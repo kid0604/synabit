@@ -27,6 +27,7 @@ pub mod stats;
 pub mod provider;
 pub mod rag;
 pub mod registry;
+pub mod routine;
 pub mod run;
 pub mod settings;
 pub mod surface;

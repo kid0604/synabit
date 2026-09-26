@@ -35,7 +35,25 @@ pub enum Surface {
     App,
     /// A message sent to the paired Telegram bot.
     Telegram,
+    /// A routine the person scheduled, running with nobody watching. See
+    /// `syn::routine`.
+    Routine,
 }
+
+/// What a routine may write: only new things.
+///
+/// Nobody is watching a routine run, so nothing it does may need watching. A
+/// new note — the brief, the summary — takes nothing away; changing or
+/// removing what is already there is for a run somebody is looking at.
+const ROUTINE_WRITES: &[&str] = &["create_node", "draw_board"];
+
+const ROUTINE_BLOCK: &str = "## Where you are answering
+This is a routine the person set up to run on a schedule. Nobody is watching while you work; they will read what you write later, in the app or on their phone.
+- Do what the routine asks, for today, then write the result: what matters first, short, in the language the routine is written in.
+- You can read and look things up, and create a new note when the routine asks for one. You cannot change or remove anything that already exists.
+- Anything that needs the person's permission stops this run until they answer. Do what you can without it.
+- Nothing new to report is a fine result: say so in one line.
+";
 
 /// What a question from Telegram may write, by name.
 ///
@@ -97,6 +115,11 @@ impl Surface {
                 Some(Capability::VaultWrite) => TELEGRAM_WRITES.contains(&tool),
                 _ => false,
             },
+            Surface::Routine => match capability {
+                Some(Capability::VaultRead) | Some(Capability::Browse) => true,
+                Some(Capability::VaultWrite) => ROUTINE_WRITES.contains(&tool),
+                _ => false,
+            },
         }
     }
 
@@ -105,6 +128,7 @@ impl Surface {
         match self {
             Surface::App => "the app",
             Surface::Telegram => "Telegram",
+            Surface::Routine => "a scheduled routine",
         }
     }
 
@@ -116,6 +140,7 @@ impl Surface {
         match self {
             Surface::App => None,
             Surface::Telegram => Some(TELEGRAM_BLOCK.to_string()),
+            Surface::Routine => Some(ROUTINE_BLOCK.to_string()),
         }
     }
 }
@@ -142,6 +167,18 @@ mod tests {
                 Surface::App.offers(&name, capability(&name).as_ref()),
                 "the app stopped being offered `{name}`"
             );
+        }
+    }
+
+    /// A routine reads, looks things up and makes new things — nothing that
+    /// changes or removes what is there, because nobody is watching.
+    #[test]
+    fn a_routine_reads_and_makes_new_things_only() {
+        for tool in ["query_nodes", "get_node", "browse", "create_node", crate::syn::tools::PLAN_TOOL] {
+            assert!(Surface::Routine.offers(tool, capability(tool).as_ref()), "{tool}");
+        }
+        for tool in ["update_node", "trash_node", "remember", "create_transaction", "delete_kind", "restore_version"] {
+            assert!(!Surface::Routine.offers(tool, capability(tool).as_ref()), "{tool}");
         }
     }
 

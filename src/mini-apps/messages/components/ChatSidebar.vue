@@ -24,7 +24,7 @@
  * than interleaved.
  */
 import { ref, computed } from 'vue';
-import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, ScrollText, Activity } from 'lucide-vue-next';
+import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, ScrollText, Activity, CalendarClock } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import NavButtons from '../../../shared/components/NavButtons.vue';
 import type { Thread, FootingTally } from '../../../shared/syn/useThreads';
@@ -38,6 +38,8 @@ export type Selection =
   | { kind: 'notifications' }
   /** What Syn is doing, what is waiting for the user, what finished today. */
   | { kind: 'activity' }
+  /** Work Syn does at times the person chose. See `syn::routine`. */
+  | { kind: 'routines' }
   /**
    * `{vault}/SYN.md` — how the two of them work together.
    *
@@ -432,6 +434,17 @@ const when = (iso?: string) => {
         >
           {{ waiting > 99 ? '99+' : waiting }}
         </span>
+      </button>
+
+      <!-- ─── Routines ───────────────────────────────────────
+           Beside Syn's work, because that is where their runs are listed. -->
+      <button
+        class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
+        :class="isOn('routines') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        @click="emit('select', { kind: 'routines' })"
+      >
+        <CalendarClock class="w-4 h-4 flex-shrink-0 text-gray-400" aria-hidden="true" />
+        <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.routines') }}</span>
       </button>
 
       <!-- ─── Notifications ──────────────────────────────────

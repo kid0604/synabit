@@ -6,7 +6,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen, Activity } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen, Activity, CalendarClock } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -22,6 +22,7 @@ import ThreadPanel from './components/ThreadPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import InstructionsPanel from './components/InstructionsPanel.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
+import RoutinesPanel from './components/RoutinesPanel.vue';
 import ModelTier from './components/ModelTier.vue';
 import { useSynActivity } from './composables/useSynActivity';
 
@@ -227,6 +228,13 @@ const handleOpenBoard = (board: KeptBoard) => {
 const handleNotificationAction = (notification: any) => {
   const targetId = notification.content?.metadata?.target_id;
   if (!targetId) return;
+
+  // A routine's result points at its conversation, which is here rather than
+  // in another app. See `commands::syn::run_routine`.
+  if (notification.content?.metadata?.target_type === 'syn_conversation') {
+    void handleSelect({ kind: 'conversation', id: targetId });
+    return;
+  }
 
   // `target_type` is written by `chat_engine.rs`. Notifications already sitting
   // in the vault from before it was have only the id, so the path stands in —
@@ -1064,6 +1072,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     <ScrollText class="w-5 h-5 text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.settings_instructions') }}</span>
                 </template>
+                <template v-else-if="selection?.kind === 'routines'">
+                    <CalendarClock class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.routines') }}</span>
+                </template>
                 <template v-else-if="selection?.kind === 'activity'">
                     <Activity class="w-5 h-5 text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.activity') }}</span>
@@ -1215,6 +1227,11 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             <InstructionsPanel
               v-else-if="selection?.kind === 'instructions'"
               :vault-path="vaultPath"
+            />
+            <RoutinesPanel
+              v-else-if="selection?.kind === 'routines'"
+              :vault-path="vaultPath"
+              @open-conversation="(id) => handleSelect({ kind: 'conversation', id })"
             />
             <ActivityPanel
               v-else-if="selection?.kind === 'activity'"

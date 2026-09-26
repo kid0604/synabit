@@ -142,7 +142,7 @@ onMounted(load);
               <dd class="mt-1 text-[11px] text-gray-500">{{ t('syn.stats_runs_total_why') }}</dd>
             </div>
             <div
-              v-for="surface in (['app', 'telegram'] as const)"
+              v-for="surface in (['app', 'telegram', 'routine'] as const)"
               :key="surface"
               class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
             >

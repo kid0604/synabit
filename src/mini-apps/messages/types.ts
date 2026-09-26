@@ -178,10 +178,11 @@ export type RunState =
   /** Found as `working` by a process that was not driving it — the app was closed mid-run. */
   | 'interrupted';
 
-export type RunTrigger = 'user';
+/** Who set a run going: a person, or a routine they scheduled. */
+export type RunTrigger = 'user' | 'schedule';
 
 /** Where a run was asked from, which decides what it may reach for. */
-export type RunSurface = 'app' | 'telegram';
+export type RunSurface = 'app' | 'telegram' | 'routine';
 
 /**
  * How heavy a turn was judged to be, before it ran. Mirrors `syn::tempo::Tempo`.

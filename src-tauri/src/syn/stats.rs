@@ -306,7 +306,11 @@ pub fn stats<Tz: TimeZone>(runs: &[Run], now: DateTime<Tz>) -> Stats {
 fn period(runs: &[Run]) -> Period {
     let mut out = Period {
         runs: runs.len() as u32,
-        by_surface: [crate::syn::surface::Surface::App, crate::syn::surface::Surface::Telegram]
+        by_surface: [
+            crate::syn::surface::Surface::App,
+            crate::syn::surface::Surface::Telegram,
+            crate::syn::surface::Surface::Routine,
+        ]
             .iter()
             .map(|s| (name_of(s), 0))
             .collect(),

@@ -21,6 +21,66 @@ impl Default for ChatEngineState {
     }
 }
 
+/// Put one message in today's list of notifications, and tell the screen.
+///
+/// The loop below writes its own batch this way every minute; this is the same
+/// write, for something that finishes outside the loop — a routine's run,
+/// which can take minutes and must not hold the tick while it does.
+pub fn post(app: &tauri::AppHandle, vault_path: &str, message: ChatMessage) {
+    let dir = Path::new(vault_path).join("Messages");
+    let _ = std::fs::create_dir_all(&dir);
+    let file = dir.join(format!("{}.json", Local::now().format("%Y-%m-%d")));
+    let mut messages: Vec<ChatMessage> = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default();
+    messages.push(message);
+    match serde_json::to_string_pretty(&messages) {
+        Ok(json) => {
+            if let Err(e) = std::fs::write(&file, json) {
+                log::error!("Failed to write daily chat log: {}", e);
+            } else {
+                let _ = app.emit("new-chat-message", ());
+            }
+        }
+        Err(e) => log::error!("Failed to write daily chat log: {}", e),
+    }
+}
+
+/// Routines are started once at a time per routine, however many ticks pass
+/// while one runs. The slot is written down before the run starts, which is
+/// what stops a second start; this is for the minute between.
+static ROUTINES_RUNNING: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+
+/// Start whatever routines are due, each in the background. See `syn::routine`.
+fn start_due_routines(app: &tauri::AppHandle, vault_path: &str) {
+    let enabled = crate::syn::settings::load_settings(vault_path).map(|s| s.enabled).unwrap_or(true);
+    // Off means off, for the parts of Syn that act without being asked above
+    // all.
+    if !enabled {
+        return;
+    }
+    let book = crate::syn::routine::load(vault_path);
+    for (routine, slot) in crate::syn::routine::all_due(&book, Local::now().naive_local()) {
+        {
+            let mut running = ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner());
+            if !running.insert(routine.id.clone()) {
+                continue;
+            }
+        }
+        let app = app.clone();
+        let vault = vault_path.to_string();
+        tauri::async_runtime::spawn(async move {
+            let id = routine.id.clone();
+            if let Err(e) = crate::commands::syn::run_routine(&app, &vault, routine, Some(slot)).await {
+                log::error!("[Syn] A routine could not run: {e}");
+            }
+            ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        });
+    }
+}
+
 pub fn init_engine(app_handle: tauri::AppHandle) {
     let state: tauri::State<'_, ChatEngineState> = app_handle.state();
     let vault_path_state = state.active_vault_path.clone();
@@ -42,6 +102,10 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
 
             let msg_dir = Path::new(&vault_path).join("Messages");
             let _ = std::fs::create_dir_all(&msg_dir);
+
+            // Routines first, and without waiting on them: a run takes as long
+            // as it takes, and the reminders below are due this minute.
+            start_due_routines(&app_handle, &vault_path);
 
             let db_state: tauri::State<'_, DbState> = app_handle.state();
             let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());

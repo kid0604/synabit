@@ -75,6 +75,11 @@ struct Outgoing {
     #[serde(default)]
     task: Option<String>,
     kept_at: i64,
+    /// Messages already rendered, for an answer rather than a reminder — a
+    /// routine's result, written in markdown and split to Telegram's length.
+    /// Sent in place of `text` when present. See `queue_answer`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    html: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -121,6 +126,7 @@ pub fn hand_over(app: &AppHandle, due: &[PlannedReminder]) {
                     text: words.reminder(due, is_late(due.trigger_at, now), now),
                     task: (due.target_type == "task").then(|| due.target_id.clone()),
                     kept_at,
+                    html: Vec::new(),
                 };
                 let key = format!("{OUTBOX_PREFIX}{}:{}", due.trigger_at.format("%Y%m%d%H%M"), due.delivery_key());
                 match serde_json::to_string(&out) {
@@ -136,6 +142,47 @@ pub fn hand_over(app: &AppHandle, due: &[PlannedReminder]) {
     if queued {
         flush(app.clone());
     }
+}
+
+/// Queue an answer Syn wrote on its own for the phone — a routine's result.
+///
+/// Through the reminders' outbox rather than a second one, for what that
+/// outbox already does: kept until Telegram has it, retried a minute later
+/// when the network is down, dropped once it is too old to be news. And under
+/// the same two conditions: a paired chat, and reminders to the phone left on
+/// — somebody who turned those off asked for the phone to stay quiet.
+///
+/// `false` when there is nobody to send it to, so the caller can say so.
+pub fn queue_answer(app: &AppHandle, key: &str, title: &str, markdown: &str) -> bool {
+    let words = Words::here();
+    let mut html = vec![format!("<b>{}</b>", render::escape(title))];
+    html.extend(render::to_html(
+        markdown,
+        &render::Placeholders { chart: words.chart(), image: words.image() },
+    ));
+    let out = Outgoing {
+        text: format!("{title}\n\n{markdown}"),
+        task: None,
+        kept_at: chrono::Utc::now().timestamp(),
+        html,
+    };
+    let kept = with_db(app, |db| {
+        if pairing::paired(db).is_none() || !is_on(db) {
+            return false;
+        }
+        let key = format!("{OUTBOX_PREFIX}{}:{key}", chrono::Local::now().format("%Y%m%d%H%M"));
+        match serde_json::to_string(&out) {
+            Ok(json) => db.set_kv(&key, &json).is_ok(),
+            Err(e) => {
+                log::error!("[Telegram] Could not write an answer down: {e}");
+                false
+            }
+        }
+    });
+    if kept {
+        flush(app.clone());
+    }
+    kept
 }
 
 /// Send what the outbox holds, unless that is already happening.
@@ -177,6 +224,15 @@ async fn send_queued(app: &AppHandle) {
 }
 
 async fn send(app: &AppHandle, api: &Api, words: &Words, chat_id: i64, out: &Outgoing, now: i64) -> Result<(), ApiError> {
+    // An answer, already rendered: its parts in order. A part that fails
+    // fails the whole, and the whole is sent again — a repeated first part is
+    // better than a lost last one.
+    if !out.html.is_empty() {
+        for part in &out.html {
+            api.send(chat_id, part).await?;
+        }
+        return Ok(());
+    }
     let html = render::escape(&out.text);
     let Some(task) = &out.task else {
         return api.send(chat_id, &html).await;

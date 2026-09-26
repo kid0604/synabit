@@ -841,6 +841,10 @@ fn start_run(
     };
     // Before `drive`, which is where it narrows the tools. See `syn::surface`.
     run.surface = surface;
+    // What set it going: a person, or a schedule they made.
+    if surface == crate::syn::surface::Surface::Routine {
+        run.trigger = crate::syn::run::Trigger::Schedule;
+    }
     run.plan_only = request.plan_only;
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
@@ -1192,6 +1196,219 @@ async fn reflect_after(
         );
     }
 
+}
+
+/// Run one routine now, and hand over what it found. See `syn::routine`.
+///
+/// `slot` is the scheduled time it is running for, written down *before* the
+/// run so the next tick does not start it again; `None` for "run it now" from
+/// the screen, which records nothing and does not count as the day's run.
+///
+/// The result goes where the person will look: the routine's own conversation
+/// (made on its first run), Syn's work, a notification in the app — and the
+/// operating system's, because this is something they asked for at a time
+/// they chose, which is what earns an interruption — and the phone when the
+/// routine asks for it. A run that stopped for permission says so instead.
+pub async fn run_routine(
+    app: &tauri::AppHandle,
+    vault_path: &str,
+    mut routine: crate::syn::routine::Routine,
+    slot: Option<String>,
+) -> Result<(), AppError> {
+    // Where it goes, made on first use and remembered.
+    let conversation_id = match routine
+        .conversation_id
+        .clone()
+        .filter(|id| conversation::get_conversation(vault_path, id).is_ok())
+    {
+        Some(id) => id,
+        None => conversation::create_conversation(vault_path, Some(routine.name.clone()))?.id,
+    };
+    routine.conversation_id = Some(conversation_id.clone());
+
+    // Written down before it runs: a run can take minutes, and the loop wakes
+    // every one of them.
+    let mut book = crate::syn::routine::load(vault_path);
+    if let Some(kept) = book.routines.iter_mut().find(|r| r.id == routine.id) {
+        kept.conversation_id = Some(conversation_id.clone());
+    }
+    if let Some(slot) = &slot {
+        book.last_slot.insert(routine.id.clone(), slot.clone());
+    }
+    crate::syn::routine::save(vault_path, &book)?;
+
+    let request = SynChatRequest {
+        conversation_id: conversation_id.clone(),
+        message: crate::syn::routine::question(&routine, chrono::Local::now().naive_local()),
+        model: None,
+        temperature: None,
+        images: None,
+        focus: None,
+        resume_run: None,
+        replacing: None,
+        plan_only: false,
+    };
+    log::info!("[Syn] Running routine \"{}\"", routine.name);
+    let answer = send_message_inner(app, vault_path, request, crate::syn::surface::Surface::Routine).await?;
+
+    let waiting = answer.content.trim().is_empty();
+    let (title, text) = if waiting {
+        (
+            format!("Syn: {}", routine.name),
+            "Syn stopped to ask you something before it can finish this routine. Open the conversation to answer."
+                .to_string(),
+        )
+    } else {
+        let first: String = answer.content.chars().take(280).collect();
+        (format!("Syn: {}", routine.name), first)
+    };
+
+    crate::chat_engine::post(
+        app,
+        vault_path,
+        crate::models::chat::ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            message_type: "system".to_string(),
+            subtype: "syn_routine".to_string(),
+            timestamp: chrono::Local::now().to_rfc3339(),
+            sender: crate::models::chat::ChatSender {
+                id: "syn".to_string(),
+                name: "Syn".to_string(),
+                role: "bot".to_string(),
+            },
+            content: crate::models::chat::ChatContent {
+                title: title.clone(),
+                text: text.clone(),
+                metadata: serde_json::json!({
+                    "target_id": conversation_id,
+                    "target_type": "syn_conversation",
+                }),
+            },
+            read_receipt: false,
+        },
+    );
+
+    {
+        use tauri_plugin_notification::NotificationExt;
+        let body: String = text.lines().next().unwrap_or_default().chars().take(160).collect();
+        if let Err(e) = app.notification().builder().title(&title).body(body).show() {
+            log::warn!("[Syn] Could not show a routine's notification: {e}");
+        }
+    }
+
+    #[cfg(desktop)]
+    if routine.to_phone && !waiting {
+        let key = format!("routine:{}:{}", routine.id, slot.as_deref().unwrap_or("now"));
+        if !crate::syn::telegram::remind::queue_answer(app, &key, &routine.name, &answer.content) {
+            log::info!("[Syn] Routine \"{}\" asked for the phone, and no phone is paired", routine.name);
+        }
+    }
+    Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROUTINES
+// ═══════════════════════════════════════════════════════════════
+
+/// A routine as the screen shows it: what it is, and when it runs next.
+#[derive(serde::Serialize)]
+pub struct RoutineView {
+    #[serde(flatten)]
+    pub routine: crate::syn::routine::Routine,
+    /// `YYYY-MM-DDTHH:MM`, local, or `None` when it is off.
+    pub next_run: Option<String>,
+    /// The slot it last ran for, when it has.
+    pub last_slot: Option<String>,
+}
+
+/// Every routine, with when each will next run.
+#[tauri::command]
+pub async fn syn_list_routines(vault_path: String) -> Result<Vec<RoutineView>, AppError> {
+    let book = crate::syn::routine::load(&vault_path);
+    let now = chrono::Local::now().naive_local();
+    Ok(book
+        .routines
+        .iter()
+        .map(|r| RoutineView {
+            next_run: crate::syn::routine::next_run(r, now),
+            last_slot: book.last_slot.get(&r.id).cloned(),
+            routine: r.clone(),
+        })
+        .collect())
+}
+
+/// Create a routine, or change one — only ever from the screen.
+///
+/// There is no tool for this, and there will not be: a routine is the person
+/// deciding what Syn does while they are not looking. See `syn::routine`.
+///
+/// A new one is not run for a slot that has already passed today: made at
+/// 9:00 with a time of 7:30, it waits for tomorrow rather than running the
+/// moment it is saved, which would be a surprise.
+#[tauri::command]
+pub async fn syn_save_routine(
+    vault_path: String,
+    routine: crate::syn::routine::Routine,
+) -> Result<crate::syn::routine::Routine, AppError> {
+    crate::syn::routine::check(&routine).map_err(AppError::General)?;
+    let mut book = crate::syn::routine::load(&vault_path);
+    let mut routine = routine;
+    if routine.id.trim().is_empty() {
+        routine.id = uuid::Uuid::new_v4().to_string();
+    }
+    let now = chrono::Local::now().naive_local();
+    match book.routines.iter_mut().find(|r| r.id == routine.id) {
+        Some(kept) => {
+            // Where its runs go is the app's to keep, not the form's.
+            routine.conversation_id = kept.conversation_id.clone();
+            *kept = routine.clone();
+        }
+        None => {
+            if book.routines.len() >= crate::syn::routine::MOST_ROUTINES {
+                return Err(AppError::General(format!(
+                    "At most {} routines.",
+                    crate::syn::routine::MOST_ROUTINES
+                )));
+            }
+            if let Some(passed) = crate::syn::routine::due(&routine, None, now) {
+                book.last_slot.insert(routine.id.clone(), passed);
+            }
+            book.routines.push(routine.clone());
+        }
+    }
+    crate::syn::routine::save(&vault_path, &book)?;
+    Ok(routine)
+}
+
+/// Remove a routine. Its conversation stays: what it said is the person's.
+#[tauri::command]
+pub async fn syn_delete_routine(vault_path: String, routine_id: String) -> Result<(), AppError> {
+    let mut book = crate::syn::routine::load(&vault_path);
+    book.routines.retain(|r| r.id != routine_id);
+    book.last_slot.remove(&routine_id);
+    crate::syn::routine::save(&vault_path, &book)
+}
+
+/// Run a routine now, to see what it does. Does not count as its scheduled
+/// run. Returns straight away; the result arrives where every run's does.
+#[tauri::command]
+pub async fn syn_run_routine_now(
+    app: tauri::AppHandle,
+    vault_path: String,
+    routine_id: String,
+) -> Result<(), AppError> {
+    let book = crate::syn::routine::load(&vault_path);
+    let routine = book
+        .routines
+        .into_iter()
+        .find(|r| r.id == routine_id)
+        .ok_or_else(|| AppError::General("No such routine.".into()))?;
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_routine(&app, &vault_path, routine, None).await {
+            log::error!("[Syn] A routine could not run: {e}");
+        }
+    });
+    Ok(())
 }
 
 /// Write a suggested skill into the vault, turned off.

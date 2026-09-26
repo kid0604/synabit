@@ -88,6 +88,8 @@ pub enum Trigger {
     /// Somebody typed something and pressed send.
     #[default]
     User,
+    /// A routine the person set up came due. See `syn::routine`.
+    Schedule,
 }
 
 /// What a run written before tempos existed reads back as.

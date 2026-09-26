@@ -72,6 +72,9 @@ const sections = [
                   <span class="font-medium">{{ t(`syn.run_state_${run.state}`) }}</span>
                   <span>{{ when(run) }}</span>
                   <span v-if="run.tool_calls">{{ t('syn.tool_calls_count', { n: run.tool_calls }, run.tool_calls) }}</span>
+                  <span v-if="run.trigger === 'schedule'" class="inline-flex items-center gap-0.5 text-violet-600 dark:text-violet-400">
+                    {{ t('syn.activity_from_routine') }}
+                  </span>
                   <span v-if="run.surface === 'telegram'" class="inline-flex items-center gap-0.5">
                     <Send class="w-3 h-3" aria-hidden="true" />{{ t('syn.activity_from_telegram') }}
                   </span>
