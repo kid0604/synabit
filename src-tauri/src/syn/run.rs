@@ -70,7 +70,7 @@ const MAX_STEP_PREVIEW: usize = 4000;
 /// a few tens of milliseconds; somewhere past a thousand the listing would need
 /// a header or an index of its own, and raising this without doing that is how
 /// opening the panel becomes slow.
-const KEEP_RUNS: usize = 200;
+pub const KEEP_RUNS: usize = 200;
 
 // ═══════════════════════════════════════════════════════════════
 //  WHAT A RUN IS
@@ -651,6 +651,58 @@ pub struct Run {
     /// asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_call: Option<crate::models::syn::ToolCall>,
+    // ── What the prompt carried ───────────────────────────────────
+    //
+    // The next five fields exist for one question: **does what Syn has
+    // actually fire?** Memory, the skill index and retrieval all reach the
+    // model by riding in the system prompt, and the system prompt is rebuilt
+    // every turn and kept nowhere. So until these were written down, "how
+    // often did a memory reach the model this month" had no answer anywhere —
+    // not in the transcript, not in a log — and every decision about memory
+    // and skills was being made on an impression. See `syn::stats`.
+    //
+    // `None` means *not measured*: a run written before these existed, or one
+    // started by something other than a message being sent. `Some(0)` means
+    // measured and none. The difference is the one `footing` learned the hard
+    // way — a tally that reads an old run's absence as zero opens by reporting
+    // that memory never reached the model in the vault's whole history.
+    /// How many remembered lines the prompt actually carried.
+    ///
+    /// Counted off the block as it was sent, after `PromptPlan::fit` had its
+    /// way with it, not off the store: a memory that was shrunk out of a tight
+    /// prompt was not in front of the model, whatever the store says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_lines_sent: Option<u32>,
+    /// How many remembered lines were left out for room — by the block's own
+    /// budget, by `fit` shrinking it, or by `fit` dropping the section whole.
+    ///
+    /// The number the 26 September review sets a target on (under 10%): a
+    /// memory the person told Syn and Syn was not shown is worse than one it
+    /// was never told, because the person believes it was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_dropped: Option<u32>,
+    /// Which optional sections `PromptPlan::fit` cut whole to stay inside the
+    /// budget, by `SectionKind` name.
+    ///
+    /// Empty is the ordinary case and is not written, so it cannot tell an old
+    /// run from one where nothing was cut; `memory_lines_sent` being present is
+    /// what says this run was measured at all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections_dropped: Vec<String>,
+    /// How long retrieval took before the model was asked, in milliseconds.
+    ///
+    /// `None` when retrieval is switched off, because it did not happen, not
+    /// because it was instant. Kept because retrieval is the one step between
+    /// pressing send and the first token that nobody can see happening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retrieval_ms: Option<u64>,
+    /// How many skills the prompt's index named.
+    ///
+    /// The denominator for `load_skill`: a skill that is indexed on every turn
+    /// and never loaded is a skill doing nothing, and "never loaded" means
+    /// little until it is known how often it was on offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skills_indexed: Option<u32>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -686,6 +738,11 @@ impl Run {
             pending_consent: None,
             pending_call: None,
             pending_choice: None,
+            memory_lines_sent: None,
+            memory_dropped: None,
+            sections_dropped: Vec::new(),
+            retrieval_ms: None,
+            skills_indexed: None,
             created_at: now.clone(),
             updated_at: now,
         }
@@ -1424,6 +1481,49 @@ mod tests {
             back.steps[0].reversal,
             Some(crate::syn::registry::Reversal::Nothing)
         );
+    }
+
+    /// A run written before the prompt was measured still reads, and reads as
+    /// unmeasured — `None`, not zero. Every run on disk today is one of these,
+    /// and a field that refused them would empty the runs panel.
+    #[test]
+    fn a_run_from_before_the_prompt_was_measured_still_reads_as_unmeasured() {
+        let old = serde_json::json!({
+            "id": "r-old",
+            "goal": "tổng kết tuần",
+            "state": "done",
+            "budget": { "iterations": 12, "tool_calls": 48, "tokens": null, "wall_ms": 600000 },
+            "steps": [],
+            "created_at": "2026-09-01T08:00:00Z",
+            "updated_at": "2026-09-01T08:00:10Z",
+        });
+        let run: Run = serde_json::from_value(old).expect("an old run still parses");
+        assert_eq!(run.memory_lines_sent, None);
+        assert_eq!(run.memory_dropped, None);
+        assert!(run.sections_dropped.is_empty());
+        assert_eq!(run.retrieval_ms, None);
+        assert_eq!(run.skills_indexed, None);
+    }
+
+    /// Unmeasured is not written at all, so a run file only grows by what was
+    /// actually measured — and measured-as-zero is written, because it is a
+    /// different claim from absent.
+    #[test]
+    fn what_the_prompt_carried_is_written_only_when_it_was_measured() {
+        let run = Run::new("g", None, budget());
+        let json = serde_json::to_value(&run).expect("serialises");
+        for field in ["memory_lines_sent", "memory_dropped", "sections_dropped", "retrieval_ms", "skills_indexed"] {
+            assert!(json.get(field).is_none(), "{field} is written for a run that never measured it");
+        }
+
+        let mut measured = Run::new("g", None, budget());
+        measured.memory_lines_sent = Some(0);
+        measured.sections_dropped = vec!["vault_context".into()];
+        let json = serde_json::to_value(&measured).expect("serialises");
+        assert_eq!(json["memory_lines_sent"], 0);
+        assert_eq!(json["sections_dropped"][0], "vault_context");
+        let back: Run = serde_json::from_value(json).expect("reads back");
+        assert_eq!(back.memory_lines_sent, Some(0));
     }
 
     /// The tally the tools screen is built on.

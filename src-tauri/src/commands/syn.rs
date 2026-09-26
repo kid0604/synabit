@@ -379,10 +379,10 @@ pub async fn send_message_inner(
     let gathered = gather(app, state.inner(), vault_path, &settings, &request, &question, &conv.messages)?;
 
     // 5–6. The prompt, and the history it goes out with.
-    let messages_for_llm = messages_for(app, vault_path, &settings, &request, surface, &gathered, &conv.messages);
+    let (messages_for_llm, carried) = messages_for(app, vault_path, &settings, &request, surface, &gathered, &conv.messages);
 
     // 7–8. What this run may reach, and the run itself.
-    let (mut run, resume_call) = start_run(app, vault_path, &settings, &request, surface, &question, gathered.counted.is_some());
+    let (mut run, resume_call) = start_run(app, vault_path, &settings, &request, surface, &question, gathered.counted.is_some(), carried);
     // Nothing, when the count is already in the prompt. A turn with tools would
     // spend a round deciding not to use them, which is the cost this tempo
     // exists to remove — see `syn::tempo`.
@@ -547,6 +547,11 @@ struct Gathered {
     /// is what makes this an instant turn. See `syn::tempo`.
     counted: Option<String>,
     timeline_block: Option<String>,
+    /// How many memories the store held, every one handed to `memory_block`.
+    /// What the prompt does not show of them was left out. See `stats::Carried`.
+    memories: usize,
+    /// How long retrieval took, or `None` when it is switched off.
+    retrieval_ms: Option<u64>,
 }
 
 /// Step 4: retrieval, memory, skills, the thread, the count and the timeline.
@@ -607,8 +612,12 @@ fn gather(
     // is about searching the vault for this question; a pinned memory is
     // what Syn knows about the person, and turning off retrieval should not
     // give them an assistant that has forgotten their name.
+    let mut memories = 0;
     let remembered = crate::syn::memory::all(&db)
-        .map(|memories| crate::syn::memory::memory_block(&memories, crate::syn::memory::MEMORY_BUDGET_CHARS))
+        .map(|all| {
+            memories = all.len();
+            crate::syn::memory::memory_block(&all, crate::syn::memory::MEMORY_BUDGET_CHARS)
+        })
         .unwrap_or_else(|e| {
             // Best effort: an unreadable memory store is a reason to answer
             // without it, not a reason to refuse the message.
@@ -648,10 +657,13 @@ fn gather(
         .and_then(|id| crate::syn::thread::get(&db, id))
         .map(|t| t.block());
 
-    let (retrieval, context) = if settings.rag_enabled {
+    // Timed, because it is the one wait between pressing send and the first
+    // token that nobody can see happening. See `Run::retrieval_ms`.
+    let retrieval_started = std::time::Instant::now();
+    let (retrieval, context, retrieval_ms) = if settings.rag_enabled {
         let retrieval = rag::retrieve_context(&db, question, history, &config)?;
         let context = rag::format_context(&retrieval);
-        (retrieval, context)
+        (retrieval, context, Some(retrieval_started.elapsed().as_millis() as u64))
     } else {
         (
             crate::models::syn::RetrievalResult {
@@ -660,10 +672,11 @@ fn gather(
                 sources: Vec::new(),
             },
             String::new(),
+            None,
         )
     };
 
-    Ok(Gathered { retrieval, context, remembered, skill_index, thread_block, counted, timeline_block })
+    Ok(Gathered { retrieval, context, remembered, skill_index, thread_block, counted, timeline_block, memories, retrieval_ms })
 }
 
 /// Steps 5 and 6: the system prompt, assembled from its parts, then the
@@ -682,7 +695,7 @@ fn messages_for(
     surface: crate::syn::surface::Surface,
     gathered: &Gathered,
     history: &[SynMessage],
-) -> Vec<SynMessage> {
+) -> (Vec<SynMessage>, crate::syn::stats::Carried) {
     let standing = standing_instructions(vault_path, settings);
     // What is on screen includes the browsing pane, and the front end cannot
     // see it — it is a webview of the operating system's, beside the app rather
@@ -697,7 +710,7 @@ fn messages_for(
         }
         _ => request.focus.clone(),
     };
-    let system_prompt = PromptPlan::for_chat(ChatPrompt {
+    let plan = PromptPlan::for_chat(ChatPrompt {
         context: &gathered.context,
         custom: standing.as_deref(),
         skills: gathered.skill_index.as_deref(),
@@ -713,8 +726,11 @@ fn messages_for(
     })
     .with_surface(surface)
     // Asked before this run registers, so it lists only the others.
-    .with_underway(&crate::syn::engine::underway(&request.conversation_id))
-    .render();
+    .with_underway(&crate::syn::engine::underway(&request.conversation_id));
+    // Measured off the plan as it goes out, after every `fit`, because the
+    // prompt is rebuilt each turn and kept nowhere. See `Run::memory_lines_sent`.
+    let carried = crate::syn::stats::Carried::of(&plan, gathered.memories, gathered.retrieval_ms);
+    let system_prompt = plan.render();
 
     let mut messages = vec![SynMessage {
         id: "system".to_string(),
@@ -741,7 +757,7 @@ fn messages_for(
             question.content.push_str(PLAN_FIRST);
         }
     }
-    messages
+    (messages, carried)
 }
 
 /// What a plan-first question carries to the model.
@@ -752,10 +768,14 @@ const PLAN_FIRST: &str = "\n\n[Plan first. Look at whatever you need, then write
 /// Step 8's record, before anything is driven: the run, and the call it is
 /// carrying on with if it is carrying on.
 ///
+/// `carried` is what the prompt measured in step 6 held; it is written onto
+/// the run here, before anything is driven, so the first save records it.
+///
 /// The run is the record: the goal in the user's own words, the ceilings this
 /// request may not exceed, and a transcript written as it happens. It survives
 /// the app being closed, which the local variables it replaced did not — so a
 /// request that fails now leaves something to read rather than nothing at all.
+#[allow(clippy::too_many_arguments)]
 fn start_run(
     app: &tauri::AppHandle,
     vault_path: &str,
@@ -764,6 +784,7 @@ fn start_run(
     surface: crate::syn::surface::Surface,
     question: &str,
     instant: bool,
+    carried: crate::syn::stats::Carried,
 ) -> (Run, Option<crate::models::syn::ToolCall>) {
     let mut budget = Budget::from_settings(settings);
     if instant {
@@ -792,6 +813,9 @@ fn start_run(
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
     run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);
+    // What the prompt carried, so "does memory reach the model" is a question
+    // the runs can answer. Before `drive`, whose first save writes it down.
+    carried.write_onto(&mut run);
 
     // Said before the work starts, not after: somebody who is about to wait
     // should know they are about to wait.
@@ -2424,6 +2448,28 @@ pub async fn syn_footing_tally(
 ) -> Result<crate::syn::footing::Tally, AppError> {
     let runs = crate::syn::run::load_all(&vault_path)?;
     Ok(crate::syn::footing::tally(&runs))
+}
+
+/// How often what Syn has actually fires: rounds, endings, ceilings, the
+/// tools that are Syn's own machinery, memory and skills in the prompt,
+/// tokens by day. See `syn::stats`.
+///
+/// Read from the runs on this device and returned to the screen that asked.
+/// Nothing is written and nothing is sent anywhere.
+///
+/// A run on disk that says `Working` while nothing drives it is counted as
+/// interrupted, the way `list_runs` would show it — but only here, in memory.
+/// `load_all` is read-only on purpose, and a screen of numbers has no business
+/// repairing files on its way past.
+#[tauri::command]
+pub async fn syn_stats(vault_path: String) -> Result<crate::syn::stats::Stats, AppError> {
+    let mut runs = crate::syn::run::load_all(&vault_path)?;
+    for run in &mut runs {
+        if run.state == crate::syn::run::RunState::Working && !crate::syn::engine::is_live(&run.id) {
+            run.state = crate::syn::run::RunState::Interrupted;
+        }
+    }
+    Ok(crate::syn::stats::stats(&runs, chrono::Local::now()))
 }
 
 /// How often a thread was in front of Syn, and how often it wrote back.

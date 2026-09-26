@@ -45,6 +45,17 @@ describe('the inspector panel', () => {
     expect(rendered()).toEqual(declared());
   });
 
+  /**
+   * The Numbers tab is drawn by its own component, so its branch is one line
+   * and easy to lose in a rebase — which would leave a button that opens the
+   * Prompt tab's `v-else` instead. Both halves are asserted: the button, and
+   * something behind it.
+   */
+  it('has a Numbers tab with the counts behind it', () => {
+    expect(declared()).toContain('numbers');
+    expect(source).toMatch(/<SynStats\s+v-else-if="tab === 'numbers'"/);
+  });
+
   it('has a label for every tab, in both languages', () => {
     for (const [locale, messages] of [['en', en], ['vi', vi]] as const) {
       const labels = (messages as { syn: Record<string, string> }).syn;
