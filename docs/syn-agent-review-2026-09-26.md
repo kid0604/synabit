@@ -564,6 +564,16 @@ Syn không nên đuổi theo agent đa năng kiểu OpenClaw. Lợi thế của 
    - `look_back` chấm điểm theo từ.
    - Mở rộng quy tắc "trích dẫn hoặc bỏ" của `narrative.rs` sang chế độ trả lời từ vault.
 
+> **Trạng thái 2026-09-27: đã làm và đã commit.**
+>
+> - **D1 Sub-run:** tool `delegate` và `syn/delegate.rs`. Run con chỉ đọc, không hỏi quyền, không tự giao việc tiếp; có `parent_run_id` và transcript riêng. Tool chỉ được đưa ra khi cửa sổ model từ 32k token trở lên.
+> - **D2 Resume thật:** `Run.resumed_from` và `run::replay`. Chọn "cái nào" giờ tự tiếp tục luôn.
+> - **D3 Memory:** `review_after` mặc định theo loại; memory quá hạn có câu rào đón và bị loại trước. So sánh chữ bỏ dấu tiếng Việt qua `search_fold`. `remember` chỉ tự ghim khi người dùng nói rõ "nhớ…".
+> - **D4 Harness tự chọn skill** (`skill::chosen_for`), đếm bằng `Run.skill_injected`.
+> - **D5 RAG:** lấy đoạn quanh chỗ khớp thay vì phần đầu note; `look_back` chấm điểm theo từ; trích dẫn `[n]` kèm cảnh báo khi số không tồn tại; eval offline thêm 10 câu. Số câu có đủ dữ liệu để trả lời: từ 4/13 lên 10/13.
+>
+> **Gate D chưa đo với model thật.**
+
 **Gate D:**
 - Việc "đọc các bài feed chưa đọc tuần này, viết một note tổng hợp" chạy trong sub-run; hội thoại chính tăng dưới 20%; transcript của sub-run đọc được riêng.
 - `load_skill` (hoặc skill được tiêm) xuất hiện ở ít nhất 20% run thuộc đúng loại việc.
@@ -580,6 +590,20 @@ Syn không nên đuổi theo agent đa năng kiểu OpenClaw. Lợi thế của 
    - "tóm tắt sáng": lịch, việc đến hạn, feed quan trọng;
    - "thread bị kẹt 7 ngày";
    - "memory mâu thuẫn". `notice.rs` đã phát hiện được việc này, chỉ thiếu người nói ra.
+
+> **Trạng thái 2026-09-27: đã làm và đã commit.**
+>
+> - **Việc định kỳ** (`syn/routine.rs`): chỉ người dùng tạo được. Chạy theo lịch từ vòng tick của `chat_engine`: không chạy trùng một khung giờ, bỏ qua nếu đã trễ quá 12 giờ.
+> - **`Trigger::Schedule` và `Surface::Routine`:** chỉ đọc, tra cứu và tạo mới. Cần quyền thì dừng ở "đang chờ bạn".
+> - **Giao kết quả:** vào hội thoại riêng của routine, thông báo trong app (bấm mở hội thoại), thông báo hệ điều hành, và Telegram (qua outbox của nhắc việc).
+> - **Mẫu có sẵn:** "Tóm tắt buổi sáng" và "Nhìn lại tuần".
+> - Ghi chú của `notice.rs` (thread kẹt, memory mâu thuẫn) đã có từ trước và giữ nguyên.
+>
+> **Chưa làm:**
+> - `Trigger::VaultEvent`.
+> - Trên điện thoại, routine chỉ chạy khi app đang mở (bù trong vòng 12 giờ).
+>
+> **Gate E chưa đo.**
 
 **Gate E:** một tuần dùng thật, ít nhất 5 run nền được mở ra đọc, và tỉ lệ bấm "tắt loại thông báo này" dưới 30%.
 
