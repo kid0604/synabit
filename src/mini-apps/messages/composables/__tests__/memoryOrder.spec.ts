@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { isStale, orderMemories } from '../useSynMemory';
+import { confirmedPatch, isStale, orderMemories } from '../useSynMemory';
 import type { Memory } from '../../types';
 
 /**
@@ -86,5 +86,31 @@ describe('what the memory screen shows first', () => {
     orderMemories(rows, TODAY);
 
     expect(rows.map(m => m.body)).toEqual(before);
+  });
+});
+
+/**
+ * Confirming a memory has to make it fresh again. The prompt hedges and gives
+ * up first whatever is past its review date, so a confirmation that moved only
+ * `last_confirmed` left the memory the person had just vouched for still marked
+ * out of date.
+ */
+describe('confirmedPatch', () => {
+  it('moves the review date on by the interval the memory was written with', () => {
+    const project = memory({ body: 'Everest waits on the vendor', last_confirmed: '2026-06-01', review_after: '2026-07-01' });
+    expect(isStale(project, TODAY)).toBe(true);
+
+    const patch = confirmedPatch(project, TODAY);
+    expect(patch).toEqual({ last_confirmed: TODAY, review_after: '2026-10-04' });
+    expect(isStale({ ...project, ...patch } as Memory, TODAY)).toBe(false);
+  });
+
+  it('leaves a memory with no review date without one', () => {
+    expect(confirmedPatch(memory({ body: 'always answer in Vietnamese' }), TODAY)).toEqual({ last_confirmed: TODAY });
+  });
+
+  it('drops a review date that gives no interval rather than leave it stale', () => {
+    const odd = memory({ body: 'hand edited', last_confirmed: '2026-08-01', review_after: '2026-07-01' });
+    expect(confirmedPatch(odd, TODAY)).toEqual({ last_confirmed: TODAY, review_after: null });
   });
 });

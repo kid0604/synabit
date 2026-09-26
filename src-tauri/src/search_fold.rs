@@ -20,6 +20,61 @@
 //! there and nowhere else. The ranking of everything else is left exactly as
 //! it was.
 
+/// Text folded for comparing in Rust: lowercase, tone marks gone, `đ` as `d`.
+///
+/// # Why a second folding, when the module above argues for one
+///
+/// Everything above is about text going into SQLite, where the tokenizer
+/// strips the marks and this module only has to add the one letter it will
+/// not. Some comparisons never reach SQLite: a memory's subject checked
+/// against another's, `recall` scanning a few dozen memories, a question
+/// matched against the skills the user enabled. Those ran on
+/// `eq_ignore_ascii_case` or a bare `to_lowercase`, so `Đức` missed `đức` and
+/// `ca phe` missed `cà phê` — the same miss the tokenizer was configured to
+/// prevent, reintroduced one layer up. This is the whole job, tokenizer and
+/// all, for the places that have no tokenizer.
+///
+/// A table rather than Unicode decomposition. `unicode-normalization` would do
+/// it in one line, and would be a new crate in the Android build, which
+/// `timeline::media`'s size gate rightly refuses without a review. The table
+/// is every precomposed Vietnamese vowel — which covers the French and Spanish
+/// accents on the same letters too — and a mark typed as a separate combining
+/// character is dropped as well, so text that arrived decomposed folds the
+/// same. Letters outside the table (`ñ`, `ü`) pass through unchanged, which
+/// errs towards a miss, never a false match.
+///
+/// Folding loses distinctions on purpose — `má` and `ma` compare equal. Use it
+/// where a false match costs a question or a less precise list; where two
+/// strings differing only by tone must stay two things, as `proposal`'s
+/// duplicate check argues, this is the wrong function.
+pub fn fold(text: &str) -> String {
+    const MARKED: &[(char, &str)] = &[
+        ('a', "àáảãạăằắẳẵặâầấẩẫậ"),
+        ('e', "èéẻẽẹêềếểễệ"),
+        ('i', "ìíỉĩị"),
+        ('o', "òóỏõọôồốổỗộơờớởỡợ"),
+        ('u', "ùúủũụưừứửữự"),
+        ('y', "ỳýỷỹỵ"),
+        ('d', "đ"),
+    ];
+    text.to_lowercase()
+        .chars()
+        // Combining diacritical marks, for text that arrived decomposed.
+        .filter(|c| !('\u{0300}'..='\u{036f}').contains(c))
+        .map(|c| {
+            MARKED
+                .iter()
+                .find(|(_, marked)| marked.contains(c))
+                .map_or(c, |(base, _)| *base)
+        })
+        .collect()
+}
+
+/// Two strings equal once folded, ignoring the space around them.
+pub fn same_folded(a: &str, b: &str) -> bool {
+    fold(a.trim()) == fold(b.trim())
+}
+
 /// Replace every `đ`/`Đ` with `d`/`D`, leaving the rest of the text alone.
 pub fn fold_d_stroke(text: &str) -> String {
     text.chars()
@@ -91,6 +146,34 @@ mod tests {
     fn is_empty_for_text_with_no_stroked_d() {
         assert_eq!(fold_d_stroke_words("công ty cổ phần abc"), "");
         assert_eq!(fold_d_stroke_words(""), "");
+    }
+
+    /// Case, tone marks, the horn on `ư`/`ơ` and the stroke on `đ`, all at once.
+    #[test]
+    fn a_full_fold_matches_what_a_person_types_without_marks() {
+        assert_eq!(fold("Cà Phê Sữa Đá"), "ca phe sua da");
+        assert_eq!(fold("Đức"), fold("đức"));
+        assert_eq!(fold("Đức"), "duc");
+        assert_eq!(fold("Trường Nguyễn"), "truong nguyen");
+        assert_eq!(fold("weekly-review"), "weekly-review", "ASCII passes through");
+        assert!(same_folded("  Đà Nẵng ", "da nang"));
+        assert!(!same_folded("Hà Nội", "Hải Phòng"));
+        // Typed decomposed — a base letter and a separate combining mark, as
+        // some keyboards and every macOS filename send it.
+        assert_eq!(fold("Ca\u{0300} phe\u{0302}\u{0301}"), "ca phe");
+    }
+
+    /// Every vowel with every mark, in both cases, folds to one of the six.
+    #[test]
+    fn every_vietnamese_vowel_folds_to_its_base() {
+        let all = "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ";
+        for c in all.chars().chain(all.to_uppercase().chars()) {
+            let folded = fold(&c.to_string());
+            assert!(
+                ["a", "e", "i", "o", "u", "y", "d"].contains(&folded.as_str()),
+                "`{c}` folded to `{folded}`"
+            );
+        }
     }
 
     #[test]

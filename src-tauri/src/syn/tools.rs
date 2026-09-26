@@ -866,7 +866,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "remember".to_string(),
-                description: "Write down something about this person that should outlive this conversation. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. NOT for things that belong in the vault as notes or tasks — those are create_node.".to_string(),
+                description: "Write down something about this person that should outlive this conversation. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. NOT for notes or tasks — those are create_node.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["body"],
@@ -876,8 +876,9 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "subject": { "type": "string", "description": "One nameable thing — a person, a project. Omit for the user themselves." },
                         "confidence": { "type": "number", "description": "0 to 1. Below 0.6 when inferring rather than being told." },
                         "source_nodes": { "type": "array", "items": { "type": "string" }, "description": "Ids of vault nodes this came from." },
-                        "pinned": { "type": "boolean", "description": "Only for what is true regardless of the question — a name, a timezone. Pinned memories ride in EVERY message, so pin sparingly." },
-                        "supersedes": { "type": "string", "description": "The id of a memory this replaces." }
+                        "pinned": { "type": "boolean", "description": "Kept first when space runs out. Default: true if the user asked you to remember." },
+                        "supersedes": { "type": "string", "description": "The id of a memory this replaces." },
+                        "review_after": { "type": "string", "description": "YYYY-MM-DD it may stop being true, or `never`. Default: by kind." }
                     }
                 }),
             },
@@ -932,7 +933,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "recall".to_string(),
-                description: "Search what you have remembered. Rarely needed — it is all in your prompt. Use it when the prompt says memories were left out, or to filter.".to_string(),
+                description: "Search what you remember. Rarely needed — it is in your prompt; use it when some was left out, or to filter.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -1543,16 +1544,51 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         .get("confidence")
         .and_then(|v| v.as_f64())
         .unwrap_or(0.8);
-    // Pinned unless told otherwise. `remember` is reached two ways: the user
-    // asked for it, or the user accepted a proposal — and the second passes
-    // `pinned: false` explicitly. Someone who says "remember this" has already
-    // made the judgement the flag encodes, so defaulting it away made their
-    // instruction rank below a machine's guess the moment a budget bit.
-    let pinned = args
-        .get("pinned")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(true);
+    // Pinned when the person asked for it in so many words, unpinned when the
+    // model decided on its own — unless the model says which.
+    //
+    // It used to be pinned unless told otherwise, on the reasoning that
+    // `remember` is reached when the user asks for it or accepts a proposal
+    // (which passes `pinned: false`). There is a third way, and it is the
+    // common one: the model hears something it judges worth keeping and keeps
+    // it. Pinned by default, every one of those ranked with "tên tao là Minh",
+    // so pinning stopped ordering anything and the budget's choice fell back
+    // to age. Someone who says "nhớ giúp tao" has made the judgement the flag
+    // encodes; a model that merely noticed something has not.
+    //
+    // Read off the run's question, which the engine saves before the first
+    // round, so it is on disk before any tool runs. A run that cannot be read
+    // — a test, a background job — is one nobody asked anything in, and
+    // unpinned is the modest default.
+    let pinned = args.get("pinned").and_then(|v| v.as_bool()).unwrap_or_else(|| {
+        ctx.run_id
+            .and_then(|id| crate::syn::run::get_run(ctx.vault_path, id).ok())
+            .is_some_and(|run| memory::asked_to_remember(&run.goal))
+    });
     let supersedes = args.get("supersedes").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    let today = memory::today();
+    // When to ask again. The model's own date wins — it may know that a claim
+    // holds "until the trip in October" — and `never` says it does not age.
+    // Otherwise the kind decides; see `memory::review_interval_days`.
+    //
+    // A malformed or past date is refused rather than quietly replaced by the
+    // default: the model meant something by it, and a memory that goes stale
+    // the moment it is written, or never when it was meant to, is a worse
+    // outcome than one retried call.
+    let review_after = match args.get("review_after").and_then(|v| v.as_str()).map(str::trim) {
+        None | Some("") => memory::default_review_after(&kind, &today),
+        Some(never) if never.eq_ignore_ascii_case("never") => None,
+        Some(date) => match chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") {
+            Ok(parsed) if parsed.format("%Y-%m-%d").to_string() > today => {
+                Some(parsed.format("%Y-%m-%d").to_string())
+            }
+            _ => {
+                return Err(AppError::General(format!(
+                    "`review_after` must be a date after today as YYYY-MM-DD, or `never`; got `{date}`."
+                )))
+            }
+        },
+    };
     let source_nodes: Vec<String> = args
         .get("source_nodes")
         .and_then(|v| v.as_array())
@@ -1598,7 +1634,8 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         &source_nodes,
         pinned,
         supersedes,
-        &memory::today(),
+        review_after.as_deref(),
+        &today,
     );
 
     let (id, title) = write_tool_node(
@@ -1624,6 +1661,7 @@ fn tool_remember<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         "id": id,
         "title": title,
         "pinned": pinned,
+        "review_after": review_after,
         // Named rather than counted, so the model can quote one back to the
         // user instead of announcing that a conflict exists.
         "existing_claims_about_the_same_thing": clashes,
@@ -1680,15 +1718,15 @@ fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
 
     let mut memories = memory::all(db)?;
 
+    // Folded, through the same `search_fold::fold` every other comparison of
+    // memory text uses. `eq_ignore_ascii_case` made `Đức` and `đức` two
+    // subjects, and a model asking for `Duc` found neither.
+    use crate::search_fold::{fold, same_folded};
     if let Some(kind) = kind.filter(|k| !k.is_empty()) {
-        memories.retain(|m| m.kind.eq_ignore_ascii_case(kind));
+        memories.retain(|m| same_folded(&m.kind, kind));
     }
     if let Some(subject) = subject.filter(|s| !s.is_empty()) {
-        memories.retain(|m| {
-            m.subject
-                .as_deref()
-                .is_some_and(|s| s.eq_ignore_ascii_case(subject))
-        });
+        memories.retain(|m| m.subject.as_deref().is_some_and(|s| same_folded(s, subject)));
     }
     // Matched in Rust rather than through FTS. A personal vault holds tens of
     // these, not thousands, and every word of every one is already in memory —
@@ -1704,18 +1742,22 @@ fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
     // rồi?", which could not reach "Dự án Everest bị hoãn đến quý 2" — the
     // rarest word in the whole set, matched and then sorted out of view.
     let mut scored: Vec<(usize, memory::Memory)> = match query {
+        // Both sides folded, so "ca phe" finds "cà phê" the way the vault's
+        // own search would. Folding makes more short syllables collide — `ma`
+        // is now `má`, `mà` and `mã` — which is what `word_hits` already
+        // guards against by matching whole words below five letters.
         Some(query) => {
-            let needle = query.to_lowercase();
+            let needle = fold(query);
             let asked = words_of(&needle);
             memories
                 .into_iter()
                 .filter_map(|m| {
-                    let hay = format!(
+                    let hay = fold(&format!(
                         "{} {} {}",
-                        m.body.to_lowercase(),
-                        m.kind.to_lowercase(),
-                        m.subject.clone().unwrap_or_default().to_lowercase()
-                    );
+                        m.body,
+                        m.kind,
+                        m.subject.clone().unwrap_or_default()
+                    ));
                     let hay = words_of(&hay);
                     let score = asked.iter().filter(|w| word_hits(&hay, w)).count();
                     (score > 0).then_some((score, m))
@@ -1746,6 +1788,7 @@ fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
                 "confidence": m.confidence,
                 "pinned": m.pinned,
                 "last_confirmed": m.last_confirmed,
+                "review_after": m.review_after,
             })
         })
         .collect();
