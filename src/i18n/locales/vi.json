@@ -2334,6 +2334,7 @@
     "tools_switch_off": "Tắt nhóm này",
     "tools_used": "đã dùng {n} lần",
     "tools_used_never": "chưa dùng bao giờ",
+    "cite_source": "Nguồn {n}: {title}",
     "diagram_open": "Bấm để xem to",
     "diagram_zoom_in": "Phóng to",
     "diagram_zoom_out": "Thu nhỏ",

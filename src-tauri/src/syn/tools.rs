@@ -2582,7 +2582,24 @@ fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppR
 ///
 /// Split out because everything this does is `run::load_all` and a filter —
 /// neither needs an app handle or a database — and standing up a Tauri runtime
-/// to prove a `contains` is a test that measures the harness.
+/// to prove a ranking is a test that measures the harness.
+///
+/// # Scored by words, not matched as a phrase
+///
+/// The query used to be one lowercase substring, so it had to appear in the
+/// goal or the answer exactly as the model wrote it. A model writes queries
+/// the way people write searches — *"fpt invoice paid"* — and the run it was
+/// looking for said *"cái hoá đơn FPT thế nào rồi"* and *"đã thanh toán"*:
+/// the words in it somewhere, the phrase nowhere. Multi-word queries rarely
+/// hit (review 2026-09-26, R4).
+///
+/// So a run scores the number of the query's words it contains, across its
+/// goal and its answer together, compared folded — marks off, `đ` as `d`, the
+/// way `rag::fold` compares them, because a model searching for `hoa don` is
+/// looking for `hoá đơn`. Whole words, with a long word allowed to match inside
+/// another, which is `word_hits`, the rule `recall` ranks memories by. Ties go
+/// to the words matched in the goal — what was asked is what a run is about —
+/// and then to the newer run.
 fn look_back(
     vault_path: &str,
     args: &Value,
@@ -2591,7 +2608,7 @@ fn look_back(
     let query = args
         .get("query")
         .and_then(|v| v.as_str())
-        .map(|q| q.trim().to_lowercase())
+        .map(str::trim)
         .filter(|q| !q.is_empty());
 
     let limit = args
@@ -2600,33 +2617,79 @@ fn look_back(
         .map(|n| n.clamp(1, 20) as usize)
         .unwrap_or(LOOK_BACK_DEFAULT);
 
+    // The words that say what the query is about. Stop words out, as for
+    // retrieval; all of them kept if that leaves nothing, since a query of
+    // nothing but common words is still a query somebody wrote.
+    let asked: Option<Vec<String>> = query.map(|q| {
+        let folded = crate::syn::rag::fold(q);
+        let mut terms: Vec<String> = crate::syn::rag::extract_search_terms(q, &[])
+            .iter()
+            .flat_map(|t| {
+                words_of(&crate::syn::rag::fold(t))
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        if terms.is_empty() {
+            terms = words_of(&folded).into_iter().map(str::to_string).collect();
+        }
+        let mut seen = std::collections::HashSet::new();
+        terms.retain(|t| seen.insert(t.clone()));
+        terms
+    });
+
     let runs = crate::syn::run::load_all(vault_path)?;
 
     // The final thing the model said, which is the part worth reading back.
-    let answer_of = |run: &crate::syn::run::Run| -> String {
+    let last_said = |run: &crate::syn::run::Run| -> String {
         run.steps
             .iter()
             .rev()
             .find(|s| s.kind == crate::syn::run::StepKind::Assistant && !s.preview.trim().is_empty())
-            .map(|s| s.preview.chars().take(LOOK_BACK_ANSWER_CHARS).collect())
+            .map(|s| s.preview.clone())
             .unwrap_or_default()
     };
+    let answer_of = |run: &crate::syn::run::Run| -> String {
+        last_said(run).chars().take(LOOK_BACK_ANSWER_CHARS).collect()
+    };
 
-    let found: Vec<serde_json::Value> = runs
+    // How many of the query's words a run has: in all, then in its goal.
+    let score = |run: &crate::syn::run::Run, asked: &[String]| -> (usize, usize) {
+        let goal = crate::syn::rag::fold(&run.goal);
+        let answer = crate::syn::rag::fold(&last_said(run));
+        let goal_words = words_of(&goal);
+        let answer_words = words_of(&answer);
+        let in_goal = asked.iter().filter(|w| word_hits(&goal_words, w)).count();
+        let in_all = asked
+            .iter()
+            .filter(|w| word_hits(&goal_words, w) || word_hits(&answer_words, w))
+            .count();
+        (in_all, in_goal)
+    };
+
+    let mut ranked: Vec<((usize, usize), &crate::syn::run::Run)> = runs
         .iter()
         .filter(|run| run.state == crate::syn::run::RunState::Done)
         // The run this call belongs to is not something Syn said before; it is
         // what it is saying now, and returning it would have the model quoting
         // a half-written answer back at itself.
         .filter(|run| this_run != Some(run.id.as_str()))
-        .filter(|run| match &query {
-            None => true,
-            Some(q) => {
-                run.goal.to_lowercase().contains(q) || answer_of(run).to_lowercase().contains(q)
+        .filter_map(|run| match &asked {
+            None => Some(((0, 0), run)),
+            Some(words) => {
+                let scored = score(run, words);
+                (scored.0 > 0).then_some((scored, run))
             }
         })
+        .collect();
+    // Stable, so equal scores keep `load_all`'s order, newest first.
+    ranked.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let found: Vec<serde_json::Value> = ranked
+        .into_iter()
         .take(limit)
-        .map(|run| {
+        .map(|(_, run)| {
             let tools: Vec<&str> = {
                 let mut names: Vec<&str> = run
                     .steps
@@ -2650,7 +2713,11 @@ fn look_back(
 
     Ok(serde_json::json!({
         "runs": found,
-        "_note": "Your own earlier work, newest first. `footing` says what each answer stood on.",
+        "_note": if query.is_some() {
+            "Your own earlier work, best match first. `footing` says what each answer stood on."
+        } else {
+            "Your own earlier work, newest first. `footing` says what each answer stood on."
+        },
     })
     .to_string())
 }
@@ -4734,6 +4801,77 @@ mod tests {
 
         let found = look_back_for_test(vault, serde_json::json!({ "query": "nexsafe" }));
         assert_eq!(found["runs"].as_array().expect("array").len(), 1, "{found}");
+    }
+
+    /// The failure this replaced: a query of several words, every one of them
+    /// in the run, and not one phrase of it — so a substring match found
+    /// nothing.
+    #[test]
+    fn a_query_of_several_words_finds_a_run_that_has_them_apart() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut run = finished_run(vault, "cái hoá đơn FPT thế nào rồi");
+        run.record_assistant(1, "Đã thanh toán hôm 12/8, qua thẻ.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &run).expect("saved");
+
+        let found = look_back_for_test(vault, serde_json::json!({ "query": "FPT hoá đơn thanh toán" }));
+        assert_eq!(found["runs"].as_array().expect("array").len(), 1, "{found}");
+    }
+
+    /// A model that writes `hoa don` is looking for `hoá đơn`.
+    #[test]
+    fn looking_back_does_not_care_how_the_marks_were_typed() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut run = finished_run(vault, "Đặt lịch khám răng");
+        run.record_assistant(1, "Đã đặt lịch thứ Năm.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &run).expect("saved");
+
+        let found = look_back_for_test(vault, serde_json::json!({ "query": "dat lich kham rang" }));
+        assert_eq!(found["runs"].as_array().expect("array").len(), 1, "{found}");
+    }
+
+    /// Ranked, then cut: the run with more of the query's words comes first,
+    /// even when it is older, and one with none of them does not come at all.
+    #[test]
+    fn the_run_with_more_of_the_query_comes_first() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let mut better = finished_run(vault, "Splunk dashboard refresh interval");
+        better.created_at = "2026-09-01T00:00:00Z".into();
+        better.record_assistant(1, "Set the refresh to 5 minutes.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &better).expect("saved");
+
+        let mut weaker = finished_run(vault, "Splunk licence renewal");
+        weaker.created_at = "2026-09-20T00:00:00Z".into();
+        weaker.record_assistant(1, "Renews in March.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &weaker).expect("saved");
+
+        let mut unrelated = finished_run(vault, "What is for dinner");
+        unrelated.created_at = "2026-09-25T00:00:00Z".into();
+        unrelated.record_assistant(1, "Phở.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &unrelated).expect("saved");
+
+        let found = look_back_for_test(
+            vault,
+            serde_json::json!({ "query": "splunk dashboard refresh" }),
+        );
+        let asked: Vec<&str> = found["runs"]
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|r| r["asked"].as_str().expect("text"))
+            .collect();
+        assert_eq!(asked, vec!["Splunk dashboard refresh interval", "Splunk licence renewal"]);
+
+        let one = look_back_for_test(
+            vault,
+            serde_json::json!({ "query": "splunk dashboard refresh", "limit": 1 }),
+        );
+        assert_eq!(one["runs"].as_array().expect("array").len(), 1, "the limit is the top of the ranking");
     }
 
     /// A cancelled or failed run is not something Syn said. Offering one back

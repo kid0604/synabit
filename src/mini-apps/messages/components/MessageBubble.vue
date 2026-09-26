@@ -29,6 +29,7 @@ import FootingMark from './FootingMark.vue';
 import KeepAsLens from './KeepAsLens.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
+import { linkCitations } from '../citations';
 import { boardsTouchedBy } from '../keepAsBoard';
 import { useNodeService } from '../../../composables/useNodeService';
 import { boardPreview } from '../../../shared/boardPreview';
@@ -219,6 +220,11 @@ const renderedContent = computed(() => {
   sanitized = sanitized.replace(
     /\[\[([^\]]+)\]\]/g,
     (_match, title) => `<a class="wikilink" data-wikilink="${title.replace(/"/g, '&quot;')}" href="#">${title}</a>`
+  );
+
+  // `[n]` to the source it cites, when this message has one. See `citations`.
+  sanitized = linkCitations(sanitized, props.message.sources, (n, title) =>
+    t('syn.cite_source', { n, title }),
   );
 
   return sanitized;
@@ -611,6 +617,16 @@ const handleContentKey = (e: KeyboardEvent) => {
 /** Handle clicks on wiki-links [[Title]] in rendered content */
 const handleContentClick = async (e: MouseEvent) => {
   const target = e.target as HTMLElement;
+
+  // A citation opens the source it numbers — the same one as the n-th chip
+  // under the answer, which `settle` arranged the numbers to match.
+  const cite = target.closest('[data-cite]') as HTMLElement | null;
+  if (cite) {
+    e.preventDefault();
+    const source = props.message.sources?.[Number(cite.dataset.cite) - 1];
+    if (source) emit('open-source', source);
+    return;
+  }
 
   // An action on a block comes first: it sits inside the same container as the
   // diagram, and a diagram that opened as well would open behind the answer.
@@ -1402,5 +1418,39 @@ const copyContent = async () => {
 :deep(a.wikilink::before) {
   content: '📄 ';
   font-size: 0.75em;
+}
+
+/* A citation, [n] made into the source it names. See `citations.ts`. Small
+   and superscript, so a sentence with three of them still reads as a
+   sentence; a real button, so it is reached by Tab and opened by Enter. */
+:deep(sup.cite-mark) {
+  line-height: 0;
+  margin-left: 0.1em;
+}
+
+:deep(button.cite) {
+  font-size: 0.75em;
+  font-weight: 600;
+  min-width: 1.4em;
+  padding: 0 0.3em;
+  margin: 0 0.05em;
+  border-radius: 0.3em;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.dark :deep(button.cite) {
+  color: #c4b5fd;
+}
+
+:deep(button.cite:hover) {
+  background: rgba(124, 58, 237, 0.25);
+}
+
+:deep(button.cite:focus-visible) {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 1px;
 }
 </style>

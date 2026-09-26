@@ -642,7 +642,7 @@ fn filter_vault_terms(terms: &[String]) -> Vec<String> {
 /// 2. Search main FTS5 index (notes, tasks, events, etc.)
 /// 3. Search feed articles FTS5
 /// 4. Search finance nodes (direct SQL, excluded from FTS)
-/// 5. Fetch full content for top results
+/// 5. Cut each vault hit to the passages that answer the question
 /// 6. Expand via knowledge graph (1-hop)
 /// 7. Deduplicate, rank, truncate
 pub fn retrieve_context(
@@ -698,6 +698,9 @@ pub fn retrieve_context(
             sources: Vec::new(),
         });
     }
+
+    // What each passage is centred on. See `passages`.
+    let centred_on = passage_terms(&terms);
 
     let terms_joined = terms.join(" ");
     let mut all_chunks: Vec<ContextChunk> = Vec::new();
@@ -860,12 +863,14 @@ pub fn retrieve_context(
         }
     }
 
-    // Step 5: Fetch full node content for top ~5 results from main search
-    // This enriches the snippet-only FTS results with full content
+    // Step 5: the passages of each vault hit that answer the question.
+    //
+    // Every hit, not the top five: the ones below used to keep FTS's 48-token
+    // snippet, which is a window too, only one chosen for a results list. The
+    // budget in step 7 still decides how many reach the prompt, best first.
     let top_ids: Vec<String> = all_chunks
         .iter()
         .filter(|c| c.source_type != "feed_article" && c.source_type != "finance")
-        .take(5)
         .map(|c| c.source_id.clone())
         .collect();
 
@@ -875,9 +880,11 @@ pub fn retrieve_context(
         }
         match db.get_node(&chunk.source_id) {
             Ok(Some(node)) => {
-                // Replace snippet with full content (will be truncated later)
-                let content_preview: String = node.content.chars().take(1500).collect();
-                chunk.content = content_preview;
+                // Where in the note the question is, rather than its opening.
+                chunk.content = passages(&node.content, &centred_on);
+                if let Some(fields) = fields_line(&node.properties) {
+                    chunk.content = format!("{fields}\n{}", chunk.content);
+                }
 
                 // Extract additional metadata from node properties
                 if let Some(props) = node.properties.as_object() {
@@ -938,9 +945,18 @@ pub fn retrieve_context(
                 }
                 seen_ids.insert(rel_id.clone());
 
-                // Fetch a brief preview of the related node
+                // A neighbour was not found by the question, so it gets one
+                // window at most: where the question's words are, if they are
+                // in it, and otherwise its opening.
                 let content_preview = match db.get_node(rel_id) {
-                    Ok(Some(node)) => node.content.chars().take(500).collect(),
+                    Ok(Some(node)) => {
+                        let text = passages(&node.content, &centred_on);
+                        if text.chars().count() > PASSAGE_CHARS {
+                            text.chars().take(PASSAGE_CHARS).collect::<String>() + " …"
+                        } else {
+                            text
+                        }
+                    }
                     _ => String::new(),
                 };
 
@@ -971,7 +987,8 @@ pub fn retrieve_context(
             // Try to fit a truncated version of this chunk
             let remaining = config.max_context_chars.saturating_sub(total_chars);
             if remaining > 100 {
-                let truncated_content: String = chunk.content.chars().take(remaining).collect();
+                let truncated_content: String =
+                    chunk.content.chars().take(remaining).collect::<String>() + " …";
                 final_chunks.push(ContextChunk {
                     content: truncated_content,
                     ..chunk
@@ -1029,6 +1046,316 @@ fn build_metadata_string(item_type: &str, status: &Option<String>, date: &str) -
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  B2. PASSAGES
+// ═══════════════════════════════════════════════════════════════
+
+/// How much of a note one passage is.
+///
+/// About two paragraphs of the kind people write in notes, which is enough to
+/// carry a fact and the sentence that says what it is a fact about. Twice the
+/// 500 characters `format_context` used to send per note, and less than the
+/// 1,500 that were fetched and then thrown away.
+const PASSAGE_CHARS: usize = 1_200;
+
+/// A note this short is sent whole.
+///
+/// Cutting a window out of a note barely longer than the window saves a few
+/// hundred characters and costs the reader the part that was cut.
+const WHOLE_NOTE_CHARS: usize = 1_500;
+
+/// How far a passage's edge may move to land on a paragraph, a line or a
+/// sentence rather than the middle of a word.
+const ALIGN_SLACK: usize = 200;
+
+/// What a note gives when nothing in its body matched — a match on its title,
+/// its tags or a field. The opening, as before, because there is nothing to
+/// centre a window on.
+const OPENING_CHARS: usize = 500;
+
+/// Text folded for matching: lower case, Vietnamese marks off, `đ` to `d`.
+///
+/// # Why this and not the index
+///
+/// The index already folds: `unicode61 remove_diacritics 2` finds `công` for
+/// `cong`, and `search_fold` adds `đ`. But the index says *which* note matched,
+/// not *where*, and a passage is a question about where. So the same folding is
+/// done here, on the text in hand, one character in and at most one out — which
+/// is what lets a position in the folded text be a position in the note.
+///
+/// A table rather than Unicode decomposition because the crate for that is not
+/// a dependency and Vietnamese is the only script here whose marks matter.
+/// Combining marks are dropped as well, for text that arrived decomposed.
+pub(crate) fn fold_char(c: char) -> Option<char> {
+    const MARKED: [(&str, char); 7] = [
+        ("àáảãạăằắẳẵặâầấẩẫậ", 'a'),
+        ("èéẻẽẹêềếểễệ", 'e'),
+        ("ìíỉĩị", 'i'),
+        ("òóỏõọôồốổỗộơờớởỡợ", 'o'),
+        ("ùúủũụưừứửữự", 'u'),
+        ("ỳýỷỹỵ", 'y'),
+        ("đ", 'd'),
+    ];
+    if ('\u{0300}'..='\u{036f}').contains(&c) {
+        return None;
+    }
+    let lower = c.to_lowercase().next().unwrap_or(c);
+    Some(
+        MARKED
+            .iter()
+            .find(|(marked, _)| marked.contains(lower))
+            .map(|(_, plain)| *plain)
+            .unwrap_or(lower),
+    )
+}
+
+/// A whole string, folded. See `fold_char`.
+pub(crate) fn fold(text: &str) -> String {
+    text.chars().filter_map(fold_char).collect()
+}
+
+/// What a passage is centred on: the parts of the question the index searched
+/// for, folded, quotes off.
+///
+/// `query_parts` is the source rather than the raw words of the question,
+/// because it has already decided what in the question tells notes apart — a
+/// name the vault knows, pairs of syllables the vault has, nothing that is in
+/// a fifth of it. A passage centred on the words the index threw away would be
+/// centred on noise.
+fn passage_terms(parts: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in parts {
+        let folded = fold(part.trim_matches('"')).trim().to_string();
+        if folded.chars().count() >= 2 && !out.contains(&folded) {
+            out.push(folded);
+        }
+    }
+    out
+}
+
+/// Where each term occurs in the folded text, as `(char position, term)`.
+///
+/// A match has to start a word. It may run on past the end of one when the
+/// term is long enough that running on is a different form of the same word —
+/// `migration` in `migrations` — and not when it is short enough to be an
+/// accident inside another, as `ha` would be in `hanoi`.
+fn occurrences(folded: &[char], terms: &[String]) -> Vec<(usize, usize)> {
+    let mut hits = Vec::new();
+    for (t, term) in terms.iter().enumerate() {
+        let needle: Vec<char> = term.chars().collect();
+        if needle.is_empty() || needle.len() > folded.len() {
+            continue;
+        }
+        for at in 0..=folded.len() - needle.len() {
+            if folded[at..at + needle.len()] != needle[..] {
+                continue;
+            }
+            let starts_word = at == 0 || !folded[at - 1].is_alphanumeric();
+            let end = at + needle.len();
+            let ends_word = end == folded.len() || !folded[end].is_alphanumeric();
+            if starts_word && (ends_word || needle.len() >= 4) {
+                hits.push((at, t));
+            }
+        }
+    }
+    hits.sort_unstable();
+    hits
+}
+
+/// The densest stretch of hits: the start of the stretch, its end, and which
+/// terms are in it.
+///
+/// Dense means *most different terms of the question*, then most hits. A
+/// paragraph that says "deposit" and "lease" answers more of "what is the
+/// deposit on the lease" than one that says "lease" four times.
+fn densest(hits: &[(usize, usize)], span: usize) -> Option<(usize, usize, HashSet<usize>)> {
+    let mut best: Option<(usize, usize, usize, HashSet<usize>)> = None;
+    for (i, &(start, _)) in hits.iter().enumerate() {
+        let inside: Vec<&(usize, usize)> =
+            hits[i..].iter().take_while(|(at, _)| *at < start + span).collect();
+        let terms: HashSet<usize> = inside.iter().map(|(_, t)| *t).collect();
+        let end = inside.last().map(|(at, _)| *at).unwrap_or(start);
+        let better = match &best {
+            None => true,
+            Some((_, _, count, seen)) => {
+                terms.len() > seen.len() || (terms.len() == seen.len() && inside.len() > *count)
+            }
+        };
+        if better {
+            best = Some((start, end, inside.len(), terms));
+        }
+    }
+    best.map(|(start, end, _, terms)| (start, end, terms))
+}
+
+/// Move a window's edges onto the nearest paragraph, line or sentence.
+///
+/// Backwards for the start and forwards for the end, so aligning only ever
+/// adds a little rather than cutting into the stretch the window was centred
+/// on. A paragraph break is preferred to a line, and a line to a sentence; if
+/// none is within `ALIGN_SLACK`, the edge stays where it was.
+fn aligned(text: &[char], start: usize, end: usize) -> (usize, usize) {
+    let found_back = |from: usize, pattern: &[char]| -> Option<usize> {
+        let floor = from.saturating_sub(ALIGN_SLACK);
+        (floor..from)
+            .rev()
+            .find(|&i| i + pattern.len() <= text.len() && text[i..i + pattern.len()] == *pattern)
+            .map(|i| i + pattern.len())
+    };
+    let found_forward = |from: usize, pattern: &[char]| -> Option<usize> {
+        let ceiling = (from + ALIGN_SLACK).min(text.len());
+        (from..ceiling)
+            .find(|&i| i + pattern.len() <= text.len() && text[i..i + pattern.len()] == *pattern)
+    };
+
+    let start = if start == 0 {
+        0
+    } else {
+        found_back(start, &['\n', '\n'])
+            .or_else(|| found_back(start, &['\n']))
+            .or_else(|| found_back(start, &['.', ' ']))
+            .unwrap_or(start)
+    };
+    let end = if end >= text.len() {
+        text.len()
+    } else {
+        found_forward(end, &['\n'])
+            .or_else(|| found_forward(end, &['.', ' ']).map(|i| i + 1))
+            .unwrap_or(end)
+    };
+    (start, end)
+}
+
+/// A window of `PASSAGE_CHARS` around a stretch of hits.
+fn window_around(text: &[char], from: usize, to: usize) -> (usize, usize) {
+    let middle = (from + to) / 2;
+    let start = middle.saturating_sub(PASSAGE_CHARS / 2);
+    let end = (start + PASSAGE_CHARS).min(text.len());
+    let start = end.saturating_sub(PASSAGE_CHARS);
+    aligned(text, start, end)
+}
+
+/// The parts of a note that answer the question, rather than its opening.
+///
+/// # The failure this exists for
+///
+/// Retrieval fetched the first 1,500 characters of a note and `format_context`
+/// then sent the first 500 of those. A fact two thousand characters into a
+/// note was lost even when that note ranked first — the model was handed the
+/// right note and not the part of it that was right (review 2026-09-26, R2).
+/// Measured on the seeded vault in `rag_vs_agentic`
+/// (`whether_the_answer_reaches_the_prompt`): of the five questions whose
+/// answer sits deep in a long note, two of them Vietnamese, the answer reached
+/// the prompt for none, though every one of those notes was retrieved.
+///
+/// | | answers in the prompt | of which long notes |
+/// | --- | ---: | ---: |
+/// | the opening, cut to 500 | 4 / 13 | 0 / 5 |
+/// | passages, and fields | 10 / 13 | 5 / 5 |
+///
+/// The three still missing are not this function's to fix: a rating kept in
+/// frontmatter whose note is never retrieved, the second hop of a multi-hop
+/// question, and a Vietnamese question over an English note (R3).
+///
+/// # What it does instead
+///
+/// - **A short note is sent whole.** See `WHOLE_NOTE_CHARS`.
+/// - **Otherwise, a window around where the question's words are densest**,
+///   about `PASSAGE_CHARS` long, its edges moved onto a paragraph or sentence.
+/// - **A second window only when it adds a word the first did not have.** "What
+///   are the deposit and the notice period" can be answered from two ends of a
+///   lease; a second window of the same words would only spend the budget
+///   twice on one answer.
+/// - **Nothing matched in the body** — the match was on the title, a tag or a
+///   field — gives the opening, since there is nothing to centre on.
+///
+/// What was left out is marked `…`, so the model reads a passage as a passage
+/// and not as the whole of what the note says.
+pub fn passages(content: &str, terms: &[String]) -> String {
+    let text: Vec<char> = content.chars().collect();
+    if text.len() <= WHOLE_NOTE_CHARS {
+        return content.to_string();
+    }
+
+    // One folded character per original, so a position is a position in both.
+    let folded: Vec<char> = text.iter().map(|&c| fold_char(c).unwrap_or(' ')).collect();
+    let hits = occurrences(&folded, terms);
+
+    let mut windows: Vec<(usize, usize)> = Vec::new();
+    match densest(&hits, PASSAGE_CHARS / 2) {
+        None => windows.push(aligned(&text, 0, OPENING_CHARS)),
+        Some((from, to, first_terms)) => {
+            let first = window_around(&text, from, to);
+            windows.push(first);
+
+            let outside: Vec<(usize, usize)> = hits
+                .iter()
+                .copied()
+                .filter(|(at, _)| *at < first.0 || *at >= first.1)
+                .collect();
+            if let Some((from, to, terms)) = densest(&outside, PASSAGE_CHARS / 2) {
+                if terms.iter().any(|t| !first_terms.contains(t)) {
+                    windows.push(window_around(&text, from, to));
+                }
+            }
+        }
+    }
+
+    // In the order they are in the note, and one where two touch.
+    windows.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in windows {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+
+    let mut out = String::new();
+    for (i, (start, end)) in merged.iter().enumerate() {
+        if i > 0 {
+            out.push_str("\n…\n");
+        } else if *start > 0 {
+            out.push_str("… ");
+        }
+        let piece: String = text[*start..*end].iter().collect();
+        out.push_str(piece.trim());
+    }
+    if merged.last().is_some_and(|(_, end)| *end < text.len()) {
+        out.push_str(" …");
+    }
+    out
+}
+
+/// A node's own fields, as a line the model can read.
+///
+/// The answer to "what is Dr. Lan's phone number" is in the frontmatter, and
+/// the frontmatter never reached the prompt: retrieval kept eight named fields
+/// for its own formatting and dropped the rest. The fields a person invented
+/// are the ones only they know the meaning of, and a phone number stored as a
+/// field is still a phone number.
+///
+/// Scalars only, in the order the node has them, and short: a field holding a
+/// paragraph is content by another name and not what this line is for.
+fn fields_line(properties: &serde_json::Value) -> Option<String> {
+    const SKIP: [&str; 5] = ["title", "type", "tags", "created_at", "updated_at"];
+    let fields: Vec<String> = properties
+        .as_object()?
+        .iter()
+        .filter(|(key, _)| !SKIP.contains(&key.as_str()))
+        .filter_map(|(key, value)| {
+            let shown = match value {
+                serde_json::Value::String(s) if !s.trim().is_empty() => s.trim().to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                _ => return None,
+            };
+            (shown.chars().count() <= 120).then(|| format!("{key}: {shown}"))
+        })
+        .collect();
+    (!fields.is_empty()).then(|| format!("Fields: {}", fields.join("; ")))
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  C. FORMAT CONTEXT
 // ═══════════════════════════════════════════════════════════════
 
@@ -1036,16 +1363,30 @@ fn build_metadata_string(item_type: &str, status: &Option<String>, date: &str) -
 ///
 /// Groups chunks by their source type and formats each with appropriate icons
 /// and relevant metadata fields extracted from the metadata string.
+///
+/// # Numbered, so an answer can say which
+///
+/// Each chunk is headed `[n]`, where `n` is its place in `context_chunks` —
+/// and so in `sources`, which is built from the same list in the same order.
+/// The groups below reorder what is *shown*; they do not renumber it, because
+/// the number is the one thing that has to mean the same on both sides: the
+/// model cites `[3]`, and `commands::syn::settle` turns `[3]` back into the
+/// third source. See `answer::citations_in`.
+///
+/// The content is shown as retrieval cut it. It used to be cut again here, to
+/// 500 characters a note, which is what lost a fact two thousand characters in
+/// even after retrieval had found the right note; `passages` has already sized
+/// it, and the budget in `retrieve_context` has already counted it.
 pub fn format_context(result: &RetrievalResult) -> String {
     if result.context_chunks.is_empty() {
         return String::new();
     }
 
     // Group chunks by source type
-    let mut groups: HashMap<String, Vec<&ContextChunk>> = HashMap::new();
-    for chunk in &result.context_chunks {
+    let mut groups: HashMap<String, Vec<(usize, &ContextChunk)>> = HashMap::new();
+    for (i, chunk) in result.context_chunks.iter().enumerate() {
         let group_key = normalize_type_group(&chunk.source_type);
-        groups.entry(group_key).or_default().push(chunk);
+        groups.entry(group_key).or_default().push((i + 1, chunk));
     }
 
     let mut output = String::new();
@@ -1067,8 +1408,9 @@ pub fn format_context(result: &RetrievalResult) -> String {
         if let Some(chunks) = groups.get(*key) {
             output.push_str(&format!("=== {} ===\n", label));
 
-            for chunk in chunks {
+            for (n, chunk) in chunks {
                 let meta = parse_metadata(&chunk.metadata);
+                output.push_str(&format!("[{n}] "));
 
                 match *key {
                     "notes" => {
@@ -1081,7 +1423,7 @@ pub fn format_context(result: &RetrievalResult) -> String {
                                 .join(" ");
                             output.push_str(&format!("Tags: {}\n", tag_str));
                         }
-                        let preview: String = chunk.content.chars().take(500).collect();
+                        let preview = chunk.content.as_str();
                         if !preview.is_empty() {
                             output.push_str(&format!("Content: {}\n", preview));
                         }
@@ -1102,7 +1444,7 @@ pub fn format_context(result: &RetrievalResult) -> String {
                             output.push_str(&format!(" — {}", task_meta.join(", ")));
                         }
                         output.push('\n');
-                        let preview: String = chunk.content.chars().take(300).collect();
+                        let preview = chunk.content.as_str();
                         if !preview.is_empty() {
                             output.push_str(&format!("Details: {}\n", preview));
                         }
@@ -1132,7 +1474,7 @@ pub fn format_context(result: &RetrievalResult) -> String {
                             output.push_str(&format!(" — Birthday: {}", birthday));
                         }
                         output.push('\n');
-                        let preview: String = chunk.content.chars().take(300).collect();
+                        let preview = chunk.content.as_str();
                         if !preview.is_empty() {
                             output.push_str(&format!("Info: {}\n", preview));
                         }
@@ -1168,7 +1510,7 @@ pub fn format_context(result: &RetrievalResult) -> String {
                     _ => {
                         // Generic format for blocks, files, whiteboards, etc.
                         output.push_str(&format!("{} [{}]\n", icon, chunk.title));
-                        let preview: String = chunk.content.chars().take(300).collect();
+                        let preview = chunk.content.as_str();
                         if !preview.is_empty() {
                             output.push_str(&format!("Content: {}\n", preview));
                         }
@@ -1642,6 +1984,218 @@ mod tests {
         assert!(formatted.contains("Priority: P1"));
     }
 
+    /// Paragraphs about nothing, to make a note long. None of the words the
+    /// passage tests below search for is in them.
+    fn padding(paragraphs: usize) -> String {
+        (0..paragraphs)
+            .map(|i| {
+                format!(
+                    "Paragraph {i} is about the weather and the coffee machine, which broke \
+                     again this morning. Somebody fixed it with a paperclip and a lot of \
+                     patience, and the queue behind them was very understanding about it."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|w| w.to_string()).collect()
+    }
+
+    #[test]
+    fn a_short_note_is_sent_whole() {
+        let note = "The wifi password is ha-noi-2026.";
+        assert_eq!(passages(note, &words(&["wifi"])), note);
+    }
+
+    /// The failure this replaces: the note ranked first, and the fact was two
+    /// thousand characters past the 500 that were sent.
+    #[test]
+    fn a_fact_in_the_middle_of_a_long_note_is_in_its_passage() {
+        let note = format!(
+            "{}\n\nThe offsite venue is the Tam Coc riverside lodge.\n\n{}",
+            padding(12),
+            padding(12)
+        );
+        let sent = passages(&note, &words(&["offsite", "venue"]));
+
+        assert!(sent.contains("Tam Coc riverside lodge"), "{sent}");
+        assert!(sent.chars().count() < note.chars().count() / 2, "a passage, not the note");
+        assert!(sent.starts_with("… ") && sent.ends_with(" …"), "what was left out is marked: {sent}");
+    }
+
+    #[test]
+    fn a_fact_in_the_last_paragraph_is_reached() {
+        let note = format!(
+            "{}\n\nThe rollback window closes at 02:30 UTC.",
+            padding(20)
+        );
+        let sent = passages(&note, &words(&["rollback", "window"]));
+        assert!(sent.contains("02:30 UTC"), "{sent}");
+        assert!(!sent.ends_with('…'), "nothing after the end of the note was left out");
+    }
+
+    /// Asked without the marks, found with them — and the other way round,
+    /// because a person types either.
+    #[test]
+    fn a_vietnamese_fact_is_found_whichever_way_the_marks_were_typed() {
+        let note = format!(
+            "{}\n\nMục tiêu cuối năm: chạy BÁN MARATHON dưới 2 giờ 10 phút.\n\n{}",
+            padding(10),
+            padding(10)
+        );
+        for asked in [&["ban marathon"][..], &["bán", "marathon"][..], &["mục tiêu"][..]] {
+            let terms = passage_terms(&words(asked));
+            let sent = passages(&note, &terms);
+            assert!(sent.contains("2 giờ 10 phút"), "{asked:?} did not reach it: {sent}");
+        }
+    }
+
+    /// `query_parts` quotes a pair of syllables; the quotes are for FTS, and a
+    /// passage looks for the words.
+    #[test]
+    fn a_quoted_pair_is_looked_for_as_the_words_it_quotes() {
+        assert_eq!(
+            passage_terms(&words(&["\"kiến trúc\"", "splunk", "Splunk"])),
+            words(&["kien truc", "splunk"])
+        );
+    }
+
+    #[test]
+    fn two_facts_at_two_ends_of_a_note_give_two_passages() {
+        let note = format!(
+            "The apartment lease was signed in August. The deposit is 30 million VND.\n\n{}\
+             \n\nTo leave, the lease asks for a notice period of 60 days.",
+            padding(20)
+        );
+        let sent = passages(&note, &words(&["deposit", "notice", "period", "lease"]));
+
+        assert!(sent.contains("30 million"), "{sent}");
+        assert!(sent.contains("60 days"), "{sent}");
+        assert!(sent.contains("\n…\n"), "the gap between them is marked: {sent}");
+    }
+
+    /// A second window of the words the first already had is the same answer
+    /// sent twice.
+    #[test]
+    fn a_second_passage_needs_a_word_the_first_did_not_have() {
+        let note = format!(
+            "The lease starts in August.\n\n{}\n\nThe lease ends in July.",
+            padding(20)
+        );
+        let sent = passages(&note, &words(&["lease"]));
+        assert!(!sent.contains("\n…\n"), "one passage: {sent}");
+    }
+
+    /// Matched on the title, a tag or a field: nothing in the body to centre
+    /// on, so the note gives its opening, as it did before.
+    #[test]
+    fn a_note_matched_only_by_its_title_gives_its_opening() {
+        let note = format!("It starts like this.\n\n{}", padding(20));
+        let sent = passages(&note, &words(&["splunk"]));
+        assert!(sent.starts_with("It starts like this."), "{sent}");
+        assert!(sent.chars().count() <= OPENING_CHARS + ALIGN_SLACK + 2, "{}", sent.len());
+    }
+
+    #[test]
+    fn a_short_term_does_not_match_inside_a_longer_word() {
+        let folded: Vec<char> = fold("Hanoi office, ha-noi").chars().collect();
+        let hits = occurrences(&folded, &words(&["ha"]));
+        assert_eq!(hits.len(), 1, "`ha` in `ha-noi`, not in `hanoi`");
+
+        let folded: Vec<char> = fold("the migrations ran").chars().collect();
+        assert_eq!(occurrences(&folded, &words(&["migration"])).len(), 1, "a longer word may run on");
+    }
+
+    #[test]
+    fn folding_takes_the_marks_off_and_keeps_every_other_letter() {
+        assert_eq!(fold("Thợ ĐIỆN báo giá"), "tho dien bao gia");
+        // Decomposed: `e` then a combining acute.
+        assert_eq!(fold("cafe\u{0301}"), "cafe");
+        assert_eq!(fold("Straße 12"), "straße 12");
+    }
+
+    /// The answer to a question about a phone number was a field, and fields
+    /// never reached the prompt.
+    #[test]
+    fn a_nodes_own_fields_are_shown() {
+        let line = fields_line(&serde_json::json!({
+            "phone": "0912 345 678",
+            "rating": 5,
+            "tags": ["family"],
+            "bio": "x".repeat(500),
+        }))
+        .expect("there are fields");
+        assert!(line.contains("phone: 0912 345 678"), "{line}");
+        assert!(line.contains("rating: 5"), "{line}");
+        assert!(!line.contains("tags"), "tags have their own line: {line}");
+        assert!(!line.contains("bio"), "a paragraph is content, not a field: {line}");
+
+        assert!(fields_line(&serde_json::json!({})).is_none());
+    }
+
+    /// End to end: a long note in the index, a question about its middle, and
+    /// the answer in what the prompt is handed.
+    #[test]
+    fn retrieval_hands_over_the_part_of_a_long_note_that_answers() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        let body = format!(
+            "{}\n\nThợ điện hẹn đến vào thứ Năm, báo giá 4,2 triệu.\n\n{}",
+            padding(15),
+            padding(15)
+        );
+        db.upsert_node(&crate::models::node::NodeMetadata {
+            id: "Notes/Sửa nhà.md".into(),
+            node_type: "note".into(),
+            title: "Kế hoạch sửa nhà".into(),
+            content: body.clone(),
+            properties: serde_json::json!({}),
+            created_at: "2026-08-01T00:00:00Z".into(),
+            updated_at: "2026-08-01T00:00:00Z".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("upsert");
+        db.upsert_search_entry(
+            "Notes/Sửa nhà.md", "note", "Kế hoạch sửa nhà", "", &body, "{}", None,
+            "2026-08-01T00:00:00Z", "Notes/Sửa nhà.md",
+        );
+
+        let result = retrieve_context(&db, "Thợ điện báo giá bao nhiêu?", &[], &RagConfig::default())
+            .expect("retrieval runs");
+        let context = format_context(&result);
+        assert!(context.contains("4,2 triệu"), "{context}");
+        assert!(context.contains("[1] 📝 [Kế hoạch sửa nhà]"), "numbered: {context}");
+    }
+
+    /// The number is a chunk's place in `sources`, whichever group it is shown
+    /// under — the answer cites the number, and `settle` reads it back.
+    #[test]
+    fn each_chunk_is_numbered_by_its_place_among_the_sources() {
+        let chunk = |id: &str, source_type: &str| ContextChunk {
+            source_id: id.to_string(),
+            source_type: source_type.to_string(),
+            title: id.to_string(),
+            content: format!("about {id}"),
+            relevance_score: 1.0,
+            metadata: None,
+        };
+        let result = RetrievalResult {
+            // A task first, then a note: shown notes-first, numbered task-first.
+            context_chunks: vec![chunk("the task", "task"), chunk("the note", "note")],
+            total_tokens_estimate: 0,
+            sources: Vec::new(),
+        };
+        let formatted = format_context(&result);
+        assert!(formatted.contains("[1] ☐ [the task]"), "{formatted}");
+        assert!(formatted.contains("[2] 📝 [the note]"), "{formatted}");
+        assert!(
+            formatted.find("[2]") < formatted.find("[1]"),
+            "the groups still decide the order shown: {formatted}"
+        );
+    }
+
     #[test]
     fn test_parse_metadata() {
         let meta = Some("status:todo|priority:P1|due_date:2026-06-12".to_string());
@@ -1825,7 +2379,139 @@ mod rag_vs_agentic {
             // question says "Ha". It reads like a hit and is not one.
             misleading: &["Notes/Office.md"],
         },
+        // The ten below are the harder half, added because five questions from
+        // one small vault could not tell a change to retrieval from noise
+        // (review 2026-09-26, R5). Every note they stand on is either long —
+        // the answer in the middle or at the end, past anything the opening of
+        // a note would carry — or shaped so that one note is not enough.
+        Question {
+            ask: "Where is the engineering offsite venue?",
+            wants: &["Tam Coc"],
+            refuses: &[],
+            about: "a fact in the middle of a long note",
+            any_of: &[],
+            relevant: &["Notes/Offsite.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "When does the rollback window close for the server migration?",
+            wants: &["02:30"],
+            refuses: &[],
+            about: "a fact in the last paragraph of a long note",
+            any_of: &[],
+            relevant: &["Notes/Migration runbook.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "Thợ điện báo giá bao nhiêu?",
+            wants: &["4,2 triệu"],
+            refuses: &[],
+            about: "a fact in the middle of a long Vietnamese note",
+            any_of: &[],
+            relevant: &["Notes/Sửa nhà.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "Mục tiêu bán marathon của tôi là gì?",
+            wants: &["2 giờ 10"],
+            refuses: &[],
+            about: "a fact at the end of a long Vietnamese note",
+            any_of: &[],
+            relevant: &["Notes/Tập chạy.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "What are the deposit and the notice period on the apartment lease?",
+            wants: &["30 million", "60 days"],
+            refuses: &[],
+            about: "two facts far apart in one long note — one window is not enough",
+            any_of: &[],
+            relevant: &["Notes/Lease.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "Who leads the team that owns the billing service?",
+            wants: &["Quang"],
+            refuses: &[],
+            about: "multi-hop: the service names a team, the team names a lead",
+            any_of: &[],
+            relevant: &["Notes/Service owners.md", "Notes/Atlas team.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "What is the launch date for the mobile app?",
+            wants: &["2 April"],
+            refuses: &[],
+            about: "two notes that disagree, the later one right",
+            any_of: &[],
+            relevant: &["Notes/Launch plan.md", "Notes/Launch moved.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "What is Dr. Lan's phone number?",
+            wants: &["0912 345 678"],
+            refuses: &[],
+            about: "the answer is in the frontmatter, not the body",
+            any_of: &[],
+            relevant: &["People/Dr Lan.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "When does my vehicle need its next oil change?",
+            wants: &["55,000"],
+            refuses: &[],
+            about: "a paraphrase: vehicle for car, oil change for service",
+            any_of: &[],
+            relevant: &["Notes/Car maintenance.md"],
+            misleading: &[],
+        },
+        Question {
+            ask: "Lịch hẹn gia hạn hộ chiếu ở đại sứ quán là khi nào?",
+            wants: &["9 October"],
+            refuses: &[],
+            about: "a Vietnamese question over an English note — R3, no semantic layer",
+            any_of: &[],
+            relevant: &["Notes/Passport renewal.md"],
+            misleading: &[],
+        },
     ];
+
+    /// Paragraphs that say nothing anybody will ask about.
+    ///
+    /// What makes a long note long in a real vault: the meeting around the one
+    /// decision, the week around the one number. Written to share no word with
+    /// any question above, so where the answer's paragraph sits is the only
+    /// thing that decides whether retrieval carries it.
+    fn filler(paragraphs: usize, vietnamese: bool) -> String {
+        const EN: &[&str] = &[
+            "Coffee ran out halfway through the morning, so somebody went to the corner shop.",
+            "The whiteboard photos from the session are in the shared drive under this week's folder.",
+            "Most of the discussion went over the backlog, one story at a time.",
+            "Somebody raised the idea of moving standups to the afternoon; nobody felt strongly either way.",
+            "The projector in room three still flickers, and facilities have been told twice.",
+            "Action items were written up and assigned at the end of each block.",
+            "Lunch was noodles from the place across the road, which everyone liked.",
+            "A few people joined remotely and the audio dropped out twice.",
+        ];
+        const VI: &[&str] = &[
+            "Sáng nay trời mưa nên mọi người đến muộn một chút.",
+            "Cuối tuần cả nhà đi ăn phở ở quán quen đầu ngõ.",
+            "Mấy chậu cây ngoài ban công cần tưới thêm vào buổi chiều.",
+            "Con mèo lại trèo lên tủ sách và làm rơi mấy cuốn tạp chí.",
+            "Đã gọi cho bên internet để hỏi về hoá đơn tháng này.",
+            "Tối qua xem một bộ phim tài liệu về đại dương, khá hay.",
+        ];
+        let pool = if vietnamese { VI } else { EN };
+        (0..paragraphs)
+            .map(|p| {
+                (0..3)
+                    .map(|k| pool[(p * 3 + k) % pool.len()])
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
 
     fn seed(vault: &std::path::Path) -> DbBridge {
         let db = DbBridge::new_in_memory_full().expect("schema");
@@ -1920,6 +2606,118 @@ mod rag_vs_agentic {
         ] {
             write(file, "task", title, "", serde_json::json!({ "status": status }));
         }
+
+        // The harder half. See the note above the questions that use these.
+        write(
+            "Notes/Offsite.md",
+            "note",
+            "Engineering offsite",
+            &format!(
+                "Notes from planning the engineering offsite.\n\n{}\n\nThe offsite venue is \
+                 the Tam Coc riverside lodge, with rooms for fourteen and a hall for the talks.\
+                 \n\n{}",
+                filler(7, false),
+                filler(7, false),
+            ),
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Migration runbook.md",
+            "note",
+            "Server migration runbook",
+            &format!(
+                "Steps for moving the database server to the new cluster.\n\n{}\n\nThe rollback \
+                 window closes at 02:30 UTC; after that the old cluster is wiped and there is \
+                 no way back.",
+                filler(14, false),
+            ),
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Sửa nhà.md",
+            "note",
+            "Kế hoạch sửa nhà",
+            &format!(
+                "Những việc cần làm trong nhà trước Tết.\n\n{}\n\nThợ điện hẹn đến sửa vào thứ \
+                 Năm, báo giá 4,2 triệu cho cả phần dây và ổ cắm.\n\n{}",
+                filler(7, true),
+                filler(7, true),
+            ),
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Tập chạy.md",
+            "note",
+            "Nhật ký tập chạy",
+            &format!(
+                "Ghi lại các buổi chạy trong năm.\n\n{}\n\nMục tiêu cuối năm: chạy bán marathon \
+                 dưới 2 giờ 10 phút.",
+                filler(14, true),
+            ),
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Lease.md",
+            "note",
+            "Apartment lease",
+            &format!(
+                "The apartment lease was signed in August. The deposit is 30 million VND, held \
+                 by the landlord.\n\n{}\n\nTo leave, the lease asks for a notice period of 60 \
+                 days, given in writing.",
+                filler(14, false),
+            ),
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Service owners.md",
+            "note",
+            "Service owners",
+            "Who owns what. The billing service is owned by the Atlas team; search belongs \
+             to Orion.",
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Atlas team.md",
+            "note",
+            "Atlas team",
+            "The Atlas team is led by Quang, with four engineers and one designer.",
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Launch plan.md",
+            "note",
+            "Launch plan",
+            "The mobile app launch date is set for 12 March.",
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Launch moved.md",
+            "note",
+            "Launch moved",
+            "Update: the mobile app launch moved to 2 April, because QA needs another sprint.",
+            serde_json::json!({}),
+        );
+        write(
+            "People/Dr Lan.md",
+            "person",
+            "Dr. Lan",
+            "Family doctor at the clinic on Kim Ma.",
+            serde_json::json!({ "phone": "0912 345 678" }),
+        );
+        write(
+            "Notes/Car maintenance.md",
+            "note",
+            "Car maintenance",
+            "Changed the engine oil at 45,000 km. The next service is due at 55,000 km.",
+            serde_json::json!({}),
+        );
+        write(
+            "Notes/Passport renewal.md",
+            "note",
+            "Passport renewal",
+            "The embassy appointment to renew the passport is on 9 October at 10:00.",
+            serde_json::json!({}),
+        );
 
         db
     }
@@ -2177,6 +2975,49 @@ mod rag_vs_agentic {
         // a person to read and decide from, and pinning today's figures would
         // turn every retrieval change into a failing test that has to be
         // re-blessed rather than read.
+    }
+
+    /// Whether the answer itself reaches the model, not just the note it is in.
+    ///
+    /// The table above counts a note as found when its id comes back. That is
+    /// the claim retrieval used to make and it is not the one that matters: a
+    /// note can rank first and still arrive as its opening 500 characters,
+    /// with the fact asked about two thousand characters further down (review
+    /// 2026-09-26, R2). So this reads what the prompt is actually handed —
+    /// `format_context`, the text that goes in — and asks whether every string
+    /// a correct answer must contain is in it.
+    ///
+    /// Only for questions some note can answer by being read. A count has to be
+    /// computed and the honest no has nothing to find, so neither has a string
+    /// that could be in the context.
+    ///
+    /// Offline and free, so it runs with the rest. Like the table above it
+    /// prints rather than asserts; the rules it measures are asserted where
+    /// they are written, in `tests`.
+    #[test]
+    fn whether_the_answer_reaches_the_prompt() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let db = seed(dir.path());
+        let config = RagConfig::default();
+
+        eprintln!("\n── is the answer in what the prompt is handed ─────────────────────");
+        eprintln!("{:<56} {:>6} {:>7}", "question", "answer", "chars");
+
+        let (mut reached, mut asked) = (0usize, 0usize);
+        for q in QUESTIONS.iter().filter(|q| !q.relevant.is_empty()) {
+            let result = retrieve_context(&db, q.ask, &[], &config).expect("retrieval runs");
+            let context = normalise(&format_context(&result));
+            let there = q.wants.iter().all(|w| context.contains(&w.to_lowercase()));
+            asked += 1;
+            reached += usize::from(there);
+            eprintln!(
+                "{:<56} {:>6} {:>7}",
+                q.ask.chars().take(56).collect::<String>(),
+                if there { "yes" } else { "no" },
+                context.chars().count(),
+            );
+        }
+        eprintln!("── {reached}/{asked} answers reach the prompt ──\n");
     }
 
     /// The one thing retrieval must never do: answer a question about something

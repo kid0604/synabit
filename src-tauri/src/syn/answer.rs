@@ -31,6 +31,11 @@
 //! checks addresses, because an address is the one claim in an answer that is
 //! exact, checkable, and silently wrong in a way the reader only discovers by
 //! clicking.
+//!
+//! Citations are the second such claim. Retrieved context reaches the model
+//! numbered, the model cites `[n]`, and whether a source numbered `n` was handed
+//! to it is `n <= sources.len()` — decidable, so decided. Whether the sentence
+//! before `[2]` is what source 2 says is not, and is not claimed.
 
 /// Every http address in a piece of text.
 ///
@@ -145,9 +150,259 @@ pub fn warning(invented: &[String]) -> String {
     )
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  CITATIONS
+// ═══════════════════════════════════════════════════════════════
+
+/// One citation as written: where it is in the answer, and the numbers in it.
+///
+/// A list because models write `[1, 3]` as often as `[1][3]`, and both are
+/// asking for the same two sources.
+#[derive(Debug, PartialEq)]
+struct Mark {
+    at: std::ops::Range<usize>,
+    numbers: Vec<usize>,
+}
+
+/// Every `[n]` and `[n, m]` in an answer, outside code.
+///
+/// # What is not a citation
+///
+/// - `[[Title]]`, which is a link to a note and the other way this app cites.
+/// - `[2](https://…)`, which is a link whose text happens to be a number.
+/// - Anything in a code block or a code span: `v[1]` is an index, not a source.
+/// - A number of more than three digits, which is a year or an amount in
+///   brackets rather than the thousandth thing retrieval found.
+///
+/// A scan rather than a regex for the same reason as `addresses_in`: it has to
+/// know where the code is, and a regex that knows that is harder to read than
+/// the loop.
+fn marks(text: &str) -> Vec<Mark> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut i = 0;
+    let mut in_fence = false;
+    let mut in_span = false;
+
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"```") {
+            in_fence = !in_fence;
+            i += 3;
+            continue;
+        }
+        if bytes[i] == b'`' && !in_fence {
+            in_span = !in_span;
+            i += 1;
+            continue;
+        }
+        if bytes[i] != b'[' || in_fence || in_span || (i > 0 && bytes[i - 1] == b'[') {
+            i += 1;
+            continue;
+        }
+        let Some(close) = text[i + 1..].find(']').map(|c| i + 1 + c) else {
+            break;
+        };
+        let inside = &text[i + 1..close];
+        let numbers: Option<Vec<usize>> = inside
+            .split(',')
+            .map(|n| {
+                let n = n.trim();
+                (!n.is_empty() && n.len() <= 3 && n.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| n.parse().ok())
+                    .flatten()
+            })
+            .collect();
+        let after = bytes.get(close + 1).copied();
+        match numbers {
+            Some(numbers) if after != Some(b']') && after != Some(b'(') => {
+                found.push(Mark { at: i..close + 1, numbers });
+                i = close + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    found
+}
+
+/// The source numbers an answer cites, each once, in the order first cited.
+pub fn citations_in(text: &str) -> Vec<usize> {
+    let mut out = Vec::new();
+    for n in marks(text).into_iter().flat_map(|m| m.numbers) {
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// The numbers an answer cites that no source carries.
+///
+/// The same failure as an invented address, one level down: `[4]` under an
+/// answer that was handed three sources reads as a reference and points at
+/// nothing. `0` is in here too — nothing is numbered from zero.
+pub fn uncited_numbers(text: &str, sources: usize) -> Vec<usize> {
+    citations_in(text)
+        .into_iter()
+        .filter(|&n| n == 0 || n > sources)
+        .collect()
+}
+
+/// The sources in the order they should stand under an answer, and how the
+/// numbers in the answer move to match.
+///
+/// # Why cited first
+///
+/// Because the chips under an answer are read as *what it stood on*, and ten
+/// retrieved notes of which the answer used one make the other nine look like
+/// evidence. Cited sources lead, in the order the answer first cites them; the
+/// rest follow, as retrieved, when `keep_uncited` says they should be shown at
+/// all.
+///
+/// # Why the numbers move
+///
+/// A citation opens the source at its place under the answer — `[2]` is the
+/// second chip. Reorder the chips and leave the text alone, and every `[3]`
+/// that used to be right now opens something else. So the answer's numbers are
+/// rewritten to the new places (`renumbered`), and nothing else in it is: no
+/// sentence is removed or reworded, and a number that matched no source is
+/// left exactly as it was written, to be flagged.
+pub fn cited_first<T>(sources: Vec<T>, cited: &[usize], keep_uncited: bool) -> (Vec<T>, Vec<(usize, usize)>) {
+    let count = sources.len();
+    let valid: Vec<usize> = cited.iter().copied().filter(|&n| n >= 1 && n <= count).collect();
+
+    let mut slots: Vec<Option<T>> = sources.into_iter().map(Some).collect();
+    let mut ordered = Vec::new();
+    let mut moved = Vec::new();
+
+    for &n in &valid {
+        if let Some(source) = slots[n - 1].take() {
+            ordered.push(source);
+            moved.push((n, ordered.len()));
+        }
+    }
+    if keep_uncited {
+        for (i, slot) in slots.into_iter().enumerate() {
+            if let Some(source) = slot {
+                ordered.push(source);
+                moved.push((i + 1, ordered.len()));
+            }
+        }
+    }
+    (ordered, moved)
+}
+
+/// The answer with each cited number moved to where its source now stands.
+///
+/// Only the digits inside a citation change. A number with nowhere to go is
+/// written as it was.
+pub fn renumbered(text: &str, moved: &[(usize, usize)]) -> String {
+    let to = |n: usize| moved.iter().find(|(from, _)| *from == n).map(|(_, to)| *to).unwrap_or(n);
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for mark in marks(text) {
+        out.push_str(&text[last..mark.at.start]);
+        let numbers: Vec<String> = mark.numbers.iter().map(|&n| to(n).to_string()).collect();
+        out.push('[');
+        out.push_str(&numbers.join(", "));
+        out.push(']');
+        last = mark.at.end;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// What to say when an answer cites a source that does not exist.
+///
+/// Added under the answer rather than cut out of it, for the reason `warning`
+/// gives: the sentence carrying `[4]` may be true, and only the reference is
+/// known to be wrong. The reader is told which reference, and can weigh the
+/// sentence for themselves.
+pub fn citation_warning(unknown: &[usize], sources: usize) -> String {
+    if unknown.is_empty() {
+        return String::new();
+    }
+    let listed = unknown.iter().map(|n| format!("[{n}]")).collect::<Vec<_>>().join(", ");
+    format!(
+        "\n\n---\n\n⚠️ **{listed} above {points} to no source.** I was given {sources} \
+         source{s}, so {what} may not be backed by anything I read.",
+        points = if unknown.len() == 1 { "points" } else { "point" },
+        s = if sources == 1 { "" } else { "s" },
+        what = if unknown.len() == 1 { "the sentence it follows" } else { "the sentences they follow" },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn citations_are_read_in_the_order_they_are_first_made() {
+        let answer = "Mật khẩu là ha-noi-2026 [2]. Giá theo ghế [1][3], và Mai phản đối [3, 1].";
+        assert_eq!(citations_in(answer), vec![2, 1, 3]);
+    }
+
+    /// A wiki-link, a link whose text is a number, an index in code and a year
+    /// in brackets are not citations.
+    #[test]
+    fn what_only_looks_like_a_citation_is_left_alone() {
+        let answer = "See [[1]] and [2](https://a.test/2). In code `v[3]` and\n\
+                      ```\nlet x = a[4];\n```\nThe report [2026] said so.";
+        assert!(citations_in(answer).is_empty(), "{:?}", citations_in(answer));
+    }
+
+    #[test]
+    fn a_number_past_the_sources_is_caught_and_zero_with_it() {
+        let answer = "One [1], four [4], nothing [0].";
+        assert_eq!(uncited_numbers(answer, 3), vec![4, 0]);
+        assert!(uncited_numbers("One [1], three [3].", 3).is_empty());
+    }
+
+    #[test]
+    fn cited_sources_stand_first_and_the_answer_follows_them() {
+        let sources = vec!["a", "b", "c", "d"];
+        let answer = "Per-seat [3]. Mai disagreed [3][1]. Also [9].";
+
+        let (ordered, moved) = cited_first(sources, &citations_in(answer), true);
+        assert_eq!(ordered, vec!["c", "a", "b", "d"]);
+
+        let rewritten = renumbered(answer, &moved);
+        assert_eq!(rewritten, "Per-seat [1]. Mai disagreed [1][2]. Also [9].");
+        // And every number still opens what it opened before.
+        assert_eq!(ordered[0], "c");
+        assert_eq!(ordered[1], "a");
+    }
+
+    /// When tools were used only the cited sources stand under the answer; the
+    /// rest of what retrieval found is not what it stood on.
+    #[test]
+    fn without_the_uncited_only_what_was_cited_is_kept() {
+        let (ordered, moved) = cited_first(vec!["a", "b", "c"], &[2], false);
+        assert_eq!(ordered, vec!["b"]);
+        assert_eq!(renumbered("It was b [2].", &moved), "It was b [1].");
+    }
+
+    /// Only the digits in the brackets move. Every sentence stays, word for
+    /// word — rewriting an answer to look right is what this module exists
+    /// to catch.
+    #[test]
+    fn renumbering_changes_nothing_but_the_numbers() {
+        let answer = "Câu một [2]. `a[2]` là code. [[Ghi chú]] vẫn là link.";
+        let rewritten = renumbered(answer, &[(2, 1)]);
+        assert_eq!(rewritten, "Câu một [1]. `a[2]` là code. [[Ghi chú]] vẫn là link.");
+    }
+
+    #[test]
+    fn a_citation_to_nothing_is_named_under_the_answer() {
+        assert!(citation_warning(&[], 3).is_empty());
+
+        let one = citation_warning(&[4], 3);
+        assert!(one.contains("[4] above points to no source"), "{one}");
+        assert!(one.contains("given 3 sources"), "{one}");
+
+        let two = citation_warning(&[4, 7], 1);
+        assert!(two.contains("[4], [7] above point to no source"), "{two}");
+        assert!(two.contains("given 1 source,"), "{two}");
+    }
 
     #[test]
     fn addresses_are_found_through_the_punctuation_around_them() {
