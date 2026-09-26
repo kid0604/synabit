@@ -357,13 +357,23 @@ const TOOL_CALLS_PER_ITERATION: u32 = 4;
 /// does not sit there until the app is closed.
 const DEFAULT_WALL_MS: u64 = 10 * 60 * 1000;
 
+/// Tokens one run may be charged, input and output, every round counted.
+///
+/// A ceiling for a run that has gone wrong, not a careful one: a dozen rounds
+/// resending a long context to a hosted model is a few hundred thousand, and
+/// this is several times that. It used to be `None`, which meant the only
+/// thing between a looping run and the user's bill was the round count — and
+/// a round can carry a very large context. On a local model it costs nothing
+/// and is never reached.
+const DEFAULT_TOKENS: u64 = 1_500_000;
+
 impl Budget {
     /// The ceilings a run gets from the vault's settings.
     pub fn from_settings(settings: &crate::models::syn::SynSettings) -> Self {
         Self {
             iterations: Some(settings.max_tool_iterations),
             tool_calls: Some(settings.max_tool_iterations as u32 * TOOL_CALLS_PER_ITERATION),
-            tokens: None,
+            tokens: Some(DEFAULT_TOKENS),
             wall_ms: Some(DEFAULT_WALL_MS),
         }
     }
@@ -420,6 +430,76 @@ pub struct Spent {
     pub tool_calls: u32,
     pub tokens: u64,
     pub wall_ms: u64,
+}
+
+/// One step of the work, as the model wrote it down.
+///
+/// # Why the model keeps a list at all
+///
+/// Because a run of eight rounds with nothing but a tool name on screen is a
+/// spinner, and a spinner cannot be followed, corrected or stopped early for a
+/// reason. A list the model writes before starting says what it understood the
+/// work to be — which is the first thing a person wants to check — and a list
+/// it updates as it goes says how far it has got.
+///
+/// And because the model needs it too. Its tool results are shortened once the
+/// window is tight (`syn::context`); the list is in its own calls, whole, and
+/// is the one thing that always says what is left.
+///
+/// Replaced whole on each update rather than patched: the model sends the
+/// list as it now stands, and a partial update the engine had to merge would
+/// be a second, worse way of saying the same thing.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct PlanStep {
+    pub text: String,
+    pub status: PlanStatus,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanStatus {
+    Todo,
+    Doing,
+    Done,
+}
+
+/// How many steps a plan may have. A list longer than this is not a plan
+/// somebody can read at a glance, and is usually the work restated as steps.
+pub const MAX_PLAN_STEPS: usize = 12;
+
+/// Read a plan out of `update_plan`'s arguments, or say what is wrong with it
+/// in words the model can act on.
+pub fn plan_from(args: &serde_json::Value) -> Result<Vec<PlanStep>, String> {
+    let steps = args
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .ok_or("`steps` must be a list of {text, status}.")?;
+    if steps.is_empty() {
+        return Err("A plan needs at least one step.".into());
+    }
+    if steps.len() > MAX_PLAN_STEPS {
+        return Err(format!("At most {MAX_PLAN_STEPS} steps. Group the small ones."));
+    }
+    let plan = steps
+        .iter()
+        .map(|step| {
+            let text = step.get("text").and_then(|v| v.as_str()).map(str::trim).unwrap_or_default();
+            if text.is_empty() {
+                return Err("Every step needs `text`.".to_string());
+            }
+            let status = match step.get("status").and_then(|v| v.as_str()).unwrap_or("todo") {
+                "todo" => PlanStatus::Todo,
+                "doing" => PlanStatus::Doing,
+                "done" => PlanStatus::Done,
+                other => return Err(format!("`{other}` is not a status: use todo, doing or done.")),
+            };
+            Ok(PlanStep { text: text.chars().take(200).collect(), status })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if plan.iter().filter(|s| s.status == PlanStatus::Doing).count() > 1 {
+        return Err("Only one step can be `doing` at a time.".into());
+    }
+    Ok(plan)
 }
 
 /// One piece of work, from the sentence that asked for it to whatever came out.
@@ -534,6 +614,10 @@ pub struct Run {
     /// on with, whether or not they are in its history.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_untrusted: bool,
+    /// The steps the model said this work would take, as it last said them.
+    /// See `PlanStep`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan: Vec<PlanStep>,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -598,6 +682,7 @@ impl Run {
             error: None,
             plan_only: false,
             read_untrusted: false,
+            plan: Vec::new(),
             pending_consent: None,
             pending_call: None,
             pending_choice: None,
@@ -1135,6 +1220,32 @@ pub fn delete_run(vault_path: &str, id: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plan_is_read_from_what_the_model_sent() {
+        let plan = plan_from(&serde_json::json!({ "steps": [
+            { "text": "Tìm các bài feed tuần này", "status": "done" },
+            { "text": "Đọc từng bài", "status": "doing" },
+            { "text": "Viết note tổng hợp", "status": "todo" },
+        ] }))
+        .expect("a plan");
+        assert_eq!(plan.len(), 3);
+        assert_eq!(plan[1].status, PlanStatus::Doing);
+    }
+
+    #[test]
+    fn a_plan_that_cannot_be_followed_says_why() {
+        assert!(plan_from(&serde_json::json!({})).is_err());
+        assert!(plan_from(&serde_json::json!({ "steps": [] })).is_err());
+        let two_at_once = serde_json::json!({ "steps": [
+            { "text": "a", "status": "doing" }, { "text": "b", "status": "doing" },
+        ] });
+        assert!(plan_from(&two_at_once).unwrap_err().contains("one step"));
+        let odd = serde_json::json!({ "steps": [{ "text": "a", "status": "maybe" }] });
+        assert!(plan_from(&odd).unwrap_err().contains("maybe"));
+        let long = serde_json::json!({ "steps": (0..20).map(|i| serde_json::json!({ "text": i.to_string(), "status": "todo" })).collect::<Vec<_>>() });
+        assert!(plan_from(&long).is_err());
+    }
 
     fn budget() -> Budget {
         Budget {

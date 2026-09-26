@@ -208,6 +208,11 @@ impl VaultTools {
                 VaultRead
             }
 
+            // Touches nothing but the run's own list. Filed with the reads
+            // because that is the power it needs — none — and a plan is not a
+            // thing anybody should be asked permission for.
+            crate::syn::tools::PLAN_TOOL => VaultRead,
+
             // `run_recipe` is the union of whatever its steps do, which cannot
             // be declared statically — so the format refuses the structural
             // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
@@ -602,6 +607,7 @@ mod tests {
             "read_board", "draw_board", "edit_board", "capture", "timeline",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
+            crate::syn::tools::PLAN_TOOL,
         ];
 
         for name in declared {

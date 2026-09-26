@@ -1,4 +1,5 @@
 pub mod board;
+pub mod context;
 pub mod conversation;
 pub mod ambiguity;
 pub mod answer;
@@ -9,6 +10,7 @@ pub mod consent;
 pub mod correction;
 pub mod engine;
 pub mod focus;
+pub mod gate;
 pub mod footing;
 pub mod instructions;
 pub mod memory;

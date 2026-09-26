@@ -116,6 +116,8 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "update_feed_article",
     // Reaching out, but only along links already seen — see `Destinations`.
     "browse",
+    // The run's own list of steps. Changes nothing outside the run.
+    "update_plan",
 ];
 
 pub fn allowed_after_reading(tool: &str) -> bool {

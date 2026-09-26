@@ -468,6 +468,12 @@ impl SynEngine {
         // carried over, not a mode the run stays in.
         let mut resuming = req.resume_call.clone();
 
+        // How big the model's window is, and what a character costs in it —
+        // learned from what the provider says each request actually was. See
+        // `syn::context`.
+        let window = self.window_tokens(req);
+        let mut chars_per_token = crate::syn::context::DEFAULT_CHARS_PER_TOKEN;
+
         let ended: LoopEnd = 'drive: loop {
             run.spent.wall_ms = started.elapsed().as_millis() as u64;
             if let Some(which) = run.budget.exceeded_by(&run.spent) {
@@ -477,15 +483,22 @@ impl SynEngine {
             let iteration = run.spent.iterations;
             run.spent.iterations = run.spent.iterations.saturating_add(1);
 
+            // Inside the window before it is asked, not after the provider has
+            // cut the front off. A carried-over call asks nothing of it.
+            if resuming.is_none() {
+                self.keep_inside(run, req, &mut working, window, chars_per_token, iteration).await;
+            }
+            let chars_sent = crate::syn::context::chars_in(&working);
+
             let request = || ChatRequest {
                 model: req.model,
                 messages: &working,
                 temperature: req.temperature,
                 num_ctx: req.num_ctx,
+                json_schema: None,
                 // `None` rather than an empty array when there are no tools.
                 // An instant turn runs against `Registry::none()`, and several
-                // servers speaking this API reject `tools: []` outright rather,
-json_schema: None,
+                // servers speaking this API reject `tools: []` outright rather
                 // than reading it as "no tools".
                 tools: (!tools.is_empty()).then_some(&tools),
             };
@@ -524,6 +537,9 @@ json_schema: None,
                 self.provider.chat(request()).await?
             };
             let turn_ms = turn_started.elapsed().as_millis() as u64;
+            if let Some(input) = reply.usage.input {
+                chars_per_token = crate::syn::context::calibrate(chars_per_token, chars_sent, input);
+            }
 
             // Stop is checked here, after the turn, whoever the provider is.
             //
@@ -604,262 +620,143 @@ json_schema: None,
                     break 'drive LoopEnd::Cancelled;
                 }
 
-                // Read something from outside, then asked for anything but
-                // reading or making something new. Refused for the rest of the
-                // run, whatever it said — this is the half of the injection
-                // defence that does not depend on the model having read the
-                // boundary. `execute_tool` holds the same line for recipes;
-                // this is here so the model is told in words. See `syn::taint`.
-                if taint.is_set() && !crate::syn::taint::allowed_after_reading(&tc.function.name) {
-                    run.note(
-                        iteration,
-                        format!(
-                            "Refused `{}`: this run has read something from outside the vault.",
-                            tc.function.name
-                        ),
-                    );
-                    working.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: serde_json::json!({
-                            "refused": crate::syn::taint::refusal(&tc.function.name),
-                        })
-                        .to_string(),
-                        tool_calls: None,
-                        tool_call_id: tc.id.clone(),
-                        images: None,
-                    });
-                    continue;
-                }
-
-                // Where the question came from, before which one and before
-                // whether the user has agreed. A tool this surface is not
-                // offered is not a permission anybody can grant from here, and
-                // asking would park the run on a card on a screen nobody is
-                // looking at. The model was never told about it; this is for
-                // when it asks by name anyway. See `syn::surface`.
-                let reaching_for = req.registry.capability_of(&tc.function.name, &tc.function.arguments);
-                if !run.surface.offers(&tc.function.name, reaching_for.as_ref()) {
-                    run.note(
-                        iteration,
-                        format!(
-                            "Refused `{}`: not available from {}.",
-                            tc.function.name,
-                            run.surface.label()
-                        ),
-                    );
-                    if let Some(capability) = &reaching_for {
-                        crate::syn::audit::record_best_effort(
-                            req.vault_path,
-                            &run_id,
-                            &tc.function.name,
-                            capability,
-                            crate::syn::audit::Outcome::Refused,
-                            run.surface,
-                        );
-                    }
-                    working.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: serde_json::json!({
-                            "refused": format!(
-                                "`{}` is not available when the question comes from {}. Do not \
-                                 look for another way; say plainly that this has to be done in \
-                                 the app.",
-                                tc.function.name,
-                                run.surface.label()
-                            ),
-                        })
-                        .to_string(),
-                        tool_calls: None,
-                        tool_call_id: tc.id.clone(),
-                        images: None,
-                    });
-                    continue;
-                }
-
-                // Which one? Checked before the consent decision below,
-                // because this is not a permission question — running the
-                // ledger for it would file "may I write to the vault" in the
-                // audit log for a call that never happened.
-                if let Some(choice) = crate::syn::ambiguity::should_ask(
+                // What happens to this call, decided before anything runs.
+                // The rules and their order live in `syn::gate`; this loop only
+                // carries out the answer.
+                let capability = req.registry.capability_of(&tc.function.name, &tc.function.arguments);
+                let ledger = crate::syn::consent::load(req.vault_path);
+                let now = chrono::Utc::now().to_rfc3339();
+                let until_done = |c: &crate::syn::consent::Capability| {
+                    conversation_id
+                        .as_deref()
+                        .is_some_and(|conv| crate::syn::consent::allowed_until_done(conv, c))
+                };
+                let decided = crate::syn::gate::decide(
                     &tc.function.name,
                     &tc.function.arguments,
-                    &seen,
-                    &chrono::Utc::now().to_rfc3339(),
-                ) {
-                    break 'drive LoopEnd::NeedsChoice(Box::new(choice));
-                }
-
-                let call_started = std::time::Instant::now();
-
-                // What sort of power is this, and has the user agreed to it?
-                //
-                // Before anything runs, and before the skill budget below,
-                // because a refusal should not be spent out of an allowance.
-                let capability = req.registry.capability_of(&tc.function.name, &tc.function.arguments);
-                if let Some(capability) = &capability {
-                    let mut decision = crate::syn::consent::decide(
-                        capability,
-                        &crate::syn::consent::load(req.vault_path),
-                        &chrono::Utc::now().to_rfc3339(),
-                    );
-
-                    // A "just this once" said earlier in this same piece of
-                    // work. Held in memory rather than written down, and read
-                    // rather than spent — see `consent::allowed_until_done`.
-                    // Spending it was what turned one question into eight
-                    // cards.
-                    //
-                    // Only ever `Ask` to `Allow`. A `Never` recorded in between
-                    // is a decision made later about the same thing, and later
-                    // wins.
-                    if decision == crate::syn::consent::Decision::Ask
-                        && conversation_id.as_deref().is_some_and(|conv| {
-                            crate::syn::consent::allowed_until_done(conv, capability)
-                        })
-                    {
-                        decision = crate::syn::consent::Decision::Allow;
-                    }
+                    capability.as_ref(),
+                    &crate::syn::gate::View {
+                        tainted: taint.is_set(),
+                        surface: run.surface,
+                        seen: &seen,
+                        ledger: &ledger,
+                        allowed_until_done: &until_done,
+                        skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
+                        plan_only: run.plan_only,
+                        now: &now,
+                    },
+                );
+                if let (Some(outcome), Some(capability)) = (decided.audit, capability.as_ref()) {
                     crate::syn::audit::record_best_effort_detailed(
                         req.vault_path,
                         &run_id,
                         &tc.function.name,
                         capability,
-                        crate::syn::audit::outcome_of(&decision),
+                        outcome,
                         run.surface,
                         audit_detail(&tc.function.name, &tc.function.arguments).as_deref(),
                     );
-
-                    match decision {
-                        crate::syn::consent::Decision::Allow => {}
-                        crate::syn::consent::Decision::Ask => {
-                            break 'drive LoopEnd::NeedsConsent(
-                                Box::new(crate::syn::consent::Ask::about(
-                                    &tc.function.name,
-                                    capability,
-                                    &chrono::Utc::now().to_rfc3339(),
-                                )),
-                                // What it was about to do, so answering can
-                                // carry it out rather than start again.
-                                Box::new(tc.clone()),
-                            );
-                        }
-                        crate::syn::consent::Decision::Refuse => {
-                            // Told, not hidden. The model asked for something
-                            // reasonable and the answer is a standing no; a
-                            // silent failure would have it try again by another
-                            // route, which is the opposite of respecting one.
-                            working.push(ChatMessage {
-                                role: "tool".to_string(),
-                                content: serde_json::json!({
-                                    "refused": format!(
-                                        "The user has said never to {}. Do not ask again and do not \
-                                         look for another way.",
-                                        capability.describe()
-                                    ),
-                                })
-                                .to_string(),
-                                tool_calls: None,
-                                tool_call_id: tc.id.clone(),
-                                images: None,
-                            });
-                            continue;
-                        }
-                    }
                 }
 
-                // A run may open two skill bodies, and the ceiling is enforced
-                // here rather than inside the tool because it is a budget over
-                // a run, and the run is what this loop owns. The tool has no
-                // way to know what else the run has already read.
-                //
-                // Refused rather than errored: the model asked for something
-                // reasonable and the answer is "not this time, use what you
-                // have", which is a sentence it can act on.
-                let over_skill_budget = tc.function.name == crate::syn::skill::LOAD_TOOL
-                    && run.successful_calls_of(crate::syn::skill::LOAD_TOOL)
-                        >= crate::syn::skill::BODIES_PER_RUN;
-
-                // A dry run says what it would do instead of doing it — but
-                // only for the steps whose undoing is somebody else's problem.
-                // Reads and reversible writes go ahead, because a plan built
-                // without looking is a guess.
-                let only_describing = run.plan_only
-                    && capability.as_ref().is_some_and(|c| {
-                        matches!(
-                            crate::syn::registry::reversal_of(c),
-                            crate::syn::registry::Reversal::Manual { .. }
-                                | crate::syn::registry::Reversal::Irreversible
-                        )
-                    });
-
-                let outcome = if only_describing {
-                    let about = capability
-                        .as_ref()
-                        .map(|c| c.describe())
-                        .unwrap_or_else(|| tc.function.name.clone());
-                    Ok(crate::syn::registry::ToolOutcome {
-                        content: serde_json::json!({
-                            "planned": format!(
-                                "This is a dry run. `{}` would {about}, with these arguments. \
-                                 Nothing was done. Carry on planning as though it had worked.",
-                                tc.function.name
-                            ),
-                            "arguments": tc.function.arguments,
-                        })
-                        .to_string(),
-                        reversal: crate::syn::registry::Reversal::Nothing,
-                    })
-                } else if tc.function.name == crate::syn::tools::BROWSE_TOOL {
-                    // The ladder, decided here and not by the model. Async, so
-                    // it cannot live in `execute_tool`'s table.
-                    let what = tc
-                        .function
-                        .arguments
-                        .get("what")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-
-                    let site = tc
-                        .function
-                        .arguments
-                        .get("site")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
-
-                    let guard = taint.is_set().then_some(&destinations);
-                    match browse(req, &what, &site, guard).await {
-                        Ok((content, sources)) => {
-                            taint.set();
-                            destinations.note_seen_in(&content);
-                            cited.extend(sources);
-                            Ok(crate::syn::registry::ToolOutcome {
-                                content,
-                                reversal: crate::syn::registry::Reversal::Nothing,
-                            })
+                let how = match decided.gate {
+                    crate::syn::gate::Gate::Refuse { said, note } => {
+                        if let Some(note) = note {
+                            run.note(iteration, note);
                         }
-                        // Nothing was read, so nothing could have said anything:
-                        // a failure leaves the gate open.
-                        Err(e) => Err(e),
+                        working.push(ChatMessage {
+                            role: "tool".to_string(),
+                            content: serde_json::json!({ "refused": said }).to_string(),
+                            tool_calls: None,
+                            tool_call_id: tc.id.clone(),
+                            images: None,
+                        });
+                        continue;
                     }
-                } else if over_skill_budget {
-                    Ok(crate::syn::registry::ToolOutcome {
-                        content: serde_json::json!({
-                            "refused": format!(
-                                "You have already opened {} skills in this run, which is the \
-                                 limit. Work from what you have read, or answer without a skill.",
-                                crate::syn::skill::BODIES_PER_RUN
-                            ),
+                    crate::syn::gate::Gate::Choose(choice) => break 'drive LoopEnd::NeedsChoice(choice),
+                    // What it was about to do travels with the question, so
+                    // answering can carry it out rather than start again.
+                    crate::syn::gate::Gate::Ask(ask) => {
+                        break 'drive LoopEnd::NeedsConsent(ask, Box::new(tc.clone()))
+                    }
+                    crate::syn::gate::Gate::Go(how) => how,
+                };
+
+                let call_started = std::time::Instant::now();
+                let outcome = match how {
+                    crate::syn::gate::How::Describe(content)
+                    | crate::syn::gate::How::OverSkillBudget(content) => {
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content,
+                            reversal: crate::syn::registry::Reversal::Nothing,
                         })
-                        .to_string(),
-                        reversal: crate::syn::registry::Reversal::Nothing,
-                    })
-                } else {
-                    req.registry
-                        .execute(&ctx, &tc.function.name, &tc.function.arguments)
+                    }
+                    crate::syn::gate::How::Browse => {
+                        // The ladder, decided here and not by the model. Async,
+                        // so it cannot live in `execute_tool`'s table.
+                        let field = |key: &str| {
+                            tc.function
+                                .arguments
+                                .get(key)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .trim()
+                                .to_string()
+                        };
+                        let guard = taint.is_set().then_some(&destinations);
+                        match browse(req, &field("what"), &field("site"), guard).await {
+                            Ok((content, sources)) => {
+                                taint.set();
+                                destinations.note_seen_in(&content);
+                                cited.extend(sources);
+                                Ok(crate::syn::registry::ToolOutcome {
+                                    content,
+                                    reversal: crate::syn::registry::Reversal::Nothing,
+                                })
+                            }
+                            // Nothing was read, so nothing could have said
+                            // anything: a failure leaves the gate open.
+                            Err(e) => Err(e),
+                        }
+                    }
+                    crate::syn::gate::How::Plan => {
+                        // Kept on the run and shown as it changes. A plan the
+                        // model got wrong is told why, the way a tool error is,
+                        // and the last good one stands.
+                        match crate::syn::run::plan_from(&tc.function.arguments) {
+                            Ok(plan) => {
+                                let doing = plan
+                                    .iter()
+                                    .position(|s| s.status == crate::syn::run::PlanStatus::Doing);
+                                let left = plan
+                                    .iter()
+                                    .filter(|s| s.status != crate::syn::run::PlanStatus::Done)
+                                    .count();
+                                run.plan = plan;
+                                let event = serde_json::json!({
+                                    "conversation_id": conversation_id,
+                                    "run_id": run_id,
+                                    "plan": &run.plan,
+                                });
+                                if let Err(e) = req.app.emit("syn-plan", &event) {
+                                    log::error!("Failed to emit syn-plan: {e}");
+                                }
+                                Ok(crate::syn::registry::ToolOutcome {
+                                    content: serde_json::json!({
+                                        "ok": true,
+                                        "steps": run.plan.len(),
+                                        "left": left,
+                                        "doing": doing.map(|i| i + 1),
+                                    })
+                                    .to_string(),
+                                    reversal: crate::syn::registry::Reversal::Nothing,
+                                })
+                            }
+                            Err(problem) => Err(crate::error::AppError::General(problem)),
+                        }
+                    }
+                    crate::syn::gate::How::Execute => {
+                        req.registry.execute(&ctx, &tc.function.name, &tc.function.arguments)
+                    }
                 };
 
                 let (content, reversal) = match outcome {
@@ -1044,6 +941,11 @@ json_schema: None,
             LoopEnd::DeadEnd => {}
         }
 
+        // The last request of all has to fit too, and it is the one most likely
+        // not to: it follows every round there was.
+        let last = run.spent.iterations;
+        self.keep_inside(run, req, &mut working, window, chars_per_token, last).await;
+
         // The pages read so far still stand under the answer. A run that
         // browsed and then ran out of rounds used to lose every citation here.
         let mut final_msg = self
@@ -1054,6 +956,97 @@ json_schema: None,
             final_msg.tool_calls_log = Some(tool_log);
         }
         Ok(final_msg)
+    }
+
+    /// The window the next request has to fit, in tokens.
+    ///
+    /// On a local model it is what Ollama is asked for, `num_ctx`, because that
+    /// is exactly where it cuts. A hosted model's window is not something this
+    /// app sets, and until the capability table says per model, it is taken as
+    /// a size every current hosted model this app speaks to exceeds.
+    fn window_tokens<R: tauri::Runtime>(&self, req: &DriveRequest<'_, R>) -> u32 {
+        if self.provider.id().is_local() {
+            req.num_ctx.max(2_048)
+        } else {
+            HOSTED_WINDOW_TOKENS
+        }
+    }
+
+    /// Bring `working` inside the window, cheapest step first. See
+    /// `syn::context`.
+    async fn keep_inside<R: tauri::Runtime>(
+        &self,
+        run: &mut Run,
+        req: &DriveRequest<'_, R>,
+        working: &mut Vec<ChatMessage>,
+        window: u32,
+        chars_per_token: f64,
+        iteration: u8,
+    ) {
+        use crate::syn::context;
+
+        let allowed = context::allowance(window);
+        let over = |messages: &[ChatMessage]| {
+            let tokens = context::estimate_tokens(context::chars_in(messages), chars_per_token);
+            (tokens > allowed).then(|| ((tokens - allowed) as f64 * chars_per_token) as usize)
+        };
+        let Some(excess) = over(working) else {
+            return;
+        };
+
+        // 1. Old tool results. The newest round's are unread, so they stay.
+        let newest_round_from = working
+            .iter()
+            .rposition(|m| m.role == "assistant" && m.tool_calls.is_some())
+            .unwrap_or(working.len());
+        let freed = context::shorten_old_results(working, newest_round_from, excess);
+        if freed > 0 {
+            run.note(
+                iteration,
+                format!("Shortened earlier tool results by {freed} characters to stay inside the window."),
+            );
+        }
+        let Some(excess) = over(working) else {
+            return;
+        };
+
+        // 2. The conversation before this question: summarised, or failing
+        // that, its oldest turns let go.
+        let Some(earlier) = context::earlier_conversation(working) else {
+            run.note(iteration, "Still over the window, with nothing earlier left to condense.");
+            return;
+        };
+        let asked = context::summary_request(&working[earlier.clone()]);
+        let summary = self
+            .provider
+            .chat(ChatRequest {
+                model: req.model,
+                messages: &asked,
+                temperature: Some(0.2),
+                num_ctx: req.num_ctx,
+                tools: None,
+                json_schema: None,
+            })
+            .await;
+        match summary {
+            Ok(reply) if !reply.content.trim().is_empty() => {
+                run.charge(reply.usage, reply.duration_ms.unwrap_or(0));
+                let count = earlier.len();
+                context::replace_with_summary(working, earlier, &reply.content);
+                run.note(iteration, format!("Condensed the {count} earlier messages of this conversation."));
+            }
+            outcome => {
+                if let Err(e) = outcome {
+                    log::warn!("[Syn] Could not condense the conversation: {e}");
+                }
+                let freed = context::drop_earliest(working, earlier, excess);
+                run.note(
+                    iteration,
+                    format!("Let go of {freed} characters of the earliest conversation to stay inside the window."),
+                );
+            }
+        }
+        crate::syn::run::save_run_best_effort(req.vault_path, run);
     }
 
     /// One completion with no tools offered, streamed.
@@ -1121,6 +1114,12 @@ json_schema: None,
     }
 
 }
+
+/// A hosted model's window, until the capability table says per model.
+///
+/// Deliberately the small end of what current hosted models offer, so the
+/// estimate errs toward condensing early rather than being cut off.
+const HOSTED_WINDOW_TOKENS: u32 = 128_000;
 
 /// How much text may pile up before it is sent on.
 ///
@@ -4756,6 +4755,138 @@ mod driving {
 
         assert_eq!(refusals(&run), 1, "{:?}", run.steps);
         assert!(dir.path().join("Notes/keep.md").exists());
+    }
+
+    // ── staying inside the window ─────────────────────────────────
+
+    fn said(role: &str, content: String) -> SynMessage {
+        SynMessage {
+            id: format!("{role}-{}", content.len()),
+            role: role.into(),
+            content,
+            model: None,
+            timestamp: String::new(),
+            tokens: None,
+            duration_ms: None,
+            sources: None,
+            footing: None,
+            tool_calls_log: None,
+            images: None,
+        }
+    }
+
+    /// A long conversation on a small local window is condensed, not cut off
+    /// at the front by Ollama — which is where the system prompt is.
+    #[tokio::test]
+    async fn a_long_conversation_is_condensed_to_fit_a_small_window() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+
+        let mut history = vec![said("system", "Bạn là Syn.".into())];
+        for i in 0..6 {
+            history.push(said("user", format!("câu hỏi {i} ") + &"chữ ".repeat(700)));
+            history.push(said("assistant", format!("trả lời {i} ") + &"ý ".repeat(700)));
+        }
+        history.push(said("user", "vậy tóm lại là gì?".into()));
+
+        let mut run = Run::new("vậy tóm lại là gì?", Some("conv-long".into()), budget(4));
+        let provider = std::sync::Arc::new(Scripted::new(&vault, &run.id, vec![text("đây")]));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history,
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 4096,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        assert!(
+            run.steps.iter().any(|s| s.kind == StepKind::Note && s.preview.starts_with("Condensed the 12 earlier")),
+            "{:?}",
+            run.steps
+        );
+        assert_eq!(run.state, RunState::Done);
+    }
+
+    /// Inside a run, a big result from an earlier round gives its room back
+    /// once the window is tight; the newest round's is left whole.
+    #[tokio::test]
+    async fn an_old_tool_result_is_shortened_when_the_window_is_tight() {
+        use crate::models::node::NodeMetadata;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let bridge = DbBridge::new_in_memory_full().expect("schema");
+        bridge
+            .upsert_node(&NodeMetadata {
+                id: "Notes/long.md".to_string(),
+                node_type: "note".to_string(),
+                title: "Dài".to_string(),
+                content: "nội dung ".repeat(1_500),
+                properties: serde_json::json!({}),
+                created_at: "2026-01-01 00:00:00".to_string(),
+                updated_at: "2026-01-01 00:00:00".to_string(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .expect("seed");
+        let db: crate::db::DbState = Mutex::new(bridge);
+
+        let mut run = Run::new("đọc note dài", Some("conv-tight".into()), budget(6));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls("get_node", serde_json::json!({ "node_id": "Notes/long.md" })),
+                calls("get_node", serde_json::json!({ "node_id": "Notes/long.md" })),
+                text("xong"),
+            ],
+        )));
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("đọc note dài"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 4096,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        assert!(
+            run.steps.iter().any(|s| s.kind == StepKind::Note && s.preview.starts_with("Shortened earlier tool results")),
+            "{:?}",
+            run.steps
+        );
     }
 
     /// The same words typed by the user are the user asking.

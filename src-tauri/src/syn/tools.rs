@@ -329,6 +329,11 @@ pub const CAPTURE_TOOL: &str = "capture";
 /// evidence that condemned the others.
 pub const LOOK_BACK_TOOL: &str = "look_back";
 
+/// The run's own list of steps, kept by the model as it works. Driven by the
+/// engine, because what it changes is the run and not the vault. See
+/// `run::PlanStep`.
+pub const PLAN_TOOL: &str = "update_plan";
+
 /// How many runs one answer may name.
 ///
 /// Five. The result carries a truncated answer for each, so ten would push the
@@ -515,7 +520,18 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// door reads `timeline.db`: its spans overlap rather than match, which
 /// `query_nodes` cannot express. Measured at 19,655 with it, after trimming
 /// its own words; the same small headroom as before.
-pub const PAYLOAD_BUDGET_CHARS: usize = 19_800;
+///
+/// # Raised to 20,300, for the plan
+///
+/// `update_plan` costs about 450 characters. It is the one tool here whose
+/// point is the user rather than the vault: a run of eight rounds that says
+/// what it is doing and what is left is a run somebody can follow and stop
+/// early, and one that does not is a spinner. And it is what keeps a long run
+/// on track — the list is in its own history, whole, when the results it
+/// read have been shortened to fit the window. This is the last raise that
+/// should happen by adding to one list: past this, tools have to be offered
+/// by need rather than all at once (roadmap, phase F).
+pub const PAYLOAD_BUDGET_CHARS: usize = 20_300;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -884,6 +900,23 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: PLAN_TOOL.to_string(),
+                description: "For work of three steps or more: write the steps before starting, then send the whole list again each time one changes. One step `doing` at a time. The user watches this list.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["steps"],
+                    "properties": {
+                        "steps": { "type": "array", "items": { "type": "object", "required": ["text", "status"], "properties": {
+                            "text": { "type": "string" },
+                            "status": { "type": "string", "enum": ["todo", "doing", "done"] }
+                        } } }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: LOOK_BACK_TOOL.to_string(),
                 description: "Search your own earlier runs — what you were asked, what you answered, which tools you used. This is your record of your own work, not the user's vault. Use it when they refer to something you told them before and it is not in this conversation.".to_string(),
                 parameters: serde_json::json!({
@@ -1212,7 +1245,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         name if name == LOOK_BACK_TOOL => tool_look_back(ctx, args),
         // Not here: this one is async, and `execute_tool` is not. The engine
         // runs it before reaching this table — see `SynEngine::drive`.
-        name if name == BROWSE_TOOL => Err(AppError::General(
+        name if name == BROWSE_TOOL || name == PLAN_TOOL => Err(AppError::General(
             format!("{name} is driven by the engine, not by this table"),
         )),
 
@@ -4947,6 +4980,14 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Not a store at all: the run's own list of steps, which the user
+        // watches and the model keeps while its results are shortened to fit.
+        // Nothing in the vault is touched, so no generic tool could do it.
+        let the_run = [PLAN_TOOL];
+        for tool in the_run {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -4960,6 +5001,7 @@ mod tests {
             .chain(memory)
             .chain(outside)
             .chain(elsewhere)
+            .chain(the_run)
             .collect();
         for name in &names {
             assert!(
