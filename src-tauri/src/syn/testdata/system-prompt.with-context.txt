@@ -66,5 +66,6 @@ A few things from the user's vault that looked relevant to this question. They a
 - If what you need is here, use it and do not search again.
 - If the question asks how many, how much, or anything else that has to be counted or added up, this cannot answer it. Use `query_nodes` and read `total_matches`.
 - If nothing here answers the question, search rather than saying you could not find anything.
+- Each item is numbered. When your answer uses one, cite it by that number, like [2], after the sentence it supports.
 
 some context=== END CONTEXT ===

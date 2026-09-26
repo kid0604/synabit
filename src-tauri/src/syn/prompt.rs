@@ -554,6 +554,15 @@ const TOOL_SHAPE: &str = r#"Tool usage guidelines:
 - Call tools FIRST, then summarize the results for the user.
 "#;
 
+/// The heading over retrieved context, and how to read it.
+///
+/// The last line asks for citations by number. It lives here rather than in
+/// the rules because it only means anything when there are numbered items
+/// beneath it — `rag::format_context` numbers them — and a rule about `[n]` in
+/// a prompt with nothing numbered would invite the model to invent numbers.
+/// What an answer cites is read back after it by `commands::syn::settle`; a
+/// number that matches nothing is flagged there, the way `answer::invented`
+/// flags an address nobody read.
 const CONTEXT_PREFIX: &str = r#"
 
 === VAULT CONTEXT ===
@@ -561,6 +570,7 @@ A few things from the user's vault that looked relevant to this question. They a
 - If what you need is here, use it and do not search again.
 - If the question asks how many, how much, or anything else that has to be counted or added up, this cannot answer it. Use `query_nodes` and read `total_matches`.
 - If nothing here answers the question, search rather than saying you could not find anything.
+- Each item is numbered. When your answer uses one, cite it by that number, like [2], after the sentence it supports.
 
 "#;
 

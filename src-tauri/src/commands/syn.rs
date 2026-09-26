@@ -875,7 +875,8 @@ fn start_run(
 ///
 /// Retrieved sources go under the answer only when no tool was used — when
 /// tools were used, their results are more precise than retrieval, so showing
-/// both is noise — and only under an answer. A run that stopped to ask
+/// both is noise — unless the answer cites one by number, and only under an
+/// answer. Cited sources stand first either way. A run that stopped to ask
 /// permission has nothing to stand on yet, and it was getting ten retrieved
 /// notes pinned under an empty bubble; when the resumed run then failed, that
 /// bubble was all the conversation kept.
@@ -905,8 +906,41 @@ fn settle(
     let retrieved = retrieval.sources.len();
     let retrieved_ids: Vec<String> = retrieval.sources.iter().map(|source| source.id.clone()).collect();
 
-    if !retrieval.sources.is_empty() && !used_tools && answered {
-        answer.sources = Some(retrieval.sources);
+    // What the answer cites, read back into sources. Retrieved context goes to
+    // the model numbered (`rag::format_context`), and an answer that cites
+    // `[2]` has said which of the ten it stood on — so that one leads, and
+    // with tools, where retrieval used to be left off entirely because the
+    // tools were more precise, a source the answer cited still stands under
+    // it. The numbers in the answer move with their sources; nothing else in
+    // it does. See `answer::cited_first`.
+    if answered && !retrieval.sources.is_empty() {
+        let count = retrieval.sources.len();
+        let cited = crate::syn::answer::citations_in(&answer.content);
+        let unknown = crate::syn::answer::uncited_numbers(&answer.content, count);
+
+        let (shown, moved) =
+            crate::syn::answer::cited_first(retrieval.sources, &cited, !used_tools);
+        answer.content = crate::syn::answer::renumbered(&answer.content, &moved);
+        if !shown.is_empty() {
+            // Before what the tools brought, which follows unnumbered.
+            let mut sources = shown;
+            sources.extend(answer.sources.take().unwrap_or_default());
+            answer.sources = Some(sources);
+        }
+
+        // Flagged the way an invented address is: named under the answer and
+        // on the run, and the sentence left where it is.
+        if !unknown.is_empty() {
+            log::warn!("[Syn] The answer cites {unknown:?}, and {count} source(s) were given");
+            run.note(
+                run.spent.iterations,
+                format!(
+                    "the answer cites {} and only {count} source(s) were given",
+                    unknown.iter().map(|n| format!("[{n}]")).collect::<Vec<_>>().join(", ")
+                ),
+            );
+            answer.content.push_str(&crate::syn::answer::citation_warning(&unknown, count));
+        }
     }
 
     if answered {
@@ -2769,5 +2803,75 @@ mod send_steps {
         assert!(answer.footing.is_some());
         assert_eq!(run.footing, answer.footing);
         assert_eq!(run.retrieved.as_deref(), Some(&["Notes/a.md".to_string()][..]));
+    }
+
+    fn three_retrieved() -> crate::models::syn::RetrievalResult {
+        serde_json::from_value(serde_json::json!({
+            "context_chunks": [],
+            "total_tokens_estimate": 0,
+            "sources": [
+                { "id": "Notes/a.md", "title": "A", "node_type": "note" },
+                { "id": "Notes/b.md", "title": "B", "node_type": "note" },
+                { "id": "Notes/c.md", "title": "C", "node_type": "note" },
+            ],
+        }))
+        .expect("retrieval")
+    }
+
+    fn ids(message: &SynMessage) -> Vec<&str> {
+        message.sources.iter().flatten().map(|s| s.id.as_str()).collect()
+    }
+
+    /// The source an answer cites leads, and `[3]` in the text still opens C.
+    #[test]
+    fn a_cited_source_stands_first_and_its_number_follows_it() {
+        let mut run = Run::new("q", Some("c-settle-3".into()), Budget::from_settings(&SynSettings::default()));
+        let mut answer = said("a1", "assistant", "Giá theo ghế [3]. Mai phản đối [3][1].");
+        settle(&mut run, &mut answer, three_retrieved(), "c-settle-3");
+
+        assert_eq!(ids(&answer), vec!["Notes/c.md", "Notes/a.md", "Notes/b.md"]);
+        assert_eq!(answer.content, "Giá theo ghế [1]. Mai phản đối [1][2].");
+    }
+
+    /// With tools, retrieval is left off — except what the answer cited, which
+    /// goes before the pages the tools read.
+    #[test]
+    fn with_tools_only_a_cited_retrieved_source_is_kept() {
+        let mut run = Run::new("q", Some("c-settle-4".into()), Budget::from_settings(&SynSettings::default()));
+        let mut answer = said("a1", "assistant", "Theo ghi chú [2].");
+        answer.tool_calls_log = Some(vec![serde_json::from_value(serde_json::json!({
+            "conversation_id": "c-settle-4", "tool_name": "browse", "tool_args": {}, "result_preview": "", "iteration": 1,
+        }))
+        .expect("a tool call")]);
+        answer.sources = Some(vec![crate::models::syn::SourceRef {
+            id: "https://a.test/".into(),
+            title: "A page".into(),
+            node_type: "web".into(),
+        }]);
+        settle(&mut run, &mut answer, three_retrieved(), "c-settle-4");
+
+        assert_eq!(ids(&answer), vec!["Notes/b.md", "https://a.test/"]);
+        assert_eq!(answer.content, "Theo ghi chú [1].");
+
+        let mut uncited = said("a2", "assistant", "Không trích gì.");
+        uncited.tool_calls_log = answer.tool_calls_log.clone();
+        settle(&mut run, &mut uncited, three_retrieved(), "c-settle-4");
+        assert!(uncited.sources.is_none(), "nothing retrieved stands under an answer that used tools and cited none");
+    }
+
+    /// `[7]` under three sources is flagged under the answer and on the run.
+    /// The sentence it follows stays.
+    #[test]
+    fn a_citation_to_a_source_that_was_never_given_is_flagged() {
+        let mut run = Run::new("q", Some("c-settle-5".into()), Budget::from_settings(&SynSettings::default()));
+        let mut answer = said("a1", "assistant", "Đúng [1]. Có lẽ đúng [7].");
+        settle(&mut run, &mut answer, three_retrieved(), "c-settle-5");
+
+        assert!(answer.content.starts_with("Đúng [1]. Có lẽ đúng [7]."), "{}", answer.content);
+        assert!(answer.content.contains("[7] above points to no source"), "{}", answer.content);
+        assert!(
+            run.steps.iter().any(|s| s.preview.contains("[7]")),
+            "the run records it too"
+        );
     }
 }
