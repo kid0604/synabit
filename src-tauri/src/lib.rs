@@ -131,6 +131,29 @@ fn surface_quick_entry(app: &tauri::AppHandle) {
     let _ = window.set_focus();
 }
 
+/// Hand a question from the quick-entry box to the main window's ask bar.
+///
+/// The box does not grow a chat of its own. It is a panel over somebody else's
+/// work, sized for one sentence, and an answer is paragraphs with links into
+/// the vault — which the main window already knows how to show, open and
+/// continue in Messages. So the question goes where answers already live, and
+/// the main window is brought forward to show it.
+///
+/// The text is left in `QuickQuestion` and the event carries nothing; see that
+/// type for why the words must not ride on an event every webview can hear.
+#[cfg(desktop)]
+#[tauri::command]
+fn ask_syn_from_quick_entry(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, capture::QuickQuestion>,
+    text: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    state.put(&text).map_err(|e| e.to_string())?;
+    surface_main_window(&app);
+    app.emit("syn-quick-question", ()).map_err(|e| e.to_string())
+}
+
 /// Bring the main window to the front, wherever it was.
 ///
 /// Shared by the hotkey and the tray, because "make Synabit visible" has more
@@ -445,6 +468,8 @@ pub fn run() {
         // The Telegram bot's tasks and what they share. See `syn::telegram`.
         .manage(syn::telegram::TelegramState::default())
         .manage(feeds::FeedSchedulerState::default())
+        // A question from the quick-entry box, until the main window takes it.
+        .manage(capture::QuickQuestion::default())
         .on_window_event(|window, event| {
             // The browsing pane's top edge is a fixed number of pixels, not a
             // fraction of the window, because the app draws its address bar in
@@ -791,6 +816,9 @@ pub fn run() {
             capture::import_handoff_captures,
             #[cfg(desktop)]
             set_tray_labels,
+            #[cfg(desktop)]
+            ask_syn_from_quick_entry,
+            capture::take_quick_question,
             #[cfg(desktop)]
             hide_to_background,
             capture::list_queued_captures,

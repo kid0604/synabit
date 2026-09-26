@@ -163,6 +163,25 @@ export function captureFocus(where: Where): SynFocus | undefined {
 }
 
 /**
+ * The focus for a selection somebody already read, rather than the live one.
+ *
+ * `captureFocus` reads the document at the instant it is called, which is right
+ * for a key press and wrong for a button. By the time a click lands, the press
+ * that started it may have moved the caret — on a phone, tapping anything
+ * outside the selected text can dismiss the selection before the click event
+ * exists. So the "Ask Syn" button remembers the text when it appears, and hands
+ * that over instead.
+ *
+ * The same rules as the key, though, because it is the same question: trimmed,
+ * whitespace is nothing, and never longer than `MAX_SELECTION_READ`. Passing
+ * `null` as the active element is what makes `readSelection` apply those rules
+ * to the text given rather than go looking in a form field.
+ */
+export function focusWithSelection(where: Where, selected: string | undefined): SynFocus | undefined {
+  return buildFocus(where, readSelection(null, selected ?? null));
+}
+
+/**
  * A one-line description of what was captured, for the bar to show.
  *
  * The bar says what it is about to send. Not a courtesy: the difference

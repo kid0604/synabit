@@ -359,6 +359,74 @@ pub fn drop_queued_capture(state: tauri::State<'_, DbState>, id: String) -> AppR
     db.delete_kv(&id)
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  A QUESTION, RATHER THAN A CAPTURE
+// ═══════════════════════════════════════════════════════════════
+
+/// A question typed into the quick-entry box, waiting for the main window to
+/// come and take it.
+///
+/// # Why it waits here instead of travelling in the event
+///
+/// The obvious shape is an event that carries the text. But an event is
+/// delivered to every webview with a listener for it — and the browsing pane
+/// is a webview, holding whatever page Syn or the user last opened, with the
+/// same `__TAURI_INTERNALS__` every webview is given. A page there that
+/// listened for this name would read what the person asked, word for word.
+///
+/// So the event says only that something is waiting, and the text is fetched
+/// with a command. Commands from the browsing pane are refused wholesale by
+/// `syn::browser::may_call`, so the question can only ever be read by the app.
+/// It is the same split the capture queue already uses: `capture-queued` says
+/// there is something, and the drain comes and gets it.
+///
+/// # Why one slot and not a queue
+///
+/// A capture is a thought that must never be lost, so captures queue. A
+/// question is asked about *now*; two of them typed while the main window was
+/// locked are one question and its correction, and opening the bar on the
+/// first would answer something the person already took back. The newest one
+/// wins.
+///
+/// # Why it is not written to disk
+///
+/// It is held in memory only. A question is typed to be answered in the next
+/// few seconds, and a lock screen the user put up while one was waiting is a
+/// reason for it to stay out of the vault's database, not to be kept in it.
+#[derive(Default)]
+pub struct QuickQuestion(std::sync::Mutex<Option<String>>);
+
+impl QuickQuestion {
+    /// Hold a question, replacing any that was waiting. Blank is refused, the
+    /// way `queue_capture` refuses a blank capture.
+    pub fn put(&self, text: &str) -> AppResult<()> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(crate::error::AppError::General(
+                "a question needs some words".to_string(),
+            ));
+        }
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(text.to_string());
+        Ok(())
+    }
+
+    /// Hand the question over, once. A second take answers `None`, so a
+    /// window that asks twice does not open the bar twice.
+    pub fn take(&self) -> Option<String> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+/// The main window collecting the question the quick-entry box left for it.
+///
+/// Called when `syn-quick-question` arrives, and again whenever the ask bar
+/// becomes allowed — which is how a question typed while the app was locked is
+/// asked after the PIN rather than lost to it. See `QuickQuestion`.
+#[tauri::command]
+pub fn take_quick_question(state: tauri::State<'_, QuickQuestion>) -> Option<String> {
+    state.take()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,5 +734,41 @@ mod tests {
             waiting[0].id,
             first
         );
+    }
+
+    // ── a question, rather than a capture ─────────────────────────
+
+    /// Taken once. The main window asks on the event and again whenever the
+    /// bar becomes allowed; answering both would open the bar twice.
+    #[test]
+    fn a_question_is_handed_over_once() {
+        let q = QuickQuestion::default();
+        q.put("tuần này tôi hứa gì với Lan?").unwrap();
+        assert_eq!(q.take().as_deref(), Some("tuần này tôi hứa gì với Lan?"));
+        assert_eq!(q.take(), None);
+    }
+
+    /// Two questions typed before the window came back are one question and
+    /// its correction. The correction is the one to ask.
+    #[test]
+    fn the_newest_question_wins() {
+        let q = QuickQuestion::default();
+        q.put("what did I promise Lan").unwrap();
+        q.put("what did I promise Lan this week").unwrap();
+        assert_eq!(q.take().as_deref(), Some("what did I promise Lan this week"));
+    }
+
+    #[test]
+    fn a_blank_question_is_refused_and_leaves_nothing_behind() {
+        let q = QuickQuestion::default();
+        assert!(q.put("   \n ").is_err());
+        assert_eq!(q.take(), None);
+    }
+
+    #[test]
+    fn a_question_is_trimmed_like_a_capture() {
+        let q = QuickQuestion::default();
+        q.put("  why?  \n").unwrap();
+        assert_eq!(q.take().as_deref(), Some("why?"));
     }
 }

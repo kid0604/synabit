@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, provide, onMounted, onUnmounted, watch } from 'vue';
+import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import {
   paneShare as synPaneShare, panePage, PANE_BAR, dragPaneTo, openPane, closePane,
   panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside, SOMEWHERE_TO_START,
@@ -145,7 +145,10 @@ import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 import DesktopLayout from './layouts/DesktopLayout.vue';
 import MobileLayout from './layouts/MobileLayout.vue';
 import AskBar from './shared/syn/AskBar.vue';
-import { captureFocus, type SynFocus } from './shared/syn/focus';
+import { captureFocus, buildFocus, focusWithSelection, type SynFocus } from './shared/syn/focus';
+import { SYN_ASK, SYN_ASK_ABOUT, type AskAboutDetail } from './shared/syn/selectionAsk';
+import { routeQuickQuestion, QUICK_QUESTION_EVENT } from './shared/syn/quickAsk';
+import synAvatar from './assets/syn-avatar.jpg';
 import { useSynEnabled } from './shared/syn/useSynEnabled';
 
 // Stores
@@ -220,7 +223,7 @@ const showHiddenAppsMenu = ref(false);
 const appStore = useAppStore();
 const { vaultPath, vaultType, activeSyncProvider } = storeToRefs(appStore);
 
-const { useMobileLayout, isMobileOS, initOS } = usePlatform();
+const { useMobileLayout, isMobileOS, isMac, initOS } = usePlatform();
 
 // ─── App View State (Vue Router) ──────────────────────────
 const router = useRouter();
@@ -830,6 +833,126 @@ const continueInMessages = (conversationId: string) => {
     callWhenReady(() => messagesAppRef.value, 'openConversation', conversationId);
 };
 
+// ─── Other ways in than the key ───────────────────────────
+//
+// Cmd+J is invisible until somebody is told about it, and it does not exist on
+// a phone. So the bar can also be opened from a button in the app's own chrome,
+// from a button beside a selection, and from the quick-entry box. Every one of
+// them goes through `askBarAllowed`, so none of them is a way around a lock or
+// the switch.
+
+/**
+ * The key, as this platform spells it, for the tooltips that teach it. `null`
+ * on a phone, where there is no key to teach.
+ */
+const askShortcut = computed<string | null>(() =>
+    isMobileOS.value ? null : isMac.value ? '⌘J' : 'Ctrl+J',
+);
+
+// The selection button in Files and the toolbar in the editor ask this, rather
+// than working it out again. See `SYN_ASK`.
+provide(SYN_ASK, { allowed: askBarAllowed, shortcut: askShortcut });
+
+/**
+ * The chrome button. The same thing as the key, including closing the bar
+ * when it is already open — a button that only ever opened would leave a
+ * touch screen with no way to put the bar away but the small ✕ inside it.
+ */
+const toggleAskBar = () => {
+    if (askBarOpen.value) askBarOpen.value = false;
+    else openAskBar();
+};
+
+/**
+ * Words to put in the bar as it opens, from the quick-entry box.
+ *
+ * Cleared as the bar closes, so pressing the key later opens an empty bar
+ * rather than the last question from another window.
+ */
+const askPrefill = ref<string | undefined>(undefined);
+watch(askBarOpen, (open) => {
+    if (!open) askPrefill.value = undefined;
+});
+
+/**
+ * "Ask Syn" beside a selection. The text arrives already read — see
+ * `focusWithSelection` for why it is not read again here — and everything
+ * else about where the person is comes from the same place the key reads it.
+ */
+const onAskAbout = (e: Event) => {
+    const selection = (e as CustomEvent<AskAboutDetail>).detail?.selection;
+    if (!selection || !askBarAllowed.value) return;
+    askFocus.value = focusWithSelection(askingFrom(askThread.value), selection);
+    askBarOpen.value = true;
+};
+
+/**
+ * Open the bar with a question typed in the quick-entry box.
+ *
+ * The focus is deliberately *not* read off the screen. The box floats over
+ * other applications, so whatever this window happens to be showing is not
+ * what the person was looking at when they asked — telling Syn "the user is
+ * in Notes, with Pricing open" would be a claim about a screen they could not
+ * see. Only the thread travels, because the thread is the piece of work the
+ * person chose, not something read off a window.
+ *
+ * Put in the box rather than sent. The bar is opened over whatever the app was
+ * left on, carrying a thread the box never showed; seeing the question sitting
+ * there, with what it will carry, costs one Enter — the same call `onChoice`
+ * in the bar makes for a question it wrote on the person's behalf.
+ */
+const askWithQuestion = async (text: string) => {
+    if (askBarOpen.value) {
+        // A bar already open holds an exchange about something else. Closing it
+        // first gives the question a clean one, and lets the bar's own "on
+        // open" run again to put the words in.
+        askBarOpen.value = false;
+        await nextTick();
+    }
+    askPrefill.value = text;
+    askFocus.value = buildFocus({ app: '', thread: askThread.value }, undefined);
+    askBarOpen.value = true;
+};
+
+/**
+ * Collect a question the quick-entry box left in Rust, if there is one and it
+ * can be dealt with now. See `routeQuickQuestion` for the three outcomes, and
+ * `QuickQuestion` in `capture.rs` for why the words wait there rather than
+ * arriving on the event.
+ */
+const collectQuickQuestion = async () => {
+    const route = routeQuickQuestion({
+        hasVault: !!vaultPath.value,
+        synEnabled: synEnabled.value,
+        allowed: askBarAllowed.value,
+    });
+    if (route === 'wait') return;
+
+    let text: string | null = null;
+    try {
+        text = await invoke<string | null>('take_quick_question');
+    } catch (e) {
+        logger.error('[Syn] Could not collect the question from quick entry', e);
+        return;
+    }
+    if (!text) return;
+
+    if (route === 'capture') {
+        invoke('queue_capture', { text, source: 'quick-entry' }).catch((e) =>
+            logger.error('[Syn] Could not keep an unaskable question as a capture', e),
+        );
+        return;
+    }
+    await askWithQuestion(text);
+};
+
+// A question typed while the app was locked is asked once it is unlocked —
+// the other half of the `wait` route.
+watch(askBarAllowed, (allowed) => {
+    if (allowed) void collectQuickQuestion();
+});
+let stopQuickQuestionListener: (() => void) | null = null;
+
 // ─── Keyboard shortcuts for navigation ───────────────────
 const handleKeyboardNav = (e: KeyboardEvent) => {
     const isMeta = e.metaKey || e.ctrlKey;
@@ -902,6 +1025,11 @@ onMounted(async () => {
   document.addEventListener('auxclick', followExternalLink);
   window.addEventListener('keydown', handleKeyboardNav);
   window.addEventListener('syn-ask-in-thread', onAskInThread as EventListener);
+  window.addEventListener(SYN_ASK_ABOUT, onAskAbout);
+  // After the vault is known, so a question that arrived during startup is
+  // routed by the vault's real state rather than by "nothing loaded yet".
+  stopQuickQuestionListener = await listen(QUICK_QUESTION_EVENT, () => void collectQuickQuestion());
+  void collectQuickQuestion();
   document.addEventListener('visibilitychange', rescanOnResume);
 
   const params = new URLSearchParams(window.location.search);
@@ -1142,6 +1270,8 @@ onUnmounted(() => {
   document.removeEventListener('auxclick', followExternalLink);
   window.removeEventListener('keydown', handleKeyboardNav);
   window.removeEventListener('syn-ask-in-thread', onAskInThread as EventListener);
+  window.removeEventListener(SYN_ASK_ABOUT, onAskAbout);
+  stopQuickQuestionListener?.();
   document.removeEventListener('visibilitychange', rescanOnResume);
   destroyEventBus();
   clearInterval(feedsUnreadInterval);
@@ -1368,6 +1498,15 @@ onUnmounted(() => {
                   </div>
                 </div>
                 
+                <!--
+                  Ask Syn, on a phone. The key does not exist here, so without
+                  this the bar did not either — on the platform where leaving
+                  what you are reading to go and ask costs the most.
+                -->
+                <button v-if="useMobileLayout && askBarAllowed" @mousedown.prevent @click="toggleAskBar" :class="['relative w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', askBarOpen ? 'bg-violet-100 dark:bg-violet-500/15' : 'hover:bg-gray-200 dark:hover:bg-gray-800']" :aria-label="$t('syn.open_ask_bar')" :aria-pressed="askBarOpen">
+                   <img :src="synAvatar" alt="" class="w-6 h-6 rounded-full object-cover" />
+                </button>
+
                 <button v-if="useMobileLayout" @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']" aria-label="Open Settings">
                    <Settings class="w-5 h-5" />
                 </button>
@@ -1375,6 +1514,33 @@ onUnmounted(() => {
              
              <!-- Settings & Sync bottom icons for desktop -->
              <div v-if="!useMobileLayout" class="flex-shrink-0 w-full flex flex-col items-center gap-3 mb-2" @mousedown.stop>
+                <!--
+                  Ask Syn: the same bar Cmd+J opens, for everybody who has not
+                  been told about Cmd+J. Down here with the other things that
+                  belong to the whole app rather than to one mini-app, and
+                  Syn's face rather than a chat bubble, because the bubble
+                  above is the Messages app and this is not a way into it.
+
+                  `mousedown.prevent` keeps the selection. Pressing a button
+                  moves focus to it, and focus leaving an editor can collapse
+                  the text somebody highlighted to ask about — so the button
+                  would read an empty selection exactly when it mattered. With
+                  the press not taking focus, `openAskBar` reads the screen as
+                  it was, the same way the key does.
+                -->
+                <button
+                  v-if="askBarAllowed"
+                  @mousedown.prevent
+                  @click="toggleAskBar"
+                  :aria-label="$t('syn.open_ask_bar')"
+                  :aria-pressed="askBarOpen"
+                  :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer',
+                           askBarOpen ? 'bg-violet-100 dark:bg-violet-500/15' : 'hover:bg-gray-200 dark:hover:bg-gray-800']"
+                >
+                   <img :src="synAvatar" alt="" class="w-6 h-6 rounded-full object-cover" />
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ askShortcut ? $t('syn.open_ask_bar_hint', { shortcut: askShortcut }) : $t('syn.open_ask_bar') }}</span>
+                </button>
+
                 <!--
                   The browser belongs to the whole app, not to Syn. Syn's header
                   has one too, because that is where somebody asking a question
@@ -1596,6 +1762,7 @@ onUnmounted(() => {
       :open="askBarOpen"
       :vault-path="vaultPath"
       :focus="askFocus"
+      :prefill="askPrefill"
       @close="askBarOpen = false"
       @open-in-messages="continueInMessages"
       @thread="chooseThread"

@@ -55,6 +55,11 @@ const props = defineProps<{
    * the keydown handler, before the bar is shown.
    */
   focus?: SynFocus;
+  /**
+   * Words to put in the box as it opens — a question typed in the quick-entry
+   * window. Put there, not sent: see `askWithQuestion` in `App.vue`.
+   */
+  prefill?: string;
 }>();
 
 const emit = defineEmits<{
@@ -187,8 +192,10 @@ watch(
   () => props.open,
   async (open) => {
     if (open) {
+      if (props.prefill) question.value = props.prefill;
       await nextTick();
       inputRef.value?.focus();
+      if (props.prefill) inputRef.value?.setSelectionRange(question.value.length, question.value.length);
       // Loaded on open rather than on mount: the bar is mounted for the whole
       // session and reading the vault for a panel nobody has summoned is work
       // nobody asked for.

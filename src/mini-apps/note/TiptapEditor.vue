@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { watch, onBeforeUnmount, onMounted, ref } from 'vue';
+import { watch, onBeforeUnmount, onMounted, ref, computed, inject } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { SYN_ASK, synAskFallback, askSynAbout } from '../../shared/syn/selectionAsk';
 import { useEditor, EditorContent, VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -283,6 +285,52 @@ const updateBubbleMenu = () => {
     left: (start.left + end.left) / 2,
   };
   showBubble.value = true;
+};
+
+// --- Ask Syn about the selection ---
+//
+// This editor is shared — Notes, Tasks, Things, Files all mount it — so the
+// action lives here and every one of them gets it. Whether it is offered is
+// `App.vue`'s decision, the same one that gates Cmd+J; see `SYN_ASK`.
+const { t } = useI18n();
+const synAsk = inject(SYN_ASK, synAskFallback, true);
+const askSynTitle = computed(() => {
+  if (!synAsk.allowed.value) return null;
+  const shortcut = synAsk.shortcut.value;
+  return shortcut ? t('syn.ask_about_selection_hint', { shortcut }) : t('syn.ask_about_selection');
+});
+const askSynBlockLabel = computed(() => (synAsk.allowed.value ? t('syn.ask_about_block') : null));
+
+/**
+ * The selected text, read from the document rather than the DOM.
+ *
+ * ProseMirror's selection is the one the person made; the DOM's can differ
+ * around node views and atoms, and would read an equation or an embed as
+ * whatever its widget happens to render. Blocks are separated by a newline so
+ * two selected paragraphs arrive as two, not as one run-together line.
+ */
+const selectedText = (): string => {
+  const ed = editor.value;
+  if (!ed) return '';
+  const { from, to, empty } = ed.state.selection;
+  return empty ? '' : ed.state.doc.textBetween(from, to, '\n');
+};
+
+const askSynAboutSelection = () => {
+  const text = selectedText();
+  showBubble.value = false;
+  if (text.trim()) askSynAbout(text);
+};
+
+/**
+ * From the right-click menu: the selection if there is one, otherwise the
+ * paragraph that was clicked — which is what "this" means when nothing is
+ * highlighted, and what the menu already read for "Copy Block Link".
+ */
+const askSynAboutBlock = () => {
+  const text = selectedText() || modals.blockCtxMenu.value.text;
+  modals.blockCtxMenu.value.show = false;
+  if (text.trim()) askSynAbout(text);
 };
 
 // --- Table Controls ref ---
@@ -957,7 +1005,9 @@ onBeforeUnmount(() => {
       :editor="editor"
       :show="showBubble"
       :position="bubblePos"
+      :ask-syn-title="askSynTitle"
       @set-link="modals.setLink"
+      @ask-syn="askSynAboutSelection"
     />
 
     <!-- Table Controls -->
@@ -983,7 +1033,9 @@ onBeforeUnmount(() => {
       :show="modals.blockCtxMenu.value.show"
       :top="modals.blockCtxMenu.value.top"
       :left="modals.blockCtxMenu.value.left"
+      :ask-syn-label="askSynBlockLabel"
       @copy-block-link="modals.copyBlockLink"
+      @ask-syn="askSynAboutBlock"
     />
 
     <!-- Editor Content -->
