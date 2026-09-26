@@ -480,6 +480,26 @@ Syn không nên đuổi theo agent đa năng kiểu OpenClaw. Lợi thế của 
 8. **Todo trong run:** một tool nội bộ `plan` (hay `update_plan`) để model ghi và cập nhật danh sách bước. Danh sách lưu vào `Run.plan`, stream ra UI, và được giữ nguyên qua compaction. Đây là cách rẻ nhất để có A3, và các agent coding mạnh hiện nay đều dùng nó.
 9. **Tách `send_message_inner`** thành các bước gather → build → drive → persist → reflect, mỗi bước có test.
 
+> **Trạng thái 2026-09-26: đã làm và đã commit.** 2.502 test Rust và 1.979 test frontend qua.
+>
+> **Đã làm:**
+> - B1: `syn/gate.rs`, hàm quyết định thuần có bảng test.
+> - B3: `syn/context.rs` rút gọn kết quả tool cũ khi quá 70% cửa sổ và tóm tắt hội thoại trước câu hỏi; `Budget.tokens` mặc định là 1,5 triệu.
+> - B4: `provider/retry.rs` thử lại có backoff và jitter, tôn trọng `Retry-After`; nhánh không stream giờ dừng được (`chat_stoppable`).
+> - B5: prompt tách hai nửa, tiền tố ổn định chiếm 98,7%; `syn/calibration.rs` học tỉ lệ ký tự/token theo từng model.
+> - B6: `provider/anthropic.rs` với `cache_control`, tool_use native, phát lại thinking block, structured output.
+> - B7: `provider/capability.rs` cùng lệnh `syn_model_capability`; cửa sổ của model hosted lấy từ bảng này.
+> - B8: tool `update_plan`, lưu vào `Run.plan`, phát sự kiện `syn-plan`.
+> - B9: `send_message_inner` tách thành 8 bước, các bước thuần có test.
+>
+> **Không làm B2 (chạy song song):** mọi tool đọc qua một kết nối SQLite duy nhất sau một mutex, nên chạy song song chỉ làm chúng xếp hàng. Muốn làm phải có pool kết nối chỉ-đọc (SQLite WAL) — một thay đổi ở tầng DB của cả app.
+>
+> **Gate B chưa đo:** ba tiêu chí dưới đây cần chạy với model thật, chưa làm. Chúng có test tương đương bằng scripted provider: cửa sổ 4k thì vẫn tóm tắt, kết quả cũ thì rút gọn.
+>
+> **Rủi ro đã biết:** trên các model Anthropic mới nhất, việc sửa lịch sử (rút gọn kết quả cũ) có thể làm lượt gửi có thinking block bị từ chối với lỗi 400. Provider đã có đường gửi lại một lần sau khi bỏ thinking, nhưng cái giá là thêm một request. Chưa thử với API thật.
+>
+> **Việc cho Phase C:** UI chưa dùng `syn-plan`, `syn_model_capability`, và chưa hiện câu privacy theo tier.
+
 **Gate B:**
 - Một run 25 round trên Ollama 8k không vượt cửa sổ và không mất system prompt.
 - Một run hosted có tỉ lệ cache hit trên 60% từ lượt thứ hai (đọc từ `Usage`).
