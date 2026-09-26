@@ -1889,6 +1889,13 @@ fn assemble(
         footing: None,
         tool_calls_log: Some(tool_log).filter(|l| !l.is_empty()),
         images: None,
+        // The plan as it stood at the end, under the answer that made it. A
+        // plan-first turn's is waiting for the user; any other run's is a
+        // record of what it did.
+        plan: (!run.plan.is_empty()).then(|| crate::models::syn::Planned {
+            steps: run.plan.clone(),
+            waiting: run.plan_only,
+        }),
     }
 }
 #[cfg(test)]
@@ -2048,6 +2055,7 @@ mod tests {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }
     }
 
@@ -2402,6 +2410,7 @@ mod tests {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }
     }
 
@@ -2597,6 +2606,7 @@ mod gate_one {
                 footing: None,
                 tool_calls_log: None,
                 images: None,
+                plan: None,
             },
             SynMessage {
                 id: "u1".into(),
@@ -2610,6 +2620,7 @@ mod gate_one {
                 footing: None,
                 tool_calls_log: None,
                 images: None,
+                plan: None,
             },
         ];
 
@@ -2906,6 +2917,7 @@ mod driving {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }]
     }
 
@@ -4811,6 +4823,7 @@ mod driving {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }
     }
 

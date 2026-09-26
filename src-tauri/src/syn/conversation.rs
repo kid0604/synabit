@@ -465,6 +465,7 @@ mod tests {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }
     }
 

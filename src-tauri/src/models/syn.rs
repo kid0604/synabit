@@ -89,6 +89,22 @@ pub struct SynMessage {
     /// Base64-encoded images attached to this message (for multimodal models)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub images: Option<Vec<String>>,
+    /// The steps the run wrote down with `update_plan`, as they stood when it
+    /// finished. On the message rather than only on the run so the plan is
+    /// still there when the conversation is reopened, and so a plan-first turn
+    /// can be approved from the answer it produced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Planned>,
+}
+
+/// A plan, under the answer that made it.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Planned {
+    pub steps: Vec<crate::syn::run::PlanStep>,
+    /// Whether this was a plan-first turn, so nothing that changes anything
+    /// has run yet and the plan is waiting for the user to approve it.
+    #[serde(default)]
+    pub waiting: bool,
 }
 
 /// Conversation metadata (used for listing without loading all messages).

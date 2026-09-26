@@ -530,6 +530,7 @@ fn open_turn(conv: &mut SynConversationFull, request: &SynChatRequest) -> Result
         footing: None,
         tool_calls_log: None,
         images: request.images.clone(),
+        plan: None,
     };
     conv.messages.push(user_message.clone());
     Ok(Turn { question: request.message.clone(), asked: Some(user_message), placeholder: None })
@@ -727,6 +728,7 @@ fn messages_for(
         footing: None,
         tool_calls_log: None,
         images: None,
+        plan: None,
     }];
     messages.extend(history.iter().cloned());
 

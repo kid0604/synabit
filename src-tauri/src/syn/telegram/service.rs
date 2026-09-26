@@ -1404,6 +1404,7 @@ mod tests {
             footing: None,
             tool_calls_log: (!tools.is_empty()).then(|| tools.iter().map(|tool| call(tool)).collect()),
             images: None,
+            plan: None,
         }
     }
 

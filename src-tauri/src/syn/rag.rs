@@ -1371,7 +1371,7 @@ mod tests {
         let before = vec![SynMessage {
             id: "u0".into(), role: "user".into(), content: "giá cổ phiếu tcb hôm nay".into(),
             model: None, timestamp: String::new(), tokens: None, duration_ms: None,
-            sources: None, footing: None, tool_calls_log: None, images: None,
+            sources: None, footing: None, tool_calls_log: None, images: None, plan: None,
         }];
         let q = "giá này so với đỉnh của 1 năm trở lại đây thì như nào";
         let parts = query_parts(&db, q, &before, &extract_search_terms(q, &before));
@@ -1557,6 +1557,7 @@ mod tests {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         }];
         let terms = extract_search_terms("còn task nào nữa", &recent);
         // Should include "deadline" and "sắp" from context
@@ -1988,6 +1989,7 @@ mod rag_vs_agentic {
             footing: None,
             tool_calls_log: None,
             images: None,
+            plan: None,
         };
 
         let history = vec![
