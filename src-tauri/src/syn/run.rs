@@ -628,6 +628,26 @@ pub struct Run {
     /// this field existed; `stats::ceiling_of` still reads those the old way.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ceiling: Option<String>,
+    /// The run this one was handed a piece of work by, when it was. See
+    /// `syn::delegate`.
+    ///
+    /// A sub-run has its own history, budget and transcript, and only its
+    /// conclusion goes back to the run that asked. The link is what lets the
+    /// two transcripts be read together, and what keeps a sub-run out of the
+    /// list of work a person is shown — it is part of its parent's work, not a
+    /// piece of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    /// The run this one carries on from, after it stopped to ask.
+    ///
+    /// Carrying on used to be a new run that knew one thing about the old one:
+    /// the call it had been about to make. Everything the stopped run had read
+    /// was gone, so a run that had searched, opened three notes and then asked
+    /// for permission to browse started its next turn knowing only that it
+    /// may now browse. The engine replays the stopped run's rounds from its
+    /// transcript instead — see `replay`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resumed_from: Option<String>,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -746,6 +766,8 @@ impl Run {
             read_untrusted: false,
             plan: Vec::new(),
             ceiling: None,
+            parent_run_id: None,
+            resumed_from: None,
             pending_consent: None,
             pending_call: None,
             pending_choice: None,
@@ -953,14 +975,84 @@ impl Run {
             tool_calls: self.spent.tool_calls,
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
+            parent_run_id: self.parent_run_id.clone(),
         }
     }
+}
+
+/// A stopped run's rounds, as the history a run carrying on from it needs.
+///
+/// Each round becomes what it was on the wire: the assistant turn that asked
+/// for tools, then one result per call, with the whole result where the
+/// transcript kept one (`load_result`) and the preview where it did not. Words
+/// the model said on the way are kept with the turn they were said in. Notes
+/// are the engine talking to itself and are left out.
+///
+/// Calls get fresh ids. The originals were never kept, and what matters is
+/// that each result answers the call beside it — which providers check, and
+/// which fresh ids satisfy.
+pub fn replay(vault_path: &str, stopped: &Run) -> Vec<crate::syn::provider::ChatMessage> {
+    use crate::syn::provider::ChatMessage;
+    let mut out = Vec::new();
+    let mut rounds: std::collections::BTreeMap<u8, Vec<&Step>> = std::collections::BTreeMap::new();
+    for step in &stopped.steps {
+        if matches!(step.kind, StepKind::Assistant | StepKind::ToolCall) {
+            rounds.entry(step.iteration).or_default().push(step);
+        }
+    }
+    for steps in rounds.values() {
+        let said: Vec<&str> = steps
+            .iter()
+            .filter(|s| s.kind == StepKind::Assistant)
+            .map(|s| s.preview.as_str())
+            .collect();
+        let calls: Vec<&&Step> = steps.iter().filter(|s| s.kind == StepKind::ToolCall).collect();
+        if calls.is_empty() {
+            // A round that only spoke was an answer, and a run that answered
+            // did not stop to ask. Nothing to carry.
+            continue;
+        }
+        let id = |step: &Step| format!("replay-{}-{}", stopped.id.chars().take(8).collect::<String>(), step.index);
+        out.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: said.join("\n"),
+            tool_calls: Some(
+                calls
+                    .iter()
+                    .map(|s| crate::models::syn::ToolCall {
+                        id: Some(id(s)),
+                        function: crate::models::syn::ToolCallFunction {
+                            name: s.tool.clone().unwrap_or_default(),
+                            arguments: s.args.clone().unwrap_or(Value::Null),
+                        },
+                        thought_signature: None,
+                    })
+                    .collect(),
+            ),
+            tool_call_id: None,
+            images: None,
+        });
+        for step in calls {
+            let whole = load_result(vault_path, &stopped.id, step.index).ok().flatten();
+            out.push(ChatMessage {
+                role: "tool".to_string(),
+                content: whole.unwrap_or_else(|| step.preview.clone()),
+                tool_calls: None,
+                tool_call_id: Some(id(step)),
+                images: None,
+            });
+        }
+    }
+    out
 }
 
 /// A run as a list needs it: everything except the transcript.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RunSummary {
     pub id: String,
+    /// The run that handed this one its work, for a sub-run. See `Run`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
     pub conversation_id: Option<String>,
     pub goal: String,
     pub trigger: Trigger,

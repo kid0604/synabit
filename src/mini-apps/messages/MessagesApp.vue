@@ -112,11 +112,18 @@ const onConsent = async (choice: ConsentAnswer) => {
 
 /**
  * The *which one* Syn stopped on. A different question from consent — see
- * `syn::ambiguity` — and answered a different way: the pick goes into the
- * composer rather than starting anything, so saying *go on* stays the person's
+ * `syn::ambiguity` — and it used to be answered a different way: the pick went
+ * into the composer and nothing started, so saying *go on* was the person's
  * move.
+ *
+ * It carries on now, the way consent does. Picking one *is* saying which to go
+ * on with — nobody picked a note from three to then not proceed — and the
+ * extra Enter was a step with nothing to decide. The pick goes as the person's
+ * words, so the conversation reads as what happened, and the stopped run's
+ * work comes with it (`run::replay`), so Syn does not search again for what it
+ * had already found.
  */
-const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
 const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
 
 // Both sentences come from the locale. They are written into the person's own
@@ -124,8 +131,28 @@ const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
 // type in — and in a neutral voice, since whatever register they use with Syn
 // is theirs to choose, not the app's.
 const onChoice = async (nodeId: string) => {
+  // Read before answering, which clears the card — as `onConsent` does.
+  const stopped = choicePending.value?.run_id;
+  const id = choicePending.value?.conversation_id;
   const named = await answerChoice(nodeId);
-  if (named) chatPanel.value?.prefill(t('syn.prefill_choice', { title: named }));
+  if (!named || !stopped || !id) return;
+  const said = t('syn.prefill_choice', { title: named });
+  const onScreen = () => activeConversationId.value === id;
+
+  const last = activeMessages.value[activeMessages.value.length - 1];
+  if (onScreen() && last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
+  if (onScreen()) {
+    activeMessages.value.push({ id: crypto.randomUUID(), role: 'user', content: said, timestamp: new Date().toISOString() });
+  }
+
+  const response = await sendMessage(props.vaultPath, id, said, {
+    model: selectedModel.value || undefined,
+    resumeRun: stopped,
+  });
+  if (response && onScreen()) {
+    activeMessages.value.push(response);
+    clearStreaming();
+  }
 };
 const trySkill = (name: string) => {
   chatPanel.value?.prefill(t('syn.prefill_skill', { name }));

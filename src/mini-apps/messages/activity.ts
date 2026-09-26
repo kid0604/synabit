@@ -25,7 +25,10 @@ export const RECENT_MS = 24 * 60 * 60 * 1000;
 
 const WAITING = new Set(['awaiting_consent', 'awaiting_choice']);
 
-export function groupRuns(runs: RunSummary[], now: number = Date.now()): Activity {
+export function groupRuns(all: RunSummary[], now: number = Date.now()): Activity {
+  // A helper's run is part of its parent's work, not a piece of its own: the
+  // parent is what the person asked for, and it is the one listed.
+  const runs = all.filter(r => !r.parent_run_id);
   const newest = (a: RunSummary, b: RunSummary) => b.updated_at.localeCompare(a.updated_at);
   const working = runs.filter(r => r.state === 'working').sort(newest);
   const waiting = runs.filter(r => WAITING.has(r.state)).sort(newest);

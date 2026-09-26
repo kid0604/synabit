@@ -539,8 +539,31 @@ pub const PAYLOAD_BUDGET_CHARS: usize = 20_300;
 /// provider sends, so it is the real length and not a model of it. Tokens are
 /// the usual four-characters-each estimate and are labelled as one everywhere
 /// they are shown.
+/// Tools offered only to a model with room for them.
+///
+/// `delegate` is the first. A helper run is worth its cost when the work would
+/// otherwise fill the window — which on a hosted model's hundreds of thousands
+/// of tokens is the whole point, and on an 8,192-token local model is a second
+/// run that cannot hold much more than the first. Its declaration is not
+/// counted against `PAYLOAD_BUDGET_CHARS`, which exists to protect the small
+/// window, because the small window never receives it.
+pub const LARGE_WINDOW_ONLY: &[&str] = &[crate::syn::delegate::TOOL];
+
+/// What counts as room: a window this size or larger.
+pub const LARGE_WINDOW_TOKENS: u32 = 32_768;
+
+/// Whether a tool is offered to a model with a window of this size.
+pub fn offered_at(tool: &str, window_tokens: u32) -> bool {
+    window_tokens >= LARGE_WINDOW_TOKENS || !LARGE_WINDOW_ONLY.contains(&tool)
+}
+
 pub fn payload_cost() -> crate::syn::prompt::ToolPayload {
-    let definitions = get_tool_definitions();
+    // What every model is sent, the smallest included: the tools kept for
+    // large windows are left out, since the budget is about the small ones.
+    let definitions: Vec<ToolDefinition> = get_tool_definitions()
+        .into_iter()
+        .filter(|d| !LARGE_WINDOW_ONLY.contains(&d.function.name.as_str()))
+        .collect();
     let chars = serde_json::to_string(&definitions).map(|s| s.len()).unwrap_or(0);
     crate::syn::prompt::ToolPayload {
         count: definitions.len(),
@@ -900,6 +923,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: crate::syn::delegate::TOOL.to_string(),
+                description: "Hand a self-contained reading or research job to a helper with its own space, and get back only its findings. For work that reads many things when only a summary matters here. The helper can read and search, not change anything.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["goal"],
+                    "properties": {
+                        "goal": { "type": "string", "description": "The whole job, alone: the helper sees nothing else." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: PLAN_TOOL.to_string(),
                 description: "For work of three steps or more: write the steps before starting, then send the whole list again each time one changes. One step `doing` at a time. The user watches this list.".to_string(),
                 parameters: serde_json::json!({
@@ -1245,7 +1282,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         name if name == LOOK_BACK_TOOL => tool_look_back(ctx, args),
         // Not here: this one is async, and `execute_tool` is not. The engine
         // runs it before reaching this table — see `SynEngine::drive`.
-        name if name == BROWSE_TOOL || name == PLAN_TOOL => Err(AppError::General(
+        name if name == BROWSE_TOOL || name == PLAN_TOOL || name == crate::syn::delegate::TOOL => Err(AppError::General(
             format!("{name} is driven by the engine, not by this table"),
         )),
 
@@ -4531,7 +4568,10 @@ mod tests {
     #[test]
     fn the_reported_cost_is_the_serialised_length() {
         let cost = payload_cost();
-        let defs = get_tool_definitions();
+        let defs: Vec<ToolDefinition> = get_tool_definitions()
+            .into_iter()
+            .filter(|d| !LARGE_WINDOW_ONLY.contains(&d.function.name.as_str()))
+            .collect();
         assert_eq!(cost.count, defs.len());
         assert_eq!(cost.chars, serde_json::to_string(&defs).expect("serialises").len());
         assert_eq!(cost.est_tokens, cost.chars / 4);
@@ -4983,7 +5023,7 @@ mod tests {
         // Not a store at all: the run's own list of steps, which the user
         // watches and the model keeps while its results are shortened to fit.
         // Nothing in the vault is touched, so no generic tool could do it.
-        let the_run = [PLAN_TOOL];
+        let the_run = [PLAN_TOOL, crate::syn::delegate::TOOL];
         for tool in the_run {
             assert!(names.contains(&tool), "{tool} is missing");
         }

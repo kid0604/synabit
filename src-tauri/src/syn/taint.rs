@@ -118,6 +118,8 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "browse",
     // The run's own list of steps. Changes nothing outside the run.
     "update_plan",
+    // A helper that may only read; what it reads taints this run in turn.
+    "delegate",
 ];
 
 pub fn allowed_after_reading(tool: &str) -> bool {

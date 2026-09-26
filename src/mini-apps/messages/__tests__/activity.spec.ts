@@ -33,6 +33,13 @@ describe("Syn's recent work", () => {
     expect(a.finished.map(r => r.id)).toEqual(['gave-up', 'done-new']);
   });
 
+  it("lists a helper's work under its parent, not beside it", () => {
+    const helper = { ...run('helper', 'done', 1_000), parent_run_id: 'going' };
+    const a = groupRuns([run('going', 'working', 0), helper], NOW);
+    expect(a.finished).toEqual([]);
+    expect(a.working.map(r => r.id)).toEqual(['going']);
+  });
+
   /** A run waiting a week for an answer is still waiting. */
   it('never lets something waiting age out', () => {
     const a = groupRuns([run('asked-long-ago', 'awaiting_consent', 7 * RECENT_MS)], NOW);

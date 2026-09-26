@@ -372,6 +372,8 @@ export interface SynStats {
 /** A run as a list needs it: everything except the transcript. */
 export interface RunSummary {
   id: string;
+  /** The run that handed this one its work, for a helper. See `syn::delegate`. */
+  parent_run_id?: string | null;
   conversation_id?: string | null;
   goal: string;
   trigger: RunTrigger;

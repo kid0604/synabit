@@ -2434,7 +2434,8 @@
     "tier_vision": "Reads pictures",
     "tier_reasoning": "Thinks before answering, and is billed for it",
     "tier_guessed": "This model is not one Syn knows by name, so these are careful guesses.",
-    "tier_label": "What this model is"
+    "tier_label": "What this model is",
+    "doing_delegate": "Handing part of the work to a helper"
   },
   "update": {
     "available": "Synabit {version} is available!",

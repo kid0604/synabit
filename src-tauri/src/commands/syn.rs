@@ -485,6 +485,38 @@ struct Turn {
 /// in the conversation and hand the model a turn with nothing in it. See
 /// `syn_answer_consent`.
 fn open_turn(conv: &mut SynConversationFull, request: &SynChatRequest) -> Result<Turn, AppError> {
+    // Carrying on *with words* — the answer to "which one" — is a new turn
+    // that carries the stopped run's work with it. The words are the person's
+    // and go in the conversation; the empty bubble the stop left goes, as it
+    // does below.
+    if request.resume_run.is_some() && !request.message.trim().is_empty() {
+        let placeholder = if conv
+            .messages
+            .last()
+            .is_some_and(|m| m.role == "assistant" && m.content.trim().is_empty())
+        {
+            conv.messages.pop().map(|m| m.id)
+        } else {
+            None
+        };
+        let user_message = SynMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            role: "user".to_string(),
+            content: request.message.clone(),
+            model: None,
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            tokens: None,
+            duration_ms: None,
+            sources: None,
+            footing: None,
+            tool_calls_log: None,
+            images: request.images.clone(),
+            plan: None,
+        };
+        conv.messages.push(user_message.clone());
+        return Ok(Turn { question: request.message.clone(), asked: Some(user_message), placeholder });
+    }
+
     if request.resume_run.is_some() {
         // The stopped run left an assistant turn with no words in it — that is
         // what `LoopEnd::NeedsConsent` assembles. Dropped rather than kept:
@@ -813,6 +845,9 @@ fn start_run(
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
     run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);
+    // And from where it was: the engine replays what it had done. See
+    // `run::replay`.
+    run.resumed_from = stopped.as_ref().map(|s| s.id.clone());
     // What the prompt carried, so "does memory reach the model" is a question
     // the runs can answer. Before `drive`, whose first save writes it down.
     carried.write_onto(&mut run);
@@ -2660,6 +2695,21 @@ mod send_steps {
         assert_eq!(turn.placeholder.as_deref(), Some("a1"));
         assert!(turn.asked.is_none());
         assert_eq!(conv.messages.len(), 1);
+    }
+
+    /// Answering "which one" carries on with the person's words as a new turn,
+    /// and the empty bubble the stop left goes.
+    #[test]
+    fn carrying_on_with_words_is_a_new_turn() {
+        let mut conv = conversation(None, None, vec![said("u1", "user", "xoá note hợp đồng"), said("a1", "assistant", "")]);
+        let mut chose = request("Cái \"Hợp đồng VPB\".");
+        chose.resume_run = Some("run-1".into());
+        let turn = open_turn(&mut conv, &chose).expect("a turn");
+        assert_eq!(turn.question, "Cái \"Hợp đồng VPB\".");
+        assert_eq!(turn.placeholder.as_deref(), Some("a1"));
+        assert!(turn.asked.is_some());
+        let contents: Vec<&str> = conv.messages.iter().map(|m| m.content.as_str()).collect();
+        assert_eq!(contents, vec!["xoá note hợp đồng", "Cái \"Hợp đồng VPB\"."]);
     }
 
     #[test]

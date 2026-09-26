@@ -213,6 +213,11 @@ impl VaultTools {
             // thing anybody should be asked permission for.
             crate::syn::tools::PLAN_TOOL => VaultRead,
 
+            // Hands work to a sub-run that may only read. What the sub-run
+            // reaches for is weighed again, call by call, inside it — this is
+            // the power handing over needs, which is none of its own.
+            crate::syn::delegate::TOOL => VaultRead,
+
             // `run_recipe` is the union of whatever its steps do, which cannot
             // be declared statically — so the format refuses the structural
             // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
@@ -608,6 +613,7 @@ mod tests {
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
+            crate::syn::delegate::TOOL,
         ];
 
         for name in declared {
@@ -817,7 +823,12 @@ mod tests {
     /// both would be right to trust neither.
     #[test]
     fn what_each_tool_costs_adds_up_to_what_the_payload_costs() {
-        let cards = catalogue(&crate::syn::consent::Ledger::default(), NOW);
+        // The whole is what every model is sent, so the parts are too: the
+        // tools kept for large windows are not in it. See `LARGE_WINDOW_ONLY`.
+        let cards: Vec<_> = catalogue(&crate::syn::consent::Ledger::default(), NOW)
+            .into_iter()
+            .filter(|c| !crate::syn::tools::LARGE_WINDOW_ONLY.contains(&c.name.as_str()))
+            .collect();
         let parts: usize = cards.iter().map(|c| c.chars).sum();
         let whole = crate::syn::tools::payload_cost().chars;
 

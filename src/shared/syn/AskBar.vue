@@ -122,7 +122,7 @@ const {
   pendingIn: consentPendingIn,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
-const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
 
 const consentHere = computed(() => consentPendingIn(conversationId.value));
 const choiceHere = computed(() => choicePendingIn(conversationId.value));
@@ -294,18 +294,15 @@ const onConsent = async (choice: ConsentAnswer) => {
 };
 
 /**
- * Say which one, and put the answer in the box — not send it. As in Messages,
- * the pick is a fact the next message carries, and sending is the person's
- * move.
+ * Say which one, and carry on with it — as Messages does, and for the same
+ * reason: picking one is saying which to go on with. See `onChoice` there.
  */
 const onChoice = async (nodeId: string) => {
+  const stopped = choicePending.value?.run_id;
+  const id = choicePending.value?.conversation_id;
   const named = await answerChoice(nodeId);
-  if (!named) return;
-  question.value = t('syn.prefill_choice', { title: named });
-  await nextTick();
-  const end = question.value.length;
-  inputRef.value?.focus();
-  inputRef.value?.setSelectionRange(end, end);
+  if (!named || !stopped || !id) return;
+  await send(id, t('syn.prefill_choice', { title: named }), stopped);
 };
 
 const stop = async () => {

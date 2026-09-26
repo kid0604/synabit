@@ -65,6 +65,8 @@ pub struct View<'a> {
     /// Skill bodies this run has already opened.
     pub skills_opened: usize,
     pub plan_only: bool,
+    /// Whether this is a sub-run: reads only, asks nobody. See `syn::delegate`.
+    pub sub_run: bool,
     pub now: &'a str,
 }
 
@@ -91,6 +93,8 @@ pub enum How {
     Browse,
     /// The run's own list of steps, which only the engine can change.
     Plan,
+    /// Hand the work to a sub-run. See `syn::delegate`.
+    Delegate,
     /// Answered with this refusal, but recorded as a call the run made — it is
     /// a budget, not a rule, and the transcript should show it was reached.
     OverSkillBudget(String),
@@ -127,6 +131,15 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
             note: Some(format!(
                 "Refused `{tool}`: this run has read something from outside the vault."
             )),
+        });
+    }
+
+    // 1½. A helper reads and looks things up, and nothing else. Before the
+    // surface, because it is narrower than any surface.
+    if view.sub_run && !crate::syn::delegate::may_use(tool, capability) {
+        return Decided::quietly(Gate::Refuse {
+            said: crate::syn::delegate::refusal(tool),
+            note: Some(format!("Refused `{tool}`: a helper only reads.")),
         });
     }
 
@@ -181,6 +194,17 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
 
         match decision {
             Decision::Allow => {}
+            // Nobody is watching a helper, so a card it raised would be on no
+            // screen. It is told, and says so in what it hands back.
+            Decision::Ask if view.sub_run => {
+                return Decided {
+                    gate: Gate::Refuse {
+                        said: crate::syn::delegate::cannot_ask(&capability.describe()),
+                        note: Some(format!("Refused `{tool}`: it needs permission, and a helper cannot ask.")),
+                    },
+                    audit: Some(Outcome::Refused),
+                };
+            }
             Decision::Ask => {
                 return Decided {
                     gate: Gate::Ask(Box::new(Ask::about(tool, capability, view.now))),
@@ -210,6 +234,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::Browse
     } else if tool == crate::syn::tools::PLAN_TOOL {
         How::Plan
+    } else if tool == crate::syn::delegate::TOOL {
+        How::Delegate
     } else if tool == crate::syn::skill::LOAD_TOOL && view.skills_opened >= crate::syn::skill::BODIES_PER_RUN {
         // A budget over a run, and the run is what this sees. Refused rather
         // than errored: "not this time, use what you have" is a sentence the
@@ -254,6 +280,7 @@ mod tests {
             allowed_until_done: until_done,
             skills_opened: 0,
             plan_only: false,
+            sub_run: false,
             now: NOW,
         }
     }
@@ -354,6 +381,27 @@ mod tests {
         v.skills_opened = crate::syn::skill::BODIES_PER_RUN;
         let d = decide(crate::syn::skill::LOAD_TOOL, &serde_json::json!({ "name": "x" }), Some(&Capability::VaultRead), &v);
         assert!(matches!(d.gate, Gate::Go(How::OverSkillBudget(_))), "{d:?}");
+    }
+
+    /// A helper reads and nothing else, and never raises a card nobody would see.
+    #[test]
+    fn a_helper_reads_and_asks_nobody() {
+        let empty = Ledger::default();
+        let mut v = view(&empty, &never_until_done);
+        v.sub_run = true;
+
+        let read = decide("get_node", &args(), Some(&Capability::VaultRead), &v);
+        assert!(matches!(read.gate, Gate::Go(How::Execute)), "{read:?}");
+        for (tool, capability) in [("create_node", Capability::VaultWrite), (crate::syn::delegate::TOOL, Capability::VaultRead)] {
+            let d = decide(tool, &args(), Some(&capability), &v);
+            assert!(matches!(d.gate, Gate::Refuse { .. }), "{tool}: {d:?}");
+        }
+        // Browsing with nothing granted would ask; a helper is refused instead.
+        let browse = decide("browse", &serde_json::json!({ "what": "x" }), Some(&Capability::Browse), &v);
+        match browse.gate {
+            Gate::Refuse { said, .. } => assert!(said.contains("cannot ask"), "{said}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
     }
 
     /// Plan mode looks, and describes every change instead of making it —

@@ -2434,7 +2434,8 @@
     "tier_vision": "Đọc được ảnh",
     "tier_reasoning": "Suy nghĩ trước khi trả lời, và bị tính phí cho phần đó",
     "tier_guessed": "Syn không biết model này qua tên, nên đây là ước đoán thận trọng.",
-    "tier_label": "Model này là gì"
+    "tier_label": "Model này là gì",
+    "doing_delegate": "Giao một phần việc cho trợ lý"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

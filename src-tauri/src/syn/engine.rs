@@ -411,6 +411,32 @@ impl SynEngine {
         started: std::time::Instant,
     ) -> AppResult<SynMessage> {
         let mut working = build_pruned_history(req.history, req.max_history);
+
+        // Carrying on from a run that stopped to ask: what it had already done
+        // goes back in, round by round, so this run starts where that one was
+        // rather than from the question. See `run::replay`.
+        //
+        // Placed after the question it was answering. When the carry-on came
+        // with words of its own — the answer to "which one" — those are the
+        // newest turn, and what was done before them goes before them.
+        if let Some(stopped) = run
+            .resumed_from
+            .as_deref()
+            .and_then(|id| crate::syn::run::get_run(req.vault_path, id).ok())
+        {
+            let replayed = crate::syn::run::replay(req.vault_path, &stopped);
+            if !replayed.is_empty() {
+                let at = match working.iter().rposition(|m| m.role == "user") {
+                    Some(last) if working[last].content.trim() != stopped.goal.trim() => last,
+                    _ => working.len(),
+                };
+                run.note(
+                    0,
+                    format!("Carrying on from run {} with {} message(s) of its work.", stopped.id, replayed.len()),
+                );
+                working.splice(at..at, replayed);
+            }
+        }
         // Kept alongside the run's own steps because it is what a `SynMessage`
         // carries and what the chat bubble draws. The transcript is the record;
         // this is the view the conversation file already had.
@@ -487,7 +513,25 @@ impl SynEngine {
             surface: run.surface,
             taint: &taint,
         };
-        let tools = req.registry.definitions(&ctx);
+        // A helper is offered only what it may use, so it does not spend rounds
+        // reaching for the rest. The gate refuses the rest anyway.
+        let sub_run = run.parent_run_id.is_some();
+        // And a tool that only pays for itself in a large window is not sent
+        // to a small one. See `tools::LARGE_WINDOW_ONLY`.
+        let room = self.window_tokens(req);
+        let tools: Vec<_> = req
+            .registry
+            .definitions(&ctx)
+            .into_iter()
+            .filter(|t| crate::syn::tools::offered_at(&t.function.name, room))
+            .filter(|t| {
+                !sub_run
+                    || crate::syn::delegate::may_use(
+                        &t.function.name,
+                        req.registry.capability_of(&t.function.name, &serde_json::Value::Null).as_ref(),
+                    )
+            })
+            .collect();
 
         // Taken on the first turn and gone thereafter: this is one call being
         // carried over, not a mode the run stays in.
@@ -686,6 +730,7 @@ impl SynEngine {
                         allowed_until_done: &until_done,
                         skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
                         plan_only: run.plan_only,
+                        sub_run,
                         now: &now,
                     },
                 );
@@ -795,6 +840,31 @@ impl SynEngine {
                                 })
                             }
                             Err(problem) => Err(crate::error::AppError::General(problem)),
+                        }
+                    }
+                    crate::syn::gate::How::Delegate => {
+                        let goal = tc
+                            .function
+                            .arguments
+                            .get("goal")
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .unwrap_or_default()
+                            .to_string();
+                        match self.delegate(run, req, stop, &goal, taint.is_set()).await {
+                            Ok((content, sources, read_untrusted)) => {
+                                // What the helper read is in this run's hands now.
+                                if read_untrusted {
+                                    taint.set();
+                                }
+                                destinations.note_seen_in(&content);
+                                cited.extend(sources);
+                                Ok(crate::syn::registry::ToolOutcome {
+                                    content,
+                                    reversal: crate::syn::registry::Reversal::Nothing,
+                                })
+                            }
+                            Err(e) => Err(e),
                         }
                     }
                     crate::syn::gate::How::Execute => {
@@ -1001,6 +1071,118 @@ impl SynEngine {
             final_msg.tool_calls_log = Some(tool_log);
         }
         Ok(final_msg)
+    }
+
+    /// Hand `goal` to a sub-run and wait for what it finds. See `syn::delegate`.
+    ///
+    /// The sub-run is a run of its own — its own history, budget and transcript
+    /// on disk — linked back by `parent_run_id`. It is not given a
+    /// conversation: nothing it says streams to a screen, and the parent's
+    /// progress already says a helper is at work. Stop reaches it through the
+    /// parent: pressing stop on the conversation stops the parent, and the
+    /// parent stops its helper.
+    ///
+    /// Returns the findings, the sources the helper cited, and whether it read
+    /// anything written outside the vault.
+    async fn delegate<R: tauri::Runtime>(
+        &self,
+        parent: &mut Run,
+        req: &DriveRequest<'_, R>,
+        stop: &Arc<AtomicBool>,
+        goal: &str,
+        tainted: bool,
+    ) -> AppResult<(String, Vec<crate::models::syn::SourceRef>, bool)> {
+        if goal.is_empty() {
+            return Err(crate::error::AppError::General(
+                "Say what the helper should do: `goal` is the whole job, and it sees nothing else.".into(),
+            ));
+        }
+
+        let mut child = Run::new(goal, None, crate::syn::delegate::budget_for(parent));
+        child.parent_run_id = Some(parent.id.clone());
+        child.surface = parent.surface;
+        child.thread = parent.thread.clone();
+        // Started by a run that had read something, it starts as one.
+        child.read_untrusted = tainted;
+
+        let today = chrono::Local::now().format("%A, %Y-%m-%d").to_string();
+        let history = vec![
+            SynMessage {
+                id: "system".into(),
+                role: "system".into(),
+                content: crate::syn::delegate::system_prompt(&today),
+                model: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                tokens: None,
+                duration_ms: None,
+                sources: None,
+                footing: None,
+                tool_calls_log: None,
+                images: None,
+                plan: None,
+            },
+            SynMessage {
+                id: "goal".into(),
+                role: "user".into(),
+                content: goal.to_string(),
+                model: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                tokens: None,
+                duration_ms: None,
+                sources: None,
+                footing: None,
+                tool_calls_log: None,
+                images: None,
+                plan: None,
+            },
+        ];
+        let message_id = uuid::Uuid::new_v4().to_string();
+        let child_req = DriveRequest {
+            app: req.app,
+            message_id: &message_id,
+            history: &history,
+            model: req.model,
+            temperature: req.temperature,
+            registry: req.registry,
+            db: req.db,
+            vault_path: req.vault_path,
+            num_ctx: req.num_ctx,
+            max_history: req.max_history,
+            browser: req.browser,
+            resume_call: None,
+        };
+
+        // Stop, passed down. The helper registers its own flag; this watches
+        // the parent's and trips the helper's when it goes.
+        let child_id = child.id.clone();
+        let answer = {
+            let driving = Box::pin(self.drive(&mut child, child_req));
+            let watching = async {
+                while !stop.load(Ordering::SeqCst) {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+                stop_run(&child_id);
+            };
+            tokio::pin!(driving);
+            tokio::select! {
+                answered = &mut driving => answered,
+                _ = watching => driving.await,
+            }
+        };
+
+        // Its spending is the parent's spending.
+        parent.spent.tokens = parent.spent.tokens.saturating_add(child.spent.tokens);
+        parent.note(
+            parent.spent.iterations.saturating_sub(1),
+            format!(
+                "Handed work to helper run {} ({} round(s), {} tool call(s)).",
+                child.id, child.spent.iterations, child.spent.tool_calls
+            ),
+        );
+
+        let answer = answer?;
+        let content = crate::syn::delegate::findings(&child, &answer.content);
+        Ok((content, answer.sources.unwrap_or_default(), child.read_untrusted))
     }
 
     /// The window the next request has to fit, in tokens.
@@ -2781,6 +2963,9 @@ mod driving {
         /// what a hosted provider would: Gemini refuses a request ending on a
         /// model turn, and OpenAI one with a tool call left unanswered.
         last_roles: Mutex<Vec<String>>,
+        /// Every request's history, as (role, content), for a test that needs
+        /// to see what a run was given rather than what it did.
+        histories: Mutex<Vec<Vec<(String, String)>>>,
         vault: String,
         run_id: String,
     }
@@ -2793,6 +2978,7 @@ mod driving {
                 transcript_seen: Mutex::new(Vec::new()),
                 before_reply: Mutex::new(None),
                 last_roles: Mutex::new(Vec::new()),
+                histories: Mutex::new(Vec::new()),
                 vault: vault.to_string(),
                 run_id: run_id.to_string(),
             }
@@ -2812,6 +2998,10 @@ mod driving {
             if let Some(last) = req.messages.last() {
                 self.last_roles.lock().expect("lock").push(last.role.clone());
             }
+            self.histories
+                .lock()
+                .expect("lock")
+                .push(req.messages.iter().map(|m| (m.role.clone(), m.content.clone())).collect());
         }
 
         /// `tools_offered` is what a real model sees, and it changes what a
@@ -4941,6 +5131,131 @@ mod driving {
             "{:?}",
             run.steps
         );
+    }
+
+    // ── handing work over, and carrying on ─────────────────────────
+
+    /// A helper does its reading in a run of its own, and its parent gets back
+    /// the findings — one tool result — however much the helper read.
+    #[tokio::test]
+    async fn a_helper_reads_in_its_own_run_and_hands_back_only_what_it_found() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+
+        let mut run = Run::new("tóm tắt ghi chú", Some("conv-helper".into()), budget(6));
+        let provider = std::sync::Arc::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                // The parent hands the job over.
+                calls(crate::syn::delegate::TOOL, serde_json::json!({ "goal": "đọc note Giữ lại và tóm tắt" })),
+                // The helper reads, tries to change something, then reports.
+                calls("get_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
+                calls("trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
+                text("Note Giữ lại (Notes/keep.md): nội dung là \"quan trọng\"."),
+                // The parent answers from the findings.
+                text("Note đó ghi là quan trọng."),
+            ],
+        ));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("tóm tắt ghi chú"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 65_536,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        assert_eq!(run.state, RunState::Done);
+        let handed = run.steps.iter().find(|s| s.tool.as_deref() == Some(crate::syn::delegate::TOOL)).expect("handed over");
+        assert_eq!(handed.ok, Some(true), "{handed:?}");
+        let back: serde_json::Value = serde_json::from_str(&handed.preview).expect("json");
+        assert!(back["findings"].as_str().unwrap().contains("quan trọng"), "{back}");
+
+        // The helper's transcript is its own, linked back, and read-only.
+        let helper_id = back["helper_run"].as_str().expect("an id");
+        let helper = crate::syn::run::get_run(&vault, helper_id).expect("on disk");
+        assert_eq!(helper.parent_run_id.as_deref(), Some(run.id.as_str()));
+        assert_eq!(helper.state, RunState::Done);
+        assert!(helper.steps.iter().any(|s| s.tool.as_deref() == Some("get_node")));
+        assert!(helper.steps.iter().any(|s| s.kind == StepKind::Note && s.preview.starts_with("Refused `trash_node`")));
+        assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
+
+        // The parent's own history never held what the helper read.
+        let parent_last = provider.histories.lock().expect("lock").last().cloned().expect("asked");
+        assert!(!parent_last.iter().any(|(role, content)| role == "tool" && content.contains("\"title\"")), "{parent_last:?}");
+    }
+
+    /// Carrying on after permission starts from what the stopped run had
+    /// done, not from the question: its rounds go back into the history.
+    #[tokio::test]
+    async fn carrying_on_starts_from_what_the_stopped_run_had_done() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+
+        let mut stopped = Run::new("đọc genk rồi so với note", Some("conv-resume".into()), budget(6));
+        stopped.record_tool(
+            0,
+            "get_node",
+            serde_json::json!({ "node_id": "Notes/keep.md" }),
+            true,
+            crate::syn::registry::Reversal::Nothing,
+            "{\"id\":\"Notes/keep.md\",\"content\":\"quan trọng\"}",
+            3,
+        );
+        stopped.finish(RunState::AwaitingConsent);
+        crate::syn::run::save_run_best_effort(&vault, &stopped);
+
+        let mut run = Run::new("đọc genk rồi so với note", Some("conv-resume".into()), budget(6));
+        run.resumed_from = Some(stopped.id.clone());
+        let provider = std::sync::Arc::new(Scripted::new(&vault, &run.id, vec![text("so sánh xong")]));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("đọc genk rồi so với note"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        let first = provider.histories.lock().expect("lock").first().cloned().expect("asked");
+        let roles: Vec<&str> = first.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(roles, vec!["user", "assistant", "tool"], "question, then what was done: {first:?}");
+        assert!(first[2].1.contains("quan trọng"));
     }
 
     /// The same words typed by the user are the user asking.

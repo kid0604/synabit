@@ -1,6 +1,7 @@
 pub mod board;
 pub mod context;
 pub mod conversation;
+pub mod delegate;
 pub mod ambiguity;
 pub mod answer;
 pub mod audit;
