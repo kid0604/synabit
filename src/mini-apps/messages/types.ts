@@ -239,8 +239,95 @@ export interface Run {
   spent: Spent;
   steps: RunStep[];
   error?: string | null;
+  /**
+   * What the prompt carried. Absent on a run written before this was measured,
+   * which is not the same as zero — see `Run::memory_lines_sent`.
+   */
+  memory_lines_sent?: number;
+  memory_dropped?: number;
+  /** Sections `PromptPlan::fit` cut whole, by `PromptSectionKind`. */
+  sections_dropped?: PromptSectionKind[];
+  /** Absent when retrieval is switched off. */
+  retrieval_ms?: number;
+  skills_indexed?: number;
   created_at: string;
   updated_at: string;
+}
+
+// ─── How often what Syn has fires ────────────────────────────
+//
+// Mirrors `syn::stats`. Counted on this device from the runs in the vault and
+// never sent anywhere.
+
+/** How many rounds runs took. */
+export interface RoundBuckets {
+  none: number;
+  one: number;
+  two: number;
+  three_to_five: number;
+  six_to_ten: number;
+  over_ten: number;
+}
+
+/** Which limit stopped a `budget_exhausted` run. `unknown` is read, not guessed. */
+export type CeilingKind = 'iterations' | 'tool_calls' | 'tokens' | 'wall_ms' | 'unknown';
+
+export interface ToolFiring {
+  tool: string;
+  /** Every call, errors included. */
+  calls: number;
+  /** Runs in which it succeeded at least once. */
+  runs: number;
+}
+
+export interface StatsPeriod {
+  runs: number;
+  by_surface: Partial<Record<RunSurface, number>>;
+  rounds: RoundBuckets;
+  ended: Partial<Record<RunState, number>>;
+  ceilings: Partial<Record<CeilingKind, number>>;
+  tools: ToolFiring[];
+  memory: {
+    /** Runs whose prompt was measured — the denominator. */
+    measured: number;
+    with_memory: number;
+    lines_sent: number;
+    lines_dropped: number;
+    avg_lines: number | null;
+  };
+  prompt: {
+    measured: number;
+    any_dropped: number;
+    by_section: Partial<Record<PromptSectionKind, number>>;
+  };
+  skills: {
+    measured: number;
+    offered: number;
+    loaded: number;
+    usage: { name: string; runs: number; last_run: string; last_at: string }[];
+  };
+  retrieval: { measured: number; avg_ms: number | null; max_ms: number | null };
+  tokens: number;
+  tokens_cached: number;
+  footing: { measured: number; grounded: number; inferred: number; guessing: number; unmeasured: number };
+}
+
+export interface DayTokens {
+  /** `YYYY-MM-DD`, in the viewer's timezone. */
+  day: string;
+  runs: number;
+  tokens: number;
+  tokens_cached: number;
+}
+
+export interface SynStats {
+  recent_days: number;
+  recent: StatsPeriod;
+  on_disk: StatsPeriod;
+  /** Every day of the recent window, oldest first, empty days included. */
+  by_day: DayTokens[];
+  oldest: string | null;
+  kept: number;
 }
 
 /** A run as a list needs it: everything except the transcript. */

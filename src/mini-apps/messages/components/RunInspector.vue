@@ -25,6 +25,7 @@ import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemor
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
 import { captureFocus } from '../../../shared/syn/focus';
+import SynStats from './SynStats.vue';
 import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard, Run, Capability } from '../types';
 import { capabilityLabel } from '../composables/useSynConsent';
 
@@ -56,8 +57,15 @@ const {
   loadRuns, openRun, cancelRun, deleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
 
-type Tab = 'runs' | 'prompt' | 'tools' | 'memory' | 'skills' | 'permissions';
+type Tab = 'runs' | 'prompt' | 'tools' | 'memory' | 'skills' | 'permissions' | 'numbers';
 const tab = ref<Tab>('runs');
+
+/**
+ * The Numbers tab: how often memory, skills and Syn's own tools actually fire,
+ * counted from the runs on this device. Its own component, loading itself on
+ * show, so this panel only has to hold a handle for the refresh button.
+ */
+const statsView = ref<InstanceType<typeof SynStats> | null>(null);
 
 const {
   memories, proposals, budget, error: memoryError,
@@ -496,7 +504,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">
             <button
-              v-for="option in (['runs', 'prompt', 'tools', 'memory', 'skills', 'permissions'] as Tab[])"
+              v-for="option in (['runs', 'prompt', 'tools', 'memory', 'skills', 'permissions', 'numbers'] as Tab[])"
               :key="option"
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
@@ -512,7 +520,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           <button
             class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
-            @click="tab === 'runs' ? loadRuns() : tab === 'tools' ? loadTools() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : showPrompt(previewQuestion)"
+            @click="tab === 'runs' ? loadRuns() : tab === 'tools' ? loadTools() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : tab === 'numbers' ? statsView?.load() : showPrompt(previewQuestion)"
           >
             <Loader2 v-if="isLoading" class="w-4 h-4 animate-spin" />
             <RefreshCw v-else class="w-4 h-4" />
@@ -1298,6 +1306,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           </li>
         </ul>
       </div>
+
+      <!-- ── Numbers ──────────────────────────────────────── -->
+      <SynStats v-else-if="tab === 'numbers'" ref="statsView" :vault-path="vaultPath" />
 
       <!-- ── Prompt ───────────────────────────────────────── -->
       <div v-else class="flex-1 overflow-y-auto p-6">
