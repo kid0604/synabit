@@ -122,12 +122,16 @@ mod tests {
             serde_json::to_value(SynProvider::Gemini).expect("serialises"),
             serde_json::json!("gemini")
         );
+        assert_eq!(
+            serde_json::to_value(SynProvider::Anthropic).expect("serialises"),
+            serde_json::json!("anthropic")
+        );
 
         // And the other side actually writes them. Checking the Rust names
         // alone would pass while the TypeScript union still lacked one — and a
         // provider missing there is a `<select>` whose value Vue cannot bind.
         let ts = include_str!("../../../src/mini-apps/messages/composables/useSynSettings.ts");
-        for provider in [SynProvider::Ollama, SynProvider::OpenAiCompat, SynProvider::Gemini] {
+        for provider in [SynProvider::Ollama, SynProvider::OpenAiCompat, SynProvider::Gemini, SynProvider::Anthropic] {
             let name = serde_json::to_value(provider).expect("serialises");
             let quoted = format!("'{}'", name.as_str().expect("a string"));
             assert!(ts.contains(&quoted), "useSynSettings.ts does not know {quoted}");
@@ -174,6 +178,7 @@ mod tests {
             SynProvider::Ollama.key_slot(),
             SynProvider::OpenAiCompat.key_slot(),
             SynProvider::Gemini.key_slot(),
+            SynProvider::Anthropic.key_slot(),
         ];
         let unique: std::collections::HashSet<_> = slots.iter().collect();
         assert_eq!(unique.len(), slots.len(), "{slots:?}");
@@ -186,6 +191,7 @@ mod tests {
         assert!(SynProvider::Ollama.is_local());
         assert!(!SynProvider::OpenAiCompat.is_local());
         assert!(!SynProvider::Gemini.is_local());
+        assert!(!SynProvider::Anthropic.is_local());
     }
 
     /// The two default tables have to agree.

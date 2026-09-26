@@ -174,6 +174,31 @@ impl OllamaProvider {
         }
     }
 
+    /// POST `/api/chat`, asking again after a transient failure.
+    ///
+    /// Mostly this is a connection refused while Ollama is still starting, or
+    /// a 503 while it loads a model into memory. `Ok(None)` is stopped. See
+    /// `provider::retry`.
+    async fn post(
+        &self,
+        req: &ChatRequest<'_>,
+        stream: bool,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<Option<reqwest::Response>> {
+        let url = format!("{}/api/chat", self.base_url);
+        let body = self.body(req, stream);
+        crate::syn::provider::retry::send(
+            "Ollama",
+            stop,
+            &|| self.client.post(&url).json(&body),
+            &|e| AppError::General(format!("Failed to connect to Ollama for chat: {}", e)),
+            &|status, body| {
+                AppError::General(format!("Ollama /api/chat returned status {}: {}", status, body))
+            },
+        )
+        .await
+    }
+
     /// Pull (download) a model via POST /api/pull with streaming progress events.
     pub async fn pull_model(&self, app: &tauri::AppHandle, model_name: &str) -> AppResult<()> {
         let url = format!("{}/api/pull", self.base_url);
@@ -348,33 +373,33 @@ impl ChatProvider for OllamaProvider {
     }
 
     async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
-        let url = format!("{}/api/chat", self.base_url);
+        self.chat_stoppable(req, &crate::syn::provider::retry::never).await
+    }
 
+    /// Stoppable, and this is the provider that needs it most: Ollama cannot
+    /// stream tool calls, so every tool-using turn is this call, and a local
+    /// model can spend minutes on one. Dropping the request closes the
+    /// connection, and Ollama stops generating when its client goes away.
+    async fn chat_stoppable(
+        &self,
+        req: ChatRequest<'_>,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<ChatReply> {
         log::info!(
             "[Syn] Non-streaming call to Ollama with {} messages",
             req.messages.len()
         );
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(&self.body(&req, false))
-            .send()
-            .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to connect to Ollama for tool call: {}", e))
-            })?;
+        let Some(resp) = self.post(&req, false, stop).await? else {
+            return Ok(ChatReply::default());
+        };
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::General(format!(
-                "Ollama /api/chat (non-streaming) returned status {}: {}",
-                status, body
-            )));
-        }
-
-        let chunk: OllamaChatChunk = resp.json().await.map_err(|e| {
+        let Some(read) =
+            crate::syn::provider::retry::unless_stopped(stop, resp.json::<OllamaChatChunk>()).await
+        else {
+            return Ok(ChatReply::default());
+        };
+        let chunk = read.map_err(|e| {
             AppError::General(format!(
                 "Failed to parse Ollama non-streaming response: {}",
                 e
@@ -405,32 +430,19 @@ impl ChatProvider for OllamaProvider {
         req: ChatRequest<'_>,
         sink: &StreamSink<'_>,
     ) -> AppResult<ChatReply> {
-        let url = format!("{}/api/chat", self.base_url);
-
-        let resp = self
-            .client
-            .post(&url)
-            .json(&self.body(&req, true))
-            .send()
-            .await
-            .map_err(|e| {
-                AppError::General(format!("Failed to connect to Ollama for chat: {}", e))
-            })?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(AppError::General(format!(
-                "Ollama /api/chat returned status {}: {}",
-                status, body
-            )));
-        }
+        let Some(resp) = self.post(&req, true, sink.stop_requested).await? else {
+            return Ok(ChatReply::default());
+        };
 
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         let mut reply = ChatReply::default();
 
-        while let Some(chunk_result) = stream.next().await {
+        // Racing the stop flag, so a model that has gone quiet mid-answer —
+        // a laptop swapping, a model still loading — can still be stopped.
+        while let Some(Some(chunk_result)) =
+            crate::syn::provider::retry::unless_stopped(sink.stop_requested, stream.next()).await
+        {
             if (sink.stop_requested)() {
                 break;
             }

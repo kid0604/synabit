@@ -21,14 +21,24 @@
 //!   `functionResponse` parts in a `user` turn, the system prompt is a separate
 //!   `systemInstruction`, and every function call carries a signature that has
 //!   to come back verbatim. See `gemini`.
+//! - Anthropic has no `tool` role either, and no system message in the list:
+//!   results are `tool_result` blocks in a `user` turn, the system prompt is a
+//!   top-level `system`, and a thinking block has to come back, signed, before
+//!   the calls it led to. See `anthropic`.
 //!
 //! Streaming is a callback rather than a `Stream`, so the trait stays
 //! object-safe and the caller keeps deciding what a token means — today that
 //! is a Tauri event, and the provider does not need to know it.
+//!
+//! What is shared rather than per provider: asking again after a transient
+//! failure (`retry`), and what a given model can do (`capability`).
 
+pub mod anthropic;
+pub mod capability;
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
+pub mod retry;
 
 use async_trait::async_trait;
 
@@ -76,7 +86,8 @@ pub struct ChatRequest<'a> {
     pub num_ctx: u32,
     pub tools: Option<&'a [ToolDefinition]>,
     /// A JSON schema the reply must follow, where the provider can be held to
-    /// one: Ollama's `format`, OpenAI's `response_format`, Gemini's JSON mode.
+    /// one: Ollama's `format`, OpenAI's `response_format`, Gemini's JSON mode,
+    /// Anthropic's `output_config.format`.
     /// A server that does not know the field may refuse the request, so a
     /// caller that sets it asks again without on an error.
     pub json_schema: Option<&'a serde_json::Value>,
@@ -191,6 +202,34 @@ pub trait ChatProvider: Send + Sync {
     /// including any `tool_calls`, before it can decide what to do next.
     async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply>;
 
+    /// The same, abandoned the moment `stop` says so.
+    ///
+    /// # Why a second method rather than a parameter on `chat`
+    ///
+    /// `chat` has no way to hear the stop button. `chat_streaming` does —
+    /// `StreamSink::stop_requested` — but the non-streaming call is the one
+    /// the tool loop makes on Ollama, the provider that cannot stream tool
+    /// calls, and a local model can take minutes over one turn. Changing
+    /// `chat` itself would touch every caller in the app, most of which (a
+    /// narration, a reflection, the timeline reader) have no stop button to
+    /// pass. So this is the stoppable variant, and `chat` is it with a flag
+    /// that never goes up.
+    ///
+    /// A stopped call answers with an empty reply rather than an error: the
+    /// person asked for it, and the engine reads an empty reply after a stop as
+    /// a clean cancellation.
+    ///
+    /// The default waits the call out, for a provider — a test double, mostly —
+    /// that has nothing to cancel.
+    async fn chat_stoppable(
+        &self,
+        req: ChatRequest<'_>,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<ChatReply> {
+        let _ = stop;
+        self.chat(req).await
+    }
+
     /// One completion, delivered token by token through `sink`.
     async fn chat_streaming(
         &self,
@@ -239,6 +278,7 @@ pub fn for_settings(
             settings.openai_reasoning_effort.clone(),
         )),
         SynProvider::Gemini => Box::new(gemini::GeminiProvider::new(api_key)),
+        SynProvider::Anthropic => Box::new(anthropic::AnthropicProvider::new(api_key)),
     }
 }
 

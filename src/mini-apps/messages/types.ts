@@ -315,7 +315,7 @@ export interface PromptPreview {
    * Which provider this vault answers with. The small-window warning is about
    * Ollama's default window and is shown for Ollama only.
    */
-  provider: 'ollama' | 'open_ai_compat' | 'gemini';
+  provider: 'ollama' | 'open_ai_compat' | 'gemini' | 'anthropic';
 }
 
 export interface ToolPayload {
