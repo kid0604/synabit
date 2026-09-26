@@ -218,6 +218,9 @@ impl VaultTools {
             // the power handing over needs, which is none of its own.
             crate::syn::delegate::TOOL => VaultRead,
 
+            // Loads a group of tools for the run. Touches nothing.
+            crate::syn::toolset::FIND_TOOL => VaultRead,
+
             // `run_recipe` is the union of whatever its steps do, which cannot
             // be declared statically — so the format refuses the structural
             // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
@@ -614,6 +617,7 @@ mod tests {
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
             crate::syn::delegate::TOOL,
+            crate::syn::toolset::FIND_TOOL,
         ];
 
         for name in declared {
@@ -827,7 +831,7 @@ mod tests {
         // tools kept for large windows are not in it. See `LARGE_WINDOW_ONLY`.
         let cards: Vec<_> = catalogue(&crate::syn::consent::Ledger::default(), NOW)
             .into_iter()
-            .filter(|c| !crate::syn::tools::LARGE_WINDOW_ONLY.contains(&c.name.as_str()))
+            .filter(|c| crate::syn::tools::always_sent(&c.name))
             .collect();
         let parts: usize = cards.iter().map(|c| c.chars).sum();
         let whole = crate::syn::tools::payload_cost().chars;

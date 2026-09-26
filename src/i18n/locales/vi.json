@@ -2473,7 +2473,8 @@
     "weekday_7": "CN",
     "activity_from_routine": "định kỳ",
     "stats_skills_injected": "Kỹ năng Syn tự chọn cho câu hỏi",
-    "stats_skills_injected_why": "Số lượt câu hỏi khớp một kỹ năng đủ rõ để Syn tự đưa vào, không cần model gọi. Cộng với số lượt nạp ở trên, đây là mức kỹ năng thực sự được dùng."
+    "stats_skills_injected_why": "Số lượt câu hỏi khớp một kỹ năng đủ rõ để Syn tự đưa vào, không cần model gọi. Cộng với số lượt nạp ở trên, đây là mức kỹ năng thực sự được dùng.",
+    "doing_find_tools": "Lấy thêm công cụ"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",

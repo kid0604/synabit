@@ -20,6 +20,7 @@ const NAMED_BY_CONSTANT: Record<string, string> = {
   RUN_TOOL: 'run_recipe',
   // `crate::syn::delegate::TOOL`, whose module names it.
   TOOL: 'delegate',
+  FIND_TOOL: 'find_tools',
 };
 
 const declared = (): string[] => {

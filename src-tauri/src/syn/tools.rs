@@ -531,7 +531,14 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// read have been shortened to fit the window. This is the last raise that
 /// should happen by adding to one list: past this, tools have to be offered
 /// by need rather than all at once (roadmap, phase F).
-pub const PAYLOAD_BUDGET_CHARS: usize = 20_300;
+/// # Down to 9,600, because most tools stopped being sent every turn
+///
+/// The core — what every turn is sent — measured 9,005 characters, about
+/// 2,250 tokens, against 20,300 for everything. The rest arrive in groups when
+/// a question wants them (`syn::toolset`), so this budget now guards the core
+/// alone, and the next tool added to it has to argue its case against a
+/// number that small. A tool that belongs in a group goes in one.
+pub const PAYLOAD_BUDGET_CHARS: usize = 9_600;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -557,12 +564,19 @@ pub fn offered_at(tool: &str, window_tokens: u32) -> bool {
     window_tokens >= LARGE_WINDOW_TOKENS || !LARGE_WINDOW_ONLY.contains(&tool)
 }
 
+/// Whether a tool is in every turn: core, and not kept for large windows.
+/// What `PAYLOAD_BUDGET_CHARS` measures. See `syn::toolset`.
+pub fn always_sent(tool: &str) -> bool {
+    !LARGE_WINDOW_ONLY.contains(&tool) && crate::syn::toolset::group_of(tool) == crate::syn::toolset::Group::Core
+}
+
 pub fn payload_cost() -> crate::syn::prompt::ToolPayload {
-    // What every model is sent, the smallest included: the tools kept for
-    // large windows are left out, since the budget is about the small ones.
+    // What every turn is sent, the smallest model's included: the core. The
+    // groups arrive when a question wants them (`syn::toolset`), and the tools
+    // kept for large windows never reach a small one.
     let definitions: Vec<ToolDefinition> = get_tool_definitions()
         .into_iter()
-        .filter(|d| !LARGE_WINDOW_ONLY.contains(&d.function.name.as_str()))
+        .filter(|d| always_sent(&d.function.name))
         .collect();
     let chars = serde_json::to_string(&definitions).map(|s| s.len()).unwrap_or(0);
     crate::syn::prompt::ToolPayload {
@@ -917,6 +931,20 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "properties": {
                         "what": { "type": "string", "description": "An address, a link's number, `more`, a heading to jump to, or words to search for." },
                         "site": { "type": "string", "description": "The site the question is about, as a domain you are sure of: genk.vn, this-week-in-rust.org." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: crate::syn::toolset::FIND_TOOL.to_string(),
+                description: "Load more tools. Groups: finance, feeds, files, boards, timeline, history (trash, versions), structure (rename or remove fields and kinds), past (your earlier runs), and mcp:<server> for connected servers. Pass a group or what you need; the tools arrive on your next step.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["need"],
+                    "properties": {
+                        "need": { "type": "string", "description": "A group name, or what you need them for." }
                     }
                 }),
             },
@@ -1283,7 +1311,10 @@ pub fn execute_tool<R: tauri::Runtime>(
         name if name == LOOK_BACK_TOOL => tool_look_back(ctx, args),
         // Not here: this one is async, and `execute_tool` is not. The engine
         // runs it before reaching this table — see `SynEngine::drive`.
-        name if name == BROWSE_TOOL || name == PLAN_TOOL || name == crate::syn::delegate::TOOL => Err(AppError::General(
+        name if name == BROWSE_TOOL
+            || name == PLAN_TOOL
+            || name == crate::syn::delegate::TOOL
+            || name == crate::syn::toolset::FIND_TOOL => Err(AppError::General(
             format!("{name} is driven by the engine, not by this table"),
         )),
 
@@ -4680,7 +4711,7 @@ mod tests {
         let cost = payload_cost();
         let defs: Vec<ToolDefinition> = get_tool_definitions()
             .into_iter()
-            .filter(|d| !LARGE_WINDOW_ONLY.contains(&d.function.name.as_str()))
+            .filter(|d| always_sent(&d.function.name))
             .collect();
         assert_eq!(cost.count, defs.len());
         assert_eq!(cost.chars, serde_json::to_string(&defs).expect("serialises").len());
@@ -5204,7 +5235,7 @@ mod tests {
         // Not a store at all: the run's own list of steps, which the user
         // watches and the model keeps while its results are shortened to fit.
         // Nothing in the vault is touched, so no generic tool could do it.
-        let the_run = [PLAN_TOOL, crate::syn::delegate::TOOL];
+        let the_run = [PLAN_TOOL, crate::syn::delegate::TOOL, crate::syn::toolset::FIND_TOOL];
         for tool in the_run {
             assert!(names.contains(&tool), "{tool} is missing");
         }

@@ -519,7 +519,7 @@ impl SynEngine {
         // And a tool that only pays for itself in a large window is not sent
         // to a small one. See `tools::LARGE_WINDOW_ONLY`.
         let room = self.window_tokens(req);
-        let tools: Vec<_> = req
+        let all_tools: Vec<_> = req
             .registry
             .definitions(&ctx)
             .into_iter()
@@ -532,6 +532,35 @@ impl SynEngine {
                     )
             })
             .collect();
+
+        // Of those, what this turn is sent: the core, and the groups the
+        // question's words bring. More arrive when the model asks with
+        // `find_tools`, or calls one it was not sent. See `syn::toolset`.
+        let servers: Vec<(String, String)> = all_tools
+            .iter()
+            .filter_map(|t| match crate::syn::toolset::group_of(&t.function.name) {
+                crate::syn::toolset::Group::Mcp(slug) => Some((slug.clone(), slug)),
+                _ => None,
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let question = req
+            .history
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.content.clone())
+            .unwrap_or_default();
+        let mut loaded = crate::syn::toolset::for_question(&question, &servers);
+        let select = |loaded: &std::collections::BTreeSet<crate::syn::toolset::Group>| -> Vec<_> {
+            all_tools
+                .iter()
+                .filter(|t| crate::syn::toolset::offered(&t.function.name, loaded))
+                .cloned()
+                .collect()
+        };
+        let mut tools = select(&loaded);
 
         // Taken on the first turn and gone thereafter: this is one call being
         // carried over, not a mode the run stays in.
@@ -867,10 +896,70 @@ impl SynEngine {
                             Err(e) => Err(e),
                         }
                     }
+                    crate::syn::gate::How::FindTools => {
+                        let need = tc
+                            .function
+                            .arguments
+                            .get("need")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        let known: Vec<_> = all_tools
+                            .iter()
+                            .map(|t| crate::syn::toolset::group_of(&t.function.name))
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .collect();
+                        let found = crate::syn::toolset::found(need, &known);
+                        loaded.extend(found.iter().cloned());
+                        tools = select(&loaded);
+                        let brought: Vec<serde_json::Value> = found
+                            .iter()
+                            .map(|g| {
+                                serde_json::json!({
+                                    "group": g.name(),
+                                    "tools": all_tools
+                                        .iter()
+                                        .filter(|t| crate::syn::toolset::group_of(&t.function.name) == *g)
+                                        .map(|t| t.function.name.clone())
+                                        .collect::<Vec<_>>(),
+                                })
+                            })
+                            .collect();
+                        let groups: Vec<serde_json::Value> = known
+                            .iter()
+                            .filter(|g| **g != crate::syn::toolset::Group::Core)
+                            .map(|g| serde_json::json!({ "group": g.name(), "for": g.about() }))
+                            .collect();
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content: if brought.is_empty() {
+                                serde_json::json!({
+                                    "loaded": [],
+                                    "note": "Nothing matched. These are the groups; ask for one by name.",
+                                    "groups": groups,
+                                })
+                            } else {
+                                serde_json::json!({
+                                    "loaded": brought,
+                                    "note": "These tools are available from your next step.",
+                                })
+                            }
+                            .to_string(),
+                            reversal: crate::syn::registry::Reversal::Nothing,
+                        })
+                    }
                     crate::syn::gate::How::Execute => {
                         req.registry.execute(&ctx, &tc.function.name, &tc.function.arguments)
                     }
                 };
+
+                // A tool called by name that this turn was not sent — the
+                // prompt still names several — brings its group for the rest
+                // of the run.
+                let used = crate::syn::toolset::group_of(&tc.function.name);
+                if !loaded.contains(&used) && all_tools.iter().any(|t| t.function.name == tc.function.name) {
+                    loaded.insert(used);
+                    tools = select(&loaded);
+                }
 
                 let (content, reversal) = match outcome {
                     Ok(o) => (o.content, o.reversal),
@@ -2966,6 +3055,8 @@ mod driving {
         /// Every request's history, as (role, content), for a test that needs
         /// to see what a run was given rather than what it did.
         histories: Mutex<Vec<Vec<(String, String)>>>,
+        /// The tools each request was sent, by name.
+        offered: Mutex<Vec<Vec<String>>>,
         vault: String,
         run_id: String,
     }
@@ -2979,6 +3070,7 @@ mod driving {
                 before_reply: Mutex::new(None),
                 last_roles: Mutex::new(Vec::new()),
                 histories: Mutex::new(Vec::new()),
+                offered: Mutex::new(Vec::new()),
                 vault: vault.to_string(),
                 run_id: run_id.to_string(),
             }
@@ -3002,6 +3094,9 @@ mod driving {
                 .lock()
                 .expect("lock")
                 .push(req.messages.iter().map(|m| (m.role.clone(), m.content.clone())).collect());
+            self.offered.lock().expect("lock").push(
+                req.tools.map(|t| t.iter().map(|d| d.function.name.clone()).collect()).unwrap_or_default(),
+            );
         }
 
         /// `tools_offered` is what a real model sees, and it changes what a
@@ -5256,6 +5351,71 @@ mod driving {
         let roles: Vec<&str> = first.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(roles, vec!["user", "assistant", "tool"], "question, then what was done: {first:?}");
         assert!(first[2].1.contains("quan trọng"));
+    }
+
+    // ── which tools a turn is sent ─────────────────────────────────
+
+    async fn offered_for(ask: &str, script: Vec<ChatReply>) -> Vec<Vec<String>> {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+        let mut run = Run::new(ask, Some("conv-tools".into()), budget(4));
+        let provider = std::sync::Arc::new(Scripted::new(&vault, &run.id, script));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history(ask),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+        let offered = provider.offered.lock().expect("lock").clone();
+        offered
+    }
+
+    /// A plain question is sent the core; one about money brings the finance
+    /// tools with it, before the model has had to think of them.
+    #[tokio::test]
+    async fn the_question_decides_which_tools_come_with_it() {
+        let plain = offered_for("tóm tắt note họp", vec![text("xong")]).await;
+        assert!(plain[0].contains(&"query_nodes".to_string()));
+        assert!(!plain[0].contains(&"search_finance".to_string()), "{:?}", plain[0]);
+        assert!(plain[0].contains(&crate::syn::toolset::FIND_TOOL.to_string()));
+
+        let money = offered_for("tháng này tôi tiêu bao nhiêu tiền", vec![text("xong")]).await;
+        assert!(money[0].contains(&"search_finance".to_string()), "{:?}", money[0]);
+    }
+
+    /// And the model can ask for a group the words did not bring; it arrives
+    /// on the next step and stays.
+    #[tokio::test]
+    async fn find_tools_brings_a_group_for_the_next_step() {
+        let offered = offered_for(
+            "tóm tắt note họp",
+            vec![
+                calls(crate::syn::toolset::FIND_TOOL, serde_json::json!({ "need": "history" })),
+                text("xong"),
+            ],
+        )
+        .await;
+        assert!(!offered[0].contains(&"list_trash".to_string()));
+        assert!(offered[1].contains(&"list_trash".to_string()), "{:?}", offered[1]);
     }
 
     /// The same words typed by the user are the user asking.

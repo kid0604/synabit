@@ -120,6 +120,8 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "update_plan",
     // A helper that may only read; what it reads taints this run in turn.
     "delegate",
+    // Loads more tools; each is weighed again when it is called.
+    "find_tools",
 ];
 
 pub fn allowed_after_reading(tool: &str) -> bool {

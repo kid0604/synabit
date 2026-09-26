@@ -95,6 +95,8 @@ pub enum How {
     Plan,
     /// Hand the work to a sub-run. See `syn::delegate`.
     Delegate,
+    /// Load a group of tools. See `syn::toolset`.
+    FindTools,
     /// Answered with this refusal, but recorded as a call the run made — it is
     /// a budget, not a rule, and the transcript should show it was reached.
     OverSkillBudget(String),
@@ -236,6 +238,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::Plan
     } else if tool == crate::syn::delegate::TOOL {
         How::Delegate
+    } else if tool == crate::syn::toolset::FIND_TOOL {
+        How::FindTools
     } else if tool == crate::syn::skill::LOAD_TOOL && view.skills_opened >= crate::syn::skill::BODIES_PER_RUN {
         // A budget over a run, and the run is what this sees. Refused rather
         // than errored: "not this time, use what you have" is a sentence the
