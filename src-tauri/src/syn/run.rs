@@ -650,6 +650,15 @@ pub struct Run {
     /// transcript instead — see `replay`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resumed_from: Option<String>,
+    /// The skill the harness put in the prompt for this question, when it
+    /// picked one. See `skill::chosen_for`.
+    ///
+    /// Beside `load_skill` calls in the numbers, because "are skills used" is
+    /// now answered two ways — the model reaching for one, or the harness
+    /// handing one over — and counting only the first would report the fix
+    /// for the 0-in-17 as though nothing had changed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_injected: Option<String>,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -770,6 +779,7 @@ impl Run {
             ceiling: None,
             parent_run_id: None,
             resumed_from: None,
+            skill_injected: None,
             pending_consent: None,
             pending_call: None,
             pending_choice: None,

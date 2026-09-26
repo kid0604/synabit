@@ -336,6 +336,14 @@ onMounted(load);
               <dd class="text-[11px] text-gray-500">{{ t('syn.stats_skills_loaded_why') }}</dd>
             </div>
             <div>
+              <dt class="text-xs text-gray-500">{{ t('syn.stats_skills_injected') }}</dt>
+              <dd class="text-sm tabular-nums text-text dark:text-text-dark">
+                {{ num(period.skills.injected) }}
+                <span class="text-xs text-gray-500">{{ pct(period.skills.injected, period.runs) }}</span>
+              </dd>
+              <dd class="text-[11px] text-gray-500">{{ t('syn.stats_skills_injected_why') }}</dd>
+            </div>
+            <div>
               <dt class="text-xs text-gray-500">{{ t('syn.stats_retrieval') }}</dt>
               <dd class="text-sm tabular-nums text-text dark:text-text-dark">
                 <template v-if="period.retrieval.measured">

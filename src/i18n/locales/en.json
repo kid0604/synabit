@@ -2471,7 +2471,9 @@
     "weekday_5": "Fri",
     "weekday_6": "Sat",
     "weekday_7": "Sun",
-    "activity_from_routine": "routine"
+    "activity_from_routine": "routine",
+    "stats_skills_injected": "Skill picked by Syn for the question",
+    "stats_skills_injected_why": "Runs where the question matched a skill closely enough for Syn to hand it over without being asked. With the loads above, this is how often skills are actually used."
   },
   "update": {
     "available": "Synabit {version} is available!",

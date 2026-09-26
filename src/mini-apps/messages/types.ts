@@ -344,6 +344,8 @@ export interface StatsPeriod {
     measured: number;
     offered: number;
     loaded: number;
+    /** Runs whose prompt carried a skill the harness picked. */
+    injected: number;
     usage: { name: string; runs: number; last_run: string; last_at: string }[];
   };
   retrieval: { measured: number; avg_ms: number | null; max_ms: number | null };

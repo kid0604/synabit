@@ -123,10 +123,7 @@ impl Carried {
         run.sections_dropped = self.sections_dropped;
         run.retrieval_ms = self.retrieval_ms;
         run.skills_indexed = Some(self.skills_indexed);
-        // `skill_injected` belongs on the run as `Run::skill_injected:
-        // Option<String>` (serde default, skipped when `None`), written here as
-        // `run.skill_injected = self.skill_injected;`, and counted beside
-        // `skills.loaded` in `stats`. Left for whoever owns `run.rs`.
+        run.skill_injected = self.skill_injected;
     }
 }
 
@@ -208,6 +205,8 @@ pub struct SkillFiring {
     /// `load_skill` call is in the transcript whether or not the prompt was
     /// measured.
     pub loaded: u32,
+    /// Runs whose prompt carried a skill the harness picked for the question.
+    pub injected: u32,
     /// Which skills, by `skill::usage` — the same list the Skills tab reads.
     pub usage: Vec<crate::syn::skill::Usage>,
 }
@@ -385,6 +384,9 @@ fn period(runs: &[Run]) -> Period {
         }
         if run.successful_calls_of(crate::syn::skill::LOAD_TOOL) > 0 {
             out.skills.loaded += 1;
+        }
+        if run.skill_injected.is_some() {
+            out.skills.injected += 1;
         }
 
         if let Some(ms) = run.retrieval_ms {
