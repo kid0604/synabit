@@ -465,17 +465,27 @@ impl OpenAiCompatProvider {
         );
     }
 
-    /// POST the completion, and adapt once if the answer says to.
+    /// POST the completion, adapt if the answer says to, and ask again if the
+    /// server stumbled.
     ///
-    /// The retry is deliberately narrow — one status, one field, one attempt,
-    /// and only when nothing has been streamed yet, which is guaranteed
-    /// because a non-2xx arrives before any body is read.
+    /// Two different kinds of "again", counted apart because they are
+    /// different things. **Adapting** is narrow — one status, one field, once
+    /// each — and changes the request. **Retrying** is `provider::retry`'s: the
+    /// same request after a 429, a 5xx or a dropped connection, with backoff.
+    /// Counting them together would let a server that needed both adaptations
+    /// use up the attempts a rate limit was owed.
+    ///
+    /// Both happen only before anything has been streamed, which is guaranteed
+    /// because a non-2xx arrives before any body is read. `Ok(None)` is stopped.
     async fn send(
         &self,
         req: &ChatRequest<'_>,
         stream: bool,
         what: &str,
-    ) -> AppResult<reqwest::Response> {
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<Option<reqwest::Response>> {
+        use crate::syn::provider::retry;
+
         let url = format!("{}/chat/completions", self.base_url);
         let effort = self.effort_for(req.model);
 
@@ -485,45 +495,66 @@ impl OpenAiCompatProvider {
 
         let mut effort = effort;
         let mut count = self.will_count();
+        let mut adapted = 0;
+        let mut failed = 0;
 
-        // Two things this endpoint may refuse, each learned once and remembered
-        // for the session. At most one retry per refusal, and both are safe to
-        // retry because a non-2xx arrives before any of the body is read, so
-        // nothing has been streamed to anybody yet.
-        for attempt in 0..3 {
-            let resp = post(self.body(req, stream, effort.clone(), count))
-                .await
-                .map_err(|e| {
-                    AppError::General(format!("Failed to connect to {}: {}", self.base_url, e))
-                })?;
+        loop {
+            let Some(sent) = retry::unless_stopped(stop, post(self.body(req, stream, effort.clone(), count))).await
+            else {
+                return Ok(None);
+            };
 
-            if resp.status().is_success() {
-                return Ok(resp);
+            // What went wrong, and how long the server asked for, if it is the
+            // kind of wrong that asking again can fix.
+            let (error, told) = match sent {
+                Ok(resp) if resp.status().is_success() => return Ok(Some(resp)),
+                Ok(resp) => {
+                    let status = resp.status();
+                    let told = retry::told_to_wait(resp.headers());
+                    let body = resp.text().await.unwrap_or_default();
+                    let refused = status == reqwest::StatusCode::BAD_REQUEST;
+
+                    // Two things this endpoint may refuse, each learned once
+                    // and remembered for the session.
+                    if refused && body.contains("stream_options") && count && adapted < 2 {
+                        self.remember_will_not_count();
+                        count = false;
+                        adapted += 1;
+                        continue;
+                    }
+                    if refused && body.contains("reasoning_effort") && effort.is_none() && adapted < 2 {
+                        self.remember_needs_none(req.model);
+                        effort = Some("none".to_string());
+                        adapted += 1;
+                        continue;
+                    }
+
+                    let error = self.explain(status, &body, what);
+                    if !retry::worth_retrying(status.as_u16()) {
+                        return Err(error);
+                    }
+                    (error, told)
+                }
+                Err(e) => {
+                    let transient = retry::transport_worth_retrying(&e);
+                    let error = AppError::General(format!("Failed to connect to {}: {}", self.base_url, e));
+                    if !transient {
+                        return Err(error);
+                    }
+                    (error, None)
+                }
+            };
+
+            failed += 1;
+            if failed >= retry::ATTEMPTS {
+                return Err(error);
             }
-
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            let refused = status == reqwest::StatusCode::BAD_REQUEST;
-
-            if refused && body.contains("stream_options") && count {
-                self.remember_will_not_count();
-                count = false;
-                continue;
+            let wait = retry::wait_before_retry(failed, told, retry::jitter());
+            log::info!("[Syn] {what} failed ({error}); trying again in {:.1}s", wait.as_secs_f64());
+            if !retry::pause(wait, stop).await {
+                return Ok(None);
             }
-            if refused && body.contains("reasoning_effort") && effort.is_none() {
-                self.remember_needs_none(req.model);
-                effort = Some("none".to_string());
-                continue;
-            }
-
-            let _ = attempt;
-            return Err(self.explain(status, &body, what));
         }
-
-        Err(AppError::General(format!(
-            "{} at {} refused every request this could adapt",
-            what, self.base_url
-        )))
     }
 
     /// Turn a non-2xx into a message worth reading.
@@ -641,6 +672,14 @@ impl ChatProvider for OpenAiCompatProvider {
     }
 
     async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
+        self.chat_stoppable(req, &crate::syn::provider::retry::never).await
+    }
+
+    async fn chat_stoppable(
+        &self,
+        req: ChatRequest<'_>,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<ChatReply> {
         log::info!(
             "[Syn] Non-streaming call to {} with {} messages",
             self.base_url,
@@ -648,11 +687,16 @@ impl ChatProvider for OpenAiCompatProvider {
         );
 
         let started = std::time::Instant::now();
-        let resp = self.send(&req, false, "Chat completion").await?;
+        let Some(resp) = self.send(&req, false, "Chat completion", stop).await? else {
+            return Ok(ChatReply::default());
+        };
 
-        let body: OpenAiChatResponse = resp
-            .json()
-            .await
+        let Some(read) =
+            crate::syn::provider::retry::unless_stopped(stop, resp.json::<OpenAiChatResponse>()).await
+        else {
+            return Ok(ChatReply::default());
+        };
+        let body = read
             .map_err(|e| AppError::General(format!("Failed to parse the chat response: {}", e)))?;
 
         let message = body.choices.into_iter().next().and_then(|c| c.message);
@@ -677,14 +721,19 @@ impl ChatProvider for OpenAiCompatProvider {
         sink: &StreamSink<'_>,
     ) -> AppResult<ChatReply> {
         let started = std::time::Instant::now();
-        let resp = self.send(&req, true, "Chat completion").await?;
+        let Some(resp) = self.send(&req, true, "Chat completion", sink.stop_requested).await? else {
+            return Ok(ChatReply::default());
+        };
 
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         let mut reply = ChatReply::default();
         let mut tools = ToolCallAccumulator::default();
 
-        while let Some(chunk_result) = stream.next().await {
+        // Racing the stop flag, so a stream that has gone quiet can be stopped.
+        while let Some(Some(chunk_result)) =
+            crate::syn::provider::retry::unless_stopped(sink.stop_requested, stream.next()).await
+        {
             if (sink.stop_requested)() {
                 break;
             }

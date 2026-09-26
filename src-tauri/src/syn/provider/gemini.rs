@@ -592,7 +592,16 @@ impl GeminiProvider {
         )
     }
 
-    async fn post(&self, req: &ChatRequest<'_>, stream: bool) -> AppResult<reqwest::Response> {
+    /// Send the request, asking again after a transient failure.
+    ///
+    /// `Ok(None)` means stop was pressed before an answer came. See
+    /// `provider::retry`.
+    async fn post(
+        &self,
+        req: &ChatRequest<'_>,
+        stream: bool,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<Option<reqwest::Response>> {
         if self.api_key.is_none() {
             return Err(Self::no_key());
         }
@@ -602,19 +611,16 @@ impl GeminiProvider {
         } else {
             format!("{}/{}:generateContent", self.base_url, model_path(req.model))
         };
+        let body = request_body(req);
 
-        let resp = self
-            .authorize(self.client.post(&url).json(&request_body(req)))
-            .send()
-            .await
-            .map_err(|e| AppError::General(format!("Failed to reach Gemini: {e}")))?;
-
-        if resp.status().is_success() {
-            return Ok(resp);
-        }
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        Err(explain(status, &body, "Gemini"))
+        crate::syn::provider::retry::send(
+            "Gemini",
+            stop,
+            &|| self.authorize(self.client.post(&url).json(&body)),
+            &|e| AppError::General(format!("Failed to reach Gemini: {e}")),
+            &|status, body| explain(status, body, "Gemini"),
+        )
+        .await
     }
 }
 
@@ -730,13 +736,25 @@ impl ChatProvider for GeminiProvider {
     }
 
     async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
-        let started = std::time::Instant::now();
-        let resp = self.post(&req, false).await?;
+        self.chat_stoppable(req, &crate::syn::provider::retry::never).await
+    }
 
-        let body: GenerateResponse = resp
-            .json()
-            .await
-            .map_err(|e| AppError::General(format!("Failed to read Gemini's reply: {e}")))?;
+    async fn chat_stoppable(
+        &self,
+        req: ChatRequest<'_>,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<ChatReply> {
+        use crate::syn::provider::retry::unless_stopped;
+
+        let started = std::time::Instant::now();
+        let Some(resp) = self.post(&req, false, stop).await? else {
+            return Ok(ChatReply::default());
+        };
+
+        let Some(read) = unless_stopped(stop, resp.json::<GenerateResponse>()).await else {
+            return Ok(ChatReply::default());
+        };
+        let body = read.map_err(|e| AppError::General(format!("Failed to read Gemini's reply: {e}")))?;
 
         let mut assembly = Assembly::default();
         assembly.absorb(body);
@@ -750,13 +768,20 @@ impl ChatProvider for GeminiProvider {
         sink: &StreamSink<'_>,
     ) -> AppResult<ChatReply> {
         let started = std::time::Instant::now();
-        let resp = self.post(&req, true).await?;
+        let Some(resp) = self.post(&req, true, sink.stop_requested).await? else {
+            return Ok(ChatReply::default());
+        };
 
         let mut stream = resp.bytes_stream();
         let mut buffer = String::new();
         let mut assembly = Assembly::default();
 
-        while let Some(chunk) = stream.next().await {
+        // Each wait for the next chunk races the stop flag, so a stream that
+        // has gone quiet can still be stopped — checking only between chunks
+        // meant a stalled one could not be.
+        while let Some(Some(chunk)) =
+            crate::syn::provider::retry::unless_stopped(sink.stop_requested, stream.next()).await
+        {
             if (sink.stop_requested)() {
                 break;
             }

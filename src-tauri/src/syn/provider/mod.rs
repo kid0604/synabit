@@ -22,13 +22,18 @@
 //!   `systemInstruction`, and every function call carries a signature that has
 //!   to come back verbatim. See `gemini`.
 //!
+//!
 //! Streaming is a callback rather than a `Stream`, so the trait stays
 //! object-safe and the caller keeps deciding what a token means — today that
 //! is a Tauri event, and the provider does not need to know it.
+//!
+//! What is shared rather than per provider: asking again after a transient
+//! failure. See `retry`.
 
 pub mod gemini;
 pub mod ollama;
 pub mod openai;
+pub mod retry;
 
 use async_trait::async_trait;
 
@@ -190,6 +195,34 @@ pub trait ChatProvider: Send + Sync {
     /// This is the call the tool loop makes: it needs the whole reply,
     /// including any `tool_calls`, before it can decide what to do next.
     async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply>;
+
+    /// The same, abandoned the moment `stop` says so.
+    ///
+    /// # Why a second method rather than a parameter on `chat`
+    ///
+    /// `chat` has no way to hear the stop button. `chat_streaming` does —
+    /// `StreamSink::stop_requested` — but the non-streaming call is the one
+    /// the tool loop makes on Ollama, the provider that cannot stream tool
+    /// calls, and a local model can take minutes over one turn. Changing
+    /// `chat` itself would touch every caller in the app, most of which (a
+    /// narration, a reflection, the timeline reader) have no stop button to
+    /// pass. So this is the stoppable variant, and `chat` is it with a flag
+    /// that never goes up.
+    ///
+    /// A stopped call answers with an empty reply rather than an error: the
+    /// person asked for it, and the engine reads an empty reply after a stop as
+    /// a clean cancellation.
+    ///
+    /// The default waits the call out, for a provider — a test double, mostly —
+    /// that has nothing to cancel.
+    async fn chat_stoppable(
+        &self,
+        req: ChatRequest<'_>,
+        stop: &(dyn Fn() -> bool + Send + Sync),
+    ) -> AppResult<ChatReply> {
+        let _ = stop;
+        self.chat(req).await
+    }
 
     /// One completion, delivered token by token through `sink`.
     async fn chat_streaming(
