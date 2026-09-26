@@ -15,14 +15,24 @@ import {
   Palette
 } from 'lucide-vue-next';
 
+import synAvatar from '../../../../assets/syn-avatar.jpg';
+
 defineProps<{
   editor: Editor | undefined;
   show: boolean;
   position: { top: number; left: number };
+  /**
+   * Offer "Ask Syn" as the first button, with this as its tooltip — or leave
+   * it out, when this is `null`: Syn is off, or the app is locked. The editor
+   * decides; see `synAsk` in `TiptapEditor.vue`.
+   */
+  askSynTitle?: string | null;
 }>();
 
 const emit = defineEmits<{
   (e: 'set-link'): void;
+  /** Ask Syn about the selected text. */
+  (e: 'ask-syn'): void;
 }>();
 </script>
 
@@ -35,6 +45,22 @@ const emit = defineEmits<{
         :style="{ top: position.top + 'px', left: position.left + 'px' }"
         @mousedown.prevent
       >
+        <!--
+          Here rather than as a second floating button: this toolbar already
+          appears over every selection in the editor, and two things appearing
+          for one gesture would sit on top of each other. First, because it is
+          the one button in the row that is not formatting.
+        -->
+        <template v-if="askSynTitle">
+          <button
+            @click="emit('ask-syn')"
+            :title="askSynTitle"
+            :aria-label="askSynTitle"
+          >
+            <img :src="synAvatar" alt="" class="w-5 h-5 rounded-full object-cover" />
+          </button>
+          <div class="bubble-divider" />
+        </template>
         <button
           @click="editor.chain().focus().toggleBold().run()"
           :class="{ 'is-active': editor.isActive('bold') }"

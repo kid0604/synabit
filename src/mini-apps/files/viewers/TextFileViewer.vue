@@ -3,6 +3,10 @@ import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import SelectionAskSyn from '../../../shared/syn/SelectionAskSyn.vue';
+
+/** Where a selection has to be for "Ask Syn" to offer itself. */
+const rootRef = ref<HTMLDivElement | null>(null);
 
 const props = defineProps<{
   filePath: string;
@@ -45,7 +49,8 @@ watch(() => props.filePath, loadContent, { immediate: true });
 </script>
 
 <template>
-  <div class="flex-1 overflow-auto bg-white dark:bg-[#1e1e1e]">
+  <div ref="rootRef" class="flex-1 overflow-auto bg-white dark:bg-[#1e1e1e]">
+    <SelectionAskSyn :within="rootRef" />
     <!-- Loading -->
     <div v-if="isLoading" class="flex items-center justify-center h-full">
       <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />

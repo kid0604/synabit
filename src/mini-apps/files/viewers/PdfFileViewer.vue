@@ -7,6 +7,7 @@ import { usePdfRenderer } from '../composables/usePdfRenderer';
 import { usePdfAnnotations, type PdfAnnotation } from '../composables/usePdfAnnotations';
 import AnnotationOverlay from '../overlays/AnnotationOverlay.vue';
 import AnnotationPopup from '../overlays/AnnotationPopup.vue';
+import SelectionAskSyn from '../../../shared/syn/SelectionAskSyn.vue';
 import DrawingOverlay from '../overlays/DrawingOverlay.vue';
 import AnnotationSidebar from '../overlays/AnnotationSidebar.vue';
 import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
@@ -546,6 +547,13 @@ const handleResetPdf = async () => {
       @delete="(id: string) => annotations.deleteAnnotation(id)"
       @export-note="exportToNote"
     />
+
+    <!--
+      Ask Syn about selected text, from pdf.js's text layer. Not in highlight
+      mode: there a selection opens the annotation popup, and one gesture
+      should open one thing. Cmd+J still reads the selection in either mode.
+    -->
+    <SelectionAskSyn :within="containerRef" :disabled="highlightMode" />
 
     <!-- Annotation Popup -->
     <AnnotationPopup
