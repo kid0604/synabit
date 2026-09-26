@@ -105,6 +105,32 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
     }
 }
 
+/// What undoing one tool looks like, where the sentence for its capability
+/// would not be true of it.
+///
+/// `reversal_of` speaks for a capability, and for a write it names
+/// `trash_node` and `restore_version` — which is right for a node and wrong for
+/// a row inside one, or for a file that is not a node. Saying the generic
+/// sentence about these would be a promise the named tools cannot keep: a
+/// Finance month's history is taken apart into rows and `restore_version`
+/// refuses it, and `trash_node` does not reach a spreadsheet in `assets/`.
+pub fn reversal_for(tool: &str, capability: &Capability) -> Reversal {
+    match tool {
+        "update_transaction" => Reversal::Automatic {
+            how: "update_transaction again, with the values it returned as `before`".into(),
+        },
+        "delete_transaction" => Reversal::Automatic {
+            how: "the row is kept aside in its month; update_transaction with restore: true puts it back"
+                .into(),
+        },
+        "write_spreadsheet" => Reversal::Automatic {
+            how: "a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash"
+                .into(),
+        },
+        _ => reversal_of(capability),
+    }
+}
+
 /// What a tool returned, and what it would take to undo.
 pub struct ToolOutcome {
     /// The JSON string handed back to the model as a `tool` message.
@@ -203,7 +229,7 @@ impl VaultTools {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
             | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
-            | "read_board" | "timeline"
+            | "read_board" | "timeline" | "read_spreadsheet"
             | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL => {
                 VaultRead
             }
@@ -230,7 +256,10 @@ impl VaultTools {
             // A board is a vault node like any other; what makes these two
             // different is that the model must not decide where anything goes.
             // See `syn::board`.
-            | "draw_board" | "edit_board" => {
+            | "draw_board" | "edit_board"
+            // Phase F. What undoes each is not the generic sentence for a
+            // write — see `reversal_for`.
+            | "update_transaction" | "delete_transaction" | "write_spreadsheet" => {
                 VaultWrite
             }
 
@@ -323,7 +352,7 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         let content = crate::syn::tools::execute_tool(&ctx.tools(), tool, args)?;
         Ok(ToolOutcome {
             content,
-            reversal: reversal_of(&capability),
+            reversal: reversal_for(tool, &capability),
         })
     }
 }
@@ -410,7 +439,8 @@ pub struct ToolCard {
     /// say so in amber rather than quietly pick a default.
     pub capability: Option<Capability>,
     /// What puts it back, derived from the capability rather than declared
-    /// twice.
+    /// twice — except for the few tools `reversal_for` names, where the
+    /// capability's sentence would not be true.
     pub reversal: Option<Reversal>,
     /// What this one declaration costs on the wire, in characters.
     ///
@@ -468,10 +498,11 @@ pub fn catalogue(ledger: &crate::syn::consent::Ledger, now: &str) -> Vec<ToolCar
             // *is*, not a call about to be made. A scoped capability answers
             // with an empty scope and the screen says so.
             let capability = registry.capability_of(&definition.function.name, &Value::Null);
+            let reversal = capability.as_ref().map(|c| reversal_for(&definition.function.name, c));
             ToolCard {
                 name: definition.function.name,
                 description: definition.function.description,
-                reversal: capability.as_ref().map(reversal_of),
+                reversal,
                 offered: capability
                     .as_ref()
                     .is_none_or(|c| !is_switched_off(c, ledger, now)),
@@ -610,6 +641,7 @@ mod tests {
             "update_feed_article", "create_transaction", "rename_field", "delete_field",
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
             "read_board", "draw_board", "edit_board", "capture", "timeline",
+            "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
@@ -827,7 +859,7 @@ mod tests {
         // tools kept for large windows are not in it. See `LARGE_WINDOW_ONLY`.
         let cards: Vec<_> = catalogue(&crate::syn::consent::Ledger::default(), NOW)
             .into_iter()
-            .filter(|c| !crate::syn::tools::LARGE_WINDOW_ONLY.contains(&c.name.as_str()))
+            .filter(|c| crate::syn::tools::counted_in_budget(&c.name))
             .collect();
         let parts: usize = cards.iter().map(|c| c.chars).sum();
         let whole = crate::syn::tools::payload_cost().chars;

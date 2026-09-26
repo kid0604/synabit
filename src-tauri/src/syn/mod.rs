@@ -23,6 +23,7 @@ pub mod proposal;
 pub mod recipe;
 pub mod reflect;
 pub mod skill;
+pub mod spreadsheet;
 pub mod stats;
 pub mod provider;
 pub mod rag;

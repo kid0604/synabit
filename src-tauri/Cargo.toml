@@ -94,6 +94,18 @@ tauri-plugin-global-shortcut = "2"
 # Starting with the machine is what makes the hotkey available without the
 # user having launched anything first.
 tauri-plugin-autostart = "2"
+# Reading and writing spreadsheets for Syn (`read_spreadsheet`,
+# `write_spreadsheet`). Desktop only, for now, because every crate that reaches
+# Android is a size review (`timeline::media::tests::REVIEWED_CRATES`) and this
+# pair has not been through one. Measured in a stripped, LTO release binary on arm64,
+# calamine adds about 0.8 MB and rust_xlsxwriter about 1.5 MB on top of the `zip`
+# the app already ships, both reusing that `zip`. That is per ABI in an APK.
+# On Android `read_spreadsheet` still reads CSV, with the few lines of parser it
+# needs, and `write_spreadsheet` is not offered. Default features only:
+# calamine's dates come back as serial numbers the tool formats itself, so
+# `chrono` stays the one clock in the tree.
+calamine = "0.36"
+rust_xlsxwriter = "0.99"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # For sending the WKWebView an editing command Tauri has no API for — see
