@@ -336,6 +336,15 @@ pub struct DriveRequest<'a, R: tauri::Runtime> {
     pub resume_call: Option<crate::models::syn::ToolCall>,
 }
 
+/// What a request has to fit in: the window, what a character costs in it,
+/// and the tool declarations that go with every request.
+#[derive(Clone, Copy)]
+struct Room {
+    window: u32,
+    chars_per_token: f64,
+    tools_chars: usize,
+}
+
 /// The loop, over whichever provider it was given.
 pub struct SynEngine {
     provider: Box<dyn ChatProvider>,
@@ -644,7 +653,7 @@ impl SynEngine {
             // them mid-run.
             let tools_chars = serde_json::to_string(&tools).map(|s| s.len()).unwrap_or(0);
             if resuming.is_none() {
-                self.keep_inside(run, req, &mut working, window, chars_per_token, iteration, tools_chars).await;
+                self.keep_inside(run, req, &mut working, Room { window, chars_per_token, tools_chars }, iteration).await;
             }
             let chars_sent = crate::syn::context::chars_in(&working) + tools_chars;
             let has_pictures = working.iter().any(|m| m.images.as_ref().is_some_and(|i| !i.is_empty()));
@@ -1249,7 +1258,7 @@ impl SynEngine {
         // The last request of all has to fit too, and it is the one most likely
         // not to: it follows every round there was.
         let last = run.spent.iterations;
-        self.keep_inside(run, req, &mut working, window, chars_per_token, last, 0).await;
+        self.keep_inside(run, req, &mut working, Room { window, chars_per_token, tools_chars: 0 }, last).await;
 
         // The pages read so far still stand under the answer. A run that
         // browsed and then ran out of rounds used to lose every citation here.
@@ -1413,12 +1422,11 @@ impl SynEngine {
         run: &mut Run,
         req: &DriveRequest<'_, R>,
         working: &mut Vec<ChatMessage>,
-        window: u32,
-        chars_per_token: f64,
+        room: Room,
         iteration: u8,
-        tools_chars: usize,
     ) {
         use crate::syn::context;
+        let Room { window, chars_per_token, tools_chars } = room;
 
         let allowed = context::allowance(window);
         let over = |messages: &[ChatMessage]| {
