@@ -325,9 +325,10 @@ pub fn agree_to_what_ran_before(vault_path: &str, book: &Book) {
         return;
     }
     let map: BTreeMap<String, String> = book.routines.iter().map(|r| (r.id.clone(), fingerprint(r))).collect();
-    if let Err(e) = serde_json::to_string_pretty(&map).map_err(AppError::from).and_then(|text| {
-        std::fs::write(&path, text).map_err(AppError::from)
-    }) {
+    let written = serde_json::to_string_pretty(&map)
+        .map_err(|e| e.to_string())
+        .and_then(|text| std::fs::write(&path, text).map_err(|e| e.to_string()));
+    if let Err(e) = written {
         log::warn!("[Syn] Could not note which routines this computer runs: {e}");
     }
 }
@@ -352,7 +353,7 @@ mod tests {
     fn a_routine_written_elsewhere_waits_to_be_agreed_to_here() {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8");
-        let mut book = Book { routines: vec![brief(vec![])], last_slot: BTreeMap::new() };
+        let mut book = Book { routines: vec![brief(vec![])], ..Book::default() };
         let now = at("2026-09-28 07:31");
 
         assert_eq!(all_due(&book, now).len(), 1, "due by the clock");
@@ -375,7 +376,7 @@ mod tests {
     fn routines_that_ran_before_agreement_existed_keep_running() {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8");
-        let book = Book { routines: vec![brief(vec![])], last_slot: BTreeMap::new() };
+        let book = Book { routines: vec![brief(vec![])], ..Book::default() };
         assert_eq!(due_here(vault, &book, at("2026-09-28 07:31")).len(), 1);
     }
 
