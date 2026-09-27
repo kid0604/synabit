@@ -2501,6 +2501,8 @@
     "routine_delete": "Xoá",
     "routine_run_now": "Chạy ngay",
     "routine_started": "Đã bắt đầu — kết quả sẽ hiện trong hội thoại của nó.",
+    "routine_not_approved": "Được tạo hoặc sửa trên thiết bị khác. Việc này sẽ không chạy trên máy này cho tới khi bạn đồng ý tại đây.",
+    "routine_approve": "Cho chạy trên máy này",
     "routine_open": "Mở hội thoại",
     "routine_next": "Lần tới: {when}",
     "routine_off": "Đang tắt",

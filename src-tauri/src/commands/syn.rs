@@ -1350,9 +1350,25 @@ pub async fn run_routine(
         plan_only: false,
     };
     log::info!("[Syn] Running routine \"{}\"", routine.name);
-    let answer = send_message_inner(app, vault_path, request, crate::syn::surface::Surface::Routine).await?;
+    let answer = match send_message_inner(app, vault_path, request, crate::syn::surface::Surface::Routine).await {
+        Ok(answer) => answer,
+        Err(e) => {
+            // Said where the result would have been. The slot is already
+            // spent — running it again an hour late is the surprise the slot
+            // exists to prevent — so the person has to know it did not happen:
+            // a morning brief that silently never came reads as there being
+            // nothing to say.
+            let title = format!("Syn: {}", routine.name);
+            let text = format!("This routine could not run: {e}");
+            tell_about_routine(app, vault_path, &conversation_id, &title, &text);
+            return Err(e);
+        }
+    };
 
-    let waiting = answer.content.trim().is_empty();
+    // Stopped to ask — for permission, or *which one* — rather than answered.
+    // Read off the run, not the reply: a "which one" comes with words.
+    let waiting = answer.content.trim().is_empty()
+        || crate::syn::run::latest_for(vault_path, &conversation_id).is_some_and(|r| crate::syn::run::is_waiting(&r));
     let (title, text) = if waiting {
         (
             format!("Syn: {}", routine.name),
@@ -1363,7 +1379,20 @@ pub async fn run_routine(
         let first: String = answer.content.chars().take(280).collect();
         (format!("Syn: {}", routine.name), first)
     };
+    tell_about_routine(app, vault_path, &conversation_id, &title, &text);
 
+    #[cfg(desktop)]
+    if routine.to_phone && !waiting {
+        let key = format!("routine:{}:{}", routine.id, slot.as_deref().unwrap_or("now"));
+        if !crate::syn::telegram::remind::queue_answer(app, &key, &routine.name, &answer.content) {
+            log::info!("[Syn] Routine \"{}\" asked for the phone, and no phone is paired", routine.name);
+        }
+    }
+    Ok(())
+}
+
+/// A routine's outcome, in the app's messages and the operating system's.
+fn tell_about_routine(app: &tauri::AppHandle, vault_path: &str, conversation_id: &str, title: &str, text: &str) {
     crate::chat_engine::post(
         app,
         vault_path,
@@ -1378,8 +1407,8 @@ pub async fn run_routine(
                 role: "bot".to_string(),
             },
             content: crate::models::chat::ChatContent {
-                title: title.clone(),
-                text: text.clone(),
+                title: title.to_string(),
+                text: text.to_string(),
                 metadata: serde_json::json!({
                     "target_id": conversation_id,
                     "target_type": "syn_conversation",
@@ -1392,19 +1421,10 @@ pub async fn run_routine(
     {
         use tauri_plugin_notification::NotificationExt;
         let body: String = text.lines().next().unwrap_or_default().chars().take(160).collect();
-        if let Err(e) = app.notification().builder().title(&title).body(body).show() {
+        if let Err(e) = app.notification().builder().title(title).body(body).show() {
             log::warn!("[Syn] Could not show a routine's notification: {e}");
         }
     }
-
-    #[cfg(desktop)]
-    if routine.to_phone && !waiting {
-        let key = format!("routine:{}:{}", routine.id, slot.as_deref().unwrap_or("now"));
-        if !crate::syn::telegram::remind::queue_answer(app, &key, &routine.name, &answer.content) {
-            log::info!("[Syn] Routine \"{}\" asked for the phone, and no phone is paired", routine.name);
-        }
-    }
-    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1420,12 +1440,17 @@ pub struct RoutineView {
     pub next_run: Option<String>,
     /// The slot it last ran for, when it has.
     pub last_slot: Option<String>,
+    /// Whether this computer agreed to run it as it now is. A routine that
+    /// arrived by sync, or was changed elsewhere, waits for that. See
+    /// `routine::approved_here`.
+    pub approved_here: bool,
 }
 
 /// Every routine, with when each will next run.
 #[tauri::command]
 pub async fn syn_list_routines(vault_path: String) -> Result<Vec<RoutineView>, AppError> {
     let book = crate::syn::routine::load(&vault_path);
+    crate::syn::routine::agree_to_what_ran_before(&vault_path, &book);
     let now = chrono::Local::now().naive_local();
     Ok(book
         .routines
@@ -1433,6 +1458,7 @@ pub async fn syn_list_routines(vault_path: String) -> Result<Vec<RoutineView>, A
         .map(|r| RoutineView {
             next_run: crate::syn::routine::next_run(r, now),
             last_slot: book.last_slot.get(&r.id).cloned(),
+            approved_here: crate::syn::routine::approved_here(&vault_path, r),
             routine: r.clone(),
         })
         .collect())
@@ -1478,7 +1504,23 @@ pub async fn syn_save_routine(
         }
     }
     crate::syn::routine::save(&vault_path, &book)?;
+    // Saved from this computer's screen: this computer agrees to it.
+    crate::syn::routine::approve_here(&vault_path, &routine)?;
     Ok(routine)
+}
+
+/// Agree, on this computer, to run a routine that was written or changed on
+/// another. See `routine::approved_here`.
+#[tauri::command]
+pub async fn syn_approve_routine(vault_path: String, routine_id: String) -> Result<(), AppError> {
+    let book = crate::syn::routine::load(&vault_path);
+    let routine = book
+        .routines
+        .iter()
+        .find(|r| r.id == routine_id)
+        .ok_or_else(|| AppError::General("No such routine.".into()))?;
+    crate::syn::routine::check(routine).map_err(AppError::General)?;
+    crate::syn::routine::approve_here(&vault_path, routine)
 }
 
 /// Remove a routine. Its conversation stays: what it said is the person's.
@@ -1504,10 +1546,24 @@ pub async fn syn_run_routine_now(
         .into_iter()
         .find(|r| r.id == routine_id)
         .ok_or_else(|| AppError::General("No such routine.".into()))?;
+    // Pressed on this computer, with the routine on the screen in front of
+    // them: that is agreeing to it. What it may not do is start over a run
+    // already going.
+    crate::syn::routine::check(&routine).map_err(AppError::General)?;
+    if !crate::syn::routine::approved_here(&vault_path, &routine) {
+        return Err(AppError::General(
+            "This routine was written or changed on another device. Agree to it here first.".into(),
+        ));
+    }
+    if !crate::chat_engine::claim_routine(&routine.id) {
+        return Err(AppError::General("This routine is already running.".into()));
+    }
     tauri::async_runtime::spawn(async move {
+        let id = routine.id.clone();
         if let Err(e) = run_routine(&app, &vault_path, routine, None).await {
             log::error!("[Syn] A routine could not run: {e}");
         }
+        crate::chat_engine::release_routine(&id);
     });
     Ok(())
 }

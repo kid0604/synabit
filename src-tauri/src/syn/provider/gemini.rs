@@ -200,6 +200,36 @@ fn sends_temperature(model: &str) -> bool {
     id.starts_with("gemini-1") || id.starts_with("gemini-2")
 }
 
+/// What Google's documentation gives for a function call it did not sign.
+///
+/// A call that is Syn's own record rather than Gemini's reply has no signature
+/// to give back: a run carrying on after a question replays the stopped run's
+/// calls out of its transcript (`run::replay`), and a conversation that was on
+/// Claude carries Claude's calls. Gemini 3 refuses a model turn whose first
+/// call is unsigned, which made every "only this time" on Gemini 3 a 400 on the
+/// run it started. Google documents this string for exactly that case — calls
+/// written by something other than the model now reading them.
+const UNSIGNED: &str = "skip_thought_signature_validator";
+
+/// Put `UNSIGNED` on the first call of every model turn that has no signature.
+///
+/// Only the first: that is where Gemini puts its own, and the later calls of
+/// a parallel round carry none.
+fn sign_what_google_did_not(contents: &mut [(String, Vec<Value>)]) {
+    for (role, parts) in contents.iter_mut().filter(|(role, _)| role == "model") {
+        let _ = role;
+        let signed = parts.iter().any(|p| p.get("thoughtSignature").is_some());
+        if signed {
+            continue;
+        }
+        if let Some(first) = parts.iter_mut().find(|p| p.get("functionCall").is_some()) {
+            if let Some(part) = first.as_object_mut() {
+                part.insert("thoughtSignature".into(), Value::String(UNSIGNED.into()));
+            }
+        }
+    }
+}
+
 /// A tool result as a `functionResponse` wants it: an object.
 ///
 /// Syn's tools answer with text that is usually JSON. An object goes across as
@@ -352,6 +382,9 @@ fn request_body(req: &ChatRequest<'_>) -> Value {
     }
 
     close_the_last_turn(&mut contents);
+    if !sends_temperature(req.model) {
+        sign_what_google_did_not(&mut contents);
+    }
 
     let mut body = Map::new();
     body.insert(
@@ -884,7 +917,25 @@ mod tests {
         asked.tool_calls = Some(vec![call(Some("c1"), "query_nodes", Some(&carried))]);
         let history = [msg("user", "q"), asked, answer_to("c1")];
         let body = request_body(&request(&history, "gemini-3.8-flash"));
-        assert!(body["contents"][1]["parts"][0].get("thoughtSignature").is_none(), "{body:#}");
+        assert_eq!(body["contents"][1]["parts"][0]["thoughtSignature"], UNSIGNED, "{body:#}");
+    }
+
+    /// P1: a call replayed from a stopped run's transcript has no signature,
+    /// and Gemini 3 refuses an unsigned first call. Given the documented
+    /// stand-in; older models, which never asked for one, get nothing.
+    #[test]
+    fn a_replayed_call_is_given_the_documented_stand_in() {
+        let mut asked = msg("assistant", "");
+        asked.tool_calls = Some(vec![call(Some("replay-1"), "get_node", None), call(Some("replay-2"), "get_node", None)]);
+        let history = [msg("user", "q"), asked, answer_to("replay-1"), answer_to("replay-2")];
+
+        let body = request_body(&request(&history, "gemini-3.8-flash"));
+        let parts = &body["contents"][1]["parts"];
+        assert_eq!(parts[0]["thoughtSignature"], UNSIGNED, "{body:#}");
+        assert!(parts[1].get("thoughtSignature").is_none(), "only the first call of the turn");
+
+        let older = request_body(&request(&history, "gemini-2.5-flash"));
+        assert!(older["contents"][1]["parts"][0].get("thoughtSignature").is_none());
     }
 
     fn answer_to(id: &str) -> ChatMessage {

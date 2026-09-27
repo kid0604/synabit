@@ -416,6 +416,29 @@ fn assistant_blocks(
     (blocks, ids)
 }
 
+/// A tool block as plain text, for a request that declares no tools.
+fn as_text(block: Value) -> Value {
+    match block["type"].as_str() {
+        Some("tool_use") => json!({
+            "type": "text",
+            "text": format!("[Called `{}` with {}]", block["name"].as_str().unwrap_or("a tool"), block["input"]),
+        }),
+        Some("tool_result") => {
+            let said = match &block["content"] {
+                Value::String(text) => text.clone(),
+                Value::Array(parts) => parts
+                    .iter()
+                    .filter_map(|p| p["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                other => other.to_string(),
+            };
+            json!({ "type": "text", "text": format!("[Result]\n{}", text_or_placeholder(&said)) })
+        }
+        _ => block,
+    }
+}
+
 fn is_thinking(block: &Value) -> bool {
     matches!(block["type"].as_str(), Some("thinking" | "redacted_thinking"))
 }
@@ -560,6 +583,22 @@ fn request_body(req: &ChatRequest<'_>, stream: bool, keep_thinking: bool) -> Val
         }
     }
     answer_waiting(&mut turns, &mut waiting);
+
+    // Sent without tools — the last round after a ceiling, or a compaction —
+    // the history still holds the loop's calls and their results, and the API
+    // refuses `tool_use` or `tool_result` blocks in a request that declares no
+    // tools. So they go as what they were: text saying what was called and
+    // what came back. Thinking goes with them, since what it led to is no
+    // longer a call.
+    if req.tools.is_none_or(|t| t.is_empty()) {
+        for turn in &mut turns {
+            turn.blocks = std::mem::take(&mut turn.blocks)
+                .into_iter()
+                .filter(|b| !is_thinking(b))
+                .map(as_text)
+                .collect();
+        }
+    }
 
     // The third breakpoint: everything so far, so the next round of the loop
     // reads it back instead of paying for it again. Not on a thinking block,
@@ -1226,7 +1265,14 @@ mod tests {
         m
     }
 
+    /// A round of the tool loop, which declares its tools.
     fn request<'a>(messages: &'a [ChatMessage], model: &'a str) -> ChatRequest<'a> {
+        let tools: &'static [ToolDefinition] = Box::leak(vec![tool("query_nodes")].into_boxed_slice());
+        ChatRequest { model, messages, temperature: Some(0.7), num_ctx: 8192, tools: Some(tools), json_schema: None }
+    }
+
+    /// A request that declares none.
+    fn bare<'a>(messages: &'a [ChatMessage], model: &'a str) -> ChatRequest<'a> {
         ChatRequest { model, messages, temperature: Some(0.7), num_ctx: 8192, tools: None, json_schema: None }
     }
 
@@ -1801,5 +1847,22 @@ data: {"type":"message_stop"}"#,
         assert!(!p.check_status().await.unwrap().connected);
         let e = p.list_models().await.unwrap_err().to_string();
         assert!(e.contains("API key"), "{e}");
+    }
+
+    /// P2: the last round without tools, or a compaction, still carries the
+    /// loop's calls. With no tools declared those blocks are a 400, so they go
+    /// as text.
+    #[test]
+    fn a_request_without_tools_carries_the_calls_as_text() {
+        let history = [
+            msg("user", "tìm sách"),
+            asking(vec![call(Some("toolu_1"), "query_nodes")]),
+            answer(Some("toolu_1"), "{\"total\":3}"),
+        ];
+        let body = request_body(&bare(&history, "claude-opus-5"), false, true);
+        let text = body.to_string();
+        assert!(!text.contains("\"tool_use\"") && !text.contains("\"tool_result\""), "{body:#}");
+        assert!(text.contains("query_nodes") && text.contains("total"), "what happened is still said: {body:#}");
+        assert_eq!(roles(&body), ["user", "assistant", "user"]);
     }
 }

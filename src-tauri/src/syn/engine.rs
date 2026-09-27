@@ -532,12 +532,21 @@ impl SynEngine {
         // Whose "only this time" applies. A helper has no conversation of its
         // own — nothing it says is shown — but it works for its parent's, and
         // a person who let that conversation browse once let its helper too.
-        let consent_conversation = conversation_id.clone().or_else(|| {
-            run.parent_run_id
-                .as_deref()
-                .and_then(|id| crate::syn::run::get_run(req.vault_path, id).ok())
-                .and_then(|parent| parent.conversation_id)
-        });
+        //
+        // Not for a routine: its conversation id comes from a file that syncs,
+        // and pointed at a conversation where somebody just let Syn browse
+        // once, it would inherit that. A routine runs on what the person
+        // allowed always, or stops and asks.
+        let consent_conversation = if run.surface == crate::syn::surface::Surface::Routine {
+            None
+        } else {
+            conversation_id.clone().or_else(|| {
+                run.parent_run_id
+                    .as_deref()
+                    .and_then(|id| crate::syn::run::get_run(req.vault_path, id).ok())
+                    .and_then(|parent| parent.conversation_id)
+            })
+        };
         let ctx = RunContext {
             run_id: &run_id,
             db: req.db,
@@ -615,7 +624,6 @@ impl SynEngine {
         let provider_id = self.provider.id();
         let mut chars_per_token =
             crate::syn::calibration::load(req.vault_path, &provider_id, req.model).chars_per_token;
-        let tools_chars = serde_json::to_string(&tools).map(|s| s.len()).unwrap_or(0);
 
         let ended: LoopEnd = 'drive: loop {
             run.spent.wall_ms = started.elapsed().as_millis() as u64;
@@ -629,8 +637,14 @@ impl SynEngine {
 
             // Inside the window before it is asked, not after the provider has
             // cut the front off. A carried-over call asks nothing of it.
+            //
+            // The declarations go with every request and count against the
+            // window like any message — about two thousand tokens of an 8k
+            // local window. Measured each round, because `find_tools` changes
+            // them mid-run.
+            let tools_chars = serde_json::to_string(&tools).map(|s| s.len()).unwrap_or(0);
             if resuming.is_none() {
-                self.keep_inside(run, req, &mut working, window, chars_per_token, iteration).await;
+                self.keep_inside(run, req, &mut working, window, chars_per_token, iteration, tools_chars).await;
             }
             let chars_sent = crate::syn::context::chars_in(&working) + tools_chars;
             let has_pictures = working.iter().any(|m| m.images.as_ref().is_some_and(|i| !i.is_empty()));
@@ -686,7 +700,12 @@ impl SynEngine {
                 self.provider.chat_stoppable(request(), &stop_check).await?
             };
             let turn_ms = turn_started.elapsed().as_millis() as u64;
-            if let (Some(input), false) = (reply.usage.input, has_pictures) {
+            // Not from a request the provider cut: Ollama counts what it kept,
+            // not what it was sent, so a request past `num_ctx` reads as more
+            // characters to the token than there are — and the estimate, taught
+            // that, lets the next one be longer still.
+            let cut = provider_id.is_local() && reply.usage.input.is_some_and(|i| i >= u64::from(req.num_ctx));
+            if let (Some(input), false, false) = (reply.usage.input, has_pictures, cut) {
                 match crate::syn::calibration::record(req.vault_path, &provider_id, req.model, chars_sent, input) {
                     Ok(learned) => chars_per_token = learned.chars_per_token,
                     Err(e) => log::warn!("[Syn] Could not keep what a token costs: {e}"),
@@ -1230,7 +1249,7 @@ impl SynEngine {
         // The last request of all has to fit too, and it is the one most likely
         // not to: it follows every round there was.
         let last = run.spent.iterations;
-        self.keep_inside(run, req, &mut working, window, chars_per_token, last).await;
+        self.keep_inside(run, req, &mut working, window, chars_per_token, last, 0).await;
 
         // The pages read so far still stand under the answer. A run that
         // browsed and then ran out of rounds used to lose every citation here.
@@ -1368,8 +1387,19 @@ impl SynEngine {
     /// app sets: it is what the capability table knows of the model by name,
     /// or its conservative guess for a name it does not know. See
     /// `provider::capability`.
+    ///
+    /// "Local" is where the model runs, not which provider: an OpenAI-shaped
+    /// server on this machine — LM Studio, llama.cpp — is loaded with whatever
+    /// window its user chose, often 4k, and reading its model's name off the
+    /// table gave 32k to 128k. Nothing then condensed, and the server cut the
+    /// front off instead. It is treated as Ollama is: the window is the one in
+    /// the settings.
     fn window_tokens<R: tauri::Runtime>(&self, req: &DriveRequest<'_, R>) -> u32 {
-        if self.provider.id().is_local() {
+        let on_this_machine = self.provider.id().is_local()
+            || crate::syn::settings::load_settings(req.vault_path)
+                .ok()
+                .is_some_and(|s| s.provider == self.provider.id() && !crate::syn::provider::capability::is_hosted(&s));
+        if on_this_machine {
             req.num_ctx.max(2_048)
         } else {
             crate::syn::provider::capability::of(req.model, true).context_window_tokens
@@ -1386,12 +1416,13 @@ impl SynEngine {
         window: u32,
         chars_per_token: f64,
         iteration: u8,
+        tools_chars: usize,
     ) {
         use crate::syn::context;
 
         let allowed = context::allowance(window);
         let over = |messages: &[ChatMessage]| {
-            let tokens = context::estimate_tokens(context::chars_in(messages), chars_per_token);
+            let tokens = context::estimate_tokens(context::chars_in(messages) + tools_chars, chars_per_token);
             (tokens > allowed).then(|| ((tokens - allowed) as f64 * chars_per_token) as usize)
         };
         let Some(excess) = over(working) else {

@@ -18,6 +18,8 @@ export interface RoutineView extends Routine {
   /** Local `YYYY-MM-DDTHH:MM`, or null when off. */
   next_run: string | null;
   last_slot: string | null;
+  /** Whether this device agreed to run it as it now is. */
+  approved_here: boolean;
 }
 
 export const blankRoutine = (): Routine => ({

@@ -15,7 +15,7 @@
 import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { CalendarClock, Play, Pencil, Trash2, ArrowUpRight, Plus, Smartphone } from 'lucide-vue-next';
+import { CalendarClock, Play, Pencil, Trash2, ArrowUpRight, Plus, Smartphone, ShieldCheck } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
 import { blankRoutine, daysInWords, toggleDay, whenInWords, type Routine, type RoutineView } from '../routines';
 
@@ -56,8 +56,17 @@ const startNew = (template?: 'morning' | 'week') => {
   error.value = null;
 };
 
+const approve = async (routine: RoutineView) => {
+  try {
+    await invoke('syn_approve_routine', { vaultPath: props.vaultPath, routineId: routine.id });
+    await load();
+  } catch (e) {
+    error.value = message(e);
+  }
+};
+
 const edit = (routine: RoutineView) => {
-  const { next_run: _next, last_slot: _last, ...plain } = routine;
+  const { next_run: _next, last_slot: _last, approved_here: _approved, ...plain } = routine;
   editing.value = { ...plain, schedule: { ...plain.schedule, weekdays: [...plain.schedule.weekdays] } };
   error.value = null;
 };
@@ -75,7 +84,7 @@ const save = async () => {
 };
 
 const setEnabled = async (routine: RoutineView, enabled: boolean) => {
-  const { next_run: _next, last_slot: _last, ...plain } = routine;
+  const { next_run: _next, last_slot: _last, approved_here: _approved, ...plain } = routine;
   try {
     await invoke('syn_save_routine', { vaultPath: props.vaultPath, routine: { ...plain, enabled } });
     await load();
@@ -219,6 +228,23 @@ const runNow = async (routine: RoutineView) => {
                 <template v-else>{{ t('syn.routine_off') }}</template>
               </p>
               <p class="mt-1 text-xs text-gray-600 dark:text-gray-300 line-clamp-2">{{ routine.ask }}</p>
+              <!-- Arrived by sync, or changed elsewhere: the whole question is
+                   shown, not two lines of it, because this is what is being
+                   agreed to. -->
+              <div
+                v-if="!routine.approved_here"
+                class="mt-2 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 px-3 py-2"
+              >
+                <p class="text-xs text-amber-800 dark:text-amber-200">{{ t('syn.routine_not_approved') }}</p>
+                <p class="mt-1 text-xs whitespace-pre-wrap text-gray-700 dark:text-gray-200">{{ routine.ask }}</p>
+                <button
+                  type="button"
+                  class="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium bg-amber-600 hover:bg-amber-700 text-white"
+                  @click="approve(routine)"
+                >
+                  <ShieldCheck class="w-3 h-3" aria-hidden="true" />{{ t('syn.routine_approve') }}
+                </button>
+              </div>
               <p v-if="started === routine.id" class="mt-1 text-xs text-emerald-600 dark:text-emerald-400" role="status">
                 {{ t('syn.routine_started') }}
               </p>
@@ -229,7 +255,7 @@ const runNow = async (routine: RoutineView) => {
             </label>
           </div>
           <div class="mt-2 flex flex-wrap gap-1 pl-7">
-            <button type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10" @click="runNow(routine)">
+            <button v-if="routine.approved_here" type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10" @click="runNow(routine)">
               <Play class="w-3 h-3" aria-hidden="true" />{{ t('syn.routine_run_now') }}
             </button>
             <button

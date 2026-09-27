@@ -233,7 +233,21 @@ async fn connect(vault_path: &str, server: &Server, secrets: &HashMap<String, St
     match listed {
         Ok((session, tools)) => {
             let mut taken = HashSet::new();
-            let offered = tools.iter().map(|t| Offered::from_remote(server, t, &mut taken)).collect();
+            // A tool is read-only if it said so when this computer first
+            // listed the server, not merely today. See `config::believed_read_only`.
+            let believed = config::believed_read_only(
+                vault_path,
+                server,
+                tools.iter().filter(|t| t.read_only).map(|t| t.name.clone()),
+            );
+            let offered = tools
+                .iter()
+                .map(|t| {
+                    let mut o = Offered::from_remote(server, t, &mut taken);
+                    o.read_only = o.read_only && believed.contains(&t.name);
+                    o
+                })
+                .collect();
             LIVE.lock()
                 .await
                 .insert(key(vault_path, &server.id), Live { resolved, session: Some(Arc::new(session)) });

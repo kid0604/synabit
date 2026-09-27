@@ -1149,6 +1149,15 @@ pub fn release_resume(vault_path: &str, id: &str) {
 pub const ALREADY_ANSWERED: &str =
     "This question has already been answered, and the work it was waiting on has carried on.";
 
+/// The newest run in a conversation, not counting helpers.
+pub fn latest_for(vault_path: &str, conversation_id: &str) -> Option<Run> {
+    load_all(vault_path)
+        .ok()?
+        .into_iter()
+        .filter(|r| r.parent_run_id.is_none() && r.conversation_id.as_deref() == Some(conversation_id))
+        .max_by(|a, b| a.created_at.cmp(&b.created_at))
+}
+
 /// Whether a run is still waiting for somebody to answer it.
 pub fn is_waiting(run: &Run) -> bool {
     run.carried_on_at.is_none() && (run.pending_consent.is_some() || run.pending_choice.is_some())

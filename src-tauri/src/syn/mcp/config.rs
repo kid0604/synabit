@@ -267,10 +267,89 @@ pub fn trusted_here(vault_path: &str, server: &Server) -> bool {
 pub fn trust_here(vault_path: &str, server: &Server) -> AppResult<()> {
     let mut map = trust_map(vault_path);
     map.insert(server.id.clone(), server.fingerprint());
-    save_trust(vault_path, &map)
+    save_trust(vault_path, &map)?;
+    // Agreeing again is agreeing to what it says now.
+    unpin(vault_path, &server.id)
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WHICH TOOLS ARE BELIEVED TO ONLY READ
+// ═══════════════════════════════════════════════════════════════
+//
+// `readOnlyHint` decides which question the consent card asks — may Syn *read
+// from* Jira, or *change* things there — and a "read" allowed always covers
+// every tool the server calls read-only. The server says which, and it says so
+// again every time it is listed. So a server trusted with three read-only tools
+// could list `delete_issue` as read-only tomorrow and be inside the permission
+// already given, with nobody asked.
+//
+// What is believed is what the server said when this computer first listed it
+// after trusting it. A tool that claims to be read-only later, and did not
+// then, is treated as one that changes things; trusting the server again,
+// from the settings screen, is agreeing to what it says now.
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+struct ReadOnlyPin {
+    fingerprint: String,
+    tools: Vec<String>,
+}
+
+fn pin_path(vault_path: &str) -> AppResult<PathBuf> {
+    let dir = std::path::Path::new(vault_path).join(".synabit");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir.join("mcp-read-only.json"))
+}
+
+fn pins(vault_path: &str) -> HashMap<String, ReadOnlyPin> {
+    pin_path(vault_path)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|c| serde_json::from_str(&c).ok())
+        .unwrap_or_default()
+}
+
+fn save_pins(vault_path: &str, map: &HashMap<String, ReadOnlyPin>) -> AppResult<()> {
+    let path = pin_path(vault_path)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, serde_json::to_string_pretty(map)?)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// Of the tools a server now claims only read, the ones believed. See above.
+pub fn believed_read_only(
+    vault_path: &str,
+    server: &Server,
+    claimed: impl IntoIterator<Item = String>,
+) -> std::collections::HashSet<String> {
+    let claimed: std::collections::HashSet<String> = claimed.into_iter().collect();
+    let mut map = pins(vault_path);
+    match map.get(&server.id) {
+        Some(pin) if pin.fingerprint == server.fingerprint() => {
+            claimed.into_iter().filter(|t| pin.tools.contains(t)).collect()
+        }
+        _ => {
+            let mut tools: Vec<String> = claimed.iter().cloned().collect();
+            tools.sort();
+            map.insert(server.id.clone(), ReadOnlyPin { fingerprint: server.fingerprint(), tools });
+            if let Err(e) = save_pins(vault_path, &map) {
+                log::warn!("[Syn] Could not note which MCP tools only read: {e}");
+            }
+            claimed
+        }
+    }
+}
+
+fn unpin(vault_path: &str, server_id: &str) -> AppResult<()> {
+    let mut map = pins(vault_path);
+    if map.remove(server_id).is_some() {
+        save_pins(vault_path, &map)?;
+    }
+    Ok(())
 }
 
 pub fn forget_here(vault_path: &str, server_id: &str) -> AppResult<()> {
+    unpin(vault_path, server_id)?;
     let mut map = trust_map(vault_path);
     if map.remove(server_id).is_some() {
         save_trust(vault_path, &map)?;
@@ -424,5 +503,28 @@ mod tests {
         revoke_grants(vault, "Jira");
         let left: Vec<String> = crate::syn::consent::load(vault).grants.into_iter().map(|g| g.scope).collect();
         assert_eq!(left, vec!["net_read:jira two".to_string()]);
+    }
+
+    /// S7: a server trusted with a read-only tool cannot, on a later listing,
+    /// call a tool that changes things read-only and slip inside a "read"
+    /// already allowed.
+    #[test]
+    fn a_tool_that_turns_read_only_later_is_not_believed() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let server = http("Jira", "https://mcp.example/jira");
+        trust_here(vault, &server).expect("trusted");
+
+        let first = believed_read_only(vault, &server, ["search".to_string()]);
+        assert!(first.contains("search"));
+
+        let later = believed_read_only(vault, &server, ["search".to_string(), "delete_issue".to_string()]);
+        assert!(later.contains("search"));
+        assert!(!later.contains("delete_issue"), "claimed read-only after the fact");
+
+        // Trusting it again is agreeing to what it says now.
+        trust_here(vault, &server).expect("trusted again");
+        let agreed = believed_read_only(vault, &server, ["search".to_string(), "delete_issue".to_string()]);
+        assert!(agreed.contains("delete_issue"));
     }
 }

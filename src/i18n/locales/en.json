@@ -2501,6 +2501,8 @@
     "routine_delete": "Delete",
     "routine_run_now": "Run now",
     "routine_started": "Started — the result will appear in its conversation.",
+    "routine_not_approved": "Written or changed on another device. It will not run on this one until you agree to it here.",
+    "routine_approve": "Run it on this device",
     "routine_open": "Open its conversation",
     "routine_next": "Next: {when}",
     "routine_off": "Off",

@@ -62,12 +62,10 @@ fn start_due_routines(app: &tauri::AppHandle, vault_path: &str) {
         return;
     }
     let book = crate::syn::routine::load(vault_path);
-    for (routine, slot) in crate::syn::routine::all_due(&book, Local::now().naive_local()) {
-        {
-            let mut running = ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner());
-            if !running.insert(routine.id.clone()) {
-                continue;
-            }
+    // Only what this computer agreed to. See `routine::approved_here`.
+    for (routine, slot) in crate::syn::routine::due_here(vault_path, &book, Local::now().naive_local()) {
+        if !claim_routine(&routine.id) {
+            continue;
         }
         let app = app.clone();
         let vault = vault_path.to_string();
@@ -76,9 +74,19 @@ fn start_due_routines(app: &tauri::AppHandle, vault_path: &str) {
             if let Err(e) = crate::commands::syn::run_routine(&app, &vault, routine, Some(slot)).await {
                 log::error!("[Syn] A routine could not run: {e}");
             }
-            ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+            release_routine(&id);
         });
     }
+}
+
+/// Mark a routine as running, unless it already is. Shared with "run it now",
+/// which could otherwise start it a second time over a scheduled run.
+pub fn claim_routine(id: &str) -> bool {
+    ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner()).insert(id.to_string())
+}
+
+pub fn release_routine(id: &str) {
+    ROUTINES_RUNNING.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
 }
 
 pub fn init_engine(app_handle: tauri::AppHandle) {
