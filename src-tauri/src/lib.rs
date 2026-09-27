@@ -928,6 +928,7 @@ pub fn run() {
             syn_commands::syn_delete_routine,
             syn_commands::syn_run_routine_now,
             syn_commands::syn_approve_routine,
+            syn_commands::syn_waiting,
             syn_commands::syn_pull_model,
             syn_commands::syn_delete_model,
             syn_commands::syn_send_message,

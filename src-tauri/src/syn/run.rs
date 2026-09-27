@@ -1158,6 +1158,43 @@ pub fn latest_for(vault_path: &str, conversation_id: &str) -> Option<Run> {
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
 }
 
+/// Every question still waiting for an answer, newest per conversation, in
+/// the shape the events that asked them had. See `commands::syn::syn_waiting`.
+///
+/// The events are the only way a question used to reach a screen, and an event
+/// is gone once it has been sent: a question asked while the app was closing,
+/// by a routine at 7:00 with nobody at the screen, or before a second question
+/// replaced it in the one slot the screen kept, had nowhere left to be
+/// answered. The run on disk still says what it is waiting for; this reads it.
+pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
+    let Ok(runs) = load_all(vault_path) else {
+        return Vec::new();
+    };
+    let mut newest: std::collections::BTreeMap<String, Run> = std::collections::BTreeMap::new();
+    for run in runs.into_iter().filter(|r| r.parent_run_id.is_none() && is_waiting(r)) {
+        let Some(conversation) = run.conversation_id.clone() else {
+            continue;
+        };
+        match newest.get(&conversation) {
+            Some(kept) if kept.created_at >= run.created_at => {}
+            _ => {
+                newest.insert(conversation, run);
+            }
+        }
+    }
+    newest
+        .into_values()
+        .map(|run| match (&run.pending_consent, &run.pending_choice) {
+            (Some(ask), _) => serde_json::json!({
+                "run_id": run.id, "conversation_id": run.conversation_id, "ask": ask,
+            }),
+            (None, choice) => serde_json::json!({
+                "run_id": run.id, "conversation_id": run.conversation_id, "choice": choice,
+            }),
+        })
+        .collect()
+}
+
 /// Whether a run is still waiting for somebody to answer it.
 pub fn is_waiting(run: &Run) -> bool {
     run.carried_on_at.is_none() && (run.pending_consent.is_some() || run.pending_choice.is_some())
@@ -2172,5 +2209,30 @@ mod agreement {
         }
         prune_runs(vault);
         assert!(get_run(vault, &waiting.id).is_ok(), "the waiting run is still there");
+    }
+
+    /// U5: a question outlives the event that asked it.
+    #[test]
+    fn a_waiting_question_can_be_read_back_from_disk() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut asked = Run::new("g", Some("conv-a".into()), super::tests_budget());
+        asked.pending_consent = Some(crate::syn::consent::Ask::about(
+            "browse",
+            &crate::syn::consent::Capability::Browse,
+            "2026-09-27T00:00:00Z",
+        ));
+        asked.finish(RunState::AwaitingConsent);
+        save_run(vault, &asked).expect("saved");
+        let mut answered = Run::new("g", Some("conv-b".into()), super::tests_budget());
+        answered.pending_consent = asked.pending_consent.clone();
+        answered.carried_on_at = Some("2026-09-27T00:01:00Z".into());
+        save_run(vault, &answered).expect("saved");
+
+        let waiting = waiting_questions(vault);
+        assert_eq!(waiting.len(), 1, "{waiting:?}");
+        assert_eq!(waiting[0]["run_id"], asked.id.as_str());
+        assert_eq!(waiting[0]["conversation_id"], "conv-a");
+        assert_eq!(waiting[0]["ask"]["tool"], "browse");
     }
 }

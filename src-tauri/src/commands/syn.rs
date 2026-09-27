@@ -1509,6 +1509,15 @@ pub async fn syn_save_routine(
     Ok(routine)
 }
 
+/// Every question Syn is still waiting on an answer to, newest per
+/// conversation. Each is shaped like the `syn-consent-needed` or
+/// `syn-choice-needed` event that asked it, so the screen reads both the same
+/// way. See `run::waiting_questions`.
+#[tauri::command]
+pub async fn syn_waiting(vault_path: String) -> Result<Vec<serde_json::Value>, AppError> {
+    Ok(crate::syn::run::waiting_questions(&vault_path))
+}
+
 /// Agree, on this computer, to run a routine that was written or changed on
 /// another. See `routine::approved_here`.
 #[tauri::command]
