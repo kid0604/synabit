@@ -151,6 +151,11 @@ pub fn detect_deletions<R: tauri::Runtime>(
     let tracked = paths.len();
 
     for (_doc_id, path) in paths {
+        // A file that used to sync and now stays local may still be tracked
+        // from before; its absence here is not a deletion to publish.
+        if crate::sync::utils::is_local_only(&path) {
+            continue;
+        }
         let file_path = vault.join(&path);
         if !file_path.exists() {
             deletions.push(LocalChange {
