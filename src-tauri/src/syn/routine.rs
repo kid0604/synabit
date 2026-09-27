@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 use chrono::{Datelike, NaiveDateTime, NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 
 /// How late a routine may still run after its time. Twelve hours: a morning
 /// brief read at lunch is still worth something; one read the next morning is
@@ -76,6 +76,11 @@ pub struct Routine {
     /// The conversation its runs are written into, made on the first run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation_id: Option<String>,
+    /// When this routine last changed, stamped by [`save`]. What decides which
+    /// copy wins when two devices changed it (`sync::core::merge`); empty in
+    /// files written before it existed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub updated_at: String,
 }
 
 fn yes() -> bool {
@@ -96,6 +101,13 @@ pub struct Book {
     /// Routine id → the slot it last ran for, as `YYYY-MM-DDTHH:MM`.
     #[serde(default)]
     pub last_slot: BTreeMap<String, String>,
+    /// Routine id → when it was deleted.
+    ///
+    /// The file is merged across devices as a union (`sync::core::merge`), and
+    /// a union never forgets: without this, the other device's copy would bring
+    /// a deleted routine back on the next sync. Stamped by [`save`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub removed: BTreeMap<String, String>,
 }
 
 fn path(vault_path: &str) -> PathBuf {
@@ -111,18 +123,47 @@ pub fn load(vault_path: &str) -> Book {
         .unwrap_or_default()
 }
 
+/// Write what is kept, dating what changed since the file was last read.
+///
+/// Callers load, change and save; they do not stamp. The stamps are worked out
+/// here, against the file as it is on disk: a routine that differs from its
+/// copy there is stamped now, one missing from the book is recorded as removed
+/// now, and everything else keeps the stamp it had. That is what lets the sync
+/// layer merge two devices' copies routine by routine (`sync::core::merge`)
+/// instead of one copy winning whole.
 pub fn save(vault_path: &str, book: &Book) -> AppResult<()> {
-    let file = path(vault_path);
-    if let Some(dir) = file.parent() {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| AppError::General(format!("Failed to create the Syn folder: {e}")))?;
+    let book = stamped(&load(vault_path), book, &crate::syn::vault_json::now_stamp());
+    crate::syn::vault_json::write(&path(vault_path), &book)
+}
+
+/// The pure half of [`save`].
+fn stamped(before: &Book, after: &Book, now: &str) -> Book {
+    let mut book = after.clone();
+    for routine in &mut book.routines {
+        let unchanged = before.routines.iter().find(|r| r.id == routine.id).filter(|old| {
+            let mut old = (*old).clone();
+            old.updated_at = routine.updated_at.clone();
+            old == *routine
+        });
+        routine.updated_at = match unchanged {
+            Some(old) if !old.updated_at.is_empty() => old.updated_at.clone(),
+            _ => now.to_string(),
+        };
     }
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(book)?)?;
-    std::fs::rename(&tmp, &file).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to save routines: {e}"))
-    })
+    for (id, at) in &before.removed {
+        book.removed.entry(id.clone()).or_insert_with(|| at.clone());
+    }
+    for old in &before.routines {
+        if !book.routines.iter().any(|r| r.id == old.id) {
+            book.removed.insert(old.id.clone(), now.to_string());
+            book.last_slot.remove(&old.id);
+        }
+    }
+    // A routine in the book is not removed, whatever was recorded before.
+    for routine in &book.routines {
+        book.removed.remove(&routine.id);
+    }
+    book
 }
 
 /// Check a routine as the person wrote it, and say what is wrong in words.
@@ -238,6 +279,7 @@ mod tests {
             enabled: true,
             to_phone: false,
             conversation_id: None,
+            updated_at: String::new(),
         }
     }
 
@@ -311,7 +353,66 @@ mod tests {
         book.last_slot.insert("r1".into(), "2026-09-28T07:30".into());
         save(vault, &book).unwrap();
         let back = load(vault);
-        assert_eq!(back.routines, book.routines);
+        assert_eq!(back.routines.len(), 1);
+        assert_eq!(Routine { updated_at: String::new(), ..back.routines[0].clone() }, book.routines[0]);
+        assert!(!back.routines[0].updated_at.is_empty(), "a new routine is dated");
         assert_eq!(back.last_slot.get("r1").map(String::as_str), Some("2026-09-28T07:30"));
+    }
+
+    /// Saving dates what changed and nothing else, and a deleted routine
+    /// leaves a dated tombstone so the other device's copy cannot revive it.
+    #[test]
+    fn saving_dates_edits_and_records_deletions() {
+        let mut a = brief(vec![]);
+        a.updated_at = "t0".into();
+        let mut b = brief(vec![]);
+        b.id = "r2".into();
+        b.updated_at = "t0".into();
+        let before = Book {
+            routines: vec![a.clone(), b.clone()],
+            last_slot: BTreeMap::from([("r2".to_string(), "2026-09-28T07:30".to_string())]),
+            removed: BTreeMap::new(),
+        };
+
+        // Only a slot recorded: no routine changed, nothing re-dated.
+        let mut ran = before.clone();
+        ran.last_slot.insert("r1".into(), "2026-09-28T07:30".into());
+        let after = stamped(&before, &ran, "t1");
+        assert!(after.routines.iter().all(|r| r.updated_at == "t0"));
+
+        // r1 renamed, r2 deleted.
+        let mut edited = before.clone();
+        edited.routines = vec![Routine { name: "Đổi tên".into(), ..a.clone() }];
+        let after = stamped(&before, &edited, "t1");
+        assert_eq!(after.routines[0].updated_at, "t1");
+        assert_eq!(after.removed.get("r2").map(String::as_str), Some("t1"));
+        assert!(!after.last_slot.contains_key("r2"));
+
+        // The tombstone outlives later saves.
+        let later = stamped(&after, &after, "t2");
+        assert_eq!(later.removed.get("r2").map(String::as_str), Some("t1"));
+    }
+
+    /// The sync layer's `metadata` survives a save (D2 in the Syn review), and
+    /// the book still reads.
+    #[test]
+    fn a_saved_book_keeps_the_sync_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_str().unwrap();
+        let mut book = Book::default();
+        book.routines.push(brief(vec![]));
+        save(vault, &book).unwrap();
+
+        let file = path(vault);
+        let mut on_disk: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        on_disk["metadata"]["node_id"] = serde_json::json!("n-routines");
+        std::fs::write(&file, on_disk.to_string()).unwrap();
+
+        let mut book = load(vault);
+        book.last_slot.insert("r1".into(), "2026-09-28T07:30".into());
+        save(vault, &book).unwrap();
+        let back: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(back["metadata"]["node_id"], "n-routines");
+        assert_eq!(load(vault).last_slot.get("r1").map(String::as_str), Some("2026-09-28T07:30"));
     }
 }

@@ -8,7 +8,8 @@
 //! - **Sequence-based**: server assigns monotonic `seq` per vault.
 //! - **Client cursor**: tracks last-processed seq in KV (`p2p_sync:cursor`).
 //! - **CRDT merge** for Markdown (character-level, conflict-free).
-//! - **LWW** for JSON/canvas (timestamp-based last-write-wins).
+//! - **LWW** for JSON/canvas (timestamp-based last-write-wins), except the
+//!   list-shaped files `merge::is_merged` names, merged item by item.
 //! - **E2EE**: all payloads encrypted with XChaCha20-Poly1305 before leaving
 //!   the device. The transport never sees plaintext.
 //!
@@ -149,6 +150,13 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
     let node_id = &payload.node_id;
     let local_path = vault.join(&payload.rel_path);
 
+    // A device from before a file became local-only still publishes it.
+    // Applying it would put back exactly the problem that made it local.
+    if crate::sync::utils::is_local_only(&payload.rel_path) {
+        info!("PULL skipped for local-only {}", payload.rel_path);
+        return Ok(());
+    }
+
     // Track path mapping
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
@@ -187,10 +195,17 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
         false
     };
 
+    // Set when the file now holds something the remote copy does not — a merge
+    // that kept local items — and then the baseline is the *remote* text, so
+    // the next sync sees the file as changed and publishes the merge. Recording
+    // the merged file as the baseline would leave the other device without
+    // this one's items until something here happened to change again.
+    let mut baseline_override: Option<String> = None;
+
     if merged_finance {
         // Already written by the merge.
     } else if payload.is_json {
-        pull_json_impl(
+        baseline_override = pull_json_impl(
             app_handle,
             vault_path,
             &local_path,
@@ -217,7 +232,7 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
     {
         let db_state = app_handle.state::<crate::db::DbState>();
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-        let sha = file_sha256(&local_path);
+        let sha = baseline_override.unwrap_or_else(|| file_sha256(&local_path));
         db.upsert_document_baseline(vault_id, provider_id, &payload.rel_path, &sha)?;
     }
 
@@ -393,7 +408,11 @@ fn pull_finance<R: tauri::Runtime>(
     Ok(true)
 }
 
-/// Pull a JSON/canvas file using LWW (last-write-wins on `metadata.updated_at`).
+/// Pull a JSON/canvas file using LWW (last-write-wins on `metadata.updated_at`),
+/// or item by item for the few files `merge::is_merged` names.
+///
+/// Returns the baseline to record instead of the file's own hash, when the
+/// file now holds something the remote copy lacks and so must be published.
 fn pull_json_impl<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     _vault_path: &str,
@@ -401,7 +420,7 @@ fn pull_json_impl<R: tauri::Runtime>(
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
     vault_id: &str,
-) -> AppResult<()> {
+) -> AppResult<Option<String>> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -421,8 +440,30 @@ fn pull_json_impl<R: tauri::Runtime>(
 
     let local_text = read_text_or_empty_if_missing(local_path)?;
 
+    let merged = if local_path.exists() && crate::sync::core::merge::is_merged(&payload.rel_path) {
+        crate::sync::core::merge::merge(&payload.rel_path, &local_text, &remote_text)
+    } else {
+        None
+    };
+    let mut baseline_override = None;
+
     // Conflict resolution: compare timestamps if local file already exists
-    let final_text = if local_path.exists() {
+    let final_text = if let Some(merged) = merged {
+        let remote_value = serde_json::from_str::<serde_json::Value>(&remote_text).ok();
+        let local_value = serde_json::from_str::<serde_json::Value>(&local_text).ok();
+        if remote_value.as_ref() == Some(&merged) {
+            // Nothing here the remote lacks: take its bytes as they are.
+            remote_text
+        } else {
+            info!("JSON merge for {}: kept items from both copies", node_id);
+            baseline_override = Some(crate::sync::utils::sha256_hex(remote_text.as_bytes()));
+            if local_value.as_ref() == Some(&merged) {
+                local_text.clone()
+            } else {
+                serde_json::to_string_pretty(&merged)?
+            }
+        }
+    } else if local_path.exists() {
         let local_ts = extract_json_updated_at(&local_text);
         let remote_ts = extract_json_updated_at(&remote_text);
 
@@ -462,7 +503,7 @@ fn pull_json_impl<R: tauri::Runtime>(
     new_doc.commit();
     db.replace_crdt_snapshot(vault_id, node_id, &new_doc.export_snapshot())?;
 
-    Ok(())
+    Ok(baseline_override)
 }
 
 /// Pull a Markdown file using CRDT merge (conflict-free character-level).
@@ -724,5 +765,62 @@ mod tests {
         let db_guard = db_state.lock().unwrap();
         let doc_read = db_guard.get_crdt_doc("vault_a", "doc1").unwrap();
         assert_eq!(doc_read.get_text("content").to_string(), winner_json);
+    }
+
+    /// `routines.json` is merged rather than resolved whole, and the merge is
+    /// left looking changed so this device publishes what the remote lacked.
+    #[test]
+    fn a_routine_book_is_merged_on_pull_and_queued_to_publish() {
+        use tauri::Manager;
+        let temp_dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp_dir.path().join("Syn")).unwrap();
+        let local_path = temp_dir.path().join("Syn/routines.json");
+        let local = r#"{"routines":[{"id":"a","updated_at":"1"}],"last_slot":{"a":"2026-09-28T07:30"}}"#;
+        let remote = r#"{"routines":[{"id":"a","updated_at":"1"},{"id":"b","updated_at":"2"}],"last_slot":{"a":"2026-09-27T07:30"}}"#;
+        fs::write(&local_path, local).unwrap();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let db = crate::db::DbBridge::new_in_memory().unwrap();
+        db.insert_sync_vault_mapping(&crate::db::sync_vault::SyncVaultRecord {
+            vault_id: "vault_a".into(),
+            canonical_root: "/tmp/v_a".into(),
+            metadata_version: 1,
+            created_at: 100,
+            updated_at: 100,
+        })
+        .unwrap();
+        app.manage(crate::db::DbState::new(db));
+
+        let doc = loro::LoroDoc::new();
+        doc.get_text("content").insert(0, remote).unwrap();
+        doc.commit();
+        let payload = crate::sync::core::types::DocSyncPayload {
+            rel_path: "Syn/routines.json".into(),
+            node_id: "Syn/routines.json".into(),
+            is_json: true,
+            snapshot: doc.export_snapshot(),
+        };
+
+        let baseline = pull_json_impl(
+            app.handle(),
+            temp_dir.path().to_str().unwrap(),
+            &local_path,
+            "Syn/routines.json",
+            &payload,
+            "vault_a",
+        )
+        .unwrap();
+
+        let book: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&local_path).unwrap()).unwrap();
+        assert_eq!(book["routines"].as_array().unwrap().len(), 2);
+        assert_eq!(book["last_slot"]["a"], "2026-09-28T07:30");
+        assert_eq!(
+            baseline,
+            Some(crate::sync::utils::sha256_hex(remote.as_bytes())),
+            "the baseline is the remote copy, so the merge is published"
+        );
     }
 }

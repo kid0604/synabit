@@ -286,6 +286,7 @@ fn into_proposals(
             }),
             from_correction: s.from_correction.unwrap_or(false),
             proposed_at: now.to_string(),
+            removed_at: None,
         })
         .collect()
 }
