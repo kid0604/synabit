@@ -78,6 +78,13 @@ pub struct Proposal {
     #[serde(default)]
     pub from_correction: bool,
     pub proposed_at: String,
+    /// When it left the tray — accepted, declined, cleared or pushed out by
+    /// newer ones. Such a proposal stays in the file as a tombstone and is not
+    /// listed: the file is merged across devices as a union by id
+    /// (`sync::core::merge`), and without it the other device's copy would put
+    /// a suggestion already answered back in the tray.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removed_at: Option<String>,
 }
 
 fn syn_dir(vault_path: &str) -> AppResult<PathBuf> {
@@ -178,27 +185,51 @@ fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
 /// refusing to answer a message because it could not be read would be a
 /// spectacular over-reaction.
 pub fn list(vault_path: &str) -> Vec<Proposal> {
+    let mut queue: Vec<Proposal> = file(vault_path).into_iter().filter(|p| p.removed_at.is_none()).collect();
+    queue.sort_by(|a, b| b.proposed_at.cmp(&a.proposed_at));
+    queue
+}
+
+/// Everything in the file, tombstones included.
+fn file(vault_path: &str) -> Vec<Proposal> {
     let Ok(path) = queue_path(vault_path) else {
         return Vec::new();
     };
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };
-    match serde_json::from_str::<Vec<Proposal>>(&content) {
-        Ok(mut queue) => {
-            queue.sort_by(|a, b| b.proposed_at.cmp(&a.proposed_at));
-            queue
-        }
-        Err(e) => {
-            log::warn!("[Syn] Proposal queue is unreadable, treating it as empty: {e}");
-            Vec::new()
-        }
-    }
+    serde_json::from_str::<Vec<Proposal>>(&content).unwrap_or_else(|e| {
+        log::warn!("[Syn] Proposal queue is unreadable, treating it as empty: {e}");
+        Vec::new()
+    })
 }
 
+/// How long a tombstone is kept. Long enough for every device to have synced
+/// it; after that the proposal it buries is gone from their copies too.
+const KEEP_TOMBSTONES_DAYS: i64 = 60;
+
+/// Write the tray as `queue` says, burying what left it.
+///
+/// Anything in the file and not in `queue` is recorded as removed now rather
+/// than dropped, so the removal survives a merge with another device's copy.
 fn save(vault_path: &str, queue: &[Proposal]) -> AppResult<()> {
+    let now = chrono::Utc::now();
+    let stamp = crate::syn::vault_json::now_stamp();
+    let cutoff = (now - chrono::Duration::days(KEEP_TOMBSTONES_DAYS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+
+    let mut out: Vec<Proposal> = queue.to_vec();
+    for old in file(vault_path) {
+        if out.iter().any(|p| p.id == old.id) {
+            continue;
+        }
+        let removed_at = old.removed_at.clone().unwrap_or_else(|| stamp.clone());
+        if removed_at >= cutoff {
+            out.push(Proposal { removed_at: Some(removed_at), ..old });
+        }
+    }
     let path = queue_path(vault_path)?;
-    atomic_write(&path, &serde_json::to_string_pretty(queue)?)
+    atomic_write(&path, &serde_json::to_string_pretty(&out)?)
 }
 
 /// Add proposals, dropping any that repeat something already queued.
@@ -351,7 +382,31 @@ mod tests {
             supersedes: None,
             from_correction: false,
             proposed_at: at.to_string(),
+            removed_at: None,
         }
+    }
+
+    /// Taking one out of the tray leaves a dated tombstone in the file, so a
+    /// merge with another device's copy (a union by id) cannot put it back.
+    #[test]
+    fn a_taken_proposal_stays_in_the_file_as_a_tombstone() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let p = proposal("a", "2026-09-01T00:00:00Z");
+        let id = p.id.clone();
+        add(vault, vec![p, proposal("b", "2026-09-02T00:00:00Z")]).expect("adds");
+        take(vault, &id).expect("takes").expect("was there");
+
+        assert_eq!(list(vault).len(), 1, "not listed");
+        let all = file(vault);
+        let buried = all.iter().find(|p| p.id == id).expect("still in the file");
+        assert!(buried.removed_at.is_some());
+
+        // Saving again keeps it buried, with the same date.
+        let at = buried.removed_at.clone();
+        add(vault, vec![proposal("c", "2026-09-03T00:00:00Z")]).expect("adds");
+        assert_eq!(file(vault).iter().find(|p| p.id == id).expect("kept").removed_at, at);
+        assert_eq!(list(vault).len(), 2);
     }
 
     #[test]

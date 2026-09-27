@@ -70,10 +70,12 @@ fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
 }
 
 /// Write a conversation file to disk (pretty-printed JSON).
+///
+/// Through `vault_json`, which keeps the `metadata` the sync layer stamped and
+/// sets `metadata.updated_at`: a conflict on one conversation is then settled
+/// by which copy was written last, rather than always by the remote one.
 fn write_conversation_file(path: &Path, conv: &ConversationFile) -> AppResult<()> {
-    let json = serde_json::to_string_pretty(conv)?;
-    atomic_write(path, &json)?;
-    Ok(())
+    crate::syn::vault_json::write(path, conv)
 }
 
 /// Convert a ConversationFile to the metadata-only SynConversation.
@@ -126,31 +128,44 @@ fn write_index(syn_dir: &Path, index: &SynIndex) -> AppResult<()> {
     Ok(())
 }
 
+/// The id of the conversation this file holds, if it is a conversation file.
+///
+/// `Syn/` holds more than conversations — `routines.json`, `proposals.json`,
+/// `mcp.json`, `calibration.json` and whatever comes next — and naming each
+/// one to skip is a list that is always one file short. A conversation is
+/// named by the UUID `create_conversation` gave it, and nothing else is.
+fn conversation_id_of(path: &Path) -> Option<String> {
+    if path.extension().and_then(|e| e.to_str()) != Some("json") {
+        return None;
+    }
+    let stem = path.file_stem()?.to_str()?;
+    uuid::Uuid::parse_str(stem).ok()?;
+    Some(stem.to_string())
+}
+
+/// Every conversation file in `Syn/`, by id.
+fn conversation_files(syn_dir: &Path) -> AppResult<Vec<(String, PathBuf)>> {
+    Ok(std::fs::read_dir(syn_dir)?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter_map(|path| conversation_id_of(&path).map(|id| (id, path)))
+        .collect())
+}
+
 fn rebuild_index(syn_dir: &Path) -> AppResult<SynIndex> {
     let mut index = SynIndex::default();
-    let entries = std::fs::read_dir(syn_dir)?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            if path.file_name().and_then(|n| n.to_str()) == Some("syn_index.json") {
-                continue;
+    for (_, path) in conversation_files(syn_dir)? {
+        match read_conversation_file(&path) {
+            Ok(conv) => {
+                let meta = to_metadata(&conv);
+                index.conversations.insert(meta.id.clone(), meta);
             }
-            // Also skip settings.json
-            if path.file_name().and_then(|n| n.to_str()) == Some("settings.json") {
-                continue;
-            }
-            match read_conversation_file(&path) {
-                Ok(conv) => {
-                    let meta = to_metadata(&conv);
-                    index.conversations.insert(meta.id.clone(), meta);
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[Syn] Skipping corrupt conversation file {:?}: {}",
-                        path.file_name(),
-                        e
-                    );
-                }
+            Err(e) => {
+                log::warn!(
+                    "[Syn] Skipping corrupt conversation file {:?}: {}",
+                    path.file_name(),
+                    e
+                );
             }
         }
     }
@@ -158,14 +173,66 @@ fn rebuild_index(syn_dir: &Path) -> AppResult<SynIndex> {
     Ok(index)
 }
 
+fn modified(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// The index, brought up to date with the conversation files on disk.
+///
+/// The index is a cache of what the files say and does not sync (see
+/// `sync::utils::is_local_only`) — each device keeps its own. So conversations
+/// arrive, change and disappear underneath it by sync, and this is where it
+/// catches up: an entry whose file is gone is dropped, and a file the index has
+/// not seen, or that was written after the index was, is read again. Only
+/// those; a listing does not re-read every conversation.
+fn refresh_index(syn_dir: &Path) -> AppResult<SynIndex> {
+    let Some(mut index) = read_index(syn_dir) else {
+        return rebuild_index(syn_dir);
+    };
+    let index_written = modified(&index_path(syn_dir));
+    let files = conversation_files(syn_dir)?;
+    let mut changed = false;
+
+    let present: std::collections::HashSet<&str> = files.iter().map(|(id, _)| id.as_str()).collect();
+    let before = index.conversations.len();
+    index.conversations.retain(|id, _| present.contains(id.as_str()));
+    changed |= index.conversations.len() != before;
+
+    for (id, path) in &files {
+        // Same-instant counts as newer: a coarse clock must not hide a change.
+        let stale = match (index_written, modified(path)) {
+            (Some(index_at), Some(file_at)) => file_at >= index_at,
+            _ => true,
+        };
+        if index.conversations.contains_key(id) && !stale {
+            continue;
+        }
+        // Written back even when nothing listed changed (the sync layer stamping
+        // `metadata`, say), so the index is newer than the file afterwards and
+        // the next listing does not read it again.
+        changed = true;
+        match read_conversation_file(path) {
+            Ok(conv) => {
+                index.conversations.insert(id.clone(), to_metadata(&conv));
+            }
+            Err(e) => {
+                log::warn!("[Syn] Skipping corrupt conversation file {:?}: {}", path.file_name(), e);
+                index.conversations.remove(id);
+            }
+        }
+    }
+
+    if changed {
+        write_index(syn_dir, &index)?;
+    }
+    Ok(index)
+}
+
 /// List all conversations in the vault's Syn/ directory (metadata only).
 /// Returns conversations sorted by `updated_at` descending (newest first).
 pub fn list_conversations(vault_path: &str) -> AppResult<Vec<SynConversation>> {
     let syn_dir = ensure_syn_dir(vault_path)?;
-    let index = match read_index(&syn_dir) {
-        Some(idx) => idx,
-        None => rebuild_index(&syn_dir)?,
-    };
+    let index = refresh_index(&syn_dir)?;
 
     let mut conversations: Vec<SynConversation> = index.conversations.into_values().collect();
 
@@ -584,5 +651,100 @@ mod tests {
         let title = auto_title(emoji);
         // Should not panic
         assert!(!title.is_empty());
+    }
+
+    /// `Syn/` holds more than conversations, and a file that merely parses
+    /// close enough is not one. `routines.json` has none of a conversation's
+    /// fields and was skipped as corrupt; a file that did have them would have
+    /// been listed as a conversation.
+    #[test]
+    fn the_index_is_built_from_conversation_files_only() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let real = create_conversation(vault, Some("thật".into())).expect("created");
+
+        let syn = dir.path().join("Syn");
+        let lookalike = r#"{"id":"routines","title":"x","model":null,"messages":[],"created_at":"a","updated_at":"b","pinned":false}"#;
+        for name in ["routines.json", "proposals.json", "mcp.json", "calibration.json", "settings.json"] {
+            std::fs::write(syn.join(name), lookalike).expect("written");
+        }
+        std::fs::write(syn.join("not-a-uuid.json"), lookalike).expect("written");
+
+        let index = rebuild_index(&syn).expect("rebuilt");
+        let ids: Vec<&String> = index.conversations.keys().collect();
+        assert_eq!(ids, vec![&real.id]);
+    }
+
+    /// The index does not sync, so a conversation that arrives by sync, or is
+    /// deleted by it, has to show up in the listing from the files alone.
+    #[test]
+    fn the_listing_catches_up_with_files_sync_brought_or_took() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let kept = create_conversation(vault, Some("ở đây".into())).expect("created");
+        let gone = create_conversation(vault, Some("sẽ bị xoá".into())).expect("created");
+        assert_eq!(list_conversations(vault).expect("listed").len(), 2);
+
+        // Another device made one, and deleted another; sync wrote the files.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let syn = dir.path().join("Syn");
+        let arrived = uuid::Uuid::new_v4().to_string();
+        let file = ConversationFile {
+            id: arrived.clone(),
+            title: "từ điện thoại".into(),
+            model: None,
+            provider: None,
+            messages: vec![said("chào")],
+            created_at: "2026-09-27T00:00:00Z".into(),
+            updated_at: "2026-09-27T00:00:00Z".into(),
+            pinned: false,
+        };
+        std::fs::write(conversation_path(&syn, &arrived), serde_json::to_string(&file).expect("json"))
+            .expect("arrived");
+        std::fs::remove_file(conversation_path(&syn, &gone.id)).expect("removed");
+
+        let mut listed: Vec<String> = list_conversations(vault).expect("listed").into_iter().map(|c| c.id).collect();
+        listed.sort();
+        let mut expected = vec![kept.id.clone(), arrived.clone()];
+        expected.sort();
+        assert_eq!(listed, expected);
+
+        // A conversation changed by sync is re-read, not served stale.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut renamed = file.clone();
+        renamed.title = "đổi tên ở máy kia".into();
+        std::fs::write(conversation_path(&syn, &arrived), serde_json::to_string(&renamed).expect("json"))
+            .expect("changed");
+        let title = list_conversations(vault)
+            .expect("listed")
+            .into_iter()
+            .find(|c| c.id == arrived)
+            .expect("still there")
+            .title;
+        assert_eq!(title, "đổi tên ở máy kia");
+    }
+
+    /// The sync layer's stamp on a conversation survives the next save.
+    #[test]
+    fn a_saved_conversation_keeps_the_sync_metadata() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let meta = create_conversation(vault, None).expect("created");
+        let path = conversation_path(&dir.path().join("Syn"), &meta.id);
+
+        let mut stamped: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        stamped["metadata"]["node_id"] = serde_json::json!("node-7");
+        std::fs::write(&path, stamped.to_string()).expect("stamped");
+
+        let mut full = get_conversation(vault, &meta.id).expect("read");
+        full.messages.push(said("một câu"));
+        save_conversation(vault, &full).expect("saved");
+
+        let back: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        assert_eq!(back["metadata"]["node_id"], "node-7");
+        assert!(back["metadata"]["updated_at"].is_string());
+        assert_eq!(get_conversation(vault, &meta.id).expect("read").messages.len(), 1);
     }
 }

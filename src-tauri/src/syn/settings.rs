@@ -35,14 +35,9 @@ pub fn save_settings(vault_path: &str, settings: &SynSettings) -> AppResult<()> 
     std::fs::create_dir_all(&syn_dir)
         .map_err(|e| AppError::General(format!("Failed to create Syn directory: {}", e)))?;
     let settings_path = syn_dir.join("settings.json");
-    let json = serde_json::to_string_pretty(settings)?;
-    let tmp_path = settings_path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, &json)?;
-    std::fs::rename(&tmp_path, &settings_path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp_path);
-        AppError::General(format!("Failed to rename temp settings file: {}", e))
-    })?;
-    Ok(())
+    // Whole-file last writer wins across devices, stamped by `vault_json` so
+    // it is the newer copy that wins.
+    crate::syn::vault_json::write(&settings_path, settings)
 }
 
 #[cfg(test)]

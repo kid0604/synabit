@@ -41,7 +41,7 @@
 //! Then `load(...).tokens_for(chars)` can replace `chars / 4` wherever an
 //! estimate is shown or budgeted against.
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 use crate::models::syn::SynProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -187,16 +187,11 @@ pub fn record(
     }
     *slot = updated;
 
-    let file = path(vault_path);
-    let dir = file.parent().expect("calibration.json has a parent");
-    std::fs::create_dir_all(dir)
-        .map_err(|e| AppError::General(format!("Failed to create Syn directory: {}", e)))?;
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&all)?)?;
-    std::fs::rename(&tmp, &file).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to save calibration: {}", e))
-    })?;
+    // Whole-file last writer wins across devices, which is acceptable here:
+    // this is a running average, and losing the other device's last few samples
+    // costs a few turns of relearning. `vault_json` stamps
+    // `metadata.updated_at` so the newer copy is the one that wins.
+    crate::syn::vault_json::write(&path(vault_path), &all)?;
     Ok(updated)
 }
 

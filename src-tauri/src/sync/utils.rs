@@ -96,11 +96,28 @@ pub fn collect_local_files(vault_path: &str) -> Vec<String> {
         }
         if let Ok(rel) = entry.path().strip_prefix(base) {
             let rel_str = rel.to_string_lossy().to_string().replace('\\', "/");
+            if is_local_only(&rel_str) {
+                continue;
+            }
             files.push(rel_str);
         }
     }
 
     files
+}
+
+/// Files in the open part of the vault that each device keeps for itself.
+///
+/// Dotfiles already stay local; these are the ones that predate that
+/// convention and live beside synced files. Each is a cache the app rebuilds
+/// from files that *do* sync, so syncing it only ever did harm: resolved last
+/// writer wins, `Syn/syn_index.json` hid conversations made on the other device
+/// and brought back ones deleted here. Not published, and ignored when an older
+/// device still publishes one.
+pub fn is_local_only(rel_path: &str) -> bool {
+    const LOCAL_ONLY: &[&str] = &["Syn/syn_index.json"];
+    let rel = rel_path.replace('\\', "/");
+    LOCAL_ONLY.contains(&rel.as_str())
 }
 
 #[cfg(test)]
@@ -158,6 +175,28 @@ mod tests {
 
         let files = collect_local_files(dir.to_str().unwrap());
         assert_eq!(files, vec!["visible.md"]);
+    }
+
+    /// The conversation index is a cache each device rebuilds from the
+    /// conversations; it is not published, while the conversations are.
+    #[test]
+    fn the_syn_index_is_not_synced_but_conversations_are() {
+        let (_holder, dir) = unique_dir("synabit_test_utils_local_only");
+        let syn = dir.join("Syn");
+        fs::create_dir_all(&syn).unwrap();
+        fs::write(syn.join("syn_index.json"), "{}").unwrap();
+        fs::write(syn.join("0b8e8f7e-4a1e-4c55-9a53-1f1f7d7f0a10.json"), "{}").unwrap();
+        fs::write(syn.join("routines.json"), "{}").unwrap();
+
+        let mut files = collect_local_files(dir.to_str().unwrap());
+        files.sort();
+        assert_eq!(
+            files,
+            vec!["Syn/0b8e8f7e-4a1e-4c55-9a53-1f1f7d7f0a10.json", "Syn/routines.json"]
+        );
+        assert!(is_local_only("Syn/syn_index.json"));
+        assert!(is_local_only("Syn\\syn_index.json"));
+        assert!(!is_local_only("Notes/Syn/syn_index.json"));
     }
 }
 
