@@ -2815,10 +2815,17 @@ pub async fn syn_open_thread(
         }),
     )?;
 
-    serde_json::from_str::<serde_json::Value>(&result)
-        .ok()
-        .and_then(|v| v.get("node_id").and_then(|id| id.as_str()).map(str::to_string))
-        .ok_or_else(|| AppError::General(format!("The thread was not created: {result}")))
+    created_id(&result).ok_or_else(|| AppError::General(format!("The thread was not created: {result}")))
+}
+
+/// The id `create_node` answers with.
+///
+/// It says `id`. This read `node_id`, the name the *other* node tools take
+/// their argument by, so every thread was written to the vault and then
+/// reported as not created — and pressing again made `… (1).md`.
+fn created_id(result: &str) -> Option<String> {
+    let v = serde_json::from_str::<serde_json::Value>(result).ok()?;
+    v.get("id").or_else(|| v.get("node_id")).and_then(|id| id.as_str()).map(str::to_string)
 }
 
 /// Move a thread: whose turn it is, and what it is waiting for.
@@ -3261,5 +3268,13 @@ mod send_steps {
         assert!(crate::syn::taint::untrusted_source("file"));
         assert!(!crate::syn::taint::untrusted_source("note"));
         assert!(!crate::syn::taint::untrusted_source("finance"));
+    }
+
+    /// A thread made is a thread reported made.
+    #[test]
+    fn a_created_thread_is_read_back_by_the_id_create_node_gives() {
+        let said = r#"{"success":true,"id":"SynThreads/This week in Rust.md","type":"syn_thread","title":"This week in Rust","message":"Created syn_thread 'This week in Rust'"}"#;
+        assert_eq!(created_id(said).as_deref(), Some("SynThreads/This week in Rust.md"));
+        assert_eq!(created_id(r#"{"error":"nope"}"#), None);
     }
 }
