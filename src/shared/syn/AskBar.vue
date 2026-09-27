@@ -91,6 +91,7 @@ const {
   plan,
   progress,
   error: chatError,
+  show: showTurn,
   sendMessage,
   stopGeneration,
   clearStreaming,
@@ -120,6 +121,8 @@ const picked = computed(() => describeFocus(props.focus));
 const {
   pending: consentPending,
   pendingIn: consentPendingIn,
+  error: consentError,
+  answering: consentAnswering,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
 const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
@@ -158,7 +161,13 @@ const canContinueElsewhere = computed(
 const rendered = computed(() => {
   if (!answer.value) return '';
   try {
-    return DOMPurify.sanitize(marked.parse(answer.value, { async: false }) as string);
+    // No `<style>`, no `style`: the model's words do not get to restyle the
+    // bar — or lay something over the permission card beside them. DOMPurify
+    // allows both by default. See `MessageBubble`.
+    return DOMPurify.sanitize(marked.parse(answer.value, { async: false }) as string, {
+      FORBID_TAGS: ['style'],
+      FORBID_ATTR: ['style'],
+    });
   } catch (e) {
     logger.error('[Syn] Could not render the answer', e);
     return '';
@@ -173,7 +182,23 @@ const rendered = computed(() => {
  * the conversation id survives until it closes — "ngắn hơn" has to mean
  * something.
  */
+/**
+ * How many times the bar has been put away. A reply that arrives after that
+ * belongs to an exchange nobody is looking at any more, and is dropped.
+ */
+let openings = 0;
+
 const reset = () => {
+  // Closed mid-answer: the run is stopped, not left to finish unseen, and its
+  // listeners go with it. It used to carry on, still heard by this bar — which
+  // is mounted for the whole session — and the next opening showed the old
+  // answer streaming in under a new question.
+  const id = conversationId.value;
+  if (busy.value && id) void stopGeneration(id);
+  else clearStreaming(id);
+  openings += 1;
+  busy.value = false;
+  showTurn(null);
   question.value = '';
   finalAnswer.value = '';
   answered.value = null;
@@ -227,10 +252,14 @@ const ask = async (said?: string) => {
   // Busy from the keypress, not from when the conversation exists: a second
   // Enter while the first is still creating one would otherwise create another.
   busy.value = true;
+  const opening = openings;
   let id: string;
   try {
     id = await conversation();
+    // Closed while the conversation was being made: nothing to ask into.
+    if (opening !== openings) return;
   } catch (e: unknown) {
+    if (opening !== openings) return;
     logger.error('[Syn] The ask bar could not start a conversation', e);
     failed.value = (e as { message?: string })?.message ?? String(e);
     busy.value = false;
@@ -247,7 +276,9 @@ const ask = async (said?: string) => {
  * question and the call it was about to make from that run. See `onConsent`.
  */
 const send = async (id: string, text: string, resumeRun?: string) => {
+  const opening = openings;
   busy.value = true;
+  showTurn(id);
   finalAnswer.value = '';
   answered.value = null;
   failed.value = null;
@@ -261,6 +292,9 @@ const send = async (id: string, text: string, resumeRun?: string) => {
       resumeRun,
       planOnly: planOnly || undefined,
     });
+    // Put away while this was answering. Whatever came back is saved with its
+    // conversation; it is not this opening's to show.
+    if (opening !== openings) return;
     // Ollama cannot stream a turn that used tools, so the streamed text may
     // never have arrived. The returned message is the one that is always right.
     if (reply) {
@@ -270,7 +304,7 @@ const send = async (id: string, text: string, resumeRun?: string) => {
       failed.value = chatError.value;
     }
   } finally {
-    busy.value = false;
+    if (opening === openings) busy.value = false;
   }
 };
 
@@ -306,7 +340,9 @@ const onChoice = async (nodeId: string) => {
 };
 
 const stop = async () => {
-  await stopGeneration();
+  // This bar's run, by name. Never a bare stop: the backend reads no
+  // conversation as every run there is.
+  await stopGeneration(conversationId.value);
   busy.value = false;
 };
 
@@ -394,7 +430,19 @@ const startAndChoose = async () => {
   }
 };
 
+/** Enter in the new thread's name — the IME's, while it is composing. */
+const onThreadTitleEnter = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  void startAndChoose();
+};
+
 const onKeydown = (event: KeyboardEvent) => {
+  // A key that belongs to the input method — Telex, VNI, pinyin — is the IME's
+  // to finish. Enter there commits the word being composed; sending on it sent
+  // half a word. `keyCode` 229 is what WebKit reports for those keys when
+  // `isComposing` is not yet set.
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     // Escape closes what is open, innermost first: the picker, then a running
@@ -439,7 +487,13 @@ const onKeydown = (event: KeyboardEvent) => {
                it is answered there is no more answer coming. -->
           <div v-if="!busy && (choiceHere || consentHere)" class="space-y-2 mb-3">
             <ChoiceCard v-if="choiceHere" :choice="choiceHere.choice" @answer="onChoice" />
-            <ConsentCard v-if="consentHere" :ask="consentHere.ask" @answer="onConsent" />
+            <ConsentCard
+              v-if="consentHere"
+              :ask="consentHere.ask"
+              :busy="consentAnswering"
+              :error="consentError"
+              @answer="onConsent"
+            />
           </div>
 
           <!-- What the run is doing: its plan, the step in words, how much
@@ -503,7 +557,7 @@ const onKeydown = (event: KeyboardEvent) => {
               v-model="newThreadTitle"
               :placeholder="t('syn.thread_new_placeholder')"
               class="flex-1 bg-transparent text-[13px] outline-none placeholder-gray-400"
-              @keydown.enter.prevent="startAndChoose"
+              @keydown.enter="onThreadTitleEnter"
               @keydown.stop
             />
             <button

@@ -17,7 +17,16 @@ import { ShieldQuestion, Check, Clock, X as XIcon } from 'lucide-vue-next';
 import { askPhrase } from '../composables/useSynConsent';
 import type { ConsentAnswer, ConsentAsk } from '../types';
 
-const props = defineProps<{ ask: ConsentAsk }>();
+const props = defineProps<{
+  ask: ConsentAsk;
+  /**
+   * The answer is on its way. The buttons wait for it: a second press used to
+   * send a second answer to a question the first one had already closed.
+   */
+  busy?: boolean;
+  /** Why the last answer did not go through, said rather than swallowed. */
+  error?: string | null;
+}>();
 const emit = defineEmits<{ answer: [choice: ConsentAnswer] }>();
 
 const { t } = useI18n();
@@ -46,7 +55,9 @@ const sentence = computed(() => {
     <div class="mt-3 flex flex-wrap gap-2">
       <button
         class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-               bg-violet-600 text-white hover:bg-violet-700"
+               bg-violet-600 text-white hover:bg-violet-700
+               disabled:opacity-50 disabled:cursor-default"
+        :disabled="busy"
         @click="emit('answer', 'once')"
       >
         <Clock class="w-3 h-3" /> {{ t('syn.consent_once') }}
@@ -58,7 +69,9 @@ const sentence = computed(() => {
       <button
         v-if="ask.can_be_remembered"
         class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-               bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
+               bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700
+               disabled:opacity-50 disabled:cursor-default"
+        :disabled="busy"
         @click="emit('answer', 'always')"
       >
         <Check class="w-3 h-3" /> {{ t('syn.consent_always') }}
@@ -66,12 +79,23 @@ const sentence = computed(() => {
 
       <button
         class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg text-red-600
-               hover:bg-red-50 dark:hover:bg-red-950/40"
+               hover:bg-red-50 dark:hover:bg-red-950/40
+               disabled:opacity-50 disabled:cursor-default"
+        :disabled="busy"
         @click="emit('answer', 'never')"
       >
         <XIcon class="w-3 h-3" /> {{ t('syn.consent_never') }}
       </button>
     </div>
+
+    <p
+      v-if="error"
+      role="alert"
+      data-consent-error
+      class="mt-2 text-[11px] text-red-600 dark:text-red-400"
+    >
+      {{ t('syn.consent_failed', { reason: error }) }}
+    </p>
 
     <p class="mt-2 text-[11px] text-gray-500">{{ t('syn.consent_explainer') }}</p>
   </div>

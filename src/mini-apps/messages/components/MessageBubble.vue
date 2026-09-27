@@ -211,9 +211,18 @@ const renderedContent = computed(() => {
   }
 
   const rawHtml = marked.parse(debouncedContent.value) as string;
+  // No `<style>` and no `style` in the model's prose. They used to be let
+  // through for the Mermaid SVG — which never passes here: it is drawn later,
+  // from the `<pre>`'s text, straight into the bubble (see `drawDiagram`). What
+  // they actually let through was an answer restyling the screen around it: a
+  // `position: fixed` block laid over the permission card's buttons, or a
+  // stylesheet relabelling them. DOMPurify allows both by default, so they are
+  // forbidden outright rather than merely not added.
   let sanitized = DOMPurify.sanitize(rawHtml, {
-    ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject', 'style'],
-    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'style', 'dx', 'dy', 'alignment-baseline', 'data-wikilink', ...MATH_ATTRS],
+    ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject'],
+    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'dx', 'dy', 'alignment-baseline', 'data-wikilink', ...MATH_ATTRS],
+    FORBID_TAGS: ['style'],
+    FORBID_ATTR: ['style'],
   });
 
   // Convert [[Title]] wiki-links to clickable links

@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue';
+import { ref, reactive, computed, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
@@ -38,19 +38,69 @@ export interface SendOptions {
 }
 
 /**
+ * One turn in flight, or finished and not yet put away.
+ *
+ * Kept per conversation, because a turn belongs to its conversation and not to
+ * whichever one is on screen. This composable used to hold one set of refs for
+ * the whole screen: switch from A to B while A was answering, and A's state
+ * was either shown in B or — once `clearStreaming` ran on the switch — thrown
+ * away, so going back to A showed it idle and a second turn could be sent into
+ * it beside the first.
+ */
+interface Turn {
+  content: string;
+  messageId: string | null;
+  /** Whether the run is still going: from sending until it answers. */
+  streaming: boolean;
+  toolCalls: SynToolCallEvent[];
+  tempo: Tempo | null;
+  plan: PlanStep[];
+  progress: RunProgress | null;
+  error: string | null;
+  /** This turn's own listeners, dropped with it. */
+  stops: UnlistenFn[];
+  /** Put away while its listeners were still being attached. */
+  dropped: boolean;
+}
+
+const freshTurn = (): Turn => ({
+  content: '',
+  messageId: null,
+  streaming: true,
+  toolCalls: [],
+  tempo: null,
+  plan: [],
+  progress: null,
+  error: null,
+  stops: [],
+  dropped: false,
+});
+
+/**
  * One turn with Syn, from sending to the answer, for whichever screen asked.
  *
  * Messages and the ask bar both use this. The ask bar used to keep its own
  * copy of the streaming, tempo and tool listening, and that copy is why it
  * never learned about permission cards or plans: every new thing a turn could
  * say had to be taught to two places, and was taught to one.
+ *
+ * The refs it returns show **one** conversation's turn — the one named by
+ * `show`. Turns in other conversations keep running and keep listening; they
+ * are just not what the refs are showing.
  */
 export function useSynChat() {
-  const streamingContent = ref('');
-  const streamingMessageId = ref<string | null>(null);
-  const isStreaming = ref(false);
-  const toolCalls = ref<SynToolCallEvent[]>([]);
-  const activeConversationId = ref<string | null>(null);
+  /** Every conversation with a turn this screen started and has not put away. */
+  const turns = reactive(new Map<string, Turn>());
+  /** The conversation on screen: what the refs below show. See `show`. */
+  const shown = ref<string | null>(null);
+  const current = computed<Turn | undefined>(() =>
+    shown.value ? turns.get(shown.value) : undefined,
+  );
+
+  const streamingContent = computed(() => current.value?.content ?? '');
+  const streamingMessageId = computed(() => current.value?.messageId ?? null);
+  const isStreaming = computed(() => current.value?.streaming ?? false);
+  const toolCalls = computed<SynToolCallEvent[]>(() => current.value?.toolCalls ?? []);
   /**
    * How heavy this turn was judged to be, before it started.
    *
@@ -60,65 +110,86 @@ export function useSynChat() {
    * that is going to take four rounds — the same dots for both is what makes a
    * fast answer feel slow and a slow one feel broken.
    */
-  const tempo = ref<Tempo | null>(null);
-  const error = ref<string | null>(null);
+  const tempo = computed<Tempo | null>(() => current.value?.tempo ?? null);
+  const error = computed<string | null>(() => current.value?.error ?? null);
   /** Whether the last refusal was the switch rather than a fault. */
   const switchedOff = ref(false);
   /** The run's own list of steps, as it last wrote it. See `update_plan`. */
-  const plan = ref<PlanStep[]>([]);
+  const plan = computed<PlanStep[]>(() => current.value?.plan ?? []);
   /** How far the run has got, against its ceilings. See `syn-progress`. */
-  const progress = ref<RunProgress | null>(null);
+  const progress = computed<RunProgress | null>(() => current.value?.progress ?? null);
 
-  let stops: UnlistenFn[] = [];
-  const stopListening = () => {
-    stops.forEach(stop => stop());
-    stops = [];
+  /** Show this conversation's turn, if it has one. Nothing is stopped. */
+  const show = (conversationId: string | null | undefined) => {
+    shown.value = conversationId ?? null;
   };
 
-  const setupListener = async (conversationId: string) => {
-    stopListening();
+  /** Whether a turn in this conversation is still running. */
+  const isRunning = (conversationId: string | null | undefined): boolean =>
+    !!conversationId && !!turns.get(conversationId)?.streaming;
+
+  /**
+   * Put one conversation's turn away: its words, its state, and its listeners.
+   *
+   * The listeners are the part that used to be missed. They were only dropped
+   * when the next turn started or the screen unmounted, and the ask bar is
+   * mounted for the whole session — so it went on hearing a turn it had closed.
+   */
+  const drop = (conversationId: string) => {
+    const turn = turns.get(conversationId);
+    if (!turn) return;
+    turn.dropped = true;
+    turn.stops.forEach(stop => stop());
+    turn.stops = [];
+    turns.delete(conversationId);
+  };
+
+  const setupListener = async (conversationId: string, turn: Turn) => {
+    const mine = (id: string | null | undefined) => id === conversationId;
+    const keep = (stop: UnlistenFn) => {
+      // Put away while this was still being attached: nothing would ever drop
+      // it later, so it goes now.
+      if (turn.dropped) stop();
+      else turn.stops.push(stop);
+    };
 
     try {
-      activeConversationId.value = conversationId;
-      stops.push(await listen<SynStreamToken>('syn-stream-token', (event) => {
+      keep(await listen<SynStreamToken>('syn-stream-token', (event) => {
         const token = event.payload;
-
-        // Only process tokens for the active conversation
-        if (token.conversation_id !== conversationId) return;
+        if (!mine(token.conversation_id)) return;
 
         if (token.done) {
-          // Stream completed
-          isStreaming.value = false;
-          streamingMessageId.value = null;
-          // Don't clear streamingContent here — the parent will handle it
-          // after it picks up the final assembled message
+          // The words have all arrived. The content is kept: the caller puts
+          // it away once it has picked up the final assembled message.
+          turn.streaming = false;
+          turn.messageId = null;
         } else {
-          streamingMessageId.value = token.message_id;
-          streamingContent.value += token.token;
+          turn.messageId = token.message_id;
+          turn.content += token.token;
         }
       }));
 
-      stops.push(await listen<{ conversation_id: string; tempo: Tempo }>(
+      keep(await listen<{ conversation_id: string; tempo: Tempo }>(
         'syn-tempo',
         (event) => {
-          if (event.payload.conversation_id !== conversationId) return;
-          tempo.value = event.payload.tempo;
+          if (!mine(event.payload.conversation_id)) return;
+          turn.tempo = event.payload.tempo;
         },
       ));
 
-      stops.push(await listen<SynToolCallEvent>('syn-tool-call', (event) => {
-        if (event.payload.conversation_id !== conversationId) return;
-        toolCalls.value.push(event.payload);
+      keep(await listen<SynToolCallEvent>('syn-tool-call', (event) => {
+        if (!mine(event.payload.conversation_id)) return;
+        turn.toolCalls.push(event.payload);
       }));
 
-      stops.push(await listen<{ conversation_id?: string | null; plan: PlanStep[] }>('syn-plan', (event) => {
-        if (event.payload.conversation_id !== conversationId) return;
-        plan.value = event.payload.plan;
+      keep(await listen<{ conversation_id?: string | null; plan: PlanStep[] }>('syn-plan', (event) => {
+        if (!mine(event.payload.conversation_id)) return;
+        turn.plan = event.payload.plan;
       }));
 
-      stops.push(await listen<RunProgress>('syn-progress', (event) => {
-        if (event.payload.conversation_id !== conversationId) return;
-        progress.value = event.payload;
+      keep(await listen<RunProgress>('syn-progress', (event) => {
+        if (!mine(event.payload.conversation_id)) return;
+        turn.progress = event.payload;
       }));
     } catch (e) {
       logger.error('[Syn] Failed to setup stream listener', e);
@@ -133,17 +204,15 @@ export function useSynChat() {
     options: SendOptions = {},
   ): Promise<SynMessage | null> => {
     const { model, temperature, images, resumeRun, replacing, planOnly, focus } = options;
-    error.value = null;
-    isStreaming.value = true;
-    streamingContent.value = '';
-    toolCalls.value = [];
-    streamingMessageId.value = null;
-    tempo.value = null;
-    plan.value = [];
-    progress.value = null;
+    // A fresh turn, and with it a fresh tempo (`tempo: null`), no tools, no
+    // plan and no progress: nothing from the last turn carries over.
+    drop(conversationId);
+    turns.set(conversationId, freshTurn());
+    // Read back through the map, so the writes below go through the proxy.
+    const turn = turns.get(conversationId)!;
 
     // Setup listener before sending
-    await setupListener(conversationId);
+    await setupListener(conversationId, turn);
 
     try {
       const response = await invoke<SynMessage>('syn_send_message', {
@@ -160,6 +229,11 @@ export function useSynChat() {
           focus,
         },
       });
+      turn.streaming = false;
+      // The run is over and nothing more is coming for it. What it said stays
+      // until the turn is put away; its listeners do not.
+      turn.stops.forEach(stop => stop());
+      turn.stops = [];
       return response;
     } catch (e: any) {
       const said = e?.message || String(e);
@@ -175,43 +249,54 @@ export function useSynChat() {
       } else {
         logger.error('[Syn] Failed to send message', e);
       }
-      error.value = said;
-      isStreaming.value = false;
-      streamingContent.value = '';
-      streamingMessageId.value = null;
+      turn.error = said;
+      turn.streaming = false;
+      turn.content = '';
+      turn.messageId = null;
+      // Nothing more is coming. The error stays, to be shown until the turn is
+      // put away; the listeners do not.
+      turn.stops.forEach(stop => stop());
+      turn.stops = [];
       return null;
     }
   };
 
-  const stopGeneration = async () => {
+  /**
+   * Stop one conversation's run — the one on screen, unless another is named.
+   *
+   * Never without an id. The backend reads a missing conversation as *stop
+   * every run*, routines and Telegram included, which is not what pressing
+   * Escape over one conversation means. No conversation, nothing to stop.
+   */
+  const stopGeneration = async (conversationId?: string | null) => {
+    const id = conversationId ?? shown.value;
+    if (!id) return;
     try {
-      await invoke('syn_stop_generation', {
-        conversationId: activeConversationId.value || undefined,
-      });
+      await invoke('syn_stop_generation', { conversationId: id });
     } catch (e) {
       logger.error('[Syn] Failed to stop generation', e);
     } finally {
-      isStreaming.value = false;
-      streamingContent.value = '';
-      streamingMessageId.value = null;
-      activeConversationId.value = null;
-      toolCalls.value = [];
-      progress.value = null;
+      drop(id);
     }
   };
 
-  const clearStreaming = () => {
-    streamingContent.value = '';
-    streamingMessageId.value = null;
-    activeConversationId.value = null;
-    isStreaming.value = false;
-    toolCalls.value = [];
-    plan.value = [];
-    progress.value = null;
+  /**
+   * Put a turn away once its answer is in hand — the one on screen, unless
+   * another conversation is named. Its listeners go with it.
+   *
+   * A turn that is still running is left alone: that is a later turn in the
+   * same conversation, started after this answer's run was stopped, and it is
+   * `stopGeneration` that puts a running turn away.
+   */
+  const clearStreaming = (conversationId?: string | null) => {
+    const id = conversationId ?? shown.value;
+    if (id && !isRunning(id)) drop(id);
   };
 
-  // Every listener, the tempo's included — it used to outlive the screen.
-  onUnmounted(stopListening);
+  // Every listener of every turn, the tempo's included.
+  onUnmounted(() => {
+    for (const id of [...turns.keys()]) drop(id);
+  });
 
   return {
     switchedOff,
@@ -223,6 +308,8 @@ export function useSynChat() {
     tempo,
     plan,
     progress,
+    show,
+    isRunning,
     sendMessage,
     stopGeneration,
     clearStreaming,

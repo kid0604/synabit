@@ -56,6 +56,8 @@ const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
 const {
   pending: consentPending,
   pendingIn: consentPendingIn,
+  error: consentError,
+  answering: consentAnswering,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
 const consentHere = computed(() => consentPendingIn(activeConversationId.value));
@@ -105,9 +107,11 @@ const onConsent = async (choice: ConsentAnswer) => {
     model: selectedModel.value || undefined,
     resumeRun: stopped,
   });
-  if (response && onScreen()) {
-    activeMessages.value.push(response);
-    clearStreaming();
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    // Put away whether or not it landed on screen: the answer is saved with
+    // its conversation, and is there when somebody goes back to it.
+    clearStreaming(id);
   }
 };
 
@@ -150,9 +154,11 @@ const onChoice = async (nodeId: string) => {
     model: selectedModel.value || undefined,
     resumeRun: stopped,
   });
-  if (response && onScreen()) {
-    activeMessages.value.push(response);
-    clearStreaming();
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    // Put away whether or not it landed on screen: the answer is saved with
+    // its conversation, and is there when somebody goes back to it.
+    clearStreaming(id);
   }
 };
 const trySkill = (name: string) => {
@@ -257,6 +263,8 @@ const {
   plan,
   progress,
   error: chatError,
+  show: showTurn,
+  isRunning,
   sendMessage,
   stopGeneration,
   clearStreaming,
@@ -332,6 +340,11 @@ const unreadNotifications = computed(() => notifications.value.filter(n => !n.re
 const activeConversationId = computed(() =>
   selection.value?.kind === 'conversation' ? selection.value.id : null,
 );
+
+// The turn on screen is the open conversation's. Moving to another one only
+// changes which turn is shown; the one left behind carries on, and is still
+// running when somebody comes back to it.
+watch(activeConversationId, (id) => showTurn(id), { immediate: true });
 
 const activeConversationTitle = computed(
   () => conversations.value.find(c => c.id === activeConversationId.value)?.title ?? 'Syn',
@@ -416,7 +429,6 @@ const createConversation = async (): Promise<string | null> => {
     });
     conversations.value = [conv, ...conversations.value];
     activeMessages.value = [];
-    clearStreaming();
     selection.value = { kind: 'conversation', id: conv.id };
     return conv.id;
   } catch (e) {
@@ -469,6 +481,10 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   let id = activeConversationId.value;
   if (!id) id = await createConversation();
   if (!id) return;
+  // One turn per conversation at a time. The composer already refuses while
+  // this conversation's run is going; this is the same rule for every other
+  // way in — a plan approved, an answer regenerated.
+  if (isRunning(id)) return;
 
   // Indentation, blank lines and repeated lines are kept: they are what makes
   // pasted code, YAML or a nested list mean anything. See `composerText.ts`.
@@ -485,6 +501,12 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   };
   activeMessages.value.push(userMessage);
 
+  // Whether the answer lands on screen — the same question `onConsent` asks.
+  // Somebody may have opened another conversation while this one was
+  // answering, and an answer pushed onto the screen then lands in *that*
+  // conversation's list.
+  const onScreen = () => activeConversationId.value === id;
+
   const response = await sendMessage(props.vaultPath, id, cleanText, {
     model: selectedModel.value || undefined,
     images,
@@ -493,8 +515,8 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   });
 
   if (response) {
-    activeMessages.value.push(response);
-    clearStreaming();
+    if (onScreen()) activeMessages.value.push(response);
+    clearStreaming(id);
     // The title is generated from the first exchange, and the count changed.
     await loadConversations();
   }
@@ -606,7 +628,7 @@ const refresh = async () => {
  * screen and the file agree.
  */
 const handleRegenerate = async (messageId: string) => {
-  if (!activeConversationId.value) return;
+  if (!activeConversationId.value || isRunning(activeConversationId.value)) return;
   const msgIndex = activeMessages.value.findIndex(m => m.id === messageId);
   if (msgIndex <= 0) return;
   const userMsg = activeMessages.value[msgIndex - 1];
@@ -659,7 +681,6 @@ const handleSettingsSaved = async () => {
 const handleSelect = async (next: Selection) => {
   selection.value = next;
   if (next?.kind === 'conversation') {
-    clearStreaming();
     await loadConversation(next.id);
   } else if (next?.kind === 'notifications') {
     await markNotificationsRead();
@@ -856,6 +877,59 @@ watch(() => status.value.connected, (connected, wasConnected) => {
   }
 });
 
+// ─── Keys, size, and what outlives the screen ───────────────
+//
+// Registered here, in setup, and not inside `onMounted`. The resize and key
+// listeners and their `onUnmounted` used to sit after the first `await` in the
+// mount block, and a lifecycle hook registered after an `await` belongs to no
+// component — Vue drops it with a warning. So nothing was ever removed, and
+// every remount added another set, and another model poll.
+
+const handleResize = () => {
+  isMobile.value = window.innerWidth < 768;
+};
+
+/** Whether this screen is the one showing. It is kept alive when it is not. */
+let showing = true;
+onActivated(() => { showing = true; });
+onDeactivated(() => { showing = false; });
+
+/**
+ * Escape, pressed inside this app.
+ *
+ * On the app's own root rather than on `window`. On `window` it heard Escape
+ * from every other app — closing a dialog in Notes stopped a run here, since
+ * this screen stays alive behind `<keep-alive>`. Something that already
+ * answered the key — a dialog, a dropdown, the conversation panel stopping the
+ * run itself — marks it handled, and is left to have handled it.
+ */
+const handleKeydown = (e: KeyboardEvent) => {
+  if (!showing || e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+  // The dialog first: Escape dismisses the thing on top, and a question about
+  // deleting something is on top of everything else on this screen.
+  if (pendingDelete.value) {
+    e.preventDefault();
+    pendingDelete.value = null;
+    return;
+  }
+  // The settings and the inspector close on Escape themselves.
+  if (showSettings.value || showInspector.value) return;
+  if (isStreaming.value) {
+    e.preventDefault();
+    void stopGeneration();
+  }
+};
+
+let unmounted = false;
+onMounted(() => {
+  window.addEventListener('resize', handleResize);
+});
+onUnmounted(() => {
+  unmounted = true;
+  window.removeEventListener('resize', handleResize);
+  cleanupModels();
+});
+
 onMounted(async () => {
   loading.value = true;
   try {
@@ -892,6 +966,9 @@ onMounted(async () => {
   void (async () => {
     try {
       await checkStatus(props.vaultPath);
+      // Gone while the provider was answering: a poll started now would have
+      // nobody left to stop it.
+      if (unmounted) return;
       if (status.value.connected) {
         await fetchModels(props.vaultPath);
         startHealthCheck(props.vaultPath);
@@ -902,30 +979,6 @@ onMounted(async () => {
       logger.error('[Syn] Could not reach the provider', e);
     }
   })();
-
-  const handleResize = () => {
-      isMobile.value = window.innerWidth < 768;
-  };
-  window.addEventListener('resize', handleResize);
-
-  const handleKeydown = (e: KeyboardEvent) => {
-    // The dialog first: Escape dismisses the thing on top, and a question about
-    // deleting something is on top of everything else on this screen.
-    if (e.key === 'Escape' && pendingDelete.value) {
-      pendingDelete.value = null;
-      return;
-    }
-    if (e.key === 'Escape' && isStreaming.value) {
-      stopGeneration();
-    }
-  };
-  window.addEventListener('keydown', handleKeydown);
-  
-  onUnmounted(() => {
-    window.removeEventListener('resize', handleResize);
-    window.removeEventListener('keydown', handleKeydown);
-    cleanupModels();
-  });
 });
 
 /**
@@ -966,7 +1019,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
 </script>
 
 <template>
-  <div class="flex-1 w-full h-full flex bg-gray-50 dark:bg-[#0f1115] text-text dark:text-text-dark relative overflow-hidden">
+  <div
+    class="flex-1 w-full h-full flex bg-gray-50 dark:bg-[#0f1115] text-text dark:text-text-dark relative overflow-hidden"
+    @keydown="handleKeydown"
+  >
     
     <!-- Sidebar -->
     <div
@@ -1200,9 +1256,11 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
                   :choice-ask="choiceHere?.choice ?? null"
+                  :consent-busy="consentAnswering"
+                  :consent-error="consentHere ? consentError : null"
                   @send="(text, images, planOnly) => handleSendMessage(text, images, undefined, planOnly)"
                   @approve-plan="handleSendMessage(t('syn.plan_go_message'))"
-                  @stop="stopGeneration"
+                  @stop="stopGeneration()"
                   @open-source="handleOpenSource"
                   @arrange="handleArrange"
                   @open-board="handleOpenBoard"

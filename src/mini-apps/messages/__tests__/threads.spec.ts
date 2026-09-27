@@ -291,7 +291,9 @@ describe('saying how heavy a turn is', () => {
   });
 
   it('is forgotten at the start of each turn', () => {
-    expect(chat).toContain('tempo.value = null');
+    // Each turn starts from a fresh record, tempo unset. See `freshTurn`.
+    expect(chat).toContain('tempo: null');
+    expect(chat).toContain('turns.set(conversationId, freshTurn())');
   });
 
   /** An instant turn says so instead of showing work that is not happening. */
@@ -349,7 +351,11 @@ describe('asking before removing', () => {
 
   /** Escape answers "no", like it does for every other dialog. */
   it('lets Escape dismiss the question before it stops a stream', () => {
-    expect(app).toContain("if (e.key === 'Escape' && pendingDelete.value)");
+    const handler = app.split('const handleKeydown')[1]?.split('\n};')[0] ?? '';
+    expect(handler).toContain('if (pendingDelete.value)');
+    expect(handler.indexOf('if (pendingDelete.value)')).toBeLessThan(
+      handler.indexOf('stopGeneration()'),
+    );
   });
 
   /**

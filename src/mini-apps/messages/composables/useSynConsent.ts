@@ -12,7 +12,7 @@
  * and two cards competing for one decision is how somebody answers the wrong
  * one.
  */
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
@@ -62,7 +62,12 @@ const listenOnce = () => {
 
 export function useSynConsent(vaultPath: () => string) {
   listenOnce();
+  /** Why the last answer did not go through. Shown on the card. */
   const error = ref<string | null>(null);
+  /** An answer is on its way. The card's buttons wait for it. */
+  const answering = ref(false);
+  // A new question starts with a clean card, not the last one's failure.
+  watch(pending, () => { error.value = null; });
 
   /**
    * The question, if it belongs to this conversation.
@@ -95,8 +100,11 @@ export function useSynConsent(vaultPath: () => string) {
    */
   const answer = async (choice: ConsentAnswer): Promise<boolean> => {
     const asked = pending.value;
-    if (!asked) return false;
+    // One answer at a time: a second press while the first is on its way is
+    // not a second decision.
+    if (!asked || answering.value) return false;
     error.value = null;
+    answering.value = true;
     try {
       const wasAsked = await invoke<boolean>('syn_answer_consent', {
         vaultPath: vaultPath(),
@@ -109,10 +117,12 @@ export function useSynConsent(vaultPath: () => string) {
       logger.error('[Syn] Could not record the answer', e);
       error.value = (e as { message?: string })?.message ?? String(e);
       return false;
+    } finally {
+      answering.value = false;
     }
   };
 
-  return { pending, pendingIn, error, answer };
+  return { pending, pendingIn, error, answering, answer };
 }
 
 /**
