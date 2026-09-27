@@ -2358,7 +2358,7 @@
     "choice_remove": "remove",
     "choice_change": "change",
     "choice_syn_picked": "the one Syn was about to act on",
-    "choice_explainer": "Picking one puts it in the box below. Syn will not carry on until you send it — the run stopped here and stays stopped.",
+    "choice_explainer": "Picking one is the answer: Syn carries on with it straight away, with nothing more to send. Your pick goes into the conversation as your reply.",
     "model_search": "Type to find a model…",
     "model_none_match": "Nothing matches “{query}”.",
     "model_hidden": "{n} hidden — they cannot answer a chat. Show them anyway",
