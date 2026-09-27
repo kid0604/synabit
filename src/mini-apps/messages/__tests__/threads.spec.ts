@@ -291,7 +291,9 @@ describe('saying how heavy a turn is', () => {
   });
 
   it('is forgotten at the start of each turn', () => {
-    expect(chat).toContain('tempo.value = null');
+    // Each turn starts from a fresh record, tempo unset. See `freshTurn`.
+    expect(chat).toContain('tempo: null');
+    expect(chat).toContain('turns.set(conversationId, freshTurn())');
   });
 
   /** An instant turn says so instead of showing work that is not happening. */

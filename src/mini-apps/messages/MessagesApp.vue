@@ -105,9 +105,11 @@ const onConsent = async (choice: ConsentAnswer) => {
     model: selectedModel.value || undefined,
     resumeRun: stopped,
   });
-  if (response && onScreen()) {
-    activeMessages.value.push(response);
-    clearStreaming();
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    // Put away whether or not it landed on screen: the answer is saved with
+    // its conversation, and is there when somebody goes back to it.
+    clearStreaming(id);
   }
 };
 
@@ -150,9 +152,11 @@ const onChoice = async (nodeId: string) => {
     model: selectedModel.value || undefined,
     resumeRun: stopped,
   });
-  if (response && onScreen()) {
-    activeMessages.value.push(response);
-    clearStreaming();
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    // Put away whether or not it landed on screen: the answer is saved with
+    // its conversation, and is there when somebody goes back to it.
+    clearStreaming(id);
   }
 };
 const trySkill = (name: string) => {
@@ -257,6 +261,8 @@ const {
   plan,
   progress,
   error: chatError,
+  show: showTurn,
+  isRunning,
   sendMessage,
   stopGeneration,
   clearStreaming,
@@ -332,6 +338,11 @@ const unreadNotifications = computed(() => notifications.value.filter(n => !n.re
 const activeConversationId = computed(() =>
   selection.value?.kind === 'conversation' ? selection.value.id : null,
 );
+
+// The turn on screen is the open conversation's. Moving to another one only
+// changes which turn is shown; the one left behind carries on, and is still
+// running when somebody comes back to it.
+watch(activeConversationId, (id) => showTurn(id), { immediate: true });
 
 const activeConversationTitle = computed(
   () => conversations.value.find(c => c.id === activeConversationId.value)?.title ?? 'Syn',
@@ -416,7 +427,6 @@ const createConversation = async (): Promise<string | null> => {
     });
     conversations.value = [conv, ...conversations.value];
     activeMessages.value = [];
-    clearStreaming();
     selection.value = { kind: 'conversation', id: conv.id };
     return conv.id;
   } catch (e) {
@@ -469,6 +479,10 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   let id = activeConversationId.value;
   if (!id) id = await createConversation();
   if (!id) return;
+  // One turn per conversation at a time. The composer already refuses while
+  // this conversation's run is going; this is the same rule for every other
+  // way in — a plan approved, an answer regenerated.
+  if (isRunning(id)) return;
 
   // Indentation, blank lines and repeated lines are kept: they are what makes
   // pasted code, YAML or a nested list mean anything. See `composerText.ts`.
@@ -485,6 +499,12 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   };
   activeMessages.value.push(userMessage);
 
+  // Whether the answer lands on screen — the same question `onConsent` asks.
+  // Somebody may have opened another conversation while this one was
+  // answering, and an answer pushed onto the screen then lands in *that*
+  // conversation's list.
+  const onScreen = () => activeConversationId.value === id;
+
   const response = await sendMessage(props.vaultPath, id, cleanText, {
     model: selectedModel.value || undefined,
     images,
@@ -493,8 +513,8 @@ const handleSendMessage = async (text: string, images?: string[], replacing?: st
   });
 
   if (response) {
-    activeMessages.value.push(response);
-    clearStreaming();
+    if (onScreen()) activeMessages.value.push(response);
+    clearStreaming(id);
     // The title is generated from the first exchange, and the count changed.
     await loadConversations();
   }
@@ -606,7 +626,7 @@ const refresh = async () => {
  * screen and the file agree.
  */
 const handleRegenerate = async (messageId: string) => {
-  if (!activeConversationId.value) return;
+  if (!activeConversationId.value || isRunning(activeConversationId.value)) return;
   const msgIndex = activeMessages.value.findIndex(m => m.id === messageId);
   if (msgIndex <= 0) return;
   const userMsg = activeMessages.value[msgIndex - 1];
@@ -659,7 +679,6 @@ const handleSettingsSaved = async () => {
 const handleSelect = async (next: Selection) => {
   selection.value = next;
   if (next?.kind === 'conversation') {
-    clearStreaming();
     await loadConversation(next.id);
   } else if (next?.kind === 'notifications') {
     await markNotificationsRead();
