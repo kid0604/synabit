@@ -1095,26 +1095,15 @@ fn run_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
 
-/// Write through a temp file, so a crash mid-write leaves the previous
-/// transcript rather than half of the new one.
-fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to rename temp run file: {e}"))
-    })?;
-    Ok(())
-}
-
 /// Persist a run as it currently stands.
 ///
 /// Called after every step, so it has to stay cheap: one serialisation and one
 /// rename of a file measured in kilobytes.
 pub fn save_run(vault_path: &str, run: &Run) -> AppResult<()> {
     let dir = runs_dir(vault_path)?;
-    let json = serde_json::to_string_pretty(run)?;
-    atomic_write(&run_path(&dir, &run.id), &json)?;
+    // Keeps the `metadata` the sync layer stamped and sets `updated_at`, so a
+    // save does not undo the stamp and cause a second write; see `vault_json`.
+    crate::syn::vault_json::write(&run_path(&dir, &run.id), run)?;
     save_results(&dir, run)
 }
 
@@ -1160,7 +1149,7 @@ fn save_results(dir: &Path, run: &Run) -> AppResult<()> {
         return Ok(());
     }
     let path = results_dir(dir)?.join(format!("{}.json", run.id));
-    atomic_write(&path, &serde_json::to_string(&Results { steps })?)
+    crate::syn::vault_json::write(&path, &Results { steps })
 }
 
 /// What a step actually returned, for a run already on disk.

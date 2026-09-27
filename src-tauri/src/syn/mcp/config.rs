@@ -32,7 +32,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 
 /// How a server is reached. Names of secrets only; values are in the keychain.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -154,16 +154,10 @@ pub fn load(vault_path: &str) -> McpConfig {
 }
 
 pub fn save(vault_path: &str, config: &McpConfig) -> AppResult<()> {
-    let path = path(vault_path);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(config)?)?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to write Syn/mcp.json: {e}"))
-    })
+    // Whole-file last writer wins across devices: the list is edited by hand,
+    // rarely, on one screen at a time. `vault_json` stamps
+    // `metadata.updated_at` so the newer edit is the one that survives.
+    crate::syn::vault_json::write(&path(vault_path), config)
 }
 
 /// What is wrong with a server as entered, in a sentence for the screen.

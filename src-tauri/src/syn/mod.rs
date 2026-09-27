@@ -40,3 +40,4 @@ pub mod toolset;
 pub mod web;
 pub mod tempo;
 pub mod tools;
+pub mod vault_json;
