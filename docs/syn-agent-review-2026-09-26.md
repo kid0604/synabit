@@ -318,7 +318,23 @@ Năm việc còn thiếu, theo thứ tự quan trọng:
 
 ## 8. Lộ trình tiếp theo
 
-### Phase G: Vá chỗ ghép (1–2 tuần)
+### Phase G: Vá chỗ ghép — **đã làm (2026-09-27)**
+
+Mục 1–12 ở §6 đã sửa; chi tiết ở phụ lục A. Gate G:
+
+- Test tấn công S1 (qua spreadsheet — đường echo không cần mạng), S2 (run con), S3, S4, S6 chạy qua engine với provider giả lập, và đã kiểm là **thất bại khi tắt bản vá**. S1 qua `browse` tìm kiếm chỉ có unit test ở `taint.rs`, vì test engine không có mạng.
+- Mount test cho U1–U4 qua được; U5 có test nạp câu hỏi từ đĩa và đã kiểm trên preview.
+- Câu hỏi của routine sau khi khởi động lại: đọc lại qua `syn_waiting`, thẻ hiện trong hội thoại khi mở từ "Việc của Syn". **Chưa kiểm trong app thật.**
+
+Còn mở sau G:
+- Lời từ chối memory (`declined.json`) chưa có tombstone: xoá tay thì quay lại từ máy kia.
+- Hội thoại vẫn last-writer-wins theo `metadata.updated_at`: hai máy cùng ghi một hội thoại thì mất một lượt.
+- `timeline/extract.rs::conversation_days` vẫn coi mọi `Syn/*.json` là hội thoại.
+- Bản app cũ chưa biết `removed_at` của đề xuất memory.
+- D3, D4, slot routine theo múi giờ; mục 13–14 của §6 (K1–K6, số liệu, trợ năng).
+- `cargo clippy -D warnings` đã đỏ từ trước (khoảng 120 lỗi ngoài phạm vi); code mới không thêm lỗi.
+
+### Phase G: kế hoạch ban đầu
 
 Mục 1–12 ở §6. Mỗi lỗ an toàn phải có **test theo hình dạng tấn công** trong bộ scripted-provider: S1 tìm kiếm tự in lại, S2 qua run con, S3 qua spreadsheet, S4 giả số dư, S5 feed qua RAG, S6 forward rồi "ok". Mỗi lỗi resume phải có test cho `start_run`: resume ở chế độ Plan, resume lồng nhau, resume khi đã taint rồi mở link.
 
@@ -368,3 +384,4 @@ Mục 1–12 ở §6. Mỗi lỗ an toàn phải có **test theo hình dạng t�
 | D | `delegate`, resume phát lại, memory có hạn xem lại, so sánh chữ bỏ dấu, harness chọn skill, RAG theo đoạn, `[n]` | `dd35150`, `9d5afb3`, `11fa12a` |
 | E | Routine (`Trigger::Schedule`, `Surface::Routine`), giao kết quả qua app, hệ điều hành và Telegram | `73dbd4b` |
 | F | Nhóm tool (`toolset`), spreadsheet, sửa/xoá giao dịch, MCP client; sửa lỗi `create_transaction` làm mất `financeSchema` | `2e365a4`, `c0884f9`, `c05acad`, `4a956cc` |
+| G | URL "đã thấy" loại chuỗi do model viết (S1–S3); run con dùng `Destinations` của cha; `create_node` chặn kiểu nội bộ (S4); RAG feed/file và forward trong lịch sử bật taint (S5, S6); resume mang Plan, link, nhóm tool, cả chuỗi, chỉ trả lời một lần (R1–R6); không dọn run đang chờ; mô tả tham số MCP bị cắt và danh sách "chỉ đọc" được ghim (S7); routine phải được duyệt trên từng máy (S8); Gemini chữ ký thay thế, Anthropic không tool thì gửi dạng chữ (P1, P2); cửa sổ tính cả tool, nhận ra server local; sync gộp theo item cho routine/đề xuất/từ chối, bỏ sync `syn_index.json` (D1, D2, D5); frontend: lượt theo hội thoại, Escape cục bộ, gỡ listener, không `style` từ model, IME, câu hỏi theo hội thoại và nạp từ đĩa (U1–U7, S9) | `665448c`, `5bef625`, `7b2aacc`, `ed44839`, merge sync và frontend |
