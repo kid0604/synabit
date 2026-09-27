@@ -159,7 +159,13 @@ const canContinueElsewhere = computed(
 const rendered = computed(() => {
   if (!answer.value) return '';
   try {
-    return DOMPurify.sanitize(marked.parse(answer.value, { async: false }) as string);
+    // No `<style>`, no `style`: the model's words do not get to restyle the
+    // bar — or lay something over the permission card beside them. DOMPurify
+    // allows both by default. See `MessageBubble`.
+    return DOMPurify.sanitize(marked.parse(answer.value, { async: false }) as string, {
+      FORBID_TAGS: ['style'],
+      FORBID_ATTR: ['style'],
+    });
   } catch (e) {
     logger.error('[Syn] Could not render the answer', e);
     return '';
