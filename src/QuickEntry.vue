@@ -115,6 +115,11 @@ const toggleMode = () => {
 };
 
 const onKeydown = (event: KeyboardEvent) => {
+  // The input method's key, not ours. With Telex or VNI, Enter commits the
+  // word being composed — saving on it saved half a word, and Escape there
+  // cancels the composition rather than the window. `keyCode` 229 is what
+  // WebKit reports for those keys before `isComposing` is set.
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     void dismiss();

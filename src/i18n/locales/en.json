@@ -2182,6 +2182,7 @@
     "consent_once": "Yes, for this",
     "consent_always": "Always allow this",
     "consent_never": "Never",
+    "consent_failed": "Your answer did not go through: {reason}. Try again.",
     "consent_explainer": "Syn carries on as soon as you answer — a no included, which it will say it cannot get round. \"Yes, for this\" lasts until this question is answered, however many steps that takes; the next one asks again.",
     "inspector_tab_permissions": "Permissions",
     "permissions_explainer": "What Syn is allowed to do beyond your vault, and what it has done with it. Reading and writing notes are not here: they never ask, because trash and version history put every one of them back — and a log with them in it would bury the entries that matter. None of this syncs; allowing something here is not allowing it on another device.",

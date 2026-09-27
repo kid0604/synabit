@@ -56,6 +56,8 @@ const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
 const {
   pending: consentPending,
   pendingIn: consentPendingIn,
+  error: consentError,
+  answering: consentAnswering,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
 const consentHere = computed(() => consentPendingIn(activeConversationId.value));
@@ -1254,9 +1256,11 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
                   :choice-ask="choiceHere?.choice ?? null"
+                  :consent-busy="consentAnswering"
+                  :consent-error="consentHere ? consentError : null"
                   @send="(text, images, planOnly) => handleSendMessage(text, images, undefined, planOnly)"
                   @approve-plan="handleSendMessage(t('syn.plan_go_message'))"
-                  @stop="stopGeneration"
+                  @stop="stopGeneration()"
                   @open-source="handleOpenSource"
                   @arrange="handleArrange"
                   @open-board="handleOpenBoard"

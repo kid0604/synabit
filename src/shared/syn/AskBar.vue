@@ -121,6 +121,8 @@ const picked = computed(() => describeFocus(props.focus));
 const {
   pending: consentPending,
   pendingIn: consentPendingIn,
+  error: consentError,
+  answering: consentAnswering,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
 const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
@@ -428,7 +430,19 @@ const startAndChoose = async () => {
   }
 };
 
+/** Enter in the new thread's name — the IME's, while it is composing. */
+const onThreadTitleEnter = (event: KeyboardEvent) => {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  void startAndChoose();
+};
+
 const onKeydown = (event: KeyboardEvent) => {
+  // A key that belongs to the input method — Telex, VNI, pinyin — is the IME's
+  // to finish. Enter there commits the word being composed; sending on it sent
+  // half a word. `keyCode` 229 is what WebKit reports for those keys when
+  // `isComposing` is not yet set.
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === 'Escape') {
     event.preventDefault();
     // Escape closes what is open, innermost first: the picker, then a running
@@ -473,7 +487,13 @@ const onKeydown = (event: KeyboardEvent) => {
                it is answered there is no more answer coming. -->
           <div v-if="!busy && (choiceHere || consentHere)" class="space-y-2 mb-3">
             <ChoiceCard v-if="choiceHere" :choice="choiceHere.choice" @answer="onChoice" />
-            <ConsentCard v-if="consentHere" :ask="consentHere.ask" @answer="onConsent" />
+            <ConsentCard
+              v-if="consentHere"
+              :ask="consentHere.ask"
+              :busy="consentAnswering"
+              :error="consentError"
+              @answer="onConsent"
+            />
           </div>
 
           <!-- What the run is doing: its plan, the step in words, how much
@@ -537,7 +557,7 @@ const onKeydown = (event: KeyboardEvent) => {
               v-model="newThreadTitle"
               :placeholder="t('syn.thread_new_placeholder')"
               class="flex-1 bg-transparent text-[13px] outline-none placeholder-gray-400"
-              @keydown.enter.prevent="startAndChoose"
+              @keydown.enter="onThreadTitleEnter"
               @keydown.stop
             />
             <button

@@ -3,8 +3,8 @@ import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 import { i18n } from '../../../i18n';
 
 /**
- * The ask bar, mounted, around what the review found (§5, U2): closing it
- * mid-answer.
+ * The ask bar, mounted, around the two things the review found (§5: U2, U7):
+ * closing it mid-answer, and Enter pressed while an input method is composing.
  */
 
 type Handler = (event: { payload: any }) => void;
@@ -75,6 +75,22 @@ beforeEach(() => {
 afterEach(() => {
   wrapper?.unmount();
   wrapper = null;
+});
+
+describe('Enter while an input method is composing', () => {
+  it('is the IME’s, not a send', async () => {
+    await openBar();
+    await wrapper!.find('textarea').setValue('Vieetj');
+
+    await press({ key: 'Enter', isComposing: true });
+    await press({ key: 'Enter', keyCode: 229 });
+    expect(called('syn_create_conversation')).toHaveLength(0);
+    expect(called('syn_send_message')).toHaveLength(0);
+
+    // Once the word is committed, Enter sends.
+    await press({ key: 'Enter' });
+    expect(called('syn_send_message')).toHaveLength(1);
+  });
 });
 
 describe('closing the bar mid-answer', () => {

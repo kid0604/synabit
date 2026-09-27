@@ -2182,6 +2182,7 @@
     "consent_once": "Cho việc này",
     "consent_always": "Luôn cho phép",
     "consent_never": "Không bao giờ",
+    "consent_failed": "Chưa ghi được câu trả lời: {reason}. Thử lại nhé.",
     "consent_explainer": "Syn làm tiếp ngay khi bạn trả lời — kể cả khi từ chối, nó sẽ nói là không lách được. \"Cho việc này\" có hiệu lực đến khi câu hỏi này được trả lời xong, dù mất mấy bước; câu sau sẽ hỏi lại.",
     "inspector_tab_permissions": "Quyền",
     "permissions_explainer": "Những gì Syn được phép làm ngoài vault, và nó đã làm gì với quyền đó. Đọc và sửa note không nằm ở đây: chúng không bao giờ hỏi, vì thùng rác và lịch sử phiên bản trả lại được tất cả — và một log có chúng sẽ chôn mất những dòng đáng đọc. Không có gì ở đây được sync; cho phép ở máy này không phải cho phép ở máy khác.",

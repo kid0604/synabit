@@ -35,6 +35,10 @@ const props = defineProps<{
   /** *Which one?* — see `syn::ambiguity`. Never both at once: a run stops on
    *  the first thing it needs, so two cards means two runs. */
   choiceAsk?: AmbiguousChoice | null;
+  /** The answer to `consentAsk` is on its way: the buttons wait for it. */
+  consentBusy?: boolean;
+  /** Why the last answer to `consentAsk` did not go through. */
+  consentError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -438,7 +442,12 @@ const handleStop = () => {
           <ChoiceCard :choice="choiceAsk" @answer="emit('choice', $event)" />
         </div>
         <div v-if="consentAsk" class="px-4">
-          <ConsentCard :ask="consentAsk" @answer="emit('consent', $event)" />
+          <ConsentCard
+            :ask="consentAsk"
+            :busy="consentBusy"
+            :error="consentError"
+            @answer="emit('consent', $event)"
+          />
         </div>
 
         <!-- Error message (shown when send fails) -->
