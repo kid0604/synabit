@@ -3553,8 +3553,10 @@ fn tool_create_node<R: tauri::Runtime>(
     if ctx.model.is_some() && crate::syn::taint::reserved_type(&node_type) {
         return Err(AppError::General(format!(
             "`{node_type}` cannot be created with create_node. Memories are kept with `remember`, \
-             skills are written by the user in the Skills screen, and threads are opened by the \
-             user. For anything else, use a kind without a dot, slash or `syn_` prefix."
+             skills are written by the user in the Skills screen, threads are opened by the \
+             user, and money is recorded with the finance tools — the app's own storage (finance, \
+             schemas, views, whiteboard data) is not written this way. For anything else, use a \
+             kind without a dot, slash or `syn_` prefix."
         )));
     }
 

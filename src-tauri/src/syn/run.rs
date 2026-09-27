@@ -659,6 +659,29 @@ pub struct Run {
     /// for the 0-in-17 as though nothing had changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_injected: Option<String>,
+    /// Where `browse` may go if this run has read something: the links it
+    /// was shown, and what the model wrote into its own tool calls. See
+    /// `taint::Destinations`.
+    ///
+    /// On the record for the reason `read_untrusted` is. A run carrying on
+    /// after a question starts with what this one saw — without it, the link
+    /// a person had just given permission to open was refused, because the
+    /// page that offered it was read by a run that no longer existed.
+    #[serde(default, skip_serializing_if = "crate::syn::taint::Destinations::is_empty")]
+    pub destinations: crate::syn::taint::Destinations,
+    /// The tool groups this run had loaded, by name, so a run carrying on from
+    /// it is sent the same tools rather than having to ask for them again.
+    /// See `syn::toolset`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_groups: Vec<String>,
+    /// When somebody answered this run's question and a new run carried on
+    /// from it.
+    ///
+    /// A question is answered once. Pressed twice, or answered from two
+    /// devices, the call it was about to make ran twice — an MCP write sent
+    /// twice. See `claim_resume`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carried_on_at: Option<String>,
     /// The question this run stopped on, when it stopped on one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_consent: Option<crate::syn::consent::Ask>,
@@ -780,6 +803,9 @@ impl Run {
             parent_run_id: None,
             resumed_from: None,
             skill_injected: None,
+            destinations: Default::default(),
+            tool_groups: Vec::new(),
+            carried_on_at: None,
             pending_consent: None,
             pending_call: None,
             pending_choice: None,
@@ -1056,6 +1082,76 @@ pub fn replay(vault_path: &str, stopped: &Run) -> Vec<crate::syn::provider::Chat
         }
     }
     out
+}
+
+/// The runs a carry-on stands on, oldest first: the one it carries on from,
+/// the one *that* carried on from, and so on back.
+///
+/// A piece of work that asks twice — read three notes, ask to browse, browse,
+/// ask to use a server — is three runs, and the third has to start with what
+/// the first did as well as the second. Replaying only the last one lost the
+/// three notes. Bounded, because the chain is read from files anyone's sync can
+/// write, and a loop in it is one edit away.
+pub fn chain(vault_path: &str, stopped: Run) -> Vec<Run> {
+    const DEEPEST: usize = 8;
+    let mut out = vec![stopped];
+    while out.len() < DEEPEST {
+        let Some(earlier) = out
+            .last()
+            .and_then(|r| r.resumed_from.clone())
+            .filter(|id| !out.iter().any(|r| &r.id == id))
+            .and_then(|id| get_run(vault_path, &id).ok())
+        else {
+            break;
+        };
+        out.push(earlier);
+    }
+    out.reverse();
+    out
+}
+
+/// Runs whose question is being answered right now, in this process.
+///
+/// The file says it for every device; this says it before the file has been
+/// written, for two presses a few milliseconds apart.
+static CLAIMED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Take the answer to a stopped run's question, once.
+///
+/// Refused when it has already been answered — here or on another device, as
+/// far as sync has carried that — so the call it was about to make runs once.
+pub fn claim_resume(vault_path: &str, id: &str) -> AppResult<Run> {
+    let mut claimed = CLAIMED.lock().unwrap_or_else(|e| e.into_inner());
+    if claimed.contains(id) {
+        return Err(AppError::General(ALREADY_ANSWERED.into()));
+    }
+    let mut run = get_run(vault_path, id)?;
+    if run.carried_on_at.is_some() {
+        return Err(AppError::General(ALREADY_ANSWERED.into()));
+    }
+    run.carried_on_at = Some(chrono::Utc::now().to_rfc3339());
+    save_run(vault_path, &run)?;
+    claimed.insert(id.to_string());
+    Ok(run)
+}
+
+/// Give a claimed question back, when carrying on failed before doing anything.
+pub fn release_resume(vault_path: &str, id: &str) {
+    CLAIMED.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+    if let Ok(mut run) = get_run(vault_path, id) {
+        run.carried_on_at = None;
+        save_run_best_effort(vault_path, &run);
+    }
+}
+
+/// Said when a question is answered a second time.
+pub const ALREADY_ANSWERED: &str =
+    "This question has already been answered, and the work it was waiting on has carried on.";
+
+/// Whether a run is still waiting for somebody to answer it.
+pub fn is_waiting(run: &Run) -> bool {
+    run.carried_on_at.is_none() && (run.pending_consent.is_some() || run.pending_choice.is_some())
 }
 
 /// A run as a list needs it: everything except the transcript.
@@ -1353,6 +1449,15 @@ pub fn prune_runs(vault_path: &str) {
     // Oldest first, so the tail past the cap is what goes.
     files.sort_by_key(|(modified, _)| *modified);
     for (_, path) in files.iter().take(files.len() - KEEP_RUNS) {
+        // A question nobody has answered yet is not history. Answering it
+        // replays this run, and a run pruned from under it replays nothing.
+        let waiting = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Run>(&text).ok())
+            .is_some_and(|run| is_waiting(&run));
+        if waiting {
+            continue;
+        }
         // The results go with the run. They are much the larger of the two, so
         // a pruner that forgot them would keep the whole history of everything
         // Syn ever read while claiming to keep two hundred transcripts.
@@ -1388,6 +1493,11 @@ pub fn delete_run(vault_path: &str, id: &str) -> AppResult<()> {
 // ═══════════════════════════════════════════════════════════════
 //  TESTS
 // ═══════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+fn tests_budget() -> Budget {
+    Budget { iterations: Some(12), tool_calls: Some(4), tokens: None, wall_ms: Some(1000) }
+}
 
 #[cfg(test)]
 mod tests {
@@ -2018,4 +2128,51 @@ mod agreement {
         }
     }
 
+
+    // ── answering a question once ─────────────────────────────────
+
+    /// R4: pressed twice, or answered from two devices, the call it was waiting
+    /// on runs once.
+    #[test]
+    fn a_question_is_answered_once() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut asked = Run::new("g", None, super::tests_budget());
+        asked.pending_consent = Some(crate::syn::consent::Ask::about(
+            "browse",
+            &crate::syn::consent::Capability::Browse,
+            "2026-09-27T00:00:00Z",
+        ));
+        asked.finish(RunState::AwaitingConsent);
+        save_run(vault, &asked).expect("saved");
+
+        let claimed = claim_resume(vault, &asked.id).expect("first answer");
+        assert!(claimed.carried_on_at.is_some());
+        assert!(claim_resume(vault, &asked.id).is_err(), "second answer refused");
+
+        // Given back when carrying on failed before doing anything.
+        release_resume(vault, &asked.id);
+        assert!(claim_resume(vault, &asked.id).is_ok());
+    }
+
+    /// A question nobody has answered is not history to prune.
+    #[test]
+    fn pruning_spares_a_run_still_waiting_for_an_answer() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut waiting = Run::new("đang chờ", None, super::tests_budget());
+        waiting.pending_choice = Some(crate::syn::ambiguity::Choice {
+            tool: "trash_node".into(),
+            candidates: Vec::new(),
+            chose: "Notes/a.md".into(),
+            asked_at: "2026-09-27T00:00:00Z".into(),
+        });
+        save_run(vault, &waiting).expect("saved");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        for _ in 0..(KEEP_RUNS + 3) {
+            save_run(vault, &Run::new("cũ", None, super::tests_budget())).expect("saved");
+        }
+        prune_runs(vault);
+        assert!(get_run(vault, &waiting.id).is_ok(), "the waiting run is still there");
+    }
 }

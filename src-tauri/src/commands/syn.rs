@@ -371,6 +371,14 @@ pub async fn send_message_inner(
     drop(held);
     let model = choose_model(&request, &conv, &settings);
 
+    // A question is answered once. Taken before anything is written, so a
+    // second press — or a second device — is refused with nothing left behind.
+    // See `run::claim_resume`.
+    let stopped = match request.resume_run.as_deref() {
+        Some(id) => Some(crate::syn::run::claim_resume(vault_path, id)?),
+        None => None,
+    };
+
     // 3. The question, as it goes into the conversation.
     let turn = open_turn(&mut conv, &request)?;
     let question = turn.question.clone();
@@ -382,7 +390,18 @@ pub async fn send_message_inner(
     let (messages_for_llm, carried) = messages_for(app, vault_path, &settings, &request, surface, &gathered, &conv.messages);
 
     // 7–8. What this run may reach, and the run itself.
-    let (mut run, resume_call) = start_run(app, vault_path, &settings, &request, surface, &question, gathered.counted.is_some(), carried);
+    let (mut run, resume_call) = start_run(app, vault_path, &settings, &request, surface, &question, gathered.counted.is_some(), carried, stopped);
+    // Retrieval put somebody else's words in the prompt: a feed article's
+    // summary, or text out of a file. That is the same reading as the tools
+    // that fetch them, and the run is treated the same way. See `syn::taint`.
+    if gathered
+        .retrieval
+        .context_chunks
+        .iter()
+        .any(|chunk| crate::syn::taint::untrusted_source(&chunk.source_type))
+    {
+        run.read_untrusted = true;
+    }
     // Nothing, when the count is already in the prompt. A turn with tools would
     // spend a round deciding not to use them, which is the cost this tempo
     // exists to remove — see `syn::tempo`.
@@ -393,7 +412,7 @@ pub async fn send_message_inner(
     let engine = SynEngine::new(provider_for(app, &settings).await);
     let assistant_message_id = uuid::Uuid::new_v4().to_string();
 
-    let mut assistant_message = engine
+    let driven = engine
         .drive(
             &mut run,
             DriveRequest {
@@ -411,7 +430,20 @@ pub async fn send_message_inner(
                 resume_call,
             },
         )
-        .await?;
+        .await;
+    let mut assistant_message = match driven {
+        Ok(message) => message,
+        Err(e) => {
+            // Failed before doing anything — the provider down, say — so the
+            // question is still open and answering it again should work.
+            if let Some(id) = run.resumed_from.as_deref() {
+                if run.spent.tool_calls == 0 {
+                    crate::syn::run::release_resume(vault_path, id);
+                }
+            }
+            return Err(e);
+        }
+    };
 
     // 9. What the answer stands on.
     settle(&mut run, &mut assistant_message, gathered.retrieval, &request.conversation_id);
@@ -831,6 +863,7 @@ fn start_run(
     question: &str,
     instant: bool,
     carried: crate::syn::stats::Carried,
+    stopped: Option<Run>,
 ) -> (Run, Option<crate::models::syn::ToolCall>) {
     let mut budget = Budget::from_settings(settings);
     if instant {
@@ -841,10 +874,6 @@ fn start_run(
     // What the stopped run was about to do, which is the thing the user just
     // gave permission for. Read off that run rather than worked out again — see
     // `run::Run::pending_call` for the transcript that made this necessary.
-    let stopped = request
-        .resume_run
-        .as_deref()
-        .and_then(|id| crate::syn::run::get_run(vault_path, id).ok());
     let resume_call = stopped.as_ref().and_then(|s| s.pending_call.clone());
 
     let mut run = Run::new(question.to_string(), Some(request.conversation_id.clone()), budget);
@@ -859,7 +888,14 @@ fn start_run(
     if surface == crate::syn::surface::Surface::Routine {
         run.trigger = crate::syn::run::Trigger::Schedule;
     }
+    // A plan being written stays a plan being written when it stops to ask:
+    // answering "only this time" to a read is not approving the plan. Nothing
+    // on the screen sends `plan_only` with an answer, so it is read off the
+    // run being carried on. See `Run::plan_only`.
     run.plan_only = request.plan_only;
+    if let Some(stopped) = stopped.as_ref() {
+        carry_over(&mut run, stopped);
+    }
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
     run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);
@@ -887,6 +923,23 @@ fn start_run(
     crate::syn::run::prune_runs(vault_path);
 
     (run, resume_call)
+}
+
+/// What a run carrying on after a question takes from the one that asked.
+///
+/// The call it was about to make is not enough on its own: a plan being written
+/// stays a plan being written — answering "only this time" to a read is not
+/// approving the plan, and nothing on the screen sends `plan_only` with an
+/// answer — and the links it had seen and the tools it had loaded are what let
+/// the permission just given be used. See `Run::plan_only`,
+/// `Run::destinations`, `Run::tool_groups`.
+fn carry_over(run: &mut Run, stopped: &Run) {
+    run.plan_only |= stopped.plan_only;
+    run.plan = stopped.plan.clone();
+    run.read_untrusted |= stopped.read_untrusted;
+    run.destinations = stopped.destinations.clone();
+    run.tool_groups = stopped.tool_groups.clone();
+    run.resumed_from = Some(stopped.id.clone());
 }
 
 /// Step 9: what the answer turned out to be standing on.
@@ -3110,5 +3163,38 @@ mod send_steps {
             run.steps.iter().any(|s| s.preview.contains("[7]")),
             "the run records it too"
         );
+    }
+
+    /// R1: "only this time" to a read, in a run writing a plan, is not approval
+    /// of the plan. The run carrying on writes the plan still.
+    #[test]
+    fn carrying_on_keeps_a_plan_a_plan() {
+        let mut stopped = Run::new("lên kế hoạch dọn note", Some("c1".into()), Budget::from_settings(&SynSettings::default()));
+        stopped.plan_only = true;
+        stopped.read_untrusted = true;
+        stopped.plan = crate::syn::run::plan_from(&serde_json::json!({
+            "steps": [{ "text": "xoá note cũ", "status": "todo" }],
+        }))
+        .expect("a plan");
+        stopped.destinations.note_seen_in("https://news.example/a");
+        stopped.tool_groups = vec!["history".into()];
+
+        let mut run = Run::new("lên kế hoạch dọn note", Some("c1".into()), Budget::from_settings(&SynSettings::default()));
+        carry_over(&mut run, &stopped);
+
+        assert!(run.plan_only);
+        assert!(run.read_untrusted);
+        assert_eq!(run.plan.len(), 1);
+        assert!(run.destinations.may_visit("https://news.example/a"));
+        assert_eq!(run.tool_groups, vec!["history".to_string()]);
+        assert_eq!(run.resumed_from.as_deref(), Some(stopped.id.as_str()));
+    }
+
+    #[test]
+    fn retrieved_feed_and_file_text_are_somebody_elses_words() {
+        assert!(crate::syn::taint::untrusted_source("feed_article"));
+        assert!(crate::syn::taint::untrusted_source("file"));
+        assert!(!crate::syn::taint::untrusted_source("note"));
+        assert!(!crate::syn::taint::untrusted_source("finance"));
     }
 }
