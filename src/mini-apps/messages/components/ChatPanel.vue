@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, nextTick, onMounted } from 'vue';
 import { useThrottleFn } from '@vueuse/core';
 import { useI18n } from 'vue-i18n';
 import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle, ListChecks } from 'lucide-vue-next';
@@ -165,17 +165,24 @@ watch(
 
 onMounted(() => {
   scrollToBottom('instant');
-  window.addEventListener('keydown', handleGlobalKeydown);
 });
 
-onUnmounted(() => {
-  window.removeEventListener('keydown', handleGlobalKeydown);
-});
-
-const handleGlobalKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape' && props.isStreaming) {
-    emit('stop');
-  }
+/**
+ * Escape stops the run — when it was pressed here.
+ *
+ * On this panel rather than on `window`. On `window` it heard every Escape in
+ * the app, and the panel is kept alive behind `<keep-alive>`, so closing a
+ * dialog in another app stopped a run in this one. Here it only hears keys
+ * pressed with focus inside the conversation, and a detached panel hears
+ * nothing. Something that already answered the key — a dropdown, an IME
+ * cancelling a composition — keeps it.
+ */
+const handlePanelKeydown = (e: KeyboardEvent) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+  if (!props.isStreaming) return;
+  // Answered: the app around this panel listens too, and must not stop twice.
+  e.preventDefault();
+  emit('stop');
 };
 
 // Create a virtual streaming message for display
@@ -302,7 +309,19 @@ const handleStop = () => {
 </script>
 
 <template>
-  <div class="flex-1 flex flex-col min-h-0 relative" @dragover="handleDragOver" @dragleave="handleDragLeave" @drop="handleDrop">
+  <div
+    class="flex-1 flex flex-col min-h-0 relative outline-none"
+    tabindex="-1"
+    data-chat-panel
+    @keydown="handlePanelKeydown"
+    @dragover="handleDragOver"
+    @dragleave="handleDragLeave"
+    @drop="handleDrop"
+  >
+    <!-- `tabindex="-1"` above: a click on the conversation puts focus in it,
+         so an Escape pressed after reading an answer is an Escape pressed
+         here, and reaches the handler. -->
+
     <!-- Drop zone overlay -->
     <Transition
       enter-active-class="transition-opacity duration-200"

@@ -6,9 +6,11 @@ import { i18n } from '../../../i18n';
  * The Messages screen, run rather than read, around a turn that is still
  * answering.
  *
- * Review §5, U1: an answer landing in whichever conversation is open. It is
- * about what happens between calls, which is exactly what the tests that read
- * `MessagesApp.vue` as text cannot see.
+ * Review §5: U1 (an answer landing in whichever conversation is open), U3
+ * (Escape from anywhere stopping the run) and U4 (listeners registered after
+ * an `await`, so never removed). All three are about what happens between
+ * calls, which is exactly what the tests that read `MessagesApp.vue` as text
+ * cannot see.
  *
  * Children are stubbed: this is about the screen's own wiring. The panel is
  * driven through the events it emits and read through the props it is given.
@@ -86,6 +88,7 @@ const open = async () => {
 };
 
 const panel = () => wrapper!.findComponent(ChatPanel);
+const stops = () => invoke.mock.calls.filter(([c]) => c === 'syn_stop_generation');
 const answer = (id: string, content: string) =>
   replies.get(id)!({ id: `r-${id}`, role: 'assistant', content, timestamp: '' });
 
@@ -168,5 +171,66 @@ describe('an answer that arrives after somebody moved on', () => {
     expect(panel().props('isStreaming')).toBe(false);
     const inA = panel().props('messages') as Array<{ content: string }>;
     expect(inA.map((m) => m.content)).toContain('done');
+  });
+});
+
+describe('Escape', () => {
+  it('does not stop the run when it was pressed somewhere else in the app', async () => {
+    await open();
+    panel().vm.$emit('send', 'about A');
+    await flushPromises();
+
+    // Focus is outside Messages — another app's dialog, say.
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(stops()).toHaveLength(0);
+    outside.remove();
+  });
+
+  it('does not stop the run when something inside already answered it', async () => {
+    await open();
+    panel().vm.$emit('send', 'about A');
+    await flushPromises();
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    event.preventDefault();
+    panel().element.dispatchEvent(event);
+    await flushPromises();
+    expect(stops()).toHaveLength(0);
+  });
+
+  it('stops this conversation’s run when pressed inside Messages', async () => {
+    await open();
+    panel().vm.$emit('send', 'about A');
+    await flushPromises();
+
+    panel().element.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flushPromises();
+    expect(stops()).toEqual([['syn_stop_generation', { conversationId: 'A' }]]);
+  });
+});
+
+describe('leaving', () => {
+  it('takes its window listeners with it', async () => {
+    const added = vi.spyOn(window, 'addEventListener');
+    const removed = vi.spyOn(window, 'removeEventListener');
+    await open();
+    wrapper!.unmount();
+    wrapper = null;
+
+    const on = added.mock.calls.filter(([name]) => name === 'resize').map(([, fn]) => fn);
+    const off = removed.mock.calls.filter(([name]) => name === 'resize').map(([, fn]) => fn);
+    expect(on.length).toBeGreaterThan(0);
+    for (const fn of on) expect(off, 'every resize listener is removed').toContain(fn);
+
+    // Escape is heard on the screen's own element now, never on `window`.
+    expect(added.mock.calls.filter(([name]) => name === 'keydown')).toHaveLength(0);
+    added.mockRestore();
+    removed.mockRestore();
   });
 });

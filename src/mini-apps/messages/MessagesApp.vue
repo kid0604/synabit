@@ -875,6 +875,59 @@ watch(() => status.value.connected, (connected, wasConnected) => {
   }
 });
 
+// ─── Keys, size, and what outlives the screen ───────────────
+//
+// Registered here, in setup, and not inside `onMounted`. The resize and key
+// listeners and their `onUnmounted` used to sit after the first `await` in the
+// mount block, and a lifecycle hook registered after an `await` belongs to no
+// component — Vue drops it with a warning. So nothing was ever removed, and
+// every remount added another set, and another model poll.
+
+const handleResize = () => {
+  isMobile.value = window.innerWidth < 768;
+};
+
+/** Whether this screen is the one showing. It is kept alive when it is not. */
+let showing = true;
+onActivated(() => { showing = true; });
+onDeactivated(() => { showing = false; });
+
+/**
+ * Escape, pressed inside this app.
+ *
+ * On the app's own root rather than on `window`. On `window` it heard Escape
+ * from every other app — closing a dialog in Notes stopped a run here, since
+ * this screen stays alive behind `<keep-alive>`. Something that already
+ * answered the key — a dialog, a dropdown, the conversation panel stopping the
+ * run itself — marks it handled, and is left to have handled it.
+ */
+const handleKeydown = (e: KeyboardEvent) => {
+  if (!showing || e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+  // The dialog first: Escape dismisses the thing on top, and a question about
+  // deleting something is on top of everything else on this screen.
+  if (pendingDelete.value) {
+    e.preventDefault();
+    pendingDelete.value = null;
+    return;
+  }
+  // The settings and the inspector close on Escape themselves.
+  if (showSettings.value || showInspector.value) return;
+  if (isStreaming.value) {
+    e.preventDefault();
+    void stopGeneration();
+  }
+};
+
+let unmounted = false;
+onMounted(() => {
+  window.addEventListener('resize', handleResize);
+});
+onUnmounted(() => {
+  unmounted = true;
+  window.removeEventListener('resize', handleResize);
+  cleanupModels();
+});
+
 onMounted(async () => {
   loading.value = true;
   try {
@@ -911,6 +964,9 @@ onMounted(async () => {
   void (async () => {
     try {
       await checkStatus(props.vaultPath);
+      // Gone while the provider was answering: a poll started now would have
+      // nobody left to stop it.
+      if (unmounted) return;
       if (status.value.connected) {
         await fetchModels(props.vaultPath);
         startHealthCheck(props.vaultPath);
@@ -921,30 +977,6 @@ onMounted(async () => {
       logger.error('[Syn] Could not reach the provider', e);
     }
   })();
-
-  const handleResize = () => {
-      isMobile.value = window.innerWidth < 768;
-  };
-  window.addEventListener('resize', handleResize);
-
-  const handleKeydown = (e: KeyboardEvent) => {
-    // The dialog first: Escape dismisses the thing on top, and a question about
-    // deleting something is on top of everything else on this screen.
-    if (e.key === 'Escape' && pendingDelete.value) {
-      pendingDelete.value = null;
-      return;
-    }
-    if (e.key === 'Escape' && isStreaming.value) {
-      stopGeneration();
-    }
-  };
-  window.addEventListener('keydown', handleKeydown);
-  
-  onUnmounted(() => {
-    window.removeEventListener('resize', handleResize);
-    window.removeEventListener('keydown', handleKeydown);
-    cleanupModels();
-  });
 });
 
 /**
@@ -985,7 +1017,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
 </script>
 
 <template>
-  <div class="flex-1 w-full h-full flex bg-gray-50 dark:bg-[#0f1115] text-text dark:text-text-dark relative overflow-hidden">
+  <div
+    class="flex-1 w-full h-full flex bg-gray-50 dark:bg-[#0f1115] text-text dark:text-text-dark relative overflow-hidden"
+    @keydown="handleKeydown"
+  >
     
     <!-- Sidebar -->
     <div
