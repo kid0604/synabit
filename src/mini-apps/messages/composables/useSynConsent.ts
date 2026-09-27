@@ -7,12 +7,17 @@
  * the button that makes it go away. A card sits where the work is, next to the
  * thing it is about, and can be left alone.
  *
- * Only one question is held at a time. A run stops on the first thing it needs
- * permission for, so a second question can only exist if a second run asked —
- * and two cards competing for one decision is how somebody answers the wrong
- * one.
+ * One question per conversation. A run stops on the first thing it needs
+ * permission for, so a conversation has at most one; but two conversations —
+ * a routine at 7:00 and the one somebody is typing in — can each be waiting,
+ * and a single slot let the second question overwrite the first.
+ *
+ * And the questions are read back from disk (`syn_waiting`), not only heard as
+ * events. An event is gone once sent: a question asked while nobody had
+ * Messages open, or before the app restarted, used to be listed as "waiting for
+ * you" with no card anywhere to answer it.
  */
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
@@ -38,8 +43,29 @@ export interface ConsentEvent {
  * One store, one listener, many places that can show the card. Which of them
  * does is decided by `conversation_id` — see `pendingIn`.
  */
-const pending = ref<ConsentEvent | null>(null);
+const questions = ref<Record<string, ConsentEvent>>({});
 let listening = false;
+
+/**
+ * Take in every question still waiting on disk. Ones already held stay as
+ * they are; ones answered elsewhere since are dropped.
+ */
+export const refreshWaiting = async (vaultPath: string) => {
+  if (!vaultPath) return;
+  try {
+    const waiting = await invoke<Array<Partial<ConsentEvent> & { run_id: string; conversation_id?: string | null }>>(
+      'syn_waiting',
+      { vaultPath },
+    );
+    const next: Record<string, ConsentEvent> = {};
+    for (const q of Array.isArray(waiting) ? waiting : []) {
+      if (q.ask && q.conversation_id) next[q.conversation_id] = { run_id: q.run_id, conversation_id: q.conversation_id, ask: q.ask };
+    }
+    questions.value = next;
+  } catch (e) {
+    logger.error('[Syn] Could not read the questions still waiting', e);
+  }
+};
 
 /**
  * Start listening, the first time anybody asks.
@@ -51,7 +77,8 @@ const listenOnce = () => {
   if (listening) return;
   listening = true;
   listen<ConsentEvent>('syn-consent-needed', event => {
-    pending.value = event.payload;
+    const id = event.payload?.conversation_id;
+    if (id) questions.value = { ...questions.value, [id]: event.payload };
   }).catch(e => {
     // Allowed to try again on the next call rather than staying deaf for the
     // rest of the session.
@@ -61,13 +88,20 @@ const listenOnce = () => {
 };
 
 export function useSynConsent(vaultPath: () => string) {
+  const first = !listening;
   listenOnce();
+  // After setup, not during it: the path usually comes from props that are
+  // not there yet while the caller is still being set up.
+  if (first) void Promise.resolve().then(() => refreshWaiting(vaultPath()));
   /** Why the last answer did not go through. Shown on the card. */
   const error = ref<string | null>(null);
   /** An answer is on its way. The card's buttons wait for it. */
   const answering = ref(false);
   // A new question starts with a clean card, not the last one's failure.
-  watch(pending, () => { error.value = null; });
+  watch(questions, () => { error.value = null; });
+
+  /** The newest question anywhere, for a badge; answering goes by conversation. */
+  const pending = computed<ConsentEvent | null>(() => Object.values(questions.value).slice(-1)[0] ?? null);
 
   /**
    * The question, if it belongs to this conversation.
@@ -79,7 +113,7 @@ export function useSynConsent(vaultPath: () => string) {
    * nowhere in one to carry it on.
    */
   const pendingIn = (conversationId: string | null | undefined): ConsentEvent | null =>
-    conversationId && pending.value?.conversation_id === conversationId ? pending.value : null;
+    (conversationId && questions.value[conversationId]) || null;
 
   /**
    * Answer, put the card away, and say whether the work should carry on.
@@ -98,8 +132,8 @@ export function useSynConsent(vaultPath: () => string) {
    * False only when there was nothing to answer: already answered, or answered
    * in another window.
    */
-  const answer = async (choice: ConsentAnswer): Promise<boolean> => {
-    const asked = pending.value;
+  const answer = async (choice: ConsentAnswer, conversationId: string | null | undefined): Promise<boolean> => {
+    const asked = pendingIn(conversationId);
     // One answer at a time: a second press while the first is on its way is
     // not a second decision.
     if (!asked || answering.value) return false;
@@ -111,7 +145,8 @@ export function useSynConsent(vaultPath: () => string) {
         runId: asked.run_id,
         answer: choice,
       });
-      pending.value = null;
+      const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;
+      questions.value = rest;
       return wasAsked;
     } catch (e) {
       logger.error('[Syn] Could not record the answer', e);
@@ -122,7 +157,7 @@ export function useSynConsent(vaultPath: () => string) {
     }
   };
 
-  return { pending, pendingIn, error, answering, answer };
+  return { pending, pendingIn, error, answering, answer, refresh: () => refreshWaiting(vaultPath()) };
 }
 
 /**

@@ -19,9 +19,10 @@ const listen = vi.fn(async (name: string, handler: (event: { payload: unknown })
   return () => handlers.delete(name);
 });
 vi.mock('@tauri-apps/api/event', () => ({ listen }));
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => true) }));
+const invoke = vi.fn(async (..._args: unknown[]): Promise<unknown> => true);
+vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
-const { useSynConsent } = await import('../useSynConsent');
+const { useSynConsent, refreshWaiting } = await import('../useSynConsent');
 const { useSynChoice } = await import('../useSynChoice');
 
 describe('where a consent question is shown', () => {
@@ -34,7 +35,10 @@ describe('where a consent question is shown', () => {
     const a = useSynConsent(() => '/vault');
     const b = useSynConsent(() => '/vault');
     expect(listen.mock.calls.filter(([name]) => name === 'syn-consent-needed')).toHaveLength(1);
-    expect(a.pending).toBe(b.pending);
+    handlers.get('syn-consent-needed')!({
+      payload: { run_id: 'run-0', conversation_id: 'conv-shared', ask: { tool: 'browse' } },
+    });
+    expect(a.pendingIn('conv-shared')).toBe(b.pendingIn('conv-shared'));
   });
 
   it('is shown in its own conversation and nowhere else', () => {
@@ -53,7 +57,20 @@ describe('where a consent question is shown', () => {
       payload: { run_id: 'run-2', conversation_id: null, ask: { tool: 'browse' } },
     });
     expect(pendingIn(null)).toBeNull();
-    expect(pendingIn('conv-a')).toBeNull();
+    expect(pendingIn('conv-c')).toBeNull();
+  });
+
+  /** U5: two conversations can each be waiting; the second does not replace the first. */
+  it('keeps one question per conversation', () => {
+    const { pendingIn } = useSynConsent(() => '/vault');
+    handlers.get('syn-consent-needed')!({
+      payload: { run_id: 'run-routine', conversation_id: 'conv-routine', ask: { tool: 'browse' } },
+    });
+    handlers.get('syn-consent-needed')!({
+      payload: { run_id: 'run-typed', conversation_id: 'conv-typed', ask: { tool: 'browse' } },
+    });
+    expect(pendingIn('conv-routine')?.run_id).toBe('run-routine');
+    expect(pendingIn('conv-typed')?.run_id).toBe('run-typed');
   });
 
   it('holds for the choice card by the same rule', () => {
@@ -66,10 +83,25 @@ describe('where a consent question is shown', () => {
   });
 });
 
+describe('a question asked while nobody was looking', () => {
+  /** U5: read back from the runs on disk, so there is a card to answer it. */
+  it('is read back from disk and shown in its conversation', async () => {
+    invoke.mockImplementationOnce(async () => [
+      { run_id: 'run-7am', conversation_id: 'conv-morning', ask: { tool: 'browse' } },
+      { run_id: 'run-which', conversation_id: 'conv-other', choice: { candidates: [] } },
+    ]);
+    await refreshWaiting('/vault');
+    const { pendingIn } = useSynConsent(() => '/vault');
+    expect(invoke).toHaveBeenCalledWith('syn_waiting', { vaultPath: '/vault' });
+    expect(pendingIn('conv-morning')?.run_id).toBe('run-7am');
+    expect(pendingIn('conv-other'), 'a which-one is not a consent').toBeNull();
+  });
+});
+
 describe('carrying on after the answer', () => {
   /** Into the conversation that stopped, not the one on screen. */
   it('resumes Messages into the question’s own conversation', () => {
-    expect(app).toContain('const id = consentPending.value?.conversation_id;');
+    expect(app).toContain('const id = consentHere.value?.conversation_id;');
     const onConsent = app.split('const onConsent')[1]?.split('\n};')[0] ?? '';
     expect(onConsent, 'the resume must not read the open conversation').not.toContain(
       'const id = activeConversationId.value',

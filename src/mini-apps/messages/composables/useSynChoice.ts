@@ -11,7 +11,7 @@
  * cards that look alike and mean opposite things about whether anything is
  * wrong would teach somebody to answer both the same way.
  */
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
@@ -28,14 +28,33 @@ export interface ChoiceEvent {
  * `useSynConsent` gives: the ask bar has to see it as well as Messages, and
  * two copies could disagree about whether it was answered.
  */
-const pending = ref<ChoiceEvent | null>(null);
+const questions = ref<Record<string, ChoiceEvent>>({});
 let listening = false;
+
+/** Take in every *which one* still waiting on disk. See `useSynConsent`. */
+export const refreshWaitingChoices = async (vaultPath: string) => {
+  if (!vaultPath) return;
+  try {
+    const waiting = await invoke<Array<Partial<ChoiceEvent> & { run_id: string; conversation_id?: string | null }>>(
+      'syn_waiting',
+      { vaultPath },
+    );
+    const next: Record<string, ChoiceEvent> = {};
+    for (const q of Array.isArray(waiting) ? waiting : []) {
+      if (q.choice && q.conversation_id) next[q.conversation_id] = { run_id: q.run_id, conversation_id: q.conversation_id, choice: q.choice };
+    }
+    questions.value = next;
+  } catch (e) {
+    logger.error('[Syn] Could not read the which-one questions still waiting', e);
+  }
+};
 
 const listenOnce = () => {
   if (listening) return;
   listening = true;
   listen<ChoiceEvent>('syn-choice-needed', event => {
-    pending.value = event.payload;
+    const id = event.payload?.conversation_id;
+    if (id) questions.value = { ...questions.value, [id]: event.payload };
   }).catch(e => {
     listening = false;
     logger.error('[Syn] Could not listen for which-one questions', e);
@@ -43,12 +62,19 @@ const listenOnce = () => {
 };
 
 export function useSynChoice(vaultPath: () => string) {
+  const first = !listening;
   listenOnce();
+  // After setup, not during it: the path usually comes from props that are
+  // not there yet while the caller is still being set up.
+  if (first) void Promise.resolve().then(() => refreshWaitingChoices(vaultPath()));
   const error = ref<string | null>(null);
 
   /** The question, if it belongs to this conversation. See `useSynConsent`. */
   const pendingIn = (conversationId: string | null | undefined): ChoiceEvent | null =>
-    conversationId && pending.value?.conversation_id === conversationId ? pending.value : null;
+    (conversationId && questions.value[conversationId]) || null;
+
+  /** The newest question anywhere; answering goes by conversation. */
+  const pending = computed<ChoiceEvent | null>(() => Object.values(questions.value).slice(-1)[0] ?? null);
 
   /**
    * Say which one, and put the card away.
@@ -58,8 +84,8 @@ export function useSynChoice(vaultPath: () => string) {
    * is for consent — work restarting while somebody is still reading why it
    * stopped is what the card is arranged to prevent.
    */
-  const answer = async (nodeId: string): Promise<string | null> => {
-    const asked = pending.value;
+  const answer = async (nodeId: string, conversationId: string | null | undefined): Promise<string | null> => {
+    const asked = pendingIn(conversationId);
     if (!asked) return null;
     error.value = null;
     const named =
@@ -75,9 +101,10 @@ export function useSynChoice(vaultPath: () => string) {
       error.value = (e as { message?: string })?.message ?? String(e);
       return null;
     }
-    pending.value = null;
+    const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;
+    questions.value = rest;
     return named;
   };
 
-  return { pending, pendingIn, error, answer };
+  return { pending, pendingIn, error, answer, refresh: () => refreshWaitingChoices(vaultPath()) };
 }

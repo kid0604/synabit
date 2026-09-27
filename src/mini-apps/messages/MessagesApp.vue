@@ -54,8 +54,8 @@ const chatPanel = ref<{ prefill: (text: string) => void } | null>(null);
  * `useSynConsent`.
  */
 const {
-  pending: consentPending,
   pendingIn: consentPendingIn,
+  refresh: refreshConsent,
   error: consentError,
   answering: consentAnswering,
   answer: answerConsent,
@@ -86,9 +86,9 @@ const onConsent = async (choice: ConsentAnswer) => {
   // used to go to `activeConversationId` on the assumption that they always
   // would be — and a card shown in the wrong place then carried the work on in
   // the wrong place too.
-  const stopped = consentPending.value?.run_id;
-  const id = consentPending.value?.conversation_id;
-  const wasAsked = await answerConsent(choice);
+  const stopped = consentHere.value?.run_id;
+  const id = consentHere.value?.conversation_id;
+  const wasAsked = await answerConsent(choice, id);
   if (!wasAsked || !stopped) return;
   if (!id) return;
 
@@ -128,8 +128,16 @@ const onConsent = async (choice: ConsentAnswer) => {
  * work comes with it (`run::replay`), so Syn does not search again for what it
  * had already found.
  */
-const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const { pendingIn: choicePendingIn, answer: answerChoice, refresh: refreshChoice } = useSynChoice(() => props.vaultPath);
 const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
+
+// Questions asked while this screen was not looking — by a routine, before a
+// restart — are read back from the runs on disk whenever it comes back, so the
+// card is there to answer. See `useSynConsent`.
+onActivated(() => {
+  void refreshConsent();
+  void refreshChoice();
+});
 
 // Both sentences come from the locale. They are written into the person's own
 // box, as though they had typed them, so they have to be in the language they
@@ -137,9 +145,9 @@ const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
 // is theirs to choose, not the app's.
 const onChoice = async (nodeId: string) => {
   // Read before answering, which clears the card — as `onConsent` does.
-  const stopped = choicePending.value?.run_id;
-  const id = choicePending.value?.conversation_id;
-  const named = await answerChoice(nodeId);
+  const stopped = choiceHere.value?.run_id;
+  const id = choiceHere.value?.conversation_id;
+  const named = await answerChoice(nodeId, id);
   if (!named || !stopped || !id) return;
   const said = t('syn.prefill_choice', { title: named });
   const onScreen = () => activeConversationId.value === id;

@@ -1029,7 +1029,7 @@ describe('answering a consent card', () => {
    */
   it('sends back the run that stopped, so the granted call is the one that runs', () => {
     expect(app, 'the id is read before the card is cleared').toContain(
-      'consentPending.value?.run_id',
+      'consentHere.value?.run_id',
     );
     expect(app, 'and it is what gets sent').toMatch(/sendMessage\([\s\S]{0,220}stopped,/);
     expect(app, 'nothing carries on without one').toContain('!wasAsked || !stopped');

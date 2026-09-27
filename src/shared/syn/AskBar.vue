@@ -119,13 +119,12 @@ const picked = computed(() => describeFocus(props.focus));
 // was the spinner going away and nothing in its place.
 
 const {
-  pending: consentPending,
   pendingIn: consentPendingIn,
   error: consentError,
   answering: consentAnswering,
   answer: answerConsent,
 } = useSynConsent(() => props.vaultPath);
-const { pending: choicePending, pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
+const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => props.vaultPath);
 
 const consentHere = computed(() => consentPendingIn(conversationId.value));
 const choiceHere = computed(() => choicePendingIn(conversationId.value));
@@ -320,9 +319,9 @@ const approvePlan = () => {
  */
 const onConsent = async (choice: ConsentAnswer) => {
   // Read before answering, which clears the card and the run id with it.
-  const stopped = consentPending.value?.run_id;
-  const id = consentPending.value?.conversation_id;
-  const wasAsked = await answerConsent(choice);
+  const stopped = consentHere.value?.run_id;
+  const id = consentHere.value?.conversation_id;
+  const wasAsked = await answerConsent(choice, id);
   if (!wasAsked || !stopped || !id) return;
   await send(id, '', stopped);
 };
@@ -332,9 +331,9 @@ const onConsent = async (choice: ConsentAnswer) => {
  * reason: picking one is saying which to go on with. See `onChoice` there.
  */
 const onChoice = async (nodeId: string) => {
-  const stopped = choicePending.value?.run_id;
-  const id = choicePending.value?.conversation_id;
-  const named = await answerChoice(nodeId);
+  const stopped = choiceHere.value?.run_id;
+  const id = choiceHere.value?.conversation_id;
+  const named = await answerChoice(nodeId, id);
   if (!named || !stopped || !id) return;
   await send(id, t('syn.prefill_choice', { title: named }), stopped);
 };
