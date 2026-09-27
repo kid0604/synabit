@@ -933,7 +933,7 @@ mod tests {
             "carrying on is a continuation of the question already asked, not a new one"
         );
         assert!(
-            app.contains("consentPending.value?.run_id"),
+            app.contains("consentHere.value?.run_id"),
             "and it has to name the run that stopped, or the call the user just allowed is \
              not the call that runs — see `run::Run::pending_call`"
         );
