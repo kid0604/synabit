@@ -18,6 +18,7 @@ pub mod chat_engine;
 pub mod feed_engine;
 pub mod file_index;
 pub mod file_text;
+pub mod safe;
 pub mod secrets;
 pub mod syn;
 pub mod sync;
