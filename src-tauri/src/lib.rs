@@ -676,6 +676,12 @@ pub fn run() {
             // App Lock
             app.manage(commands::app_lock::AppLockState::default());
 
+            // Safe: nothing open until the user unlocks it, and it locks
+            // itself again when left alone.
+            app.manage(safe::session::SafeSession::default());
+            app.manage(safe::clipboard::SafeClipboard::default());
+            commands::safe::start_auto_lock(app.handle().clone());
+
             // P2P Sync
             app.manage(sync_cmds::P2pSyncState::default());
 
@@ -884,6 +890,28 @@ pub fn run() {
             commands::app_lock::change_app_lock,
             commands::app_lock::get_app_lock_config,
             commands::app_lock::update_app_lock_config,
+            // Safe
+            commands::safe::safe_status,
+            commands::safe::safe_create,
+            commands::safe::safe_unlock,
+            commands::safe::safe_lock,
+            commands::safe::safe_change_password,
+            commands::safe::safe_secret_key,
+            commands::safe::safe_save_emergency_kit,
+            commands::safe::safe_overview,
+            commands::safe::safe_list,
+            commands::safe::safe_get,
+            commands::safe::safe_reveal,
+            commands::safe::safe_copy,
+            commands::safe::safe_create_item,
+            commands::safe::safe_update_item,
+            commands::safe::safe_set_favorite,
+            commands::safe::safe_set_trashed,
+            commands::safe::safe_purge,
+            commands::safe::safe_generate,
+            commands::safe::safe_estimate,
+            commands::safe::safe_get_settings,
+            commands::safe::safe_set_settings,
             // Feeds
             feeds::feed_get_sources,
             feeds::feed_add_source,

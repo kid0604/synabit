@@ -114,10 +114,16 @@ pub fn collect_local_files(vault_path: &str) -> Vec<String> {
 /// writer wins, `Syn/syn_index.json` hid conversations made on the other device
 /// and brought back ones deleted here. Not published, and ignored when an older
 /// device still publishes one.
+///
+/// `Safe/` is here for a different reason and only for now. Its files are
+/// already encrypted, and syncing them is the plan — but as opaque blobs with
+/// Safe's own rules for revisions and rollback (section 5.6 of
+/// `docs/safe-2026-09-28.md`), not as attachments that the last writer wins.
+/// Until those rules exist, an item stays on the device that wrote it.
 pub fn is_local_only(rel_path: &str) -> bool {
     const LOCAL_ONLY: &[&str] = &["Syn/syn_index.json"];
     let rel = rel_path.replace('\\', "/");
-    LOCAL_ONLY.contains(&rel.as_str())
+    LOCAL_ONLY.contains(&rel.as_str()) || rel.starts_with("Safe/")
 }
 
 #[cfg(test)]
@@ -197,6 +203,9 @@ mod tests {
         assert!(is_local_only("Syn/syn_index.json"));
         assert!(is_local_only("Syn\\syn_index.json"));
         assert!(!is_local_only("Notes/Syn/syn_index.json"));
+        assert!(is_local_only("Safe/keyset.safe"));
+        assert!(is_local_only("Safe\\items\\00ff.safe"));
+        assert!(!is_local_only("Projects/Safe/notes.md"), "only the vault's own Safe");
     }
 }
 

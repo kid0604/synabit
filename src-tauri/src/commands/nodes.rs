@@ -435,6 +435,10 @@ pub(crate) fn is_in_unscanned_dir(rel_id: &str) -> bool {
     // `Timeline/` holds what the timeline derived, never notes. Only at the
     // vault root, so a user's own `Projects/Timeline/` is still theirs.
     crate::timeline::is_timeline_path(rel_id)
+        // Safe's encrypted files. Nothing in them is readable, and nothing
+        // under the folder may ever become a node, a search hit or something
+        // Syn can open. Only at the vault root, like `Timeline/`.
+        || rel_id.replace('\\', "/").starts_with("Safe/")
         // Feeds' per-device read state: one file per device, rewritten
         // constantly, and of no interest to anybody reading the vault. Indexed,
         // its hundreds of sync conflict copies crowded out real notes in the
@@ -4138,6 +4142,19 @@ mod orphan_cleanup_tests {
         assert!(is_in_unscanned_dir("Timeline\\ledger\\macbook\\2026-09.json"));
         assert!(!is_in_unscanned_dir("Projects/Timeline/plan.md"));
         assert!(!is_in_unscanned_dir("Timeline.md"));
+    }
+
+    /// Nothing under the vault's `Safe/` becomes a node, even a `.json` that
+    /// the scan would otherwise index — and a user's own `Safe` folder deeper
+    /// in the vault is still theirs.
+    #[test]
+    fn the_safe_folder_is_skipped_only_at_the_vault_root() {
+        assert!(is_in_unscanned_dir("Safe/keyset.safe"));
+        assert!(is_in_unscanned_dir("Safe/items/00ff.safe"));
+        assert!(is_in_unscanned_dir("Safe/stray.json"));
+        assert!(is_in_unscanned_dir("Safe\\items\\00ff.safe"));
+        assert!(!is_in_unscanned_dir("Projects/Safe/plan.md"));
+        assert!(!is_in_unscanned_dir("Safe.md"));
     }
 
     #[test]

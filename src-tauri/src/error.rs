@@ -42,6 +42,12 @@ pub enum AppError {
     /// `crate::refusal`.
     #[error("{0}")]
     Refused(crate::refusal::Refusal),
+
+    /// Something Safe would not or could not do, with a code the screen
+    /// translates (`SAFE:<code>`). A wrong password is the lock working, so
+    /// only real failures are logged as errors.
+    #[error("{0}")]
+    Safe(crate::safe::session::SafeError),
 }
 
 // Convert AppError into a structure that Tauri can serialize and send to JS.
@@ -71,12 +77,14 @@ impl Serialize for AppError {
             AppError::AssetTooLarge(msg) => ("ASSET_TOO_LARGE".to_string(), msg.clone()),
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
             AppError::Refused(why) => (format!("REFUSED:{}", why.code()), why.to_string()),
+            AppError::Safe(e) => (format!("SAFE:{}", e.code()), e.to_string()),
         };
 
         // A refusal is not an error and is not logged as one: somebody typed a
         // question the engine cannot ask, which is the engine working.
         match self {
             AppError::Refused(why) => log::debug!("Refused [{}]: {}", why.code(), message),
+            AppError::Safe(e) if !e.is_failure() => log::debug!("Safe [{}]: {}", e.code(), message),
             _ => log::error!("Backend Error [{}]: {}", code, message),
         }
 

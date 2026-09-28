@@ -526,6 +526,80 @@ impl SecretManager {
     }
 }
 
+/// Secrets that live in a keychain entry of their own, beside the shared blob.
+///
+/// Safe's Secret Key is the first. It stays out of `AppSecrets` for three
+/// reasons: it must not share the blob's read-modify-write with every other
+/// setter; a Secret Key per Safe is a key per vault, which is a name, not a
+/// field; and later (section 6.7 of `docs/safe-2026-09-28.md`) it is the entry
+/// that wants access-control flags the shared blob does not.
+impl SecretManager {
+    /// `Ok(None)` when nothing is stored under `name`; `Err` when something may
+    /// be and could not be read.
+    pub fn get_named(app_handle: Option<&tauri::AppHandle>, name: &str) -> Result<Option<String>, String> {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let _ = app_handle;
+            let entry = keyring::Entry::new("synabit", name).map_err(|e| format!("Keyring error: {e}"))?;
+            match entry.get_password() {
+                Ok(value) => Ok(Some(value)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(format!("Keyring error: {e}")),
+            }
+        }
+        #[cfg(target_os = "ios")]
+        {
+            let Some(handle) = app_handle else { return Err("AppHandle is required on mobile".into()) };
+            match std::fs::read_to_string(Self::named_file(handle, name)) {
+                Ok(value) => Ok(Some(value)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(format!("FS error: {e}")),
+            }
+        }
+        #[cfg(target_os = "android")]
+        {
+            if app_handle.is_none() {
+                return Err("AppHandle is required on mobile".into());
+            }
+            android_secure_store_get(name).map(|v| (!v.is_empty()).then_some(v))
+        }
+    }
+
+    pub fn set_named(app_handle: Option<&tauri::AppHandle>, name: &str, value: &str) -> Result<(), String> {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let _ = app_handle;
+            keyring::Entry::new("synabit", name)
+                .and_then(|entry| entry.set_password(value))
+                .map_err(|e| format!("Keyring error: {e}"))
+        }
+        #[cfg(target_os = "ios")]
+        {
+            let Some(handle) = app_handle else { return Err("AppHandle is required on mobile".into()) };
+            let path = Self::named_file(handle, name);
+            if let Some(p) = path.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            std::fs::write(path, value).map_err(|e| format!("FS error: {e}"))
+        }
+        #[cfg(target_os = "android")]
+        {
+            if app_handle.is_none() {
+                return Err("AppHandle is required on mobile".into());
+            }
+            android_secure_store_put(name, value)
+        }
+    }
+
+    #[cfg(target_os = "ios")]
+    fn named_file(app_handle: &tauri::AppHandle, name: &str) -> std::path::PathBuf {
+        use tauri::Manager;
+        let mut path = app_handle.path().app_data_dir().unwrap_or_default();
+        path.push(format!("{name}.secret"));
+        path
+    }
+}
+
 /// Held for the whole of every read-modify-write of the secrets blob.
 ///
 /// Process-wide rather than per `AppHandle` because the blob is: there is one

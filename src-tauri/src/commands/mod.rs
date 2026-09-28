@@ -15,6 +15,7 @@ pub mod migration;
 pub mod nodes;
 pub mod paste;
 pub mod people;
+pub mod safe;
 pub mod syn;
 pub mod telegram;
 pub mod sync;
