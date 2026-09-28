@@ -82,7 +82,7 @@ const keyLooksLike = computed(() =>
 );
 
 /** What each folded section still says about itself. */
-const connectionSummary = computed(() => {
+const aiModelSummary = computed(() => {
   const provider = t(`syn.provider_${settings.value.provider === 'open_ai_compat' ? 'openai' : settings.value.provider}`);
   return settings.value.default_model ? `${provider} · ${settings.value.default_model}` : provider;
 });
@@ -164,7 +164,7 @@ watch(() => props.vaultPath, async () => {
       </label>
 
       <!-- CONNECTION -->
-      <SettingsSection id="connection" :title="t('syn.settings_connection')" :summary="connectionSummary" default-open>
+      <SettingsSection id="ai-model" :title="t('syn.settings_ai_model')" :summary="aiModelSummary" default-open>
         <div class="space-y-3">
           <!-- Provider -->
           <div>
