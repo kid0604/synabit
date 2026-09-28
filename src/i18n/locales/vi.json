@@ -1964,7 +1964,7 @@
     "prefill_skill": "Dùng kỹ năng `{name}`.",
     "tool_call": "lệnh gọi",
     "settings": "Cài đặt",
-    "settings_connection": "Kết nối",
+    "settings_connection": "AI Model",
     "settings_generation": "Sinh văn bản",
     "settings_context": "Ngữ cảnh (RAG)",
     "provider": "Nhà cung cấp",

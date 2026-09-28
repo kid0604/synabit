@@ -1964,7 +1964,7 @@
     "prefill_skill": "Use the `{name}` skill.",
     "tool_call": "tool call",
     "settings": "Settings",
-    "settings_connection": "Connection",
+    "settings_connection": "AI Model",
     "settings_generation": "Generation",
     "settings_context": "Context (RAG)",
     "provider": "Provider",
