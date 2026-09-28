@@ -116,6 +116,12 @@ rust_xlsxwriter = "0.99"
 # own ClipboardManager and a flag of its own, reached through JNI in P2.
 arboard = { version = "3", default-features = false }
 
+[target.'cfg(unix)'.dependencies]
+# `mlock` for the page Safe keeps its keys in, and `setrlimit` to turn core
+# dumps off while a Safe is open (`safe::memory`). Already in every build
+# through the standard library's own dependencies; naming it adds no bytes.
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # For sending the WKWebView an editing command Tauri has no API for — see
 # `commands::paste`. Already in the tree through wry, so this is a name for it

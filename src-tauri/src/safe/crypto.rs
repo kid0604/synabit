@@ -80,31 +80,30 @@ pub enum CryptoError {
     Padding,
 }
 
-/// A 256-bit key, wiped when dropped.
+/// A 256-bit key, in a page kept out of swap and wiped when dropped.
 ///
-/// Not `Clone` — a copy is a second place the key has to be wiped from, and
-/// nothing so far needs one. `Debug` prints nothing of the key, so a key that
-/// ends up in a `log::debug!("{:?}", …)` costs a line of log and not the store.
-pub struct Key([u8; KEY_LEN]);
+/// The bytes live at one address for the key's whole life (see
+/// `safe::memory`), so moving a `Key` moves a handle, not a copy of the
+/// secret. Not `Clone` — a copy is a second place the key has to be wiped
+/// from. `Debug` prints nothing of the key, so a key that ends up in a
+/// `log::debug!("{:?}", …)` costs a line of log and not the store.
+pub struct Key(super::memory::Slot);
 
 impl Key {
-    pub fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
-        Self(bytes)
+    /// Take `bytes` into protected memory and wipe the copy handed in.
+    pub fn from_bytes(mut bytes: [u8; KEY_LEN]) -> Self {
+        let key = Self(super::memory::Slot::new(&bytes));
+        bytes.zeroize();
+        key
     }
 
     /// A fresh key from the operating system's random number generator.
     pub fn random() -> Result<Self, CryptoError> {
-        random_bytes().map(Self)
+        random_bytes().map(Self::from_bytes)
     }
 
     pub fn as_bytes(&self) -> &[u8; KEY_LEN] {
-        &self.0
-    }
-}
-
-impl Drop for Key {
-    fn drop(&mut self) {
-        self.0.zeroize();
+        self.0.bytes()
     }
 }
 
@@ -221,12 +220,12 @@ pub fn derive_auk(
     let mut material = Zeroizing::new([0u8; KEY_LEN + SECRET_KEY_LEN]);
     material[..KEY_LEN].copy_from_slice(stretched.as_ref());
     material[KEY_LEN..].copy_from_slice(secret_key.as_bytes());
-    Ok(Key(blake3::derive_key(ctx::AUK, material.as_ref())))
+    Ok(Key::from_bytes(blake3::derive_key(ctx::AUK, material.as_ref())))
 }
 
 /// A key for one purpose, derived from a key for another.
 pub fn subkey(context: &'static str, key: &Key) -> Key {
-    Key(blake3::derive_key(context, key.as_bytes()))
+    Key::from_bytes(blake3::derive_key(context, key.as_bytes()))
 }
 
 /// What `keyset.safe` stores to recognise the right AUK without decrypting
@@ -281,7 +280,7 @@ pub fn wrap_key(kek: &Key, nonce: &[u8; NONCE_LEN], aad: &[u8], key: &Key) -> Re
 pub fn unwrap_key(kek: &Key, nonce: &[u8; NONCE_LEN], aad: &[u8], wrapped: &[u8; WRAPPED_KEY_LEN]) -> Result<Key, CryptoError> {
     let opened = open(kek, nonce, aad, wrapped)?;
     let bytes: [u8; KEY_LEN] = opened.as_slice().try_into().map_err(|_| CryptoError::Open)?;
-    Ok(Key(bytes))
+    Ok(Key::from_bytes(bytes))
 }
 
 /// `body`, prefixed with its length and padded with zeros to a multiple of

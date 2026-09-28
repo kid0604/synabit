@@ -463,3 +463,84 @@ fn frozen_files_still_open() {
     let gone = ItemFile::decode(&bytes("tombstone_safe")).expect("decode tombstone");
     assert_eq!(gone.open(&safe_key, &SAFE_ID, &ITEM_ID).unwrap(), ItemContent::Tombstone);
 }
+
+// ─── untrusted bytes ─────────────────────────────────────
+//
+// Everything below reads bytes another device chose: a sync peer, a copied
+// file, a pasted link. None of it may panic — a panic on the sync path is a
+// device that stops syncing, and on the unlock path a Safe that cannot open.
+// Not cargo-fuzz (that wants nightly), but the same idea on every run: many
+// random inputs, and every valid file damaged in every way a byte can be.
+
+fn random_inputs(count: usize, max_len: usize) -> Vec<Vec<u8>> {
+    (0..count)
+        .map(|i| {
+            let len = i % max_len;
+            let mut bytes = vec![0u8; len];
+            use rand::RngCore;
+            rand::rng().fill_bytes(&mut bytes);
+            // Half of them start with a real magic, so the parser gets past
+            // the first check and into the fields.
+            if i % 2 == 0 && len >= 4 {
+                bytes[..4].copy_from_slice(if i % 4 == 0 { b"SFK1" } else { b"SFI1" });
+                if len >= 6 {
+                    bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
+                }
+            }
+            bytes
+        })
+        .collect()
+}
+
+#[test]
+fn parsers_never_panic_on_random_bytes() {
+    let safe_key = Key::from_bytes(SAFE_KEY);
+    for bytes in random_inputs(4_000, 700) {
+        if let Ok(k) = Keyset::decode(&bytes) {
+            let _ = k.open(&auk());
+        }
+        if let Ok(f) = ItemFile::decode(&bytes) {
+            let _ = f.open(&safe_key, &SAFE_ID, &ITEM_ID);
+        }
+        let _ = crypto::unpad(&bytes);
+        let _ = super::item::ItemBody::from_json(&bytes);
+        let _ = super::totp::Totp::parse(&String::from_utf8_lossy(&bytes));
+    }
+}
+
+/// Truncated at every length, and each byte set to each of a few values that
+/// break parsers — the edges of the length fields, zero, all ones.
+#[test]
+fn damaged_files_never_panic() {
+    let safe_key = Key::from_bytes(SAFE_KEY);
+    for valid in [keyset().encode(), item().encode(), tombstone().encode()] {
+        for len in 0..valid.len() {
+            let _ = Keyset::decode(&valid[..len]).map(|k| k.open(&auk()).is_ok());
+            let _ = ItemFile::decode(&valid[..len]).map(|f| f.open(&safe_key, &SAFE_ID, &ITEM_ID).is_ok());
+        }
+        for at in 0..valid.len() {
+            for value in [0x00, 0x01, 0x7f, 0x80, 0xff] {
+                let mut bytes = valid.clone();
+                bytes[at] = value;
+                if let Ok(k) = Keyset::decode(&bytes) {
+                    let _ = k.open(&auk());
+                }
+                if let Ok(f) = ItemFile::decode(&bytes) {
+                    let _ = f.open(&safe_key, &SAFE_ID, &ITEM_ID);
+                }
+            }
+        }
+    }
+}
+
+/// The sync decision reads a peer's bytes while the Safe is locked.
+#[test]
+fn the_sync_decision_never_panics_on_what_a_peer_sends() {
+    let dir = tempfile::tempdir().unwrap();
+    super::store::write_atomic(&dir.path().join("Safe/keyset.safe"), &keyset().encode()).unwrap();
+    let path = format!("Safe/items/{}.safe", hex::encode(ITEM_ID));
+    for bytes in random_inputs(1_000, 400) {
+        let _ = super::sync::decide(dir.path(), &path, &bytes);
+        let _ = super::sync::decide(dir.path(), "Safe/keyset.safe", &bytes);
+    }
+}

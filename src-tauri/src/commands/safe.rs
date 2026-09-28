@@ -539,16 +539,26 @@ pub fn safe_set_settings(
     with(&app, &vault_path, |s| s.set_settings(settings))
 }
 
-/// Lock whatever Safe has been left alone too long, every few seconds, and
-/// tell the screen. Started once from `setup`.
+/// Lock whatever Safe has been left alone too long — or sat open while the
+/// machine slept — every few seconds, and tell the screen. Started once from
+/// `setup`.
 pub fn start_auto_lock(app: tauri::AppHandle) {
+    const TICK: Duration = Duration::from_secs(10);
     tauri::async_runtime::spawn(async move {
+        let mut last = std::time::SystemTime::now();
         loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            if app.state::<SafeSession>().lock_if_idle(std::time::Instant::now()) {
-                log::info!("[Safe] locked after being left alone");
+            tokio::time::sleep(TICK).await;
+            let now = std::time::SystemTime::now();
+            let session = app.state::<SafeSession>();
+            let locked = if crate::safe::session::slept(last, now, TICK) {
+                session.lock().then(|| log::info!("[Safe] locked: the machine was asleep"))
+            } else {
+                session.lock_if_idle(std::time::Instant::now()).then(|| log::info!("[Safe] locked after being left alone"))
+            };
+            if locked.is_some() {
                 let _ = app.emit(LOCKED_EVENT, ());
             }
+            last = now;
         }
     });
 }

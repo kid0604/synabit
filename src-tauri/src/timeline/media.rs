@@ -1107,7 +1107,7 @@ mod tests {
     const REVIEWED_CRATES: &[&str] = &[
         "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20poly1305", "chrono", "chrono-tz",
         "ctor", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
-        "iroh", "jni", "keyring", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
+        "iroh", "jni", "keyring", "libc", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
         "opml", "postcard", "pulldown-cmark", "rand", "regex", "reqwest", "rusqlite", "rustls", "scraper",
         "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "synabit_protocol", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",

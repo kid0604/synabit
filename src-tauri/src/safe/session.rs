@@ -215,6 +215,7 @@ fn parse_id(id: &str) -> Result<ItemId, SafeError> {
 impl Unlocked {
     /// Read every item of the Safe in `vault` and hold it open.
     pub fn open(vault: &Path, keyset: Keyset, safe_key: Key) -> Result<Self, SafeError> {
+        super::memory::harden();
         let mut unlocked = Unlocked {
             vault: vault.to_path_buf(),
             keyset,
@@ -454,6 +455,23 @@ impl Unlocked {
     }
 }
 
+/// Whether the machine was asleep — or this process suspended — between two
+/// ticks of a loop meant to run every `tick`.
+///
+/// The wall clock keeps running while a laptop sleeps; the loop does not. A
+/// gap far longer than the tick means the Safe sat open through a sleep, and
+/// a lid closed on an open Safe is a lid somebody else may open. Waking is
+/// treated like being left alone: it locks. This needs no hook into each
+/// operating system's power events, which Tauri does not offer. It does not
+/// see the screen being locked without sleeping; the idle timeout covers that.
+pub fn slept(previous: std::time::SystemTime, now: std::time::SystemTime, tick: Duration) -> bool {
+    match now.duration_since(previous) {
+        Ok(gap) => gap > tick * 6,
+        // The clock went backwards — set by hand, or corrected. Not a sleep.
+        Err(_) => false,
+    }
+}
+
 /// The Safe of whichever vault is open, if it is unlocked. Managed by Tauri.
 #[derive(Default)]
 pub struct SafeSession {
@@ -606,6 +624,18 @@ mod tests {
         assert!(!session.lock_if_idle(Instant::now()));
         assert!(session.lock_if_idle(Instant::now() + Duration::from_secs(601)));
         assert!(matches!(session.with(a.path(), |_| Ok(())), Err(SafeError::Locked)));
+    }
+
+    #[test]
+    fn a_long_gap_between_ticks_is_a_sleep() {
+        use std::time::SystemTime;
+        let tick = Duration::from_secs(10);
+        let t0 = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        assert!(!slept(t0, t0 + Duration::from_secs(10), tick));
+        assert!(!slept(t0, t0 + Duration::from_secs(45), tick), "a slow tick is not a sleep");
+        assert!(slept(t0, t0 + Duration::from_secs(61), tick));
+        assert!(slept(t0, t0 + Duration::from_secs(8 * 3600), tick));
+        assert!(!slept(t0, t0 - Duration::from_secs(3600), tick), "a clock set back is not a sleep");
     }
 
     #[test]

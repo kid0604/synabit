@@ -34,6 +34,7 @@ pub mod format;
 pub mod generator;
 pub mod item;
 pub mod keyset;
+pub mod memory;
 pub mod session;
 pub mod store;
 pub mod sync;
