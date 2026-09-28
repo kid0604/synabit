@@ -9,6 +9,7 @@ import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
 import { useSynSettings } from '../composables/useSynSettings';
 import SynTelegramSettings from './SynTelegramSettings.vue';
 import SynMcpSettings from './SynMcpSettings.vue';
+import SettingsSection from './SettingsSection.vue';
 import type { ModelInfo } from '../types';
 
 const props = defineProps<{
@@ -80,6 +81,14 @@ const keyLooksLike = computed(() =>
     : t('syn.api_key_placeholder'),
 );
 
+/** What each folded section still says about itself. */
+const connectionSummary = computed(() => {
+  const provider = t(`syn.provider_${settings.value.provider === 'open_ai_compat' ? 'openai' : settings.value.provider}`);
+  return settings.value.default_model ? `${provider} · ${settings.value.default_model}` : provider;
+});
+const generationSummary = computed(() => `${t('syn.temperature')} ${settings.value.temperature}`);
+const contextSummary = computed(() => t(settings.value.rag_enabled ? 'syn.settings_context_on' : 'syn.settings_context_off'));
+
 /** What to say under the selector about where the words go. */
 const providerSays = computed(() => {
   if (usingOllama.value) return t('syn.provider_ollama_desc');
@@ -125,7 +134,7 @@ watch(() => props.vaultPath, async () => {
     </div>
 
     <!-- Settings content -->
-    <div v-else class="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+    <div v-else class="flex-1 overflow-y-auto px-6 py-5 space-y-3">
 
       <!-- The switch, above everything.
            First because it outranks every control under it: a model, a
@@ -155,10 +164,7 @@ watch(() => props.vaultPath, async () => {
       </label>
 
       <!-- CONNECTION -->
-      <section>
-        <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-          {{ t('syn.settings_connection') }}
-        </h3>
+      <SettingsSection id="connection" :title="t('syn.settings_connection')" :summary="connectionSummary" default-open>
         <div class="space-y-3">
           <!-- Provider -->
           <div>
@@ -298,13 +304,10 @@ watch(() => props.vaultPath, async () => {
             <ModelTier v-if="!modelsAreStale" :vault-path="vaultPath" :model="settings.default_model" />
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
       <!-- GENERATION -->
-      <section>
-        <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-          {{ t('syn.settings_generation') }}
-        </h3>
+      <SettingsSection id="generation" :title="t('syn.settings_generation')" :summary="generationSummary">
         <div class="space-y-4">
           <!-- Temperature -->
           <div>
@@ -389,13 +392,10 @@ watch(() => props.vaultPath, async () => {
             />
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
       <!-- CONTEXT (RAG) -->
-      <section>
-        <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-          {{ t('syn.settings_context') }}
-        </h3>
+      <SettingsSection id="context" :title="t('syn.settings_context')" :summary="contextSummary">
         <div class="space-y-3">
           <!-- Enable vault context -->
           <div class="flex items-center justify-between py-1">
@@ -514,11 +514,17 @@ watch(() => props.vaultPath, async () => {
             />
           </div>
         </div>
-      </section>
+      </SettingsSection>
 
-      <SynTelegramSettings />
+      <!-- These two act the moment their own buttons are pressed; Save below
+           is not theirs, and the badge says so. -->
+      <SettingsSection id="telegram" :title="t('syn.telegram_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
+        <SynTelegramSettings />
+      </SettingsSection>
 
-      <SynMcpSettings :vault-path="vaultPath" />
+      <SettingsSection id="mcp" :title="t('syn.mcp_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
+        <SynMcpSettings :vault-path="vaultPath" />
+      </SettingsSection>
 
       <!-- HOW WE WORK TOGETHER
            This used to be a three-voice picker and a textarea. Both are

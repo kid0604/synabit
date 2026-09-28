@@ -92,10 +92,8 @@ const subtleDanger =
        saved, its secrets go to the keychain and it is connected the moment
        its own button is pressed, so the list always shows what is true. -->
   <section>
-    <div class="flex items-center justify-between mb-3">
-      <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500">
-        {{ t('syn.mcp_title') }}
-      </h3>
+    <!-- Titled by the folding section around it. -->
+    <div class="flex items-center justify-end mb-3">
       <button
         v-if="servers.length"
         type="button"

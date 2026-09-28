@@ -66,10 +66,8 @@ const primaryButton =
        than part of the form above: nothing here waits for Save. A token is
        checked with Telegram the moment it is given, and a pairing happens on
        the phone, so every control acts at once. -->
+  <!-- Titled by the folding section around it. -->
   <section>
-    <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
-      {{ t('syn.telegram_title') }}
-    </h3>
     <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3">
       {{ t('syn.telegram_intro') }}
     </p>
