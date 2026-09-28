@@ -135,6 +135,7 @@ import { usePlatform } from './composables/usePlatform';
 import { useBackGuard } from './composables/useBackGuard';
 import { appInPlatformScope } from './shared/platformScope';
 import { BUILT_IN_APPS, appName } from './shared/appRegistry';
+import { railOverflow, railSlots } from './shared/railFit';
 import { ensureNotificationPermission } from './composables/useNotificationPermission';
 import { useAppUpdate } from './composables/useAppUpdate';
 import { useCaptureIntake } from './mini-apps/quickcap/useQuickCapWriter';
@@ -196,10 +197,41 @@ const mobileVisibleApps = computed(() => {
         .map(a => a.id);
 });
 
+/**
+ * The desktop rail's app list, measured, and the apps that do not fit in it.
+ * They move to More Apps rather than overflowing the shell — see
+ * `shared/railFit.ts` for why the rail does not simply scroll.
+ */
+const railList = ref<HTMLElement | null>(null);
+const railHeight = ref(0);
+// A plain ResizeObserver, re-aimed whenever the element is replaced — the same
+// `ref` is the phone's bottom bar or the sidebar depending on the layout.
+// `useElementSize` was tried first and, after a full reload, reported 0px for a
+// sidebar that was 400px tall, so nothing ever moved to More.
+let railObserver: ResizeObserver | null = null;
+watch(railList, (el) => {
+    railObserver?.disconnect();
+    railObserver = null;
+    railHeight.value = 0;
+    if (!el) return;
+    railObserver = new ResizeObserver(([entry]) => { railHeight.value = entry.contentRect.height; });
+    railObserver.observe(el);
+}, { flush: 'post' });
+onUnmounted(() => railObserver?.disconnect());
+const railOverflowed = computed(() => {
+    // Nothing is measured on the first render; better to show every app for
+    // one frame than to hide them all.
+    if (useMobileLayout.value || railHeight.value <= 0) return [];
+    const onRail = platformApps.value.map(a => a.id).filter(id => !hiddenSidebarApps.value.includes(id));
+    const moreShown = onRail.length < platformApps.value.length;
+    return railOverflow(onRail, railSlots(railHeight.value), moreShown);
+});
+
 const isAppVisible = (appId: string) => {
     if (!appInPlatformScope(appId)) return false;
     if (hiddenSidebarApps.value.includes(appId)) return false;
     if (useMobileLayout.value && !mobileVisibleApps.value.includes(appId)) return false;
+    if (railOverflowed.value.includes(appId)) return false;
     return true;
 };
 
@@ -207,9 +239,12 @@ const moreMenuApps = computed(() => {
     return platformApps.value.filter(a => {
         const isUserHidden = hiddenSidebarApps.value.includes(a.id);
         const isMobileHidden = useMobileLayout.value && !mobileVisibleApps.value.includes(a.id);
-        return isUserHidden || isMobileHidden;
+        return isUserHidden || isMobileHidden || railOverflowed.value.includes(a.id);
     });
 });
+
+/** Light up More Apps when the app on screen is one of the ones inside it. */
+const activeInMore = computed(() => moreMenuApps.value.some(a => a.id === activeTool.value));
 
 // ─── App Lock ─────────────────────────────────────────────
 const appLockStore = useAppLockStore();
@@ -1411,7 +1446,7 @@ onUnmounted(() => {
         -->
         <template v-if="!isFloatingView" #[useMobileLayout?`bottombar`:`sidebar`]>
           <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-[55] h-full'" data-tauri-drag-region>
-              <div :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 flex flex-col items-center gap-3 mt-4 w-full'" @mousedown.stop>
+              <div ref="railList" :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 min-h-0 flex flex-col items-center gap-3 mt-4 w-full *:shrink-0'" @mousedown.stop>
                 <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <!--
                      A globe here and a globe on the browser button were the
@@ -1487,15 +1522,19 @@ onUnmounted(() => {
                 </button>
 
                 <div v-if="moreMenuApps.length > 0" class="relative flex justify-center">
-                  <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showHiddenAppsMenu ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                  <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showHiddenAppsMenu || activeInMore ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                     <MoreHorizontal class="w-5 h-5" />
                     <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">More Apps</span>
                   </button>
                   
+                  <!--
+                    When the rail is full, More sits at the bottom of it, so its
+                    menu opens upwards; otherwise it would run off a short window.
+                  -->
                   <!-- Overlay for clicking outside -->
                   <div v-if="showHiddenAppsMenu" class="fixed inset-0 z-40" @click="showHiddenAppsMenu = false"></div>
                   
-                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50 max-h-[60vh] overflow-y-auto">
+                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : railOverflowed.length ? 'absolute left-full bottom-0 ml-2 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50 max-h-[60vh] overflow-y-auto">
                     <button v-for="app in moreMenuApps" :key="app.id" @click="openHiddenApp(app.id)" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
                       <component :is="app.icon" class="w-5 h-5 text-gray-500" />
                       <span class="font-medium">{{ app.name }}</span>
