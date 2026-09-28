@@ -72,10 +72,58 @@ async function copy(f: FieldView) {
   }
 }
 
-watch(() => props.item.id, () => hide());
+/*
+ * The current code, counted down here and asked for again when it runs out.
+ * One call a period rather than one a second: the countdown is arithmetic,
+ * only the code needs the secret.
+ */
+const code = ref<{ code: string; remaining: number; period: number } | null>(null);
+let tick: ReturnType<typeof setInterval> | undefined;
+async function fetchCode() {
+  if (!props.item.totp) {
+    code.value = null;
+    return;
+  }
+  try {
+    code.value = await props.api.totp(props.item.id);
+  } catch (e) {
+    code.value = null;
+    emit('error', e);
+  }
+}
+function startCodes() {
+  clearInterval(tick);
+  code.value = null;
+  if (!props.item.totp) return;
+  void fetchCode();
+  tick = setInterval(() => {
+    if (!code.value) return;
+    if (code.value.remaining <= 1) void fetchCode();
+    else code.value = { ...code.value, remaining: code.value.remaining - 1 };
+  }, 1000);
+}
+async function copyCode() {
+  try {
+    const { clear_after_secs } = await props.api.copyTotp(props.item.id);
+    say(clear_after_secs ? t('safe.detail.copied', { n: clear_after_secs }) : t('safe.detail.copied_kept'));
+  } catch (e) {
+    say(explain(e));
+  }
+}
+const spaced = (c: string) => (c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c);
+/** Both factors of one account in one place — worth a line, not a refusal. */
+const sharesAPassword = computed(() => props.item.fields.some((f) => f.kind === 'password' && !f.empty));
+
+watch(() => props.item.id, () => {
+  hide();
+  startCodes();
+});
+watch(() => props.item.totp, startCodes);
+startCodes();
 onBeforeUnmount(() => {
   hide();
   clearTimeout(toastTimer);
+  clearInterval(tick);
 });
 
 function dots(bucket: number | null) {
@@ -176,6 +224,22 @@ const trashed = computed(() => props.item.trashed_at !== null);
           </template>
         </div>
       </dl>
+
+      <section v-if="item.totp" class="rounded-xl border border-border dark:border-border-dark px-4 py-3 flex items-center gap-3">
+        <div class="flex-1 min-w-0">
+          <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.totp.label') }}</p>
+          <p class="font-mono text-lg tracking-wider tabular-nums">{{ code ? spaced(code.code) : '— — —' }}</p>
+        </div>
+        <svg v-if="code" class="w-6 h-6 -rotate-90" viewBox="0 0 24 24" :aria-label="t('safe.totp.remaining', { n: code.remaining })" role="img">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" class="text-border dark:text-border-dark" />
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="text-accent"
+            :stroke-dasharray="62.83" :stroke-dashoffset="62.83 * (1 - code.remaining / code.period)" />
+        </svg>
+        <button class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark" :aria-label="t('safe.detail.copy')" :title="t('safe.detail.copy')" @click="copyCode">
+          <Copy class="w-4 h-4" />
+        </button>
+      </section>
+      <p v-if="item.totp && sharesAPassword" class="-mt-4 text-xs text-warning">{{ t('safe.totp.same_place') }}</p>
 
       <section v-if="item.urls.length" class="space-y-2">
         <h3 class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.detail.websites') }}</h3>

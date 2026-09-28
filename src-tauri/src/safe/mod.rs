@@ -36,6 +36,8 @@ pub mod item;
 pub mod keyset;
 pub mod session;
 pub mod store;
+pub mod sync;
+pub mod totp;
 
 #[cfg(test)]
 mod tests;

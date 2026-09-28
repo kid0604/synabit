@@ -11,6 +11,7 @@ import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AlertTriangle, LayoutGrid, Lock, Plus, Search, Settings2, Star, Tag, Trash2 } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
+import { useEventBus } from '../../composables/useEventBus';
 import { safeCode, type Filter, type ItemKind, type ItemSummary, type ItemView, type Overview, type SafeApi } from './api';
 import { KINDS, kindInfo } from './kinds';
 import ItemDetail from './ItemDetail.vue';
@@ -77,6 +78,24 @@ watch(query, () => {
 });
 watch(filter, load, { deep: true });
 onMounted(load);
+
+/*
+ * Another device's items arrive by sync while this screen is open. Rust has
+ * already decided which version of each file to keep; `refresh` reads them
+ * again and folds in any version it set aside. Only when something under
+ * `Safe/` came in — a note arriving is no reason to decrypt every item.
+ */
+const bus = useEventBus();
+bus.on('vault:sync-completed', async (payload) => {
+  const files = payload?.pulled_files;
+  if (files && !files.some((f) => f.replace(/\\/g, '/').startsWith('Safe/'))) return;
+  try {
+    await props.api.refresh();
+    await refreshAll();
+  } catch (e) {
+    fail(e);
+  }
+});
 
 function isFilter(f: Filter) {
   return JSON.stringify(f) === JSON.stringify(filter.value);

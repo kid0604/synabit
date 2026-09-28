@@ -22,7 +22,8 @@ import { logger } from '../utils/logger';
 export interface TauriEventMap {
   'vault:file-modified': { paths: string[] };
   'vault:file-created-deleted': { paths: string[] };
-  'vault:sync-completed': { result?: any };
+  /** What `useSync` sends after a sync that brought something in. */
+  'vault:sync-completed': { pulled_files?: string[]; pulled?: number };
   'vault:changed': void;
   'chat:new-message': void;
   'note:updated-external': { id: string; content: string };

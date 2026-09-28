@@ -14,7 +14,7 @@ import { computed, nextTick, onMounted, reactive, ref } from 'vue';
 import ModalDialog from '../calendar/components/ModalDialog.vue';
 import { useI18n } from 'vue-i18n';
 import { Dices, Eye, EyeOff, Plus, X } from 'lucide-vue-next';
-import type { EditValue, FieldKind, ItemEdit, ItemKind, ItemView, SafeApi } from './api';
+import type { EditValue, FieldKind, ItemEdit, ItemKind, ItemView, SafeApi, TotpEdit } from './api';
 import { CONCEALED, FIELD_KINDS, kindInfo } from './kinds';
 import PasswordGenerator from './PasswordGenerator.vue';
 import { useSafeError } from './useSafeError';
@@ -40,6 +40,12 @@ let nextKey = 0;
 const kind = ref<ItemKind>(props.item?.kind ?? props.kind);
 const title = ref(props.item?.title ?? '');
 const notes = ref(props.item?.notes ?? '');
+/** An existing setup is never sent here; the choice is keep, remove or replace. */
+const hasTotp = ref(!!props.item?.totp);
+const totpInput = ref('');
+const totpEdit = computed<TotpEdit>(() =>
+  totpInput.value.trim() ? { t: 'set', v: totpInput.value.trim() } : props.item?.totp && !hasTotp.value ? { t: 'remove' } : { t: 'unchanged' },
+);
 const tags = ref((props.item?.tags ?? []).join(', '));
 const urls = ref<string[]>(props.item ? props.item.urls.map((u) => u.url) : kindInfo(props.kind).url ? [''] : []);
 const fields = reactive<DraftField[]>(
@@ -83,6 +89,7 @@ const edit = computed<ItemEdit>(() => ({
   tags: tags.value.split(',').map((s) => s.trim()).filter(Boolean),
   favorite: props.item?.favorite ?? false,
   notes: notes.value,
+  totp: totpEdit.value,
   expires_at: props.item?.expires_at ?? null,
 }));
 
@@ -194,6 +201,25 @@ onMounted(async () => {
           <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.editor.tags') }}</span>
           <input v-model="tags" :placeholder="t('safe.editor.tags_placeholder')" class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark focus:outline-none focus:ring-2 focus:ring-accent" />
         </label>
+
+        <div class="space-y-1.5">
+          <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.totp.label') }}</span>
+          <div v-if="hasTotp && !totpInput" class="flex items-center gap-2">
+            <span class="flex-1 px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-dashed border-border dark:border-border-dark text-sm text-text-tertiary dark:text-text-tertiary-dark">
+              {{ t('safe.totp.configured') }}
+            </span>
+            <button type="button" class="px-3 py-2 text-sm rounded-lg text-danger hover:bg-danger/10" @click="hasTotp = false">{{ t('safe.totp.remove') }}</button>
+          </div>
+          <input
+            v-else
+            v-model="totpInput"
+            type="password"
+            :placeholder="t('safe.totp.placeholder')"
+            :aria-label="t('safe.totp.label')"
+            autocomplete="off" spellcheck="false" autocapitalize="off"
+            class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
 
         <label class="block space-y-1">
           <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.editor.notes') }}</span>

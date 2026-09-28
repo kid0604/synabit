@@ -71,6 +71,7 @@ impl SafeError {
             SafeError::NotFound => "not_found",
             SafeError::Item(ItemError::NoTitle) => "no_title",
             SafeError::Item(ItemError::UnknownField) => "unknown_field",
+            SafeError::Item(ItemError::BadTotp) => "bad_totp",
             SafeError::Generate(_) => "bad_recipe",
             SafeError::Keychain(_) => "keychain",
             SafeError::Clipboard(_) => "clipboard",
@@ -214,23 +215,94 @@ fn parse_id(id: &str) -> Result<ItemId, SafeError> {
 impl Unlocked {
     /// Read every item of the Safe in `vault` and hold it open.
     pub fn open(vault: &Path, keyset: Keyset, safe_key: Key) -> Result<Self, SafeError> {
-        let (loaded, unreadable) = store::load_all(vault, &keyset, &safe_key)?;
-        let entries = loaded
+        let mut unlocked = Unlocked {
+            vault: vault.to_path_buf(),
+            keyset,
+            safe_key,
+            entries: HashMap::new(),
+            unreadable: Vec::new(),
+            last_used: Instant::now(),
+            settings: Settings::load(vault),
+        };
+        unlocked.reload()?;
+        Ok(unlocked)
+    }
+
+    /// Read every item again — after sync brought some — and fold in any
+    /// version sync set aside.
+    pub fn reload(&mut self) -> Result<(), SafeError> {
+        if let Ok(on_disk) = super::keyset::read(&self.vault) {
+            if on_disk.header.safe_id == self.keyset.header.safe_id {
+                super::sync::saw_keyset(&self.vault, on_disk.header.keyset_revision);
+                self.keyset = on_disk;
+            }
+        }
+        let (loaded, unreadable) = store::load_all(&self.vault, &self.keyset, &self.safe_key)?;
+        self.entries = loaded
             .into_iter()
             .map(|item| {
+                super::sync::saw_item(&self.vault, &item.id, item.revision);
                 let summary = item.body.as_ref().map(|b| b.summary(&hex::encode(item.id)));
                 (item.id, Entry { revision: item.revision, summary })
             })
             .collect();
-        Ok(Unlocked {
-            vault: vault.to_path_buf(),
-            keyset,
-            safe_key,
-            entries,
-            unreadable,
-            last_used: Instant::now(),
-            settings: Settings::load(vault),
-        })
+        self.unreadable = unreadable;
+        self.resolve_conflicts();
+        Ok(())
+    }
+
+    /// Fold each version sync set aside into the item it belongs to.
+    ///
+    /// The fold is deterministic (`ItemBody::absorb`), so two devices holding
+    /// the same pair write the same item; if they do it at the same moment the
+    /// two new revisions tie again, and that second fold changes nothing and
+    /// ends it. A version that does not open stays where it is and is
+    /// reported, never deleted.
+    fn resolve_conflicts(&mut self) {
+        for (id, path) in super::sync::conflicts_for(&self.vault) {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let other = std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|b| super::format::ItemFile::decode(&b).map_err(|e| e.to_string()))
+                .and_then(|f| f.open(&self.safe_key, &self.keyset.header.safe_id, &id).map_err(|e| e.to_string()))
+                .and_then(|content| match content {
+                    super::format::ItemContent::Tombstone => Ok(None),
+                    super::format::ItemContent::Body(json) => {
+                        ItemBody::from_json(&json).map(Some).map_err(|e| e.to_string())
+                    }
+                });
+            let other = match other {
+                Ok(other) => other,
+                Err(reason) => {
+                    self.unreadable.push(Unreadable { file: format!("conflicts/{name}"), reason });
+                    continue;
+                }
+            };
+            let current = self.entries.get(&id).and_then(|e| e.summary.as_ref()).map(|_| self.body(&id));
+            let outcome = match (current, other) {
+                // A live item and a live version beside it: fold.
+                (Some(Ok(mut body)), Some(other)) => {
+                    if body.absorb(other) {
+                        self.write(id, &body)
+                    } else {
+                        Ok(())
+                    }
+                }
+                // One side was deleted for good. A deletion is not undone by an
+                // edit made at the same moment — nor an edit lost to a
+                // deletion's tombstone being the one kept: the live side stays.
+                (Some(Ok(_)), None) | (None, _) => Ok(()),
+                (Some(Err(e)), _) => Err(e),
+            };
+            match outcome {
+                Ok(()) => {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        log::warn!("[Safe] could not remove the merged version {name}: {e}");
+                    }
+                }
+                Err(e) => self.unreadable.push(Unreadable { file: format!("conflicts/{name}"), reason: e.to_string() }),
+            }
+        }
     }
 
     pub fn settings(&self) -> Settings {
@@ -311,6 +383,7 @@ impl Unlocked {
     fn write(&mut self, id: ItemId, body: &ItemBody) -> Result<(), SafeError> {
         let revision = self.entries.get(&id).map_or(1, |e| e.revision + 1);
         store::save(&self.vault, &self.keyset, &self.safe_key, &id, revision, body)?;
+        super::sync::saw_item(&self.vault, &id, revision);
         self.entries.insert(id, Entry { revision, summary: Some(body.summary(&hex::encode(id))) });
         Ok(())
     }
@@ -324,6 +397,12 @@ impl Unlocked {
     pub fn reveal(&self, id: &str, field: &str) -> Result<SecretString, SafeError> {
         let id = parse_id(id)?;
         self.body(&id)?.field_value(field).cloned().ok_or(SafeError::NotFound)
+    }
+
+    /// The item's current one-time code, and how long it has left.
+    pub fn totp(&self, id: &str, now: u64) -> Result<super::totp::Code, SafeError> {
+        let id = parse_id(id)?;
+        self.body(&id)?.totp.as_ref().map(|t| t.code_at(now)).ok_or(SafeError::NotFound)
     }
 
     pub fn create(&mut self, edit: ItemEdit, now: i64) -> Result<ItemView, SafeError> {
@@ -369,6 +448,7 @@ impl Unlocked {
         }
         let revision = entry.revision + 1;
         store::bury(&self.vault, &self.keyset, &self.safe_key, &id, revision)?;
+        super::sync::saw_item(&self.vault, &id, revision);
         self.entries.insert(id, Entry { revision, summary: None });
         Ok(())
     }
@@ -451,6 +531,7 @@ mod tests {
             tags: tags.iter().map(|t| t.to_string()).collect(),
             favorite: false,
             notes: String::new(),
+                totp: Default::default(),
             expires_at: None,
         }
     }

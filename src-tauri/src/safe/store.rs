@@ -214,6 +214,7 @@ mod tests {
                 tags: vec![],
                 favorite: false,
                 notes: String::new(),
+                totp: Default::default(),
                 expires_at: None,
             },
             1,

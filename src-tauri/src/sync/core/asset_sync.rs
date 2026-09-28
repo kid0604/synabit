@@ -375,6 +375,25 @@ async fn write_one(
 
     let contents = asset::reassemble(e2ee_key, &asset, &fetched)?;
 
+    // Safe's files are not decided by the rule below — "the later one wins,
+    // ours is renamed beside it" would let a peer hand back an old password,
+    // and a renamed item file is a second item with the same id. They carry a
+    // revision in the clear, and `safe::sync` decides from that.
+    if crate::safe::sync::is_safe_path(&asset.rel_path) {
+        let decision = crate::safe::sync::decide(vault, &asset.rel_path, &contents);
+        if crate::safe::sync::apply(vault, &asset.rel_path, &contents, &decision)? {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            db.upsert_document_path(vault_id, &asset.node_id, &asset.rel_path)?;
+            db.upsert_document_baseline(
+                vault_id,
+                provider_id,
+                &asset.rel_path,
+                &crate::sync::utils::sha256_hex(&contents),
+            )?;
+        }
+        return Ok((asset.rel_path, None));
+    }
+
     // Is there something of ours here that this would destroy?
     //
     // An attachment is identified by its path, so a file already sitting at this

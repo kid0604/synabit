@@ -2670,7 +2670,8 @@
       "bad_recipe": "Với các tuỳ chọn này thì không sinh được mật khẩu.",
       "keychain": "Không truy cập được keychain của máy này.",
       "clipboard": "Không truy cập được clipboard.",
-      "failed": "Có lỗi xảy ra: {msg}"
+      "failed": "Có lỗi xảy ra: {msg}",
+      "bad_totp": "Đây không phải link otpauth:// hay khoá thiết lập."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2813,6 +2814,14 @@
       "secret_key_body": "Nhập master password để xem Secret Key hoặc lưu Emergency Kit mới.",
       "show": "Xem",
       "close": "Đóng"
+    },
+    "totp": {
+      "label": "Mã một lần",
+      "placeholder": "Dán link otpauth:// hoặc khoá thiết lập",
+      "configured": "Đã thiết lập — khoá được giữ kín",
+      "remove": "Bỏ",
+      "remaining": "còn {n} giây",
+      "same_place": "Mục này giữ cả mật khẩu lẫn mã một lần, nên ai mở được Safe là có cả hai yếu tố."
     }
   }
 }

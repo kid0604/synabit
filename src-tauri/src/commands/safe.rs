@@ -331,6 +331,14 @@ fn with<R>(app: &tauri::AppHandle, vault_path: &str, f: impl FnOnce(&mut Unlocke
     app.state::<SafeSession>().with(&vault, f).map_err(AppError::Safe)
 }
 
+/// Read the Safe again after sync brought items from another device, and
+/// fold in any version it set aside.
+#[tauri::command]
+pub fn safe_refresh(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<()> {
+    gate(&webview)?;
+    with(&app, &vault_path, |s| s.reload())
+}
+
 #[tauri::command]
 pub fn safe_overview(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<Overview> {
     gate(&webview)?;
@@ -389,6 +397,47 @@ pub fn safe_copy(
     let (value, clear_after) = with(&app, &vault_path, |s| Ok((s.reveal(&id, &field)?, s.settings().clipboard_clear_secs)))?;
     let generation = app.state::<SafeClipboard>().copy(&value).map_err(AppError::Safe)?;
     drop(value);
+    if clear_after > 0 {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(clear_after)).await;
+            handle.state::<SafeClipboard>().clear_if_unchanged(generation);
+        });
+    }
+    Ok(Copied { clear_after_secs: clear_after })
+}
+
+/// The current one-time code of an item. The secret stays here; a code is
+/// worth thirty seconds.
+#[tauri::command]
+pub fn safe_totp(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    id: String,
+) -> AppResult<crate::safe::totp::Code> {
+    gate(&webview)?;
+    with(&app, &vault_path, |s| s.totp(&id, now() as u64))
+}
+
+/// Copy the current one-time code — or the next one, in the last five
+/// seconds of this one, so it is not stale by the time it is pasted.
+#[tauri::command]
+pub fn safe_copy_totp(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    id: String,
+) -> AppResult<Copied> {
+    gate(&webview)?;
+    let (code, clear_after) = with(&app, &vault_path, |s| {
+        let t = now() as u64;
+        let current = s.totp(&id, t)?;
+        let code = if current.remaining <= 5 { s.totp(&id, t + u64::from(current.remaining))? } else { current };
+        Ok((code, s.settings().clipboard_clear_secs))
+    })?;
+    let value = crate::safe::item::SecretString::new(code.code);
+    let generation = app.state::<SafeClipboard>().copy(&value).map_err(AppError::Safe)?;
     if clear_after > 0 {
         let handle = app.clone();
         tauri::async_runtime::spawn(async move {

@@ -258,6 +258,11 @@ pub enum DeleteOutcome {
     SupersededByNewerWork,
     /// Nothing to remove locally; only bookkeeping was cleaned up.
     AlreadyGone,
+    /// A file of Safe's. Safe never deletes one — a deleted item becomes a
+    /// tombstone with a higher revision — so a tombstone from sync is at best
+    /// a file somebody removed by hand and at worst a way to erase an item on
+    /// every device. Either way, it is not applied.
+    RefusedForSafe,
 }
 
 /// Apply a remote tombstone.
@@ -284,6 +289,11 @@ pub fn apply_delete_payload<R: tauri::Runtime>(
             "refusing to delete outside the vault: {}",
             payload.rel_path
         )));
+    }
+
+    if crate::safe::sync::is_safe_path(&payload.rel_path) {
+        log::info!("[Safe] sync: a delete for {} was not applied", payload.rel_path);
+        return Ok(DeleteOutcome::RefusedForSafe);
     }
 
     let db_state = app_handle.state::<crate::db::DbState>();

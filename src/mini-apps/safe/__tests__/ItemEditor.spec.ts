@@ -26,6 +26,7 @@ const github: ItemView = {
     { id: 'p', label: 'Password', kind: 'password', concealed: true, value: null, length_bucket: 16, empty: false },
   ],
   urls: [{ url: 'https://github.com', match: 'domain' }], tags: ['work'], favorite: true, notes: '', links: [],
+  totp: { algorithm: 'sha1', digits: 6, period: 30 },
   ai_level: 'hidden', expires_at: null, created_at: 1, updated_at: 2, history_count: 0, trashed_at: null,
 };
 
@@ -70,6 +71,18 @@ describe('the item editor', () => {
     const username = saved[0].fields.find((f) => f.id === 'u');
     expect(username?.value).toEqual({ t: 'set', v: 'anh' });
     expect(saved[0].favorite).toBe(true);
+    expect(saved[0].totp, 'an existing one-time-code key was sent back').toEqual({ t: 'unchanged' });
+  });
+
+  it('removes a one-time code only when asked', async () => {
+    const { api, saved } = fakeApi();
+    const wrapper = mount(ItemEditor, { props: { api, item: github, kind: 'login' } });
+    await flushPromises();
+    const remove = wrapper.findAll('button').find((b) => b.text() === 'safe.totp.remove');
+    await remove!.trigger('click');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+    expect(saved[0].totp).toEqual({ t: 'remove' });
   });
 
   it('sends a new value only once the user chose to change it', async () => {

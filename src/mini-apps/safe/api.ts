@@ -55,6 +55,8 @@ export interface ItemView {
   favorite: boolean;
   notes: string;
   links: string[];
+  /** How its one-time codes are made — never the secret behind them. */
+  totp: { algorithm: 'sha1' | 'sha256' | 'sha512'; digits: number; period: number } | null;
   ai_level: AiLevel;
   expires_at: number | null;
   created_at: number;
@@ -65,6 +67,9 @@ export interface ItemView {
 
 /** A concealed value the editor never received goes back as `unchanged`. */
 export type EditValue = { t: 'unchanged' } | { t: 'set'; v: string };
+
+/** The same for one-time codes: `set` carries an otpauth:// link or a base32 secret. */
+export type TotpEdit = { t: 'unchanged' } | { t: 'remove' } | { t: 'set'; v: string };
 
 export interface FieldEdit {
   id: string | null;
@@ -81,6 +86,7 @@ export interface ItemEdit {
   tags: string[];
   favorite: boolean;
   notes: string;
+  totp: TotpEdit;
   expires_at: number | null;
 }
 
@@ -140,11 +146,14 @@ export function useSafeApi(vaultPath: () => string) {
     changePassword: (current: string, next: string) => invoke<void>('safe_change_password', { ...v(), current, next }),
     secretKey: (password: string) => invoke<string>('safe_secret_key', { ...v(), password }),
     saveEmergencyKit: (path: string) => invoke<void>('safe_save_emergency_kit', { ...v(), path }),
+    refresh: () => invoke<void>('safe_refresh', v()),
     overview: () => invoke<Overview>('safe_overview', v()),
     list: (filter: Filter, query: string) => invoke<ItemSummary[]>('safe_list', { ...v(), filter, query }),
     get: (id: string) => invoke<ItemView>('safe_get', { ...v(), id }),
     reveal: (id: string, field: string) => invoke<string>('safe_reveal', { ...v(), id, field }),
     copy: (id: string, field: string) => invoke<{ clear_after_secs: number }>('safe_copy', { ...v(), id, field }),
+    totp: (id: string) => invoke<{ code: string; remaining: number; period: number }>('safe_totp', { ...v(), id }),
+    copyTotp: (id: string) => invoke<{ clear_after_secs: number }>('safe_copy_totp', { ...v(), id }),
     createItem: (item: ItemEdit) => invoke<ItemView>('safe_create_item', { ...v(), item }),
     updateItem: (id: string, item: ItemEdit) => invoke<ItemView>('safe_update_item', { ...v(), id, item }),
     setFavorite: (id: string, favorite: boolean) => invoke<void>('safe_set_favorite', { ...v(), id, favorite }),

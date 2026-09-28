@@ -2670,7 +2670,8 @@
       "bad_recipe": "Those generator settings cannot make a password.",
       "keychain": "This device's keychain could not be reached.",
       "clipboard": "The clipboard could not be reached.",
-      "failed": "Something went wrong: {msg}"
+      "failed": "Something went wrong: {msg}",
+      "bad_totp": "That is neither an otpauth:// link nor a setup key."
     },
     "sidebar": {
       "all": "All items",
@@ -2813,6 +2814,14 @@
       "secret_key_body": "Enter your master password to see your Secret Key or save a new Emergency Kit.",
       "show": "Show",
       "close": "Close"
+    },
+    "totp": {
+      "label": "One-time code",
+      "placeholder": "Paste an otpauth:// link or the setup key",
+      "configured": "Set up — the key is kept hidden",
+      "remove": "Remove",
+      "remaining": "{n} seconds left",
+      "same_place": "This item holds both the password and the one-time code, so whoever opens the Safe has both factors."
     }
   }
 }

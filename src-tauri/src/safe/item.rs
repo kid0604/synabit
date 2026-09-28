@@ -208,6 +208,10 @@ pub struct ItemBody {
     /// Vault node ids this item is linked to.
     #[serde(default)]
     pub links: Vec<String>,
+    /// One-time codes. Warned about when it sits beside the password of the
+    /// same account — the Safe then holds both factors.
+    #[serde(default)]
+    pub totp: Option<super::totp::Totp>,
     #[serde(default)]
     pub ai: AiPolicy,
     #[serde(default)]
@@ -288,6 +292,7 @@ impl ItemBody {
             favorite: self.favorite,
             notes: self.notes.expose().to_string(),
             links: self.links.clone(),
+            totp: self.totp.as_ref().map(|t| t.view()),
             ai_level: self.ai.level,
             expires_at: self.expires_at,
             created_at: self.created_at,
@@ -335,6 +340,11 @@ impl ItemBody {
         self.tags = normalise_tags(edit.tags);
         self.favorite = edit.favorite;
         self.notes = SecretString::new(edit.notes);
+        match edit.totp {
+            TotpEdit::Unchanged => {}
+            TotpEdit::Remove => self.totp = None,
+            TotpEdit::Set { v } => self.totp = Some(super::totp::Totp::parse(v.expose()).map_err(|_| ItemError::BadTotp)?),
+        }
         self.expires_at = edit.expires_at;
         self.updated_at = now;
         Ok(())
@@ -367,6 +377,7 @@ impl ItemBody {
             favorite: false,
             notes: SecretString::default(),
             links: Vec::new(),
+            totp: None,
             ai: AiPolicy::default(),
             expires_at: None,
             created_at: now,
@@ -377,6 +388,45 @@ impl ItemBody {
         };
         body.apply(edit, now)?;
         Ok(body)
+    }
+
+    /// Fold in another version of this item, written at the same revision on
+    /// another device.
+    ///
+    /// The newer edit (by `updated_at`, then device) wins, as the design
+    /// says. Every concealed value the other version held that the winner does
+    /// not is kept in the winner's history, so two people changing one
+    /// password at once lose neither. Deterministic: both devices fold the
+    /// same pair into the same body, so they stop disagreeing. Returns whether
+    /// the result differs from `self`.
+    pub fn absorb(&mut self, other: ItemBody) -> bool {
+        let self_newer = (self.updated_at, self.fingerprint()) >= (other.updated_at, other.fingerprint());
+        let (mut winner, loser) = if self_newer { (self.clone(), other) } else { (other, self.clone()) };
+        for old in loser.fields.iter().filter(|f| f.kind.is_concealed() && !f.value.is_empty()) {
+            let current = winner.fields.iter().find(|f| f.id == old.id).map(|f| f.value.clone());
+            if current.as_ref() == Some(&old.value) {
+                continue;
+            }
+            if winner.history.iter().any(|h| h.field == old.id && h.value == old.value) {
+                continue;
+            }
+            winner.history.push(HistoryEntry { field: old.id.clone(), value: old.value.clone(), replaced_at: loser.updated_at });
+        }
+        for h in loser.history {
+            if !winner.history.iter().any(|w| w.field == h.field && w.value == h.value) {
+                winner.history.push(h);
+            }
+        }
+        winner.history.sort_by(|a, b| a.replaced_at.cmp(&b.replaced_at).then_with(|| a.field.cmp(&b.field)));
+        winner.trim_history();
+        let changed = winner != *self;
+        *self = winner;
+        changed
+    }
+
+    /// A stable tie-break for two edits made in the same second.
+    fn fingerprint(&self) -> [u8; 32] {
+        *blake3::hash(&self.to_json()).as_bytes()
     }
 
     pub fn field_value(&self, field_id: &str) -> Option<&SecretString> {
@@ -390,6 +440,8 @@ pub enum ItemError {
     NoTitle,
     #[error("the edit keeps a field the item does not have")]
     UnknownField,
+    #[error("that one-time code setup is neither an otpauth:// link nor a base32 secret")]
+    BadTotp,
 }
 
 fn normalise_tags(tags: Vec<String>) -> Vec<String> {
@@ -482,6 +534,8 @@ pub struct ItemView {
     pub favorite: bool,
     pub notes: String,
     pub links: Vec<String>,
+    /// How the item's codes are made, never the secret behind them.
+    pub totp: Option<super::totp::TotpView>,
     pub ai_level: AiLevel,
     pub expires_at: Option<i64>,
     pub created_at: i64,
@@ -526,7 +580,21 @@ pub struct ItemEdit {
     #[serde(default)]
     pub notes: String,
     #[serde(default)]
+    pub totp: TotpEdit,
+    #[serde(default)]
     pub expires_at: Option<i64>,
+}
+
+/// The one-time-code part of an edit. Like a concealed field, an existing
+/// secret is never sent to the editor, so leaving it alone is `Unchanged`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(tag = "t", rename_all = "snake_case")]
+pub enum TotpEdit {
+    #[default]
+    Unchanged,
+    Remove,
+    /// An `otpauth://` link or a base32 secret, as pasted.
+    Set { v: SecretString },
 }
 
 #[cfg(test)]
@@ -549,6 +617,7 @@ mod tests {
             tags: vec![" #work".into(), "Work".into(), "dev".into()],
             favorite: false,
             notes: String::new(),
+            totp: TotpEdit::Unchanged,
             expires_at: None,
         }
     }
@@ -628,6 +697,64 @@ mod tests {
         assert!(body.fields[0].kind.is_concealed(), "an unknown field kind is treated as concealed");
         let again: Value = serde_json::from_slice(&body.to_json()).unwrap();
         assert_eq!(again["totp"]["secret"], "JBSWY3DPEHPK3PXP");
+    }
+
+    #[test]
+    fn a_totp_secret_is_kept_out_of_the_view_and_survives_an_edit() {
+        let mut edit = login("x");
+        edit.totp = TotpEdit::Set { v: SecretString::new("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=8".into()) };
+        let mut body = ItemBody::new_from(edit, 1).unwrap();
+        let json = serde_json::to_string(&body.view("id")).unwrap();
+        assert!(!json.contains("JBSWY3DPEHPK3PXP"), "{json}");
+        assert_eq!(body.view("id").totp.unwrap().digits, 8);
+
+        let ids: Vec<String> = body.fields.iter().map(|f| f.id.clone()).collect();
+        let mut again = login("x");
+        again.fields[0].id = Some(ids[0].clone());
+        again.fields[1].id = Some(ids[1].clone());
+        body.apply(again, 2).unwrap();
+        assert!(body.totp.is_some(), "Unchanged kept the secret");
+
+        let mut remove = login("x");
+        remove.totp = TotpEdit::Remove;
+        body.apply(remove, 3).unwrap();
+        assert!(body.totp.is_none());
+
+        let mut bad = login("x");
+        bad.totp = TotpEdit::Set { v: SecretString::new("not a secret".into()) };
+        assert_eq!(body.apply(bad, 4).unwrap_err(), ItemError::BadTotp);
+    }
+
+    /// Two devices changed the same password at once. Folding either version
+    /// into the other gives the same item, with the loser's password in the
+    /// history — and folding again changes nothing, which is what lets the
+    /// two devices stop.
+    #[test]
+    fn absorbing_a_concurrent_edit_is_symmetric_and_settles() {
+        let base = ItemBody::new_from(login("original"), 100).unwrap();
+        let ids: Vec<String> = base.fields.iter().map(|f| f.id.clone()).collect();
+        let edited = |password: &str, at: i64| {
+            let mut b = base.clone();
+            let mut e = login(password);
+            e.fields[0].id = Some(ids[0].clone());
+            e.fields[1].id = Some(ids[1].clone());
+            b.apply(e, at).unwrap();
+            b
+        };
+        let on_a = edited("from-a", 200);
+        let on_b = edited("from-b", 201);
+
+        let mut a_view = on_a.clone();
+        assert!(a_view.absorb(on_b.clone()));
+        let mut b_view = on_b.clone();
+        b_view.absorb(on_a.clone());
+        assert_eq!(a_view, b_view, "the two devices folded to different items");
+        assert_eq!(a_view.fields[1].value.expose(), "from-b", "the newer edit wins");
+        let kept: Vec<&str> = a_view.history.iter().map(|h| h.value.expose()).collect();
+        assert!(kept.contains(&"from-a") && kept.contains(&"original"), "{kept:?}");
+
+        let mut again = a_view.clone();
+        assert!(!again.absorb(b_view.clone()), "folding a settled item changed it");
     }
 
     #[test]

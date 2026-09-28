@@ -2383,3 +2383,186 @@ async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
         assert!(conflicts.is_empty(), "{}: {conflicts:?}", device.name);
     }
 }
+
+/// Safe's files between two devices, through the real coordinator and a real
+/// (in-memory) mailbox. `safe::sync` decides each arrival from the cleartext
+/// header; these check that the decision is actually the one sync carries out.
+mod safe_between_devices {
+    use super::*;
+    use crate::safe::crypto::{self, KdfParams, Key, SecretKey};
+    use crate::safe::format::{Keyset, KeysetHeader};
+    use crate::safe::item::{EditValue, FieldEdit, FieldKind, ItemEdit, ItemKind, SecretString};
+    use crate::safe::session::{Filter, Unlocked};
+
+    const SAFE_KEY: [u8; 32] = [0x33; 32];
+
+    /// The Safe exists on A. Tiny Argon2id parameters: this is about sync, not
+    /// the KDF, and the keyset is only ever opened here with the key directly.
+    fn create_safe(device: &HarnessDevice) {
+        let kdf = KdfParams { m_kib: 64, t: 1, p: 1 };
+        let auk = crypto::derive_auk(b"pw", &[0; 32], kdf, &SecretKey::from_bytes([1; 16])).unwrap();
+        let header = KeysetHeader { safe_id: [0x44; 16], key_epoch: 1, keyset_revision: 1, kdf, kdf_salt: [0; 32] };
+        let keyset = Keyset::seal(header, &auk, &Key::from_bytes(SAFE_KEY), [0; 24]).unwrap();
+        crate::safe::store::write_atomic(&crate::safe::keyset::keyset_path(device.vault_path()), &keyset.encode()).unwrap();
+    }
+
+    fn open(device: &HarnessDevice) -> Unlocked {
+        let keyset = crate::safe::keyset::read(device.vault_path()).expect("the keyset is here");
+        Unlocked::open(device.vault_path(), keyset, Key::from_bytes(SAFE_KEY)).unwrap()
+    }
+
+    fn login(title: &str, password: &str) -> ItemEdit {
+        ItemEdit {
+            kind: ItemKind::Login,
+            title: title.into(),
+            fields: vec![FieldEdit {
+                id: None,
+                label: "password".into(),
+                kind: FieldKind::Password,
+                value: EditValue::Set { v: SecretString::new(password.into()) },
+            }],
+            urls: vec![],
+            tags: vec![],
+            favorite: false,
+            notes: String::new(),
+            totp: Default::default(),
+            expires_at: None,
+        }
+    }
+
+    /// Edit the one password field of item `id`, keeping its field id.
+    fn change_password(safe: &mut Unlocked, id: &str, password: &str, at: i64) {
+        let view = safe.view(id).unwrap();
+        let mut edit = login(&view.title, password);
+        edit.fields[0].id = Some(view.fields[0].id.clone());
+        safe.update(id, edit, at).unwrap();
+    }
+
+    fn password(safe: &Unlocked, id: &str) -> String {
+        let field = safe.view(id).unwrap().fields[0].id.clone();
+        safe.reveal(id, &field).unwrap().expose().to_string()
+    }
+
+    fn item_path(device: &HarnessDevice, id: &str) -> std::path::PathBuf {
+        device.vault_path().join(format!("Safe/items/{id}.safe"))
+    }
+
+    #[tokio::test]
+    async fn an_item_made_on_one_device_opens_on_the_other() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("GitHub", "canary-1"), 1).unwrap().id;
+
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        let on_b = open(b);
+        assert_eq!(on_b.list(&Filter::All, "").len(), 1);
+        assert_eq!(password(&on_b, &id), "canary-1");
+    }
+
+    /// The attack `safe::sync` exists for. B has seen revision 2 of an item;
+    /// A — a peer that is compromised, or merely stale — publishes revision 1
+    /// again. B keeps revision 2.
+    #[tokio::test]
+    async fn an_old_revision_sent_again_is_refused() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Bank", "old-password"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+        let revision_one = std::fs::read(item_path(a, &id)).unwrap();
+
+        change_password(&mut open(b), &id, "new-password", 2);
+        b.sync_ok().await;
+        a.sync_ok().await;
+        assert_eq!(password(&open(a), &id), "new-password", "precondition: A has revision 2");
+
+        // A puts revision 1 back and publishes it.
+        std::fs::write(item_path(a, &id), &revision_one).unwrap();
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        assert_eq!(password(&open(b), &id), "new-password", "B went back to an old password");
+    }
+
+    /// Both devices change the same password before either has synced. They
+    /// end with the same item — the newer edit — and the other password in its
+    /// history, not with two items or one lost password.
+    #[tokio::test]
+    async fn two_edits_at_once_converge_and_lose_nothing() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Wi-Fi", "original"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        change_password(&mut open(a), &id, "from-a", 10);
+        change_password(&mut open(b), &id, "from-b", 11);
+        a.sync_ok().await;
+        b.sync_ok().await;
+        a.sync_ok().await;
+
+        // Opening folds what sync set aside; syncing carries the fold; a second
+        // round settles any tie the two folds made with each other.
+        for _ in 0..2 {
+            let _ = open(a);
+            let _ = open(b);
+            a.sync_ok().await;
+            b.sync_ok().await;
+            a.sync_ok().await;
+        }
+
+        let (on_a, on_b) = (open(a), open(b));
+        assert_eq!(on_a.list(&Filter::All, "").len(), 1, "a second copy of the item appeared");
+        assert_eq!(password(&on_a, &id), "from-b", "the newer edit should win");
+        assert_eq!(password(&on_b, &id), "from-b");
+        assert_eq!(on_a.view(&id).unwrap().history_count, on_b.view(&id).unwrap().history_count);
+        assert!(on_a.view(&id).unwrap().history_count >= 2, "from-a and the original are both kept");
+        for device in [a, b] {
+            assert!(crate::safe::sync::conflicts_for(device.vault_path()).is_empty(), "{}: a version was left unmerged", device.name);
+        }
+    }
+
+    /// Safe never deletes a file — a deleted item becomes a tombstone — so a
+    /// delete arriving from sync is not applied.
+    #[tokio::test]
+    async fn a_file_removed_on_one_device_stays_on_the_other() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("GitHub", "x"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        std::fs::remove_file(item_path(a, &id)).unwrap();
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        assert!(item_path(b, &id).exists(), "a delete from sync removed a Safe item");
+    }
+
+    /// A deleted item reaches the other device as what it is — a tombstone —
+    /// and disappears there too.
+    #[tokio::test]
+    async fn an_item_deleted_for_good_is_gone_on_both() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let mut safe = open(a);
+        let id = safe.create(login("Old", "x"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        safe.set_trashed(&id, true, 2).unwrap();
+        safe.purge(&id).unwrap();
+        a.sync_ok().await;
+        b.sync_ok().await;
+
+        assert!(open(b).list(&Filter::Trash, "").is_empty());
+        assert!(open(b).list(&Filter::All, "").is_empty());
+    }
+}
