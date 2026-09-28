@@ -2857,6 +2857,22 @@
       "none_totp": "This item has no one-time code.",
       "none_open": "This item has no website.",
       "no_safe": "There is no Safe in this vault yet. Create one in Synabit."
+    },
+    "device": {
+      "title": "This device",
+      "body": "Secrets Synabit keeps in this computer's keychain, outside the Safe, because they must work while it is locked. Only their names are shown.",
+      "kind": {
+        "sync_key": "Sync key",
+        "app_lock_pin": "App lock PIN",
+        "provider": "AI provider key",
+        "telegram": "Telegram bot token",
+        "connector": "Connector secret"
+      },
+      "forget": "Forget",
+      "elsewhere": "Managed in Settings",
+      "none": "Nothing is stored on this device.",
+      "forget_title": "Forget {name}?",
+      "forget_body": "It is removed from this device's keychain. Whatever used it stops working here until it is entered again."
     }
   }
 }

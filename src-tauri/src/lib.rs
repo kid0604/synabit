@@ -956,6 +956,8 @@ pub fn run() {
             commands::safe::safe_secret_key,
             commands::safe::safe_save_emergency_kit,
             commands::safe::safe_import,
+            commands::safe::safe_device_secrets,
+            commands::safe::safe_forget_device_secret,
             commands::safe::safe_export,
             commands::safe::safe_export_plain,
             commands::safe::safe_refresh,

@@ -122,6 +122,14 @@ export type Recipe =
   | { mode: 'passphrase'; words: number; separator: string; capitalise: boolean; digit: boolean }
   | { mode: 'pin'; length: number };
 
+/** A secret in this device's keychain, beside the Safe. Never its value. */
+export interface DeviceSecret {
+  slot: string;
+  kind: 'sync_key' | 'app_lock_pin' | 'provider' | 'telegram' | 'connector';
+  name: string;
+  forgettable: boolean;
+}
+
 /** Emitted by Rust when the Safe locks itself after being left alone. */
 export const LOCKED_EVENT = 'safe://locked';
 
@@ -165,6 +173,8 @@ export function useSafeApi(vaultPath: () => string) {
       invoke<{ format: string; imported: number; warnings: string[]; source_was_plaintext: boolean }>('safe_import', { ...v(), path, password: password || null }),
     exportSealed: (path: string, exportPassword: string) => invoke<number>('safe_export', { ...v(), path, exportPassword }),
     exportPlain: (path: string, password: string) => invoke<number>('safe_export_plain', { ...v(), path, password }),
+    deviceSecrets: () => invoke<DeviceSecret[]>('safe_device_secrets', v()),
+    forgetDeviceSecret: (slot: string) => invoke<void>('safe_forget_device_secret', { ...v(), slot }),
     getSettings: () => invoke<Settings>('safe_get_settings', v()),
     setSettings: (settings: Settings) => invoke<Settings>('safe_set_settings', { ...v(), settings }),
   };

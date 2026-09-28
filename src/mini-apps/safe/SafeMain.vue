@@ -9,7 +9,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AlertTriangle, LayoutGrid, Lock, Plus, Search, Settings2, Star, Tag, Trash2 } from 'lucide-vue-next';
+import { AlertTriangle, LayoutGrid, Lock, Monitor, Plus, Search, Settings2, Star, Tag, Trash2 } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { useEventBus } from '../../composables/useEventBus';
 import { safeCode, type Filter, type ItemKind, type ItemSummary, type ItemView, type Overview, type SafeApi } from './api';
@@ -17,6 +17,7 @@ import { KINDS, kindInfo } from './kinds';
 import ItemDetail from './ItemDetail.vue';
 import ItemEditor from './ItemEditor.vue';
 import SafeSettings from './SafeSettings.vue';
+import DeviceSecrets from './DeviceSecrets.vue';
 import { useSafeError } from './useSafeError';
 
 const props = defineProps<{ api: SafeApi }>();
@@ -118,6 +119,11 @@ async function saved(item: ItemView) {
 }
 
 const showSettings = ref(false);
+/** The detail pane shows "This device" instead of an item. */
+const showDevice = ref(false);
+watch(selected, (item) => {
+  if (item) showDevice.value = false;
+});
 
 async function lock() {
   await props.api.lock().catch(() => undefined);
@@ -173,6 +179,9 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
         </button>
       </div>
       <div class="p-2 border-t border-border dark:border-border-dark space-y-0.5">
+        <button :class="[navButton, showDevice ? navActive : navIdle]" @click="showDevice = true; selected = null">
+          <Monitor class="w-4 h-4" />{{ t('safe.device.title') }}
+        </button>
         <button :class="[navButton, navIdle]" @click="showSettings = true">
           <Settings2 class="w-4 h-4" />{{ t('safe.sidebar.settings') }}
         </button>
@@ -236,8 +245,9 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
     <!-- Detail -->
     <main class="flex-1 min-w-0">
       <p v-if="error" class="m-4 p-3 rounded-lg bg-danger/10 text-sm text-danger" role="alert">{{ error }}</p>
+      <DeviceSecrets v-if="showDevice" :api="api" @error="fail" />
       <ItemDetail
-        v-if="selected"
+        v-else-if="selected"
         :api="api"
         :item="selected"
         @edit="editing = { item: selected, kind: selected.kind }"

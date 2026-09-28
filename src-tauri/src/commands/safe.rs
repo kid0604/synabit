@@ -625,6 +625,53 @@ pub async fn safe_export_plain(
     .await
 }
 
+// ─── this device ─────────────────────────────────────────
+
+/// The secrets this device's keychain holds beside the Safe — names only.
+/// Behind the open Safe, so that a glance at an unlocked machine does not
+/// list them.
+#[tauri::command]
+pub async fn safe_device_secrets(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+) -> AppResult<Vec<crate::safe::device::DeviceSecret>> {
+    gate(&webview)?;
+    with(&app, &vault_path, |_| Ok(()))?;
+    let handle = app.clone();
+    blocking(move || {
+        let secrets = SecretManager::load_secrets(Some(&handle));
+        let connectors = crate::syn::connector::config::load(&vault_path);
+        Ok(crate::safe::device::describe(&secrets, |id| {
+            connectors.servers.iter().find(|s| s.id == id).map(|s| s.name.clone())
+        }))
+    })
+    .await
+}
+
+/// Forget one of those secrets. Only a provider key or a connector's secret:
+/// the sync key, the PIN and Telegram have screens of their own that say
+/// what forgetting them does.
+#[tauri::command]
+pub async fn safe_forget_device_secret(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    slot: String,
+) -> AppResult<()> {
+    gate(&webview)?;
+    with(&app, &vault_path, |_| Ok(()))?;
+    let handle = app.clone();
+    blocking(move || {
+        let secrets = SecretManager::load_secrets(Some(&handle));
+        if !crate::safe::device::may_forget(&secrets, &slot) {
+            return Err(SafeError::NotFound);
+        }
+        SecretManager::set_syn_api_key(Some(&handle), &slot, "").map_err(SafeError::Keychain)
+    })
+    .await
+}
+
 // ─── tools ───────────────────────────────────────────────
 
 #[derive(Serialize)]

@@ -2857,6 +2857,22 @@
       "none_totp": "Mục này không có mã một lần.",
       "none_open": "Mục này không có website.",
       "no_safe": "Vault này chưa có Safe. Hãy tạo trong Synabit."
+    },
+    "device": {
+      "title": "Thiết bị này",
+      "body": "Các secret Synabit giữ trong keychain của máy này, bên ngoài Safe, vì chúng phải chạy được cả khi Safe khoá. Chỉ hiện tên.",
+      "kind": {
+        "sync_key": "Khoá sync",
+        "app_lock_pin": "PIN khoá app",
+        "provider": "Khoá nhà cung cấp AI",
+        "telegram": "Token bot Telegram",
+        "connector": "Secret của connector"
+      },
+      "forget": "Quên",
+      "elsewhere": "Quản lý trong Cài đặt",
+      "none": "Máy này không lưu gì.",
+      "forget_title": "Quên {name}?",
+      "forget_body": "Nó bị xoá khỏi keychain của máy này. Thứ đang dùng nó sẽ ngừng chạy ở đây cho tới khi bạn nhập lại."
     }
   }
 }
