@@ -131,7 +131,7 @@ fn write_index(syn_dir: &Path, index: &SynIndex) -> AppResult<()> {
 /// The id of the conversation this file holds, if it is a conversation file.
 ///
 /// `Syn/` holds more than conversations — `routines.json`, `proposals.json`,
-/// `mcp.json`, `calibration.json` and whatever comes next — and naming each
+/// `connectors.json`, `calibration.json` and whatever comes next — and naming each
 /// one to skip is a list that is always one file short. A conversation is
 /// named by the UUID `create_conversation` gave it, and nothing else is.
 fn conversation_id_of(path: &Path) -> Option<String> {
@@ -665,7 +665,7 @@ mod tests {
 
         let syn = dir.path().join("Syn");
         let lookalike = r#"{"id":"routines","title":"x","model":null,"messages":[],"created_at":"a","updated_at":"b","pinned":false}"#;
-        for name in ["routines.json", "proposals.json", "mcp.json", "calibration.json", "settings.json"] {
+        for name in ["routines.json", "proposals.json", "connectors.json", "calibration.json", "settings.json"] {
             std::fs::write(syn.join(name), lookalike).expect("written");
         }
         std::fs::write(syn.join("not-a-uuid.json"), lookalike).expect("written");

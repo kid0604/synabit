@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
-import { draftFrom, serverFrom, statusLine, type McpServerView } from '../mcp';
+import { draftFrom, serverFrom, statusLine, type ConnectorView } from '../connector';
 
 const t = (key: string, values?: Record<string, unknown>) => `${key}:${JSON.stringify(values ?? {})}`;
 
-const jira: McpServerView = {
+const jira: ConnectorView = {
   server: {
     id: 'srv-1',
     name: 'Jira',
@@ -20,7 +20,7 @@ const jira: McpServerView = {
   secrets_here: ['Authorization'],
 };
 
-describe('an MCP server, as the settings form edits it', () => {
+describe('a connector, as the settings form edits it', () => {
   it('shows which secrets this device holds, and never a value', () => {
     const draft = draftFrom(jira);
     expect(draft.secrets).toEqual([{ name: 'Authorization', value: '', stored: true }]);
@@ -62,9 +62,9 @@ describe('an MCP server, as the settings form edits it', () => {
       statusLine(t, { ...jira, status: null }),
       statusLine(t, { ...jira, server: { ...jira.server, enabled: false } }),
     ];
-    expect(lines[0].text).toBe('syn.mcp_status_connected:{"n":2}');
+    expect(lines[0].text).toBe('syn.connector_status_connected:{"n":2}');
     expect(lines[1].text).toContain('refused');
-    expect(lines[2].text).toBe('syn.mcp_status_desktop_only:{}');
+    expect(lines[2].text).toBe('syn.connector_status_desktop_only:{}');
     for (const { text } of lines) {
       const key = text.split(':')[0].replace('syn.', '');
       expect(en.syn, key).toHaveProperty(key);
@@ -72,13 +72,13 @@ describe('an MCP server, as the settings form edits it', () => {
     }
   });
 
-  it('has every MCP sentence in both languages', () => {
-    const enKeys = Object.keys(en.syn).filter(k => k.startsWith('mcp_'));
-    const viKeys = Object.keys(vi.syn).filter(k => k.startsWith('mcp_'));
+  it('has every connector sentence in both languages', () => {
+    const enKeys = Object.keys(en.syn).filter(k => k.startsWith('connector_'));
+    const viKeys = Object.keys(vi.syn).filter(k => k.startsWith('connector_'));
     expect(enKeys.length).toBeGreaterThan(20);
     expect(viKeys.sort()).toEqual(enKeys.sort());
-    expect(en.syn.mcp_honest).toBe(
-      'Tools from this server see what Syn sends them; results are treated as untrusted.',
+    expect(en.syn.connector_honest).toBe(
+      'Tools on this connector see what Syn sends them; results are treated as untrusted.',
     );
   });
 });

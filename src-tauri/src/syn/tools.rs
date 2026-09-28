@@ -939,7 +939,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: crate::syn::toolset::FIND_TOOL.to_string(),
-                description: "Load more tools. Groups: finance, feeds, files, boards, timeline, history (trash, versions), structure (rename or remove fields and kinds), past (your earlier runs), and mcp:<server> for connected servers. Pass a group or what you need; the tools arrive on your next step.".to_string(),
+                description: "Load more tools. Groups: finance, feeds, files, boards, timeline, history (trash, versions), structure (rename or remove fields and kinds), past (your earlier runs), and connector:<server> for connected servers. Pass a group or what you need; the tools arrive on your next step.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["need"],

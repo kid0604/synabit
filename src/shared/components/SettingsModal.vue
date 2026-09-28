@@ -12,7 +12,7 @@ const DeviceManager = defineAsyncComponent(() => import('./DeviceManager.vue'));
 const TimelineSettings = defineAsyncComponent(() => import('./TimelineSettings.vue'));
 
 const SyncMobileSettings = defineAsyncComponent(() => import('./SyncMobileSettings.vue'));
-// Syn's own settings — provider, model, memory, Telegram, MCP — as a tab here
+// Syn's own settings — provider, model, memory, Telegram, connectors — as a tab here
 // rather than a drawer inside Messages, so they are reachable from anywhere.
 // Loaded when the tab is opened.
 const SynSettings = defineAsyncComponent(() => import('../../mini-apps/messages/components/SynSettings.vue'));

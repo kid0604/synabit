@@ -1,4 +1,4 @@
-//! An MCP server on 127.0.0.1 that answers from a script, for tests.
+//! An connector on 127.0.0.1 that answers from a script, for tests.
 //!
 //! Speaks just enough Streamable HTTP to be told apart from a real one only by
 //! what it says: a session id on `initialize`, 202 for a notification, pages of

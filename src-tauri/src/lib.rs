@@ -942,12 +942,12 @@ pub fn run() {
             syn_commands::syn_save_settings,
             syn_commands::syn_set_api_key,
             syn_commands::syn_has_api_key,
-            // Syn's MCP servers (Phase F). See `syn::mcp`.
-            commands::mcp::syn_mcp_list,
-            commands::mcp::syn_mcp_reconnect,
-            commands::mcp::syn_mcp_save,
-            commands::mcp::syn_mcp_delete,
-            commands::mcp::syn_mcp_test,
+            // Syn's connectors (Phase F). See `syn::connector`.
+            commands::connector::syn_connector_list,
+            commands::connector::syn_connector_reconnect,
+            commands::connector::syn_connector_save,
+            commands::connector::syn_connector_delete,
+            commands::connector::syn_connector_test,
             commands::telegram::telegram_status,
             commands::telegram::telegram_set_token,
             commands::telegram::telegram_clear_token,

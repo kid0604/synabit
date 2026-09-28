@@ -6,7 +6,7 @@
 //! thousand tokens before the person had said a word — most of an 8,192-token
 //! local window, and a steady cost on a hosted one — and `PAYLOAD_BUDGET_CHARS`
 //! had been raised four times, each time by one more tool that looked free.
-//! Tools from MCP servers would add tens more. Past a point a model choosing
+//! Tools from connectors would add tens more. Past a point a model choosing
 //! among seventy also chooses worse.
 //!
 //! So a turn is sent the **core** — the tools most questions use — and the
@@ -54,8 +54,8 @@ pub enum Group {
     Structure,
     /// Syn's own past: earlier runs, and remembered things looked up by hand.
     Past,
-    /// One connected MCP server, by its slug.
-    Mcp(String),
+    /// One connected connector, by its slug.
+    Connector(String),
 }
 
 impl Group {
@@ -71,7 +71,7 @@ impl Group {
             Group::History => "history".into(),
             Group::Structure => "structure".into(),
             Group::Past => "past".into(),
-            Group::Mcp(server) => format!("mcp:{server}"),
+            Group::Connector(server) => format!("connector:{server}"),
         }
     }
 
@@ -86,7 +86,14 @@ impl Group {
             "history" => Group::History,
             "structure" => Group::Structure,
             "past" => Group::Past,
-            other => return other.strip_prefix("mcp:").map(|s| Group::Mcp(s.to_string())),
+            // `mcp:` is what these were called before connectors had their
+            // name, and runs from then keep it in `Run::tool_groups`.
+            other => {
+                return other
+                    .strip_prefix("connector:")
+                    .or_else(|| other.strip_prefix("mcp:"))
+                    .map(|s| Group::Connector(s.to_string()))
+            }
         })
     }
 
@@ -102,7 +109,7 @@ impl Group {
             Group::History => "the trash and earlier versions: restore what was removed or changed".into(),
             Group::Structure => "rename or remove a field or a kind across every note".into(),
             Group::Past => "your own earlier runs, and remembered things searched by hand".into(),
-            Group::Mcp(server) => format!("tools from the connected server `{server}`"),
+            Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
 }
@@ -111,8 +118,11 @@ impl Group {
 /// without deciding is sent every turn, which costs tokens and never breaks
 /// anything — the safe way to be wrong.
 pub fn group_of(tool: &str) -> Group {
-    if let Some(rest) = tool.strip_prefix("mcp__") {
-        return Group::Mcp(rest.split("__").next().unwrap_or_default().to_string());
+    if let Some(rest) = tool
+        .strip_prefix(crate::syn::connector::PREFIX)
+        .or_else(|| tool.strip_prefix(crate::syn::connector::provider::LEGACY_PREFIX))
+    {
+        return Group::Connector(rest.split("__").next().unwrap_or_default().to_string());
     }
     match tool {
         "get_finance_summary" | "search_finance" | "get_transactions" | "create_transaction"
@@ -172,7 +182,7 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "lần trước", "trước đây", "bạn đã nói", "hôm trước", "bạn nói", "earlier", "last time",
             "you said", "you told", "you answered", "nhớ lại",
         ],
-        Group::Core | Group::Mcp(_) => &[],
+        Group::Core | Group::Connector(_) => &[],
     }
 }
 
@@ -183,7 +193,7 @@ fn has_marks(text: &str) -> bool {
 
 /// The groups a question brings, read from its words.
 ///
-/// `servers` are the connected MCP servers' slugs and names: a question that
+/// `servers` are the connected connectors' slugs and names: a question that
 /// names one brings its tools.
 pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Group> {
     // Matched as typed when it was typed with marks; folded when it was not.
@@ -221,7 +231,7 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
     for (slug, name) in servers {
         let name = shape(name);
         if said(slug) || (!name.trim().is_empty() && asked.contains(name.trim())) {
-            groups.insert(Group::Mcp(slug.clone()));
+            groups.insert(Group::Connector(slug.clone()));
         }
     }
     groups
@@ -295,22 +305,25 @@ mod tests {
 
     #[test]
     fn a_question_naming_a_server_brings_its_tools() {
-        assert!(groups("các issue Jira của tôi tuần này").contains(&"mcp:jira".into()));
+        assert!(groups("các issue Jira của tôi tuần này").contains(&"connector:jira".into()));
     }
 
     #[test]
     fn a_tool_belongs_to_one_group_and_the_unlisted_are_core() {
         assert_eq!(group_of("get_transactions"), Group::Finance);
-        assert_eq!(group_of("mcp__jira__search"), Group::Mcp("jira".into()));
+        assert_eq!(group_of("connector__jira__search"), Group::Connector("jira".into()));
         assert_eq!(group_of("query_nodes"), Group::Core);
         assert_eq!(group_of("a_tool_added_tomorrow"), Group::Core);
     }
 
     #[test]
     fn find_tools_loads_by_name_or_by_what_it_is_for() {
-        let known = vec![Group::Finance, Group::Files, Group::Timeline, Group::Mcp("jira".into())];
+        let known = vec![Group::Finance, Group::Files, Group::Timeline, Group::Connector("jira".into())];
         assert_eq!(found("finance", &known), vec![Group::Finance]);
-        assert_eq!(found("mcp:jira", &known), vec![Group::Mcp("jira".into())]);
+        assert_eq!(found("connector:jira", &known), vec![Group::Connector("jira".into())]);
+        // A run from before connectors had their name kept its groups as `mcp:`.
+        assert_eq!(Group::from_name("mcp:jira"), Some(Group::Connector("jira".into())));
+        assert_eq!(group_of("mcp__jira__search"), Group::Connector("jira".into()));
         assert!(found("spreadsheets", &known).contains(&Group::Files));
         assert!(found("money", &known).contains(&Group::Finance));
         assert!(found("nothing like it", &known).is_empty());

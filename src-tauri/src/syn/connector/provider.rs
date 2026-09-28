@@ -1,8 +1,8 @@
-//! MCP servers' tools, as the registry offers them to a run.
+//! Connectors' tools, as the registry offers them to a run.
 //!
 //! # Names
 //!
-//! Every tool is offered as `mcp__<server slug>__<tool>`. The prefix is how the
+//! Every tool is offered as `connector__<server slug>__<tool>`. The prefix is how the
 //! rest of Syn recognises one without asking this module — the gate, the
 //! surface, the taint rule, the screen that labels a step — and the slug is
 //! how a person reading a transcript knows which server it was. A provider
@@ -29,7 +29,7 @@
 //! decides *whether* to ask, and it never decides what undoes a call: that is
 //! `registry::reversal_of`, derived from the capability, so a write is `Manual`
 //! whatever the server claims about itself. The review's rule, kept: *Reversal
-//! do app quyết định, không do MCP server khai.*
+//! do app quyết định, không do connector khai.*
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, RwLock};
@@ -42,8 +42,13 @@ use crate::models::syn::{FunctionDefinition, ToolDefinition};
 use crate::syn::consent::Capability;
 use crate::syn::registry::{RunContext, ToolOutcome, ToolProvider};
 
-/// What every MCP tool's name starts with.
-pub const PREFIX: &str = "mcp__";
+/// What every connector tool's name starts with.
+pub const PREFIX: &str = "connector__";
+
+/// What they started with before connectors had their name. Still recognised
+/// — by the gate, the surface and the audit — because runs from then are on
+/// disk and one may be carried on; never offered.
+pub const LEGACY_PREFIX: &str = "mcp__";
 
 /// The longest tool name every provider accepts.
 const MAX_NAME: usize = 64;
@@ -60,20 +65,23 @@ const MAX_DESCRIPTION: usize = 600;
 /// every turn for one tool.
 const MAX_SCHEMA_CHARS: usize = 8_000;
 
-pub fn is_mcp_tool(name: &str) -> bool {
-    name.starts_with(PREFIX)
+pub fn is_connector_tool(name: &str) -> bool {
+    name.starts_with(PREFIX) || name.starts_with(LEGACY_PREFIX)
 }
 
-/// `mcp__jira__search` → `jira`. The group the tool-groups work files these
-/// under is `mcp:<this>`.
+/// `connector__jira__search` → `jira`. The group the tool-groups work files these
+/// under is `connector:<this>`.
 pub fn server_slug_of(name: &str) -> Option<&str> {
-    name.strip_prefix(PREFIX)?.split_once("__").map(|(slug, _)| slug)
+    name.strip_prefix(PREFIX)
+        .or_else(|| name.strip_prefix(LEGACY_PREFIX))?
+        .split_once("__")
+        .map(|(slug, _)| slug)
 }
 
 /// One tool, as it is offered.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Offered {
-    /// The name the model calls: `mcp__<slug>__<tool>`.
+    /// The name the model calls: `connector__<slug>__<tool>`.
     pub name: String,
     pub server_id: String,
     pub server_name: String,
@@ -117,7 +125,7 @@ impl Offered {
         } else {
             ""
         };
-        format!("From the MCP server “{}”, which wrote this description: {said}{schema}", self.server_name)
+        format!("From the connector “{}”, which wrote this description: {said}{schema}", self.server_name)
     }
 
     fn definition(&self) -> ToolDefinition {
@@ -144,7 +152,7 @@ pub fn capability_for(tool: &Offered) -> Capability {
     }
 }
 
-/// `mcp__<slug>__<tool>`, made to fit and made unique.
+/// `connector__<slug>__<tool>`, made to fit and made unique.
 fn exposed_name(slug: &str, tool: &str, taken: &HashSet<String>) -> String {
     let clean: String = tool
         .chars()
@@ -297,12 +305,12 @@ fn capability_by_name(name: &str) -> Option<Capability> {
 //  THE PROVIDER
 // ═══════════════════════════════════════════════════════════════
 
-/// Every connected MCP server's tools.
-pub struct McpTools;
+/// Every connected connector's tools.
+pub struct ConnectorTools;
 
-impl<R: tauri::Runtime> ToolProvider<R> for McpTools {
+impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
     fn name(&self) -> &'static str {
-        "mcp"
+        "connector"
     }
 
     /// The tools of every connected server, for a run asked in the app.
@@ -332,18 +340,18 @@ impl<R: tauri::Runtime> ToolProvider<R> for McpTools {
     }
 
     fn capability(&self, tool: &str, _args: &Value) -> Option<Capability> {
-        if !is_mcp_tool(tool) {
+        if !is_connector_tool(tool) {
             return None;
         }
         capability_by_name(tool)
     }
 
     /// Not reached from a run: a call is a network request, which the engine
-    /// awaits itself (`gate::How::Mcp`). A caller that is not the engine — a
+    /// awaits itself (`gate::How::Connector`). A caller that is not the engine — a
     /// recipe's step, say — is told so rather than run.
     fn execute(&self, _ctx: &RunContext<R>, tool: &str, _args: &Value) -> AppResult<ToolOutcome> {
         Err(crate::error::AppError::General(format!(
-            "`{tool}` is a tool on an MCP server and can only be called by Syn in a conversation"
+            "`{tool}` is a tool on a connector and can only be called by Syn in a conversation"
         )))
     }
 }
@@ -351,8 +359,8 @@ impl<R: tauri::Runtime> ToolProvider<R> for McpTools {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::syn::mcp::client::RemoteTool;
-    use crate::syn::mcp::config::{Server, TransportConfig};
+    use crate::syn::connector::client::RemoteTool;
+    use crate::syn::connector::config::{Server, TransportConfig};
 
     fn server(name: &str) -> Server {
         Server {
@@ -412,7 +420,7 @@ mod tests {
         for o in [&first, &second, &dotted] {
             assert!(o.name.len() <= MAX_NAME, "{}", o.name);
             assert!(o.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'), "{}", o.name);
-            assert!(is_mcp_tool(&o.name));
+            assert!(is_connector_tool(&o.name));
             assert_eq!(server_slug_of(&o.name), Some("a_server_with_a_long"));
         }
         assert_ne!(first.name, second.name);
@@ -424,7 +432,7 @@ mod tests {
         let mut taken = HashSet::new();
         let o = Offered::from_remote(&server("Jira"), &remote("search", true), &mut taken);
         let d = o.definition();
-        assert!(d.function.description.starts_with("From the MCP server “Jira”"), "{}", d.function.description);
+        assert!(d.function.description.starts_with("From the connector “Jira”"), "{}", d.function.description);
         assert_eq!(d.function.parameters["type"], "object");
 
         let mut long = remote("search2", true);
@@ -480,5 +488,17 @@ mod tests {
         assert!(schema["properties"]["q"].get("examples").is_none());
         let deep = schema["properties"]["deep"]["properties"]["x"]["title"].as_str().expect("kept");
         assert!(deep.chars().count() <= MAX_PARAMETER_TEXT + 1);
+    }
+
+    /// Runs from before connectors had their name are on disk with `mcp__`
+    /// names, and are still recognised as connector tools — so the gate still
+    /// refuses them after a read, and a carried-on run is still fenced.
+    #[test]
+    fn a_tool_named_before_connectors_is_still_a_connector_tool() {
+        assert!(is_connector_tool("connector__jira__search"));
+        assert!(is_connector_tool("mcp__jira__search"));
+        assert_eq!(server_slug_of("mcp__jira__search"), Some("jira"));
+        assert_eq!(server_slug_of("connector__jira__search"), Some("jira"));
+        assert!(!is_connector_tool("query_nodes"));
     }
 }

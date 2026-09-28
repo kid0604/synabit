@@ -1,10 +1,10 @@
-//! MCP over Streamable HTTP: one POST per message, answered with JSON or with a
+//! A connector over Streamable HTTP: one POST per message, answered with JSON or with a
 //! stream of server-sent events.
 //!
 //! # Why the address is not put through Syn's public-only guard
 //!
 //! `browse` refuses loopback and private addresses, because a page could steer
-//! it at the router or at Ollama. An MCP server is the opposite case: very
+//! it at the router or at Ollama. An connector is the opposite case: very
 //! often it *is* on this machine — a local bridge to a notes app, a database,
 //! a company VPN — and the person typed its address into settings themselves.
 //! Nobody else chooses where these requests go.
@@ -21,7 +21,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use serde_json::Value;
 
-use super::client::{answer_to, McpError, SseParser};
+use super::client::{answer_to, ConnectorError, SseParser};
 
 /// The most an answer may be. A tool result the model will see at most a few
 /// thousand characters of does not need to be read past this.
@@ -46,18 +46,18 @@ pub struct Http {
 }
 
 impl Http {
-    pub fn new(url: &str, headers: Vec<(String, String)>) -> Result<Self, McpError> {
+    pub fn new(url: &str, headers: Vec<(String, String)>) -> Result<Self, ConnectorError> {
         let url = url::Url::parse(url.trim())
-            .map_err(|e| McpError::Unreachable(format!("the address is not a URL: {e}")))?;
+            .map_err(|e| ConnectorError::Unreachable(format!("the address is not a URL: {e}")))?;
         if !matches!(url.scheme(), "http" | "https") {
-            return Err(McpError::Unreachable("only http and https addresses are used".into()));
+            return Err(ConnectorError::Unreachable("only http and https addresses are used".into()));
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(10))
             .user_agent(concat!("Synabit/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| McpError::Unreachable(format!("could not set up the connection: {e}")))?;
+            .map_err(|e| ConnectorError::Unreachable(format!("could not set up the connection: {e}")))?;
         Ok(Self { client, url, headers, session: Mutex::new(None), version: Mutex::new(None) })
     }
 
@@ -86,7 +86,7 @@ impl Http {
         builder
     }
 
-    async fn post(&self, message: &Value) -> Result<reqwest::Response, McpError> {
+    async fn post(&self, message: &Value) -> Result<reqwest::Response, ConnectorError> {
         let had_session = self.session_id().is_some();
         let response = self
             .build(reqwest::Method::POST)
@@ -95,7 +95,7 @@ impl Http {
             .body(message.to_string())
             .send()
             .await
-            .map_err(|e| McpError::Unreachable(format!("could not reach the server: {}", without_url(&e))))?;
+            .map_err(|e| ConnectorError::Unreachable(format!("could not reach the server: {}", without_url(&e))))?;
 
         if let Some(session) = response.headers().get(SESSION_HEADER).and_then(|v| v.to_str().ok()) {
             if let Ok(mut s) = self.session.lock() {
@@ -105,7 +105,7 @@ impl Http {
 
         let status = response.status();
         if status.is_redirection() {
-            return Err(McpError::Unreachable(format!(
+            return Err(ConnectorError::Unreachable(format!(
                 "the server answered {status} and pointed elsewhere; only the address in settings is used"
             )));
         }
@@ -113,23 +113,23 @@ impl Http {
             if let Ok(mut s) = self.session.lock() {
                 *s = None;
             }
-            return Err(McpError::SessionGone);
+            return Err(ConnectorError::SessionGone);
         }
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(McpError::Unreachable(format!(
+            return Err(ConnectorError::Unreachable(format!(
                 "the server refused the request ({status}); check the header and its secret"
             )));
         }
         // The body is not read: it is the server's words, and this message goes
         // to the model and the settings screen as ours.
         if !status.is_success() {
-            return Err(McpError::Unreachable(format!("the server answered {status}")));
+            return Err(ConnectorError::Unreachable(format!("the server answered {status}")));
         }
         Ok(response)
     }
 
     /// Send a request and read until its answer arrives.
-    pub async fn exchange(&self, id: u64, message: &Value, within: Duration) -> Result<Value, McpError> {
+    pub async fn exchange(&self, id: u64, message: &Value, within: Duration) -> Result<Value, ConnectorError> {
         tokio::time::timeout(within, async {
             let response = self.post(message).await?;
             let streamed = response
@@ -142,22 +142,22 @@ impl Http {
             } else {
                 let body = crate::feed_engine::fetcher::read_capped(response, MAX_BYTES)
                     .await
-                    .map_err(McpError::Unreachable)?;
+                    .map_err(ConnectorError::Unreachable)?;
                 let message: Value = serde_json::from_slice(&body)
-                    .map_err(|_| McpError::Protocol("the answer was not JSON".into()))?;
+                    .map_err(|_| ConnectorError::Protocol("the answer was not JSON".into()))?;
                 answer_to(id, &message)
-                    .unwrap_or_else(|| Err(McpError::Protocol("the answer did not answer the request".into())))
+                    .unwrap_or_else(|| Err(ConnectorError::Protocol("the answer did not answer the request".into())))
             }
         })
         .await
-        .map_err(|_| McpError::Timeout)?
+        .map_err(|_| ConnectorError::Timeout)?
     }
 
     /// Send a notification. The server answers 202 with nothing to read.
-    pub async fn notify(&self, message: &Value) -> Result<(), McpError> {
+    pub async fn notify(&self, message: &Value) -> Result<(), ConnectorError> {
         tokio::time::timeout(super::client::CONNECT_TIMEOUT, self.post(message))
             .await
-            .map_err(|_| McpError::Timeout)?
+            .map_err(|_| ConnectorError::Timeout)?
             .map(|_| ())
     }
 
@@ -178,22 +178,22 @@ impl Http {
 ///
 /// Bytes are split into lines before they are decoded, so a character cut in
 /// two by a chunk boundary arrives whole.
-async fn read_events(response: reqwest::Response, id: u64) -> Result<Value, McpError> {
+async fn read_events(response: reqwest::Response, id: u64) -> Result<Value, ConnectorError> {
     let mut stream = response.bytes_stream();
     let mut parser = SseParser::default();
     let mut pending: Vec<u8> = Vec::new();
     let mut read = 0usize;
 
-    let consider = |event: String| -> Option<Result<Value, McpError>> {
+    let consider = |event: String| -> Option<Result<Value, ConnectorError>> {
         let message: Value = serde_json::from_str(&event).ok()?;
         answer_to(id, &message)
     };
 
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| McpError::Unreachable(format!("the stream broke: {}", without_url(&e))))?;
+        let chunk = chunk.map_err(|e| ConnectorError::Unreachable(format!("the stream broke: {}", without_url(&e))))?;
         read += chunk.len();
         if read > MAX_BYTES {
-            return Err(McpError::Protocol("the answer was larger than this app reads".into()));
+            return Err(ConnectorError::Protocol("the answer was larger than this app reads".into()));
         }
         pending.extend_from_slice(&chunk);
         if let Some(cut) = pending.iter().rposition(|b| *b == b'\n') {
@@ -209,7 +209,7 @@ async fn read_events(response: reqwest::Response, id: u64) -> Result<Value, McpE
     if let Some(answer) = parser.finish().and_then(consider) {
         return answer;
     }
-    Err(McpError::Protocol("the stream ended without an answer".into()))
+    Err(ConnectorError::Protocol("the stream ended without an answer".into()))
 }
 
 /// A reqwest error without the URL in it. The URL may carry a token in its
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn only_http_addresses_are_accepted() {
-        assert!(Http::new("https://mcp.example/mcp", vec![]).is_ok());
+        assert!(Http::new("https://connector.example/mcp", vec![]).is_ok());
         assert!(Http::new("http://127.0.0.1:8080/mcp", vec![]).is_ok());
         assert!(Http::new("file:///etc/passwd", vec![]).is_err());
         assert!(Http::new("not a url", vec![]).is_err());

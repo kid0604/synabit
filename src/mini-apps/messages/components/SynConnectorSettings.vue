@@ -3,22 +3,22 @@ import { onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Loader2, Plus, X } from 'lucide-vue-next';
 import { isMobileOS } from '../../../shared/platformScope';
-import { useSynMcp } from '../composables/useSynMcp';
-import { draftFrom, statusLine, type McpDraft, type McpServerView, type McpTested } from '../mcp';
+import { useSynConnectors } from '../composables/useSynConnectors';
+import { draftFrom, statusLine, type ConnectorDraft, type ConnectorView, type ConnectorTested } from '../connector';
 
 const props = defineProps<{ vaultPath: string }>();
 
 const { t } = useI18n();
-const { servers, busy, error, load, reconnect, save, remove, test } = useSynMcp(() => props.vaultPath);
+const { servers, busy, error, load, reconnect, save, remove, test } = useSynConnectors(() => props.vaultPath);
 
 /** The server being added or edited, or `null` when the form is closed. */
-const draft = ref<McpDraft | null>(null);
+const draft = ref<ConnectorDraft | null>(null);
 /** What Test found for the draft as it stands. Cleared when it changes. */
-const tested = ref<McpTested | null>(null);
+const tested = ref<ConnectorTested | null>(null);
 /** The server whose Remove was pressed once, waiting for the second press. */
 const removing = ref<string | null>(null);
 
-const open = (view?: McpServerView) => {
+const open = (view?: ConnectorView) => {
   draft.value = draftFrom(view);
   tested.value = null;
   removing.value = null;
@@ -42,13 +42,13 @@ const saveDraft = async () => {
 };
 
 /** Switching a server on or off is a save with nothing else changed. */
-const toggle = async (view: McpServerView) => {
+const toggle = async (view: ConnectorView) => {
   const flipped = draftFrom(view);
   flipped.enabled = !flipped.enabled;
   await save(flipped);
 };
 
-const confirmRemove = async (view: McpServerView) => {
+const confirmRemove = async (view: ConnectorView) => {
   if (removing.value !== view.server.id) {
     removing.value = view.server.id;
     return;
@@ -86,7 +86,7 @@ const subtleDanger =
 </script>
 
 <template>
-  <!-- MCP SERVERS
+  <!-- CONNECTORS
        Tools on other services. Its own section, like Telegram, and for the
        same reason: nothing here waits for the Save at the bottom. A server is
        saved, its secrets go to the keychain and it is connected the moment
@@ -101,10 +101,10 @@ const subtleDanger =
         :disabled="busy"
         @click="reconnect"
       >
-        {{ t('syn.mcp_reconnect') }}
+        {{ t('syn.connector_reconnect') }}
       </button>
     </div>
-    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3">{{ t('syn.mcp_intro') }}</p>
+    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed mb-3">{{ t('syn.connector_intro') }}</p>
 
     <ul v-if="servers.length" class="space-y-2 mb-3">
       <li
@@ -117,17 +117,17 @@ const subtleDanger =
             type="checkbox"
             :checked="view.server.enabled"
             :disabled="busy"
-            :aria-label="t('syn.mcp_enabled')"
+            :aria-label="t('syn.connector_enabled')"
             class="w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
             @change="toggle(view)"
           />
           <span class="text-sm font-medium text-text dark:text-text-dark truncate">{{ view.server.name }}</span>
           <span class="ml-auto flex items-center gap-1 shrink-0">
             <button type="button" :class="plainButton" :disabled="busy" @click="open(view)">
-              {{ t('syn.mcp_edit') }}
+              {{ t('syn.connector_edit') }}
             </button>
             <button type="button" :class="subtleDanger" :disabled="busy" @click="confirmRemove(view)">
-              {{ t('syn.mcp_remove') }}
+              {{ t('syn.connector_remove') }}
             </button>
           </span>
         </div>
@@ -136,66 +136,66 @@ const subtleDanger =
           <span class="text-xs text-gray-500 dark:text-gray-400 break-words min-w-0">{{ statusLine(t, view).text }}</span>
         </div>
         <p v-if="removing === view.server.id" class="text-xs text-red-600 dark:text-red-400">
-          {{ t('syn.mcp_remove_confirm', { name: view.server.name }) }}
+          {{ t('syn.connector_remove_confirm', { name: view.server.name }) }}
         </p>
       </li>
     </ul>
-    <p v-else-if="!draft" class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ t('syn.mcp_none') }}</p>
+    <p v-else-if="!draft" class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ t('syn.connector_none') }}</p>
 
     <button v-if="!draft" type="button" :class="[plainButton, 'flex items-center gap-1.5']" :disabled="busy" @click="open()">
       <Plus class="w-3.5 h-3.5" />
-      {{ t('syn.mcp_add') }}
+      {{ t('syn.connector_add') }}
     </button>
 
     <!-- The form. -->
     <div v-else class="p-3 rounded-xl border border-violet-200 dark:border-violet-500/30 space-y-3">
       <div>
-        <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.mcp_name') }}</label>
-        <input v-model="draft.name" type="text" spellcheck="false" :class="field" :placeholder="t('syn.mcp_name_placeholder')" />
+        <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_name') }}</label>
+        <input v-model="draft.name" type="text" spellcheck="false" :class="field" :placeholder="t('syn.connector_name_placeholder')" />
       </div>
 
       <div class="flex flex-col gap-1.5 text-sm text-text dark:text-text-dark">
         <label class="flex items-center gap-2 cursor-pointer">
           <input v-model="draft.kind" type="radio" value="http" class="accent-violet-500" />
-          {{ t('syn.mcp_kind_http') }}
+          {{ t('syn.connector_kind_http') }}
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input v-model="draft.kind" type="radio" value="stdio" class="accent-violet-500" />
-          {{ t('syn.mcp_kind_stdio') }}
+          {{ t('syn.connector_kind_stdio') }}
         </label>
       </div>
 
       <div v-if="draft.kind === 'http'">
-        <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.mcp_url') }}</label>
+        <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_url') }}</label>
         <input
           v-model="draft.url"
           type="url"
           spellcheck="false"
           autocomplete="off"
           :class="field"
-          placeholder="https://example.com/mcp"
+          placeholder="https://example.com/…"
         />
-        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.mcp_url_hint') }}</p>
+        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_url_hint') }}</p>
       </div>
 
       <template v-else>
         <!-- Said up front on a phone, as a fact about the platform rather
              than as a connection that failed. -->
-        <p v-if="isMobileOS" class="text-xs text-amber-600 dark:text-amber-400">{{ t('syn.mcp_stdio_desktop_only') }}</p>
+        <p v-if="isMobileOS" class="text-xs text-amber-600 dark:text-amber-400">{{ t('syn.connector_stdio_desktop_only') }}</p>
         <div>
-          <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.mcp_command') }}</label>
+          <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_command') }}</label>
           <input
             v-model="draft.command"
             type="text"
             spellcheck="false"
             autocomplete="off"
             :class="[field, 'font-mono']"
-            placeholder="/usr/local/bin/my-mcp-server"
+            placeholder="/usr/local/bin/my-connector"
           />
-          <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.mcp_command_hint') }}</p>
+          <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_command_hint') }}</p>
         </div>
         <div>
-          <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.mcp_args') }}</label>
+          <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_args') }}</label>
           <textarea v-model="draft.args" rows="3" spellcheck="false" :class="[field, 'font-mono resize-y']" />
         </div>
       </template>
@@ -203,7 +203,7 @@ const subtleDanger =
       <!-- Secrets: names are saved with the server, values go to the keychain. -->
       <div>
         <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">
-          {{ draft.kind === 'http' ? t('syn.mcp_secret_headers') : t('syn.mcp_secret_env') }}
+          {{ draft.kind === 'http' ? t('syn.connector_secret_headers') : t('syn.connector_secret_env') }}
         </label>
         <div v-for="(secret, i) in draft.secrets" :key="i" class="flex gap-2 mb-2">
           <input
@@ -213,7 +213,7 @@ const subtleDanger =
             autocomplete="off"
             :class="[field, 'w-2/5 font-mono']"
             :placeholder="draft.kind === 'http' ? 'Authorization' : 'API_TOKEN'"
-            :aria-label="t('syn.mcp_secret_name')"
+            :aria-label="t('syn.connector_secret_name')"
           />
           <input
             v-model="secret.value"
@@ -221,31 +221,31 @@ const subtleDanger =
             spellcheck="false"
             autocomplete="off"
             :class="[field, 'flex-1 min-w-0']"
-            :placeholder="secret.stored ? t('syn.mcp_secret_stored') : t('syn.mcp_secret_value')"
-            :aria-label="t('syn.mcp_secret_value')"
+            :placeholder="secret.stored ? t('syn.connector_secret_stored') : t('syn.connector_secret_value')"
+            :aria-label="t('syn.connector_secret_value')"
           />
-          <button type="button" class="p-1.5 text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="t('syn.mcp_remove')" @click="dropSecret(i)">
+          <button type="button" class="p-1.5 text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="t('syn.connector_remove')" @click="dropSecret(i)">
             <X class="w-4 h-4" />
           </button>
         </div>
         <button type="button" class="text-xs text-violet-600 dark:text-violet-400 hover:underline cursor-pointer" @click="addSecret">
-          + {{ t('syn.mcp_add_secret') }}
+          + {{ t('syn.connector_add_secret') }}
         </button>
-        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400">{{ t('syn.mcp_secret_hint') }}</p>
+        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400">{{ t('syn.connector_secret_hint') }}</p>
       </div>
 
       <!-- Said where the server is set up, once, as information: choosing a
            server is the choice. -->
-      <p class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.mcp_honest') }}</p>
+      <p class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.connector_honest') }}</p>
 
       <div v-if="tested" class="text-xs space-y-1">
-        <p v-if="tested.desktop_only" class="text-gray-500 dark:text-gray-400">{{ t('syn.mcp_status_desktop_only') }}</p>
+        <p v-if="tested.desktop_only" class="text-gray-500 dark:text-gray-400">{{ t('syn.connector_status_desktop_only') }}</p>
         <p v-else-if="!tested.ok" class="text-red-600 dark:text-red-400 break-words">
-          {{ t('syn.mcp_status_failed', { reason: tested.error ?? '' }) }}
+          {{ t('syn.connector_status_failed', { reason: tested.error ?? '' }) }}
         </p>
         <template v-else>
           <p class="text-green-700 dark:text-green-400">
-            {{ tested.tools.length ? t('syn.mcp_test_ok', { n: tested.tools.length }) : t('syn.mcp_test_none') }}
+            {{ tested.tools.length ? t('syn.connector_test_ok', { n: tested.tools.length }) : t('syn.connector_test_none') }}
           </p>
           <ul class="space-y-0.5 max-h-40 overflow-y-auto">
             <li v-for="tool in tested.tools" :key="tool.name" class="flex items-baseline gap-2 min-w-0">
@@ -256,7 +256,7 @@ const subtleDanger =
                   ? 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300'
                   : 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'"
               >
-                {{ tool.read_only ? t('syn.mcp_reads') : t('syn.mcp_sends') }}
+                {{ tool.read_only ? t('syn.connector_reads') : t('syn.connector_sends') }}
               </span>
             </li>
           </ul>
@@ -266,10 +266,10 @@ const subtleDanger =
       <div class="flex items-center gap-2">
         <button type="button" :class="primaryButton" :disabled="busy || !draft.name.trim()" @click="saveDraft">
           <Loader2 v-if="busy" class="w-3.5 h-3.5 animate-spin" />
-          {{ t('syn.mcp_save') }}
+          {{ t('syn.connector_save') }}
         </button>
-        <button type="button" :class="plainButton" :disabled="busy" @click="runTest">{{ t('syn.mcp_test') }}</button>
-        <button type="button" :class="[plainButton, 'ml-auto']" :disabled="busy" @click="close">{{ t('syn.mcp_cancel') }}</button>
+        <button type="button" :class="plainButton" :disabled="busy" @click="runTest">{{ t('syn.connector_test') }}</button>
+        <button type="button" :class="[plainButton, 'ml-auto']" :disabled="busy" @click="close">{{ t('syn.connector_cancel') }}</button>
       </div>
     </div>
 

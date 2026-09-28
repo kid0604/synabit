@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import tools from '../../../../src-tauri/src/syn/tools.rs?raw';
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
-import { LABELLED_TOOLS, mcpTool, shortCount, toolLabel } from '../toolLabel';
+import { LABELLED_TOOLS, connectorTool, shortCount, toolLabel } from '../toolLabel';
 
 /**
  * Every tool the model can call has words a person reads.
@@ -56,19 +56,20 @@ describe('what a tool is doing, in words', () => {
     expect(toolLabel(t, 'mcp_jira_search')).toBe('syn.doing_other:{"tool":"mcp_jira_search"}');
   });
 
-  it('says which server a tool on an MCP server is being used on', () => {
+  it('says which connector a tool is being used on', () => {
     const t = (key: string, values?: Record<string, unknown>) => `${key}:${JSON.stringify(values ?? {})}`;
-    expect(toolLabel(t, 'mcp__jira__search_issues')).toBe(
-      'syn.doing_mcp:{"server":"jira","tool":"search_issues"}',
+    expect(toolLabel(t, 'connector__jira__search_issues')).toBe(
+      'syn.doing_connector:{"server":"jira","tool":"search_issues"}',
     );
-    // The tool part may hold `__`; the server part never does.
-    expect(mcpTool('mcp__files__read__all')).toEqual({ server: 'files', tool: 'read__all' });
-    expect(mcpTool('mcp__jira__')).toBeNull();
-    expect(mcpTool('mcp____x')).toBeNull();
-    expect(en.syn).toHaveProperty('doing_mcp');
-    expect(vi.syn).toHaveProperty('doing_mcp');
-    expect(en.syn.doing_mcp).toContain('{server}');
-    expect(vi.syn.doing_mcp).toContain('{server}');
+    expect(connectorTool('connector__files__read__all')).toEqual({ server: 'files', tool: 'read__all' });
+    expect(connectorTool('connector__jira__')).toBeNull();
+    expect(connectorTool('connector____x')).toBeNull();
+    // Runs from before connectors had their name still read.
+    expect(connectorTool('mcp__jira__search_issues')).toEqual({ server: 'jira', tool: 'search_issues' });
+    expect(en.syn).toHaveProperty('doing_connector');
+    expect(vi.syn).toHaveProperty('doing_connector');
+    expect(en.syn.doing_connector).toContain('{server}');
+    expect(vi.syn.doing_connector).toContain('{server}');
   });
 
   it('keeps a count short enough for one line', () => {

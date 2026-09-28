@@ -20,23 +20,30 @@ export const LABELLED_TOOLS = [
 
 export function toolLabel(t: (key: string, values?: Record<string, unknown>) => string, tool: string): string {
   if ((LABELLED_TOOLS as readonly string[]).includes(tool)) return t(`syn.doing_${tool}`);
-  const onServer = mcpTool(tool);
-  if (onServer) return t('syn.doing_mcp', onServer);
+  const onConnector = connectorTool(tool);
+  if (onConnector) return t('syn.doing_connector', onConnector);
   return t('syn.doing_other', { tool });
 }
 
 /**
- * `mcp__jira__search_issues` → `{ server: 'jira', tool: 'search_issues' }`.
+ * `connector__jira__search_issues` → `{ server: 'jira', tool: 'search_issues' }`.
  *
- * A tool on an MCP server is named `mcp__<server>__<tool>` by `syn::mcp`, and
- * the server part never holds `__`, so the first one after the prefix is where
- * the tool begins. These come and go with the servers a person connects, so
- * they cannot be in the list above; saying which server is what a person
- * watching needs, because it is the part that has left the computer.
+ * A tool on a connector is named `connector__<connector>__<tool>` by
+ * `syn::connector`, and the connector part never holds `__`, so the first one
+ * after the prefix is where the tool begins. These come and go with the
+ * connectors a person adds, so they cannot be in the list above; saying which
+ * connector is what a person watching needs, because it is the part that has
+ * left the computer.
+ *
+ * `mcp__` is the prefix these had before connectors had their name, and it is
+ * still in the transcripts of runs from then.
  */
-export function mcpTool(name: string): { server: string; tool: string } | null {
-  if (!name.startsWith('mcp__')) return null;
-  const rest = name.slice('mcp__'.length);
+const PREFIXES = ['connector__', 'mcp__'];
+
+export function connectorTool(name: string): { server: string; tool: string } | null {
+  const prefix = PREFIXES.find(p => name.startsWith(p));
+  if (!prefix) return null;
+  const rest = name.slice(prefix.length);
   const cut = rest.indexOf('__');
   if (cut <= 0 || cut + 2 >= rest.length) return null;
   return { server: rest.slice(0, cut), tool: rest.slice(cut + 2) };

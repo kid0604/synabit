@@ -272,7 +272,7 @@ pub fn question(routine: &Routine, now: NaiveDateTime) -> String {
 // then browse to an address in its own words, which count as "the user named
 // this site". The file says what was written; whether *this* computer agreed
 // to run it is kept beside the other things only this computer agreed to, in
-// `.synabit/`, which does not sync. `mcp::config::trusted_here` is the same
+// `.synabit/`, which does not sync. `connector::config::trusted_here` is the same
 // arrangement for servers.
 //
 // What is agreed to is what the routine does: its question, its schedule, and

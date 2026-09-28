@@ -489,9 +489,9 @@ pub struct ToolCard {
 ///
 /// The shortcut holds for the vault's own tools, which are exactly that list.
 /// `the_catalogue_covers_what_a_chat_can_reach` is the guard for them. The one
-/// other provider, `syn::mcp::McpTools`, is left out on purpose: its tools are
+/// other provider, `syn::connector::ConnectorTools`, is left out on purpose: its tools are
 /// whatever the person's servers offer today, listed per server — read-only or
-/// not — in the MCP section of Syn's settings, where they are connected and
+/// not — in the connector section of Syn's settings, where they are connected and
 /// tested, and switched off by the same ledger this screen writes.
 pub fn catalogue(ledger: &crate::syn::consent::Ledger, now: &str) -> Vec<ToolCard> {
     let registry = Registry::<tauri::Wry>::for_chat();
@@ -548,11 +548,11 @@ impl<R: tauri::Runtime> Registry<R> {
         Self { providers: Vec::new() }
     }
 
-    /// The providers a chat gets: the vault's tools, then whatever MCP servers
-    /// the person has connected (`syn::mcp`), which offer nothing until one is.
+    /// The providers a chat gets: the vault's tools, then whatever connectors
+    /// the person has connected (`syn::connector`), which offer nothing until one is.
     pub fn for_chat() -> Self {
         Self {
-            providers: vec![Box::new(VaultTools), Box::new(crate::syn::mcp::McpTools)],
+            providers: vec![Box::new(VaultTools), Box::new(crate::syn::connector::ConnectorTools)],
         }
     }
 

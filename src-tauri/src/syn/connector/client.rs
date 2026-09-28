@@ -1,4 +1,4 @@
-//! Speaking MCP: JSON-RPC 2.0 messages, the handshake, and the three calls
+//! Speaking the Model Context Protocol: JSON-RPC 2.0 messages, the handshake, and the three calls
 //! Syn makes — `initialize`, `tools/list`, `tools/call`.
 //!
 //! # Why written here rather than taken from an SDK
@@ -63,7 +63,7 @@ pub const MAX_TOOLS: usize = 200;
 /// *wrote* is content from outside, as much as a result is; an error this code
 /// wrote — a timeout, a refused connection — carries nothing of theirs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum McpError {
+pub enum ConnectorError {
     /// Never reached the server, or the server's answer was not read. Our words.
     Unreachable(String),
     /// Nothing came back in time.
@@ -72,28 +72,28 @@ pub enum McpError {
     SessionGone,
     /// The server answered with a JSON-RPC error. `message` is **its** words.
     Rpc { code: i64, message: String },
-    /// The server answered with something that is not MCP. Our words.
+    /// The server answered with something that is not connector. Our words.
     Protocol(String),
     /// A stdio server on a platform that cannot start one.
     DesktopOnly,
 }
 
-impl McpError {
+impl ConnectorError {
     /// Whether anything in this error was written by the server.
     pub fn server_wrote_it(&self) -> bool {
-        matches!(self, McpError::Rpc { .. })
+        matches!(self, ConnectorError::Rpc { .. })
     }
 }
 
-impl std::fmt::Display for McpError {
+impl std::fmt::Display for ConnectorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            McpError::Unreachable(why) => write!(f, "{why}"),
-            McpError::Timeout => write!(f, "the server did not answer in time"),
-            McpError::SessionGone => write!(f, "the server ended the session"),
-            McpError::Rpc { code, message } => write!(f, "the server answered with an error ({code}): {message}"),
-            McpError::Protocol(why) => write!(f, "the server's answer was not MCP: {why}"),
-            McpError::DesktopOnly => write!(f, "this server runs a program, which needs the desktop app"),
+            ConnectorError::Unreachable(why) => write!(f, "{why}"),
+            ConnectorError::Timeout => write!(f, "the server did not answer in time"),
+            ConnectorError::SessionGone => write!(f, "the server ended the session"),
+            ConnectorError::Rpc { code, message } => write!(f, "the server answered with an error ({code}): {message}"),
+            ConnectorError::Protocol(why) => write!(f, "the server's answer was not connector: {why}"),
+            ConnectorError::DesktopOnly => write!(f, "this server runs a program, which needs the desktop app"),
         }
     }
 }
@@ -118,7 +118,7 @@ pub fn notification(method: &str) -> Value {
 /// a server's own notifications, or its requests to us — which are not the
 /// answer and are passed over. An id is matched as a number or as the same
 /// number written as a string, because servers have been seen doing both.
-pub fn answer_to(id: u64, message: &Value) -> Option<Result<Value, McpError>> {
+pub fn answer_to(id: u64, message: &Value) -> Option<Result<Value, ConnectorError>> {
     if let Some(batch) = message.as_array() {
         return batch.iter().find_map(|m| answer_to(id, m));
     }
@@ -134,7 +134,7 @@ pub fn answer_to(id: u64, message: &Value) -> Option<Result<Value, McpError>> {
         return None;
     }
     if let Some(error) = object.get("error") {
-        return Some(Err(McpError::Rpc {
+        return Some(Err(ConnectorError::Rpc {
             code: error.get("code").and_then(Value::as_i64).unwrap_or(0),
             message: error
                 .get("message")
@@ -167,7 +167,7 @@ pub fn reply_to_server(message: &Value) -> Option<Value> {
 
 /// Server-sent events, fed in as the bytes arrive.
 ///
-/// Only `data:` lines matter to MCP; an event is the `data:` lines between two
+/// Only `data:` lines matter to connector; an event is the `data:` lines between two
 /// blank lines, joined by newlines. `event:`, `id:` and `retry:` are read past,
 /// and a comment line (`:`) is a keep-alive.
 #[derive(Default)]
@@ -216,7 +216,7 @@ pub enum Transport {
 }
 
 impl Transport {
-    async fn exchange(&self, id: u64, message: &Value, within: Duration) -> Result<Value, McpError> {
+    async fn exchange(&self, id: u64, message: &Value, within: Duration) -> Result<Value, ConnectorError> {
         match self {
             Transport::Http(t) => t.exchange(id, message, within).await,
             #[cfg(desktop)]
@@ -224,7 +224,7 @@ impl Transport {
         }
     }
 
-    async fn notify(&self, message: &Value) -> Result<(), McpError> {
+    async fn notify(&self, message: &Value) -> Result<(), ConnectorError> {
         match self {
             Transport::Http(t) => t.notify(message).await,
             #[cfg(desktop)]
@@ -279,7 +279,7 @@ pub struct Session {
 
 impl Session {
     /// Say hello, agree a version, and tell the server we are ready.
-    pub async fn open(transport: Transport) -> Result<Self, McpError> {
+    pub async fn open(transport: Transport) -> Result<Self, ConnectorError> {
         let mut session = Session { transport, next_id: AtomicU64::new(1), protocol: String::new() };
         let result = session
             .call(
@@ -299,10 +299,10 @@ impl Session {
         let version = result
             .get("protocolVersion")
             .and_then(Value::as_str)
-            .ok_or_else(|| McpError::Protocol("no protocol version in the answer to initialize".into()))?;
+            .ok_or_else(|| ConnectorError::Protocol("no protocol version in the answer to initialize".into()))?;
         if !SUPPORTED_VERSIONS.contains(&version) {
             session.transport.close().await;
-            return Err(McpError::Protocol(format!("unsupported protocol version {version:?}")));
+            return Err(ConnectorError::Protocol(format!("unsupported protocol version {version:?}")));
         }
         session.protocol = version.to_string();
         session.transport.agreed(version);
@@ -310,13 +310,13 @@ impl Session {
         Ok(session)
     }
 
-    async fn call(&self, method: &str, params: Value, within: Duration) -> Result<Value, McpError> {
+    async fn call(&self, method: &str, params: Value, within: Duration) -> Result<Value, ConnectorError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         self.transport.exchange(id, &request(id, method, params), within).await
     }
 
     /// Every tool the server offers, reading every page.
-    pub async fn list_tools(&self) -> Result<Vec<RemoteTool>, McpError> {
+    pub async fn list_tools(&self) -> Result<Vec<RemoteTool>, ConnectorError> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_PAGES {
@@ -328,7 +328,7 @@ impl Session {
             let listed = page
                 .get("tools")
                 .and_then(Value::as_array)
-                .ok_or_else(|| McpError::Protocol("tools/list gave no list of tools".into()))?;
+                .ok_or_else(|| ConnectorError::Protocol("tools/list gave no list of tools".into()))?;
             tools.extend(listed.iter().filter_map(tool_from));
             if tools.len() >= MAX_TOOLS {
                 tools.truncate(MAX_TOOLS);
@@ -343,7 +343,7 @@ impl Session {
     }
 
     /// Call one tool.
-    pub async fn call_tool(&self, name: &str, arguments: &Value) -> Result<CallResult, McpError> {
+    pub async fn call_tool(&self, name: &str, arguments: &Value) -> Result<CallResult, ConnectorError> {
         let arguments = if arguments.is_object() { arguments.clone() } else { json!({}) };
         let result = self
             .call("tools/call", json!({ "name": name, "arguments": arguments }), CALL_TIMEOUT)
@@ -469,8 +469,8 @@ mod tests {
         let answer = answer_to(1, &json!({ "jsonrpc": "2.0", "id": 1, "error": { "code": -32602, "message": "bad" } }));
         let error = answer.expect("found").expect_err("an error");
         assert!(error.server_wrote_it());
-        assert!(!McpError::Timeout.server_wrote_it());
-        assert!(!McpError::Unreachable("x".into()).server_wrote_it());
+        assert!(!ConnectorError::Timeout.server_wrote_it());
+        assert!(!ConnectorError::Unreachable("x".into()).server_wrote_it());
     }
 
     #[test]

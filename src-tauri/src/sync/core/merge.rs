@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn other_files_and_unreadable_copies_are_left_to_last_writer_wins() {
-        assert!(merge("Syn/mcp.json", "{}", "{}").is_none());
+        assert!(merge("Syn/connectors.json", "{}", "{}").is_none());
         assert!(merge("Syn/routines.json", "{ not json", "{}").is_none());
         assert!(merge("Syn/proposals.json", "{}", "[]").is_none(), "wrong shape");
         assert!(is_merged("Syn/declined.json") && !is_merged("Notes/declined.json"));

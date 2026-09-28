@@ -8,7 +8,7 @@ import { RotateCcw, Save, Loader2 } from 'lucide-vue-next';
 import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
 import { useSynSettings } from '../composables/useSynSettings';
 import SynTelegramSettings from './SynTelegramSettings.vue';
-import SynMcpSettings from './SynMcpSettings.vue';
+import SynConnectorSettings from './SynConnectorSettings.vue';
 import SettingsSection from './SettingsSection.vue';
 import type { ModelInfo } from '../types';
 
@@ -522,8 +522,8 @@ watch(() => props.vaultPath, async () => {
         <SynTelegramSettings />
       </SettingsSection>
 
-      <SettingsSection id="mcp" :title="t('syn.mcp_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
-        <SynMcpSettings :vault-path="vaultPath" />
+      <SettingsSection id="connectors" :title="t('syn.connector_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
+        <SynConnectorSettings :vault-path="vaultPath" />
       </SettingsSection>
 
       <!-- HOW WE WORK TOGETHER

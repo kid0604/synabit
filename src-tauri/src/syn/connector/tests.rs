@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
-use super::client::{McpError, Session, Transport};
+use super::client::{ConnectorError, Session, Transport};
 use super::config::{self, Server, TransportConfig};
 use super::fake::{self, Script};
 use super::*;
@@ -17,7 +17,7 @@ fn jira_tools() -> Vec<serde_json::Value> {
     vec![fake::tool("search", true), fake::tool("create_issue", false), fake::tool("add_comment", false)]
 }
 
-async fn open_http(url: &str, headers: Vec<(String, String)>) -> Result<Session, McpError> {
+async fn open_http(url: &str, headers: Vec<(String, String)>) -> Result<Session, ConnectorError> {
     Session::open(Transport::Http(transport_http::Http::new(url, headers)?)).await
 }
 
@@ -76,7 +76,7 @@ async fn a_redirect_is_not_followed() {
         .await
         .err()
         .expect("refused");
-    assert!(matches!(&error, McpError::Unreachable(why) if why.contains("only the address in settings")), "{error:?}");
+    assert!(matches!(&error, ConnectorError::Unreachable(why) if why.contains("only the address in settings")), "{error:?}");
     assert_eq!(server.seen.lock().expect("lock").len(), 1, "one request, to the configured address only");
 }
 
@@ -134,7 +134,7 @@ fn a_command_is_run_directly_and_never_through_a_shell() {
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
     runtime.block_on(async {
         let missing = transport_stdio::Stdio::spawn("x", "definitely-not-a-program-7f3a", &["; echo hi".into()], &[]);
-        assert!(matches!(missing, Err(McpError::Unreachable(_))));
+        assert!(matches!(missing, Err(ConnectorError::Unreachable(_))));
     });
     let source = include_str!("transport_stdio.rs");
     let code = source.split("#[cfg(test)]").next().expect("the code");
@@ -157,7 +157,7 @@ async fn a_server_connects_with_its_secret_and_only_once_agreed_to_here() {
         transport: TransportConfig::Http { url: fake_server.url.clone(), secret_headers: vec!["Authorization".into()] },
         enabled: true,
     };
-    config::save(vault, &config::McpConfig { servers: vec![server.clone()] }).expect("saved");
+    config::save(vault, &config::ConnectorConfig { servers: vec![server.clone()] }).expect("saved");
     let mut secrets = HashMap::new();
     secrets.insert(config::slot("srv-1", "header", "Authorization"), "Bearer s3cret".to_string());
 
@@ -171,7 +171,7 @@ async fn a_server_connects_with_its_secret_and_only_once_agreed_to_here() {
     assert_eq!(states[0].status, Status::Connected);
     assert_eq!(states[0].tools.len(), 3);
     assert!(fake_server.seen.lock().expect("lock")[0].contains("Bearer s3cret"));
-    assert!(!std::fs::read_to_string(dir.path().join("Syn/mcp.json")).expect("file").contains("s3cret"));
+    assert!(!std::fs::read_to_string(dir.path().join("Syn/connectors.json")).expect("file").contains("s3cret"));
 
     let view = views(vault, &secrets);
     assert_eq!(view[0].secrets_here, vec!["Authorization".to_string()]);
@@ -192,7 +192,7 @@ async fn a_result_comes_back_inside_a_boundary_the_server_cannot_forge() {
     fake::install(vault, "Jira Fence", &fake_server.url).await;
 
     let read = Capability::NetRead { domain: "Jira Fence".into() };
-    let called = call(vault, "mcp__jira_fence__search", &json!({ "text": "x" }), Some(&read)).await;
+    let called = call(vault, "connector__jira_fence__search", &json!({ "text": "x" }), Some(&read)).await;
     assert!(called.server_answered && called.ok);
     let mark = called.content.lines().next().and_then(|l| l.rsplit('[').next()).map(|m| m.trim_end_matches(" ===").trim_end_matches(']'));
     let mark = mark.expect("a mark").to_string();
@@ -203,13 +203,13 @@ async fn a_result_comes_back_inside_a_boundary_the_server_cannot_forge() {
 
     // The server said the tool failed: an error, and still its words.
     let write = Capability::NetWrite { domain: "Jira Fence".into(), tool: "create_issue".into() };
-    let failed = call(vault, "mcp__jira_fence__create_issue", &json!({}), Some(&write)).await;
+    let failed = call(vault, "connector__jira_fence__create_issue", &json!({}), Some(&write)).await;
     assert!(failed.server_answered && !failed.ok);
     assert!(failed.content.starts_with("{\"error\""), "{}", failed.content);
     assert!(matches!(failed.reversal, Reversal::Manual { .. }), "the app says what undoes it");
 
     // A permission weighed for a read is not a permission for a write.
-    let refused = call(vault, "mcp__jira_fence__create_issue", &json!({}), Some(&read)).await;
+    let refused = call(vault, "connector__jira_fence__create_issue", &json!({}), Some(&read)).await;
     assert!(!refused.server_answered && !refused.ok);
     assert_eq!(fake_server.calls_to("create_issue"), 1, "the mismatched call was never sent");
     disconnect(vault, None).await;
@@ -228,13 +228,13 @@ fn only_the_app_is_offered_or_may_call_a_servers_tools() {
     let read = Capability::NetRead { domain: "Jira".into() };
     let write = Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() };
     for capability in [&read, &write] {
-        assert!(Surface::App.offers("mcp__jira__x", Some(capability)));
-        assert!(!Surface::Telegram.offers("mcp__jira__x", Some(capability)));
-        assert!(!Surface::Routine.offers("mcp__jira__x", Some(capability)));
+        assert!(Surface::App.offers("connector__jira__x", Some(capability)));
+        assert!(!Surface::Telegram.offers("connector__jira__x", Some(capability)));
+        assert!(!Surface::Routine.offers("connector__jira__x", Some(capability)));
     }
     // Even misclassified as reading the vault, the name alone keeps it in the app.
-    assert!(!Surface::Telegram.offers("mcp__jira__x", Some(&Capability::VaultRead)));
-    assert!(!Surface::Routine.offers("mcp__jira__x", Some(&Capability::VaultRead)));
+    assert!(!Surface::Telegram.offers("connector__jira__x", Some(&Capability::VaultRead)));
+    assert!(!Surface::Routine.offers("connector__jira__x", Some(&Capability::VaultRead)));
 }
 
 fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Capability) -> bool) -> gate::View<'a> {
@@ -261,7 +261,7 @@ fn reading_asks_about_the_server_and_sending_asks_about_the_tool() {
     let write = Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() };
 
     for capability in [&read, &write] {
-        let d = gate::decide("mcp__jira__x", &json!({}), Some(capability), &view(&empty, &no));
+        let d = gate::decide("connector__jira__x", &json!({}), Some(capability), &view(&empty, &no));
         match d.gate {
             Gate::Ask(ask) => assert_eq!(&ask.capability, capability),
             other => panic!("expected a question, got {other:?}"),
@@ -269,11 +269,11 @@ fn reading_asks_about_the_server_and_sending_asks_about_the_tool() {
     }
 
     let yes = |_: &Capability| true;
-    let d = gate::decide("mcp__jira__search", &json!({}), Some(&read), &view(&empty, &yes));
-    assert!(matches!(d.gate, Gate::Go(How::Mcp)), "{d:?}");
+    let d = gate::decide("connector__jira__search", &json!({}), Some(&read), &view(&empty, &yes));
+    assert!(matches!(d.gate, Gate::Go(How::Connector)), "{d:?}");
 
-    // A name nothing claims is not an MCP call; the registry says it is unknown.
-    let unknown = gate::decide("mcp__jira__nothing", &json!({}), None, &view(&empty, &no));
+    // A name nothing claims is not a connector call; the registry says it is unknown.
+    let unknown = gate::decide("connector__jira__nothing", &json!({}), None, &view(&empty, &no));
     assert!(matches!(unknown.gate, Gate::Go(How::Execute)), "{unknown:?}");
 }
 
@@ -294,12 +294,12 @@ fn a_run_that_has_read_something_calls_no_server_at_all() {
     let mut v = view(&ledger, &yes);
     v.tainted = true;
     for (tool, capability) in [
-        ("mcp__jira__search", Capability::NetRead { domain: "Jira".into() }),
-        ("mcp__jira__create_issue", Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() }),
+        ("connector__jira__search", Capability::NetRead { domain: "Jira".into() }),
+        ("connector__jira__create_issue", Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() }),
     ] {
         let d = gate::decide(tool, &json!({ "text": "the finance summary" }), Some(&capability), &v);
         match d.gate {
-            Gate::Refuse { said, .. } => assert!(said.contains("every MCP tool is refused"), "{said}"),
+            Gate::Refuse { said, .. } => assert!(said.contains("every connector tool is refused"), "{said}"),
             other => panic!("{tool}: expected a refusal, got {other:?}"),
         }
         assert_eq!(d.audit, Some(crate::syn::audit::Outcome::Refused), "{tool}: on the record");
@@ -309,7 +309,7 @@ fn a_run_that_has_read_something_calls_no_server_at_all() {
 /// A helper may not reach a server: it cannot ask, and it only reads the vault.
 #[test]
 fn a_helper_is_never_handed_a_servers_tool() {
-    assert!(!crate::syn::delegate::may_use("mcp__jira__search", Some(&Capability::NetRead { domain: "Jira".into() })));
+    assert!(!crate::syn::delegate::may_use("connector__jira__search", Some(&Capability::NetRead { domain: "Jira".into() })));
 }
 
 /// The audit line names the server, the tool, and what went out.
@@ -320,9 +320,9 @@ async fn the_audit_line_says_what_was_sent_and_to_whom() {
     let fake_server = fake::serve(Script { tools: jira_tools(), ..Default::default() }).await;
     fake::install(vault, "Jira Audit", &fake_server.url).await;
 
-    let said = audit_detail(Some(vault), "mcp__jira_audit__search", &json!({ "text": "my issues" }));
+    let said = audit_detail(Some(vault), "connector__jira_audit__search", &json!({ "text": "my issues" }));
     assert_eq!(said, r#"Jira Audit · search · {"text":"my issues"}"#);
-    let unknown = audit_detail(None, "mcp__other__thing", &json!({}));
+    let unknown = audit_detail(None, "connector__other__thing", &json!({}));
     assert_eq!(unknown, "other · thing · {}");
     disconnect(vault, None).await;
 }
@@ -345,7 +345,7 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
     let registry = Registry::for_chat();
     let offered = |surface, taint: &crate::syn::taint::Taint| -> Vec<String> {
         let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface, taint };
-        registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_mcp_tool(n)).collect()
+        registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect()
     };
     let clean = crate::syn::taint::Taint::new();
     assert_eq!(offered(Surface::App, &clean).len(), 3);
@@ -354,7 +354,7 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
     assert!(offered(Surface::App, &crate::syn::taint::Taint::already()).is_empty());
 
     assert_eq!(
-        registry.capability_of("mcp__jira_reg__create_issue", &json!({})),
+        registry.capability_of("connector__jira_reg__create_issue", &json!({})),
         Some(Capability::NetWrite { domain: "Jira Reg".into(), tool: "create_issue".into() })
     );
 
@@ -375,9 +375,9 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
 /// built-in tools never sees them.
 #[test]
 fn a_tool_says_which_server_it_is_on_and_is_not_charged_to_the_core_payload() {
-    assert_eq!(server_slug_of("mcp__jira__search_issues"), Some("jira"));
+    assert_eq!(server_slug_of("connector__jira__search_issues"), Some("jira"));
     assert_eq!(server_slug_of("query_nodes"), None);
-    assert!(crate::syn::tools::get_tool_definitions().iter().all(|d| !is_mcp_tool(&d.function.name)));
+    assert!(crate::syn::tools::get_tool_definitions().iter().all(|d| !is_connector_tool(&d.function.name)));
 }
 
 /// `test` is the settings screen's Test button: it lists and lets go.
@@ -396,7 +396,7 @@ async fn testing_a_server_lists_its_tools_and_keeps_nothing() {
     assert!(tested.ok, "{tested:?}");
     assert_eq!(tested.tools.len(), 3);
     assert!(provider::catalog_of(vault).is_empty(), "nothing kept");
-    assert!(!dir.path().join("Syn/mcp.json").exists(), "nothing saved");
+    assert!(!dir.path().join("Syn/connectors.json").exists(), "nothing saved");
 
     let nowhere = Server {
         transport: TransportConfig::Http { url: "http://127.0.0.1:9/mcp".into(), secret_headers: vec![] },

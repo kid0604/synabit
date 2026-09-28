@@ -678,7 +678,7 @@ pub struct Run {
     /// from it.
     ///
     /// A question is answered once. Pressed twice, or answered from two
-    /// devices, the call it was about to make ran twice — an MCP write sent
+    /// devices, the call it was about to make ran twice — a connector write sent
     /// twice. See `claim_resume`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub carried_on_at: Option<String>,

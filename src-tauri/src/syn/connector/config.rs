@@ -1,9 +1,9 @@
-//! Which MCP servers a vault uses, where their secrets are, and which of them
+//! Which connectors a vault uses, where their secrets are, and which of them
 //! this computer has agreed to start.
 //!
 //! # Three places, on purpose
 //!
-//! * **`{vault}/Syn/mcp.json`** — the servers: a name, an address or a
+//! * **`{vault}/Syn/connectors.json`** — the servers: a name, an address or a
 //!   command, and the *names* of the headers and environment variables that
 //!   carry secrets. It lives in the vault beside `settings.json` and syncs with
 //!   it, so a server set up on one computer is known on the other.
@@ -11,7 +11,7 @@
 //!   through `SecretManager`'s slot map like every API key. Never in the JSON:
 //!   that file syncs, opens in any editor, and on a vault kept in git gets
 //!   committed. See `slot`.
-//! * **`{vault}/.synabit/mcp-trusted.json`** — which servers *this computer*
+//! * **`{vault}/.synabit/connectors-trusted.json`** — which servers *this computer*
 //!   has agreed to connect to, as they were when it agreed. A dotfile, which
 //!   sync skips, for the reason `consent.json` is one.
 //!
@@ -19,7 +19,7 @@
 //!
 //! Because a stdio server is a program this computer will run. A config file
 //! that syncs is a file another device — or anything that can write into the
-//! vault folder — can change, and "start whatever command `mcp.json` names when
+//! vault folder — can change, and "start whatever command `connectors.json` names when
 //! the app opens" would make that file a way to run code here without anybody
 //! here choosing to. So a server is connected only while its transport is
 //! exactly what was saved *on this computer*: a server added elsewhere, or
@@ -54,7 +54,7 @@ pub enum TransportConfig {
     },
 }
 
-/// One server, as `mcp.json` holds it.
+/// One server, as `connectors.json` holds it.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Server {
     pub id: String,
@@ -71,7 +71,7 @@ fn yes() -> bool {
 }
 
 impl Server {
-    /// The part of the tool names that says which server: `mcp__<slug>__…`.
+    /// The part of the tool names that says which server: `connector__<slug>__…`.
     pub fn slug(&self) -> String {
         slug(&self.name)
     }
@@ -98,7 +98,7 @@ impl Server {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct McpConfig {
+pub struct ConnectorConfig {
     #[serde(default)]
     pub servers: Vec<Server>,
 }
@@ -109,7 +109,33 @@ pub struct McpConfig {
 /// not orphan its secret; and prefixed so nothing here can collide with a
 /// provider's key slot.
 pub fn slot(server_id: &str, kind: &str, key: &str) -> String {
-    format!("mcp:{server_id}:{kind}:{key}")
+    format!("{SLOT_PREFIX}{server_id}:{kind}:{key}")
+}
+
+/// What every connector's slot begins with.
+pub const SLOT_PREFIX: &str = "connector:";
+
+/// Where a secret was kept before connectors had their name. Read when the new
+/// slot is empty, and cleared whenever the secret is written or removed, so a
+/// device that stored one then keeps working and the old slot does not outlive
+/// it.
+pub const LEGACY_SLOT_PREFIX: &str = "mcp:";
+
+pub fn legacy_slot(server_id: &str, kind: &str, key: &str) -> String {
+    format!("{LEGACY_SLOT_PREFIX}{server_id}:{kind}:{key}")
+}
+
+/// `new`, having first moved `old` there if only `old` exists. For the files
+/// that were named after MCP before connectors had their name: a vault
+/// opened by this version carries on with what it had. Best effort — a move
+/// that fails leaves both where they were and reads nothing from the old one.
+fn moved_from(old: PathBuf, new: PathBuf) -> PathBuf {
+    if !new.exists() && old.exists() {
+        if let Err(e) = std::fs::rename(&old, &new) {
+            log::warn!("[Syn] Could not move {} to {}: {e}", old.display(), new.display());
+        }
+    }
+    new
 }
 
 /// `Jira Cloud` → `jira_cloud`, `Tệp của tôi` → `tep_cua_toi`.
@@ -117,7 +143,7 @@ pub fn slot(server_id: &str, kind: &str, key: &str) -> String {
 /// Folded first, so a Vietnamese name keeps its letters rather than becoming a
 /// row of underscores. Then letters and digits, lowercased; anything else
 /// becomes one underscore, and never two in a row, because `__` is what
-/// separates the server from the tool in `mcp__<slug>__<tool>`. Short, because
+/// separates the server from the tool in `connector__<slug>__<tool>`. Short, because
 /// a provider allows sixty-four characters for the whole name.
 pub fn slug(name: &str) -> String {
     let mut out = String::new();
@@ -138,22 +164,23 @@ pub fn slug(name: &str) -> String {
 }
 
 fn path(vault_path: &str) -> PathBuf {
-    std::path::Path::new(vault_path).join("Syn").join("mcp.json")
+    let syn = std::path::Path::new(vault_path).join("Syn");
+    moved_from(syn.join("mcp.json"), syn.join("connectors.json"))
 }
 
 /// The servers. An unreadable file is no servers, logged — and nothing is
 /// started from a file this code cannot read.
-pub fn load(vault_path: &str) -> McpConfig {
+pub fn load(vault_path: &str) -> ConnectorConfig {
     let Ok(content) = std::fs::read_to_string(path(vault_path)) else {
-        return McpConfig::default();
+        return ConnectorConfig::default();
     };
     serde_json::from_str(&content).unwrap_or_else(|e| {
-        log::warn!("[Syn] Syn/mcp.json is unreadable, using no MCP servers: {e}");
-        McpConfig::default()
+        log::warn!("[Syn] Syn/connectors.json is unreadable, using no connectors: {e}");
+        ConnectorConfig::default()
     })
 }
 
-pub fn save(vault_path: &str, config: &McpConfig) -> AppResult<()> {
+pub fn save(vault_path: &str, config: &ConnectorConfig) -> AppResult<()> {
     // Whole-file last writer wins across devices: the list is edited by hand,
     // rarely, on one screen at a time. `vault_json` stamps
     // `metadata.updated_at` so the newer edit is the one that survives.
@@ -232,7 +259,7 @@ pub fn problem(server: &Server, others: &[Server]) -> Option<String> {
 fn trust_path(vault_path: &str) -> AppResult<PathBuf> {
     let dir = std::path::Path::new(vault_path).join(".synabit");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("mcp-trusted.json"))
+    Ok(moved_from(dir.join("mcp-trusted.json"), dir.join("connectors-trusted.json")))
 }
 
 fn trust_map(vault_path: &str) -> HashMap<String, String> {
@@ -291,7 +318,7 @@ struct ReadOnlyPin {
 fn pin_path(vault_path: &str) -> AppResult<PathBuf> {
     let dir = std::path::Path::new(vault_path).join(".synabit");
     std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("mcp-read-only.json"))
+    Ok(moved_from(dir.join("mcp-read-only.json"), dir.join("connectors-read-only.json")))
 }
 
 fn pins(vault_path: &str) -> HashMap<String, ReadOnlyPin> {
@@ -327,7 +354,7 @@ pub fn believed_read_only(
             tools.sort();
             map.insert(server.id.clone(), ReadOnlyPin { fingerprint: server.fingerprint(), tools });
             if let Err(e) = save_pins(vault_path, &map) {
-                log::warn!("[Syn] Could not note which MCP tools only read: {e}");
+                log::warn!("[Syn] Could not note which connector tools only read: {e}");
             }
             claimed
         }
@@ -397,9 +424,9 @@ mod tests {
     fn the_config_round_trips_and_no_secret_is_in_it() {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8");
-        let config = McpConfig {
+        let config = ConnectorConfig {
             servers: vec![
-                http("Jira", "https://mcp.example/jira"),
+                http("Jira", "https://connector.example/jira"),
                 Server {
                     id: "id-files".into(),
                     name: "Files".into(),
@@ -416,7 +443,7 @@ mod tests {
         let back = load(vault);
         assert_eq!(back.servers, config.servers);
 
-        let raw = std::fs::read_to_string(dir.path().join("Syn/mcp.json")).expect("the file");
+        let raw = std::fs::read_to_string(dir.path().join("Syn/connectors.json")).expect("the file");
         assert!(raw.contains("\"Authorization\""), "the header's name is kept: {raw}");
         assert!(raw.contains("\"FILES_TOKEN\""), "and the variable's name");
         for field in ["value", "secret\":", "token\":", "password"] {
@@ -428,7 +455,7 @@ mod tests {
     fn an_unreadable_config_starts_nothing() {
         let dir = tempfile::tempdir().expect("temp");
         std::fs::create_dir_all(dir.path().join("Syn")).expect("dir");
-        std::fs::write(dir.path().join("Syn/mcp.json"), "{ not json").expect("written");
+        std::fs::write(dir.path().join("Syn/connectors.json"), "{ not json").expect("written");
         assert!(load(dir.path().to_str().expect("utf8")).servers.is_empty());
     }
 
@@ -438,7 +465,7 @@ mod tests {
     fn a_server_changed_elsewhere_is_not_trusted_here() {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8");
-        let mut server = http("Jira", "https://mcp.example/jira");
+        let mut server = http("Jira", "https://connector.example/jira");
 
         assert!(!trusted_here(vault, &server), "added elsewhere: not yet");
         trust_here(vault, &server).expect("trusted");
@@ -451,14 +478,14 @@ mod tests {
         assert!(!trusted_here(vault, &server), "turned into a program: asks again");
 
         assert!(
-            !dir.path().join("Syn/mcp-trusted.json").exists() && dir.path().join(".synabit/mcp-trusted.json").exists(),
+            !dir.path().join("Syn/connectors-trusted.json").exists() && dir.path().join(".synabit/connectors-trusted.json").exists(),
             "and the agreement is in the folder that does not sync"
         );
     }
 
     #[test]
     fn what_is_entered_is_checked_in_words() {
-        let jira = http("Jira", "https://mcp.example/jira");
+        let jira = http("Jira", "https://connector.example/jira");
         assert_eq!(problem(&jira, &[]), None);
 
         let mut twin = http("JIRA", "https://other.example/");
@@ -506,7 +533,7 @@ mod tests {
     fn a_tool_that_turns_read_only_later_is_not_believed() {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8");
-        let server = http("Jira", "https://mcp.example/jira");
+        let server = http("Jira", "https://connector.example/jira");
         trust_here(vault, &server).expect("trusted");
 
         let first = believed_read_only(vault, &server, ["search".to_string()]);
@@ -520,5 +547,40 @@ mod tests {
         trust_here(vault, &server).expect("trusted again");
         let agreed = believed_read_only(vault, &server, ["search".to_string(), "delete_issue".to_string()]);
         assert!(agreed.contains("delete_issue"));
+    }
+
+    /// A vault set up before connectors had their name carries on: the list,
+    /// this computer's agreement and the read-only pins move to their new
+    /// names the first time they are read.
+    #[test]
+    fn files_named_after_mcp_move_to_their_connector_names() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let server = http("Jira", "https://connector.example/jira");
+        std::fs::create_dir_all(dir.path().join("Syn")).expect("dir");
+        std::fs::create_dir_all(dir.path().join(".synabit")).expect("dir");
+        std::fs::write(
+            dir.path().join("Syn/mcp.json"),
+            serde_json::to_string(&ConnectorConfig { servers: vec![server.clone()] }).expect("json"),
+        )
+        .expect("written");
+        std::fs::write(
+            dir.path().join(".synabit/mcp-trusted.json"),
+            serde_json::to_string(&HashMap::from([(server.id.clone(), server.fingerprint())])).expect("json"),
+        )
+        .expect("written");
+
+        assert_eq!(load(vault).servers.len(), 1, "the list carried over");
+        assert!(trusted_here(vault, &server), "and this computer's agreement");
+        assert!(dir.path().join("Syn/connectors.json").exists() && !dir.path().join("Syn/mcp.json").exists());
+        assert!(dir.path().join(".synabit/connectors-trusted.json").exists());
+    }
+
+    #[test]
+    fn a_secret_kept_under_the_old_slot_is_still_found() {
+        let server = http("Jira", "https://connector.example/jira");
+        let secrets = HashMap::from([(legacy_slot(&server.id, "header", "Authorization"), "Bearer old".to_string())]);
+        let resolved = crate::syn::connector::resolve(&server, &secrets);
+        assert_eq!(resolved.header_names(), vec!["Authorization".to_string()]);
     }
 }
