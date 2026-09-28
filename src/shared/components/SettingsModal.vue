@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, CalendarClock } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, CalendarClock, Sparkles } from 'lucide-vue-next';
 import TrashPanel from './TrashPanel.vue';
 import { useSettings } from '../../composables/useSettings';
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
@@ -12,6 +12,10 @@ const DeviceManager = defineAsyncComponent(() => import('./DeviceManager.vue'));
 const TimelineSettings = defineAsyncComponent(() => import('./TimelineSettings.vue'));
 
 const SyncMobileSettings = defineAsyncComponent(() => import('./SyncMobileSettings.vue'));
+// Syn's own settings — provider, model, memory, Telegram, MCP — as a tab here
+// rather than a drawer inside Messages, so they are reachable from anywhere.
+// Loaded when the tab is opened.
+const SynSettings = defineAsyncComponent(() => import('../../mini-apps/messages/components/SynSettings.vue'));
 const ConfirmModal = defineAsyncComponent(() => import('./ConfirmModal.vue'));
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke } from '@tauri-apps/api/core';
@@ -469,6 +473,11 @@ const setupE2ee = () => {
                 <CalendarClock class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.timeline') }}</span>
               </button>
+              <button @click="settingsTab = 'syn'" data-tab-syn
+                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'syn' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
+                <Sparkles class="w-4 h-4 opacity-70 shrink-0" />
+                <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.syn') }}</span>
+              </button>
               <button @click="settingsTab = 'security'" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'security' ? 'bg-white dark:bg-[#2a2a2a] text-[#1c1c1e] dark:text-white shadow-sm' : 'text-[#52525b] dark:text-[#a1a1aa] hover:bg-white/60 dark:hover:bg-[#252525] hover:text-[#1c1c1e] dark:hover:text-white']">
                 <Lock class="w-4 h-4 opacity-70 shrink-0" />
@@ -497,8 +506,11 @@ const setupE2ee = () => {
               </button>
             </div>
             
+            <!-- Syn: its own scroll and its own Save bar, pinned at the bottom. -->
+            <SynSettings v-if="settingsTab === 'syn'" :vault-path="vaultPath" class="flex-1" />
+
             <!-- Scrollable Content -->
-            <div class="flex-1 overflow-y-auto p-6">
+            <div v-else class="flex-1 overflow-y-auto p-6">
               
               <!-- === GENERAL TAB === -->
               <div v-if="settingsTab === 'general'" class="space-y-6">

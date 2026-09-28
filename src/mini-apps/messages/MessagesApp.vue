@@ -14,7 +14,6 @@ import ChatSidebar, { type Selection } from './components/ChatSidebar.vue';
 import ChatPanel from './components/ChatPanel.vue';
 import NotificationCard from './components/NotificationCard.vue';
 import ModelSelector from './components/ModelSelector.vue';
-import SynSettings from './components/SynSettings.vue';
 import RunInspector from './components/RunInspector.vue';
 import BoardPane from './components/BoardPane.vue';
 import { keepAsBoard, type KeptBoard } from './keepAsBoard';
@@ -31,7 +30,8 @@ import { useSynConsent } from './composables/useSynConsent';
 import { useSynChoice } from './composables/useSynChoice';
 import { useSynModels } from './composables/useSynModels';
 import { useThreads, type ThreadState } from '../../shared/syn/useThreads';
-import { useSynEnabled } from '../../shared/syn/useSynEnabled';
+import { useSynEnabled, SETTINGS_SAVED } from '../../shared/syn/useSynEnabled';
+import { useSettings } from '../../composables/useSettings';
 import { tidyComposerText } from '../../shared/syn/composerText';
 import { useNodeService } from '../../composables/useNodeService';
 import type { ConsentAnswer, SynConversation, SynConversationFull, SynMessage } from './types';
@@ -308,7 +308,12 @@ const {
 const selection = ref<Selection>(null);
 const activeMessages = ref<SynMessage[]>([]);
 const notifications = ref<any[]>([]);
-const showSettings = ref(false);
+/**
+ * Syn's settings are a tab of the app's Settings. Every button here that used
+ * to open a drawer of its own opens that tab.
+ */
+const { openSettings } = useSettings();
+const openSynSettings = () => openSettings('syn');
 /**
  * The panel that shows what Syn actually did, and what it was actually told.
  *
@@ -669,7 +674,6 @@ const handleExportConversation = async () => {
 const { enabled: synEnabled, refresh: refreshEnabled } = useSynEnabled(() => props.vaultPath);
 
 const handleSettingsSaved = async () => {
-  showSettings.value = false;
   await refreshEnabled();
   await checkStatus(props.vaultPath);
   if (status.value.connected) {
@@ -920,8 +924,8 @@ const handleKeydown = (e: KeyboardEvent) => {
     pendingDelete.value = null;
     return;
   }
-  // The settings and the inspector close on Escape themselves.
-  if (showSettings.value || showInspector.value) return;
+  // The inspector closes on Escape itself.
+  if (showInspector.value) return;
   if (isStreaming.value) {
     e.preventDefault();
     void stopGeneration();
@@ -929,12 +933,17 @@ const handleKeydown = (e: KeyboardEvent) => {
 };
 
 let unmounted = false;
+// Saved in the app's Settings, which is not in this component's tree: the
+// provider, the model list and whether Syn is on may all have changed.
+const onSynSettingsSaved = () => { void handleSettingsSaved(); };
 onMounted(() => {
   window.addEventListener('resize', handleResize);
+  window.addEventListener(SETTINGS_SAVED, onSynSettingsSaved);
 });
 onUnmounted(() => {
   unmounted = true;
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener(SETTINGS_SAVED, onSynSettingsSaved);
   cleanupModels();
 });
 
@@ -1208,7 +1217,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 </button>
 
                 <button
-                  @click="showSettings = !showSettings"
+                  @click="openSynSettings"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
                   :title="t('syn.settings')"
                   :aria-label="t('syn.settings')"
@@ -1243,7 +1252,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     {{ t('syn.syn_off_body') }}
                 </p>
                 <button
-                  @click="showSettings = true"
+                  @click="openSynSettings"
                   class="mt-4 px-3 py-1.5 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer"
                 >
                     {{ t('syn.syn_off_turn_on') }}
@@ -1369,13 +1378,5 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
       @cancel="pendingDelete = null"
     />
 
-    <!-- Settings Panel -->
-    <SynSettings
-      v-if="showSettings"
-      :vault-path="props.vaultPath"
-      :models="models"
-      @close="showSettings = false"
-      @saved="handleSettingsSaved"
-    />
   </div>
 </template>

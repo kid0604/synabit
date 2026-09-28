@@ -33,7 +33,7 @@ async function translateTrayMenu() {
 
 // UI State (singleton)
 const showSettingsModal = ref(false);
-const settingsTab = ref<'general' | 'notes' | 'tasks' | 'timeline' | 'about' | 'security' | 'devices'>('general');
+const settingsTab = ref<'general' | 'notes' | 'tasks' | 'timeline' | 'syn' | 'about' | 'security' | 'devices'>('general');
 const showE2eeOnboarding = ref(false);
 const showRecoveryModal = ref(false);
 

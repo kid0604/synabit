@@ -68,6 +68,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('../../../utils/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
+// Syn's settings are a tab of the app's Settings; opening it is the store's job.
+vi.mock('../../../composables/useSettings', () => ({ useSettings: () => ({ openSettings: vi.fn() }) }));
 vi.mock('../../../composables/useNodeService', () => ({
   useNodeService: () => ({ writeNode: vi.fn(), trashNode: vi.fn() }),
 }));
