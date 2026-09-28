@@ -21,7 +21,7 @@
  */
 
 import type { Component } from 'vue';
-import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Zap } from 'lucide-vue-next';
+import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, KeyRound, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Zap } from 'lucide-vue-next';
 
 export interface AppEntry {
   /**
@@ -70,7 +70,17 @@ export const BUILT_IN_APPS: readonly AppEntry[] = [
   { id: 'finance',    name: 'Finance',    icon: Wallet,        view: () => import('../mini-apps/finance/FinanceApp.vue') },
   { id: 'feeds',      name: 'Feeds',      icon: Rss,           view: () => import('../mini-apps/feeds/FeedsApp.vue') },
   { id: 'things',     name: 'Things',     icon: Boxes,         view: () => import('../mini-apps/things/ThingsApp.vue') },
+  { id: 'safe',       name: 'Safe',       icon: KeyRound,      view: () => import('../mini-apps/safe/SafeApp.vue') },
 ];
+
+/**
+ * Apps with a lock of their own, which App Lock's PIN does not guard.
+ *
+ * Safe opens with a master password and a Secret Key. Offering it in App
+ * Lock's list would let somebody believe a four-digit PIN was what protected
+ * it — see section 9.1 of `docs/safe-2026-09-28.md`.
+ */
+export const SELF_LOCKING_APPS: readonly string[] = ['safe'];
 
 /** The entry for an app id, or `undefined` for a name nothing ships. */
 export function appById(appId: string): AppEntry | undefined {

@@ -26,7 +26,7 @@ import { logger } from '../../utils/logger';
 import { useAppLockStore } from '../../stores/useAppLockStore';
 import { useAppUpdate } from '../../composables/useAppUpdate';
 import { appInPlatformScope } from '../platformScope';
-import { BUILT_IN_APPS } from '../appRegistry';
+import { BUILT_IN_APPS, SELF_LOCKING_APPS } from '../appRegistry';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
 import { useVaultArchive, formatBytes } from '../../composables/useVaultArchive';
 
@@ -63,6 +63,7 @@ const {
  * does not ship is a setting with nothing behind it.
  */
 const availableApps = computed(() => BUILT_IN_APPS.filter(a => appInPlatformScope(a.id)));
+const lockableApps = computed(() => availableApps.value.filter(a => !SELF_LOCKING_APPS.includes(a.id)));
 
 /**
  * How many ways of looking at the vault this person has kept.
@@ -1054,7 +1055,7 @@ const setupE2ee = () => {
                       <p class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-2">{{ $t('settings.security.protected_mini_apps') }}</p>
                       <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">{{ $t('settings.security.protected_mini_apps_desc') }}</p>
                       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label v-for="app in availableApps" :key="app.id"
+                        <label v-for="app in lockableApps" :key="app.id"
                           class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
                           :class="appLockStore.isAppProtected(app.id) ? 'bg-purple-50 dark:bg-purple-900/20 border-purple-200 dark:border-purple-800' : 'bg-white dark:bg-[#2a2a2a] border-[#e6e6e6] dark:border-[#3a3a3a] hover:border-gray-300 dark:hover:border-gray-500'"
                         >

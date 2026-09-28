@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { BUILT_IN_APPS, appById, appName } from '../appRegistry';
+import { BUILT_IN_APPS, appById, appName, SELF_LOCKING_APPS } from '../appRegistry';
 import { Waypoints } from 'lucide-vue-next';
 import router from '../../router';
 // The sidebar's markup as text. `?raw` rather than `node:fs` because this
@@ -63,8 +63,14 @@ describe('the app registry', () => {
   it('keeps the ids that settings on disk refer to', () => {
     expect(BUILT_IN_APPS.map((a) => a.id)).toEqual([
       'nexus', 'messages', 'quickcap', 'note', 'task',
-      'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds', 'things',
+      'calendar', 'file', 'whiteboard', 'people', 'finance', 'feeds', 'things', 'safe',
     ]);
+  });
+
+  /** A self-locking app is a real app, or the exclusion guards nothing. */
+  it('names only real apps as locking themselves', () => {
+    const ids = BUILT_IN_APPS.map((a) => a.id);
+    for (const id of SELF_LOCKING_APPS) expect(ids).toContain(id);
   });
 
   /**
