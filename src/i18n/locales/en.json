@@ -2848,6 +2848,15 @@
       "plain_type": "Type {phrase} to confirm",
       "plain_go": "Export plain CSV…",
       "exported_plain": "{n} item(s) written as plain text. Delete the file once you have imported it."
+    },
+    "quick": {
+      "hint": "Enter: password · Shift+Enter: username · Alt+Enter: one-time code · Cmd/Ctrl+Enter: open website · Esc: close",
+      "open_app_for_key": "This device needs the Secret Key — unlock once from the Synabit window.",
+      "none_password": "This item has no password.",
+      "none_username": "This item has no username.",
+      "none_totp": "This item has no one-time code.",
+      "none_open": "This item has no website.",
+      "no_safe": "There is no Safe in this vault yet. Create one in Synabit."
     }
   }
 }

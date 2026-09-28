@@ -52,15 +52,23 @@ fn register_capture_hotkey(app: &tauri::AppHandle) {
     // Cmd/Ctrl+Shift+Space. Chosen to sit clear of the obvious neighbours —
     // Spotlight owns Cmd+Space, and input-source switching owns Ctrl+Space.
     let shortcut = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::Space);
+    // Cmd/Ctrl+Alt+Backslash: Safe's Quick Access. One plugin holds both, so
+    // the handler tells them apart by id.
+    let safe_shortcut = Shortcut::new(Some(Modifiers::ALT | Modifiers::SUPER), Code::Backslash);
+    let safe_id = safe_shortcut.id();
 
     let handler_app = app.clone();
     let plugin = tauri_plugin_global_shortcut::Builder::new()
-        .with_handler(move |_app, _shortcut, event| {
+        .with_handler(move |_app, pressed, event| {
             // Key-down only. Without this the window is raised twice per press.
             if event.state() != ShortcutState::Pressed {
                 return;
             }
-            surface_quick_entry(&handler_app);
+            if pressed.id() == safe_id {
+                surface_safe_quick(&handler_app);
+            } else {
+                surface_quick_entry(&handler_app);
+            }
         })
         .build();
 
@@ -77,6 +85,52 @@ fn register_capture_hotkey(app: &tauri::AppHandle) {
         Ok(()) => log::info!("capture hotkey registered: Cmd/Ctrl+Shift+Space"),
         Err(e) => log::warn!("capture hotkey unavailable, most likely taken by another app: {e}"),
     }
+    match app.global_shortcut().register(safe_shortcut) {
+        Ok(()) => log::info!("Safe Quick Access hotkey registered: Cmd/Ctrl+Alt+\\"),
+        Err(e) => log::warn!("Safe Quick Access hotkey unavailable, most likely taken by another app: {e}"),
+    }
+}
+
+/// Safe's Quick Access: find an item and copy from it without opening the
+/// app — the desktop's stand-in for a browser extension.
+///
+/// A window of its own rather than a mode of the capture box: this one may
+/// use Safe's commands and that one has no business to. Built hidden, like the
+/// capture box, so the hotkey shows it at once.
+#[cfg(desktop)]
+fn build_safe_quick_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::{WebviewUrl, WebviewWindowBuilder};
+
+    WebviewWindowBuilder::new(app, "safe-quick", WebviewUrl::App("index.html#/safe-quick".into()))
+        .title("Synabit — Safe")
+        .inner_size(560.0, 420.0)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .visible(false)
+        .center()
+        .build()?;
+    Ok(())
+}
+
+#[cfg(desktop)]
+fn surface_safe_quick(app: &tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.show();
+    }
+    let Some(window) = app.get_webview_window("safe-quick") else {
+        surface_main_window(app);
+        return;
+    };
+    let _ = window.center();
+    let _ = window.show();
+    let _ = window.set_focus();
+    // The window was built once and hidden since; tell it to look again —
+    // the Safe may have locked, or the vault changed, while it was away.
+    let _ = window.emit("safe-quick://shown", ());
 }
 
 /// The window the hotkey opens: a box over the user's work, not the app.
@@ -587,6 +641,9 @@ pub fn run() {
                 if let Err(e) = build_quick_entry_window(app.handle()) {
                     log::error!("quick capture window unavailable: {e}");
                 }
+                if let Err(e) = build_safe_quick_window(app.handle()) {
+                    log::error!("Safe Quick Access window unavailable: {e}");
+                }
                 if let Err(e) = setup_tray(app.handle()) {
                     log::error!("tray icon unavailable: {e}");
                 }
@@ -909,6 +966,7 @@ pub fn run() {
             commands::safe::safe_copy,
             commands::safe::safe_totp,
             commands::safe::safe_copy_totp,
+            commands::safe::safe_copy_primary,
             commands::safe::safe_create_item,
             commands::safe::safe_update_item,
             commands::safe::safe_set_favorite,

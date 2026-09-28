@@ -2848,6 +2848,15 @@
       "plain_type": "Gõ {phrase} để xác nhận",
       "plain_go": "Xuất CSV không mã hoá…",
       "exported_plain": "Đã ghi {n} mục dạng văn bản thường. Hãy xoá file sau khi nhập xong."
+    },
+    "quick": {
+      "hint": "Enter: mật khẩu · Shift+Enter: tên đăng nhập · Alt+Enter: mã một lần · Cmd/Ctrl+Enter: mở website · Esc: đóng",
+      "open_app_for_key": "Máy này cần Secret Key — hãy mở khoá một lần trong cửa sổ Synabit.",
+      "none_password": "Mục này không có mật khẩu.",
+      "none_username": "Mục này không có tên đăng nhập.",
+      "none_totp": "Mục này không có mã một lần.",
+      "none_open": "Mục này không có website.",
+      "no_safe": "Vault này chưa có Safe. Hãy tạo trong Synabit."
     }
   }
 }

@@ -8,6 +8,7 @@ import "./style.css";
 logger.info("main.ts imports done");
 import App from "./App.vue";
 import QuickEntry from "./QuickEntry.vue";
+import SafeQuick from "./SafeQuick.vue";
 
 /**
  * The quick-entry window mounts a different root.
@@ -19,10 +20,12 @@ import QuickEntry from "./QuickEntry.vue";
  * which is the thing it exists to avoid.
  */
 const isQuickEntry = window.location.hash.startsWith("#/quick-entry");
+/** Safe's Quick Access window, for the same reason. */
+const isSafeQuick = window.location.hash.startsWith("#/safe-quick");
 
-const app = createApp(isQuickEntry ? QuickEntry : App);
+const app = createApp(isQuickEntry ? QuickEntry : isSafeQuick ? SafeQuick : App);
 app.use(createPinia());
-if (!isQuickEntry) app.use(router);
+if (!isQuickEntry && !isSafeQuick) app.use(router);
 app.use(i18n);
 logger.info("main.ts app created, mounting...");
 app.mount("#app");

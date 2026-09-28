@@ -28,10 +28,11 @@ use crate::secrets::SecretManager;
 /// Emitted when the Safe locks by itself, so an open screen can follow.
 pub const LOCKED_EVENT: &str = "safe://locked";
 
-/// Which webviews may use Safe: the main window, the Quick Entry window, and a
-/// note opened in a window of its own.
+/// Which webviews may use Safe: the main window, Safe's own Quick Access
+/// window, and a note opened in a window of its own. Not the capture box —
+/// it has no reason to.
 fn may_use_safe(label: &str) -> bool {
-    label == "main" || label == "quick-entry" || label.starts_with("node_")
+    label == "main" || label == "safe-quick" || label.starts_with("node_")
 }
 
 fn gate(webview: &tauri::Webview) -> AppResult<()> {
@@ -407,6 +408,32 @@ pub fn safe_copy(
     Ok(Copied { clear_after_secs: clear_after })
 }
 
+/// Copy what Quick Access copies: an item's password, its username, or its
+/// current one-time code — without the screen knowing which field that is.
+#[tauri::command]
+pub async fn safe_copy_primary(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    id: String,
+    what: String,
+) -> AppResult<Copied> {
+    use crate::safe::item::FieldKind;
+    if what == "totp" {
+        return safe_copy_totp(app, webview, vault_path, id);
+    }
+    gate(&webview)?;
+    let kinds: &[FieldKind] = match what.as_str() {
+        "username" => &[FieldKind::Username, FieldKind::Email],
+        _ => &[FieldKind::Password, FieldKind::Concealed, FieldKind::Pin],
+    };
+    let field = with(&app, &vault_path, |s| {
+        let view = s.view(&id)?;
+        view.fields.iter().find(|f| kinds.contains(&f.kind) && !f.empty).map(|f| f.id.clone()).ok_or(SafeError::NotFound)
+    })?;
+    safe_copy(app, webview, vault_path, id, field)
+}
+
 /// The current one-time code of an item. The secret stays here; a code is
 /// worth thirty seconds.
 #[tauri::command]
@@ -686,7 +713,8 @@ mod tests {
     #[test]
     fn only_the_apps_own_windows_may_use_safe() {
         assert!(may_use_safe("main"));
-        assert!(may_use_safe("quick-entry"));
+        assert!(may_use_safe("safe-quick"));
+        assert!(!may_use_safe("quick-entry"), "the capture box has no use for Safe");
         assert!(may_use_safe("node_1727500000"));
         assert!(!may_use_safe(crate::syn::browser::WINDOW));
         assert!(!may_use_safe("some-future-webview"));
