@@ -10,7 +10,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw, Star, Trash2 } from 'lucide-vue-next';
+import { Copy, ExternalLink, Eye, EyeOff, Link, Pencil, RotateCcw, Star, Trash2 } from 'lucide-vue-next';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import type { FieldView, ItemView, SafeApi } from './api';
 import { kindInfo } from './kinds';
@@ -130,6 +130,21 @@ function dots(bucket: number | null) {
   return '•'.repeat(bucket ?? 8);
 }
 
+/**
+ * A link to paste into a note. The id and nothing else: a note is a plain
+ * file that syncs and may sit in git, and the title of what is in the Safe
+ * is not the note's to carry. The id is not a secret, so the ordinary
+ * clipboard is fine.
+ */
+async function copyLink() {
+  try {
+    await navigator.clipboard.writeText(`synabit://safe/${props.item.id}`);
+    say(t('safe.detail.link_copied'));
+  } catch (e) {
+    say(explain(e));
+  }
+}
+
 async function favorite() {
   try {
     await props.api.setFavorite(props.item.id, !props.item.favorite);
@@ -184,6 +199,9 @@ const trashed = computed(() => props.item.trashed_at !== null);
         <template v-if="!trashed">
           <button class="p-2 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark" :aria-label="item.favorite ? t('safe.detail.unfavorite') : t('safe.detail.favorite')" :title="item.favorite ? t('safe.detail.unfavorite') : t('safe.detail.favorite')" @click="favorite">
             <Star class="w-4 h-4" :class="item.favorite ? 'fill-warning text-warning' : ''" />
+          </button>
+          <button class="p-2 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark" :aria-label="t('safe.detail.copy_link')" :title="t('safe.detail.copy_link')" @click="copyLink">
+            <Link class="w-4 h-4" />
           </button>
           <button class="p-2 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark" :aria-label="t('safe.detail.trash')" :title="t('safe.detail.trash')" @click="trash(true)">
             <Trash2 class="w-4 h-4" />

@@ -23,6 +23,14 @@ const api = useSafeApi(() => props.vaultPath);
 type Screen = 'loading' | 'setup' | 'locked' | 'open' | 'no_vault';
 const screen = ref<Screen>('loading');
 const status = ref<Status | null>(null);
+/** An item a link asked for, shown once the Safe is open. */
+const wanted = ref<string | null>(null);
+
+function openItemById(id: string) {
+  wanted.value = id;
+  void refresh();
+}
+defineExpose({ openItemById });
 
 async function refresh() {
   if (!props.vaultPath) {
@@ -62,6 +70,6 @@ watch(() => props.vaultPath, refresh);
       :needs-secret-key="!!status && status.exists && !status.has_secret_key"
       @unlocked="refresh"
     />
-    <SafeMain v-else-if="screen === 'open'" :api="api" @locked="refresh" />
+    <SafeMain v-else-if="screen === 'open'" :api="api" :open-id="wanted" @opened="wanted = null" @locked="refresh" />
   </div>
 </template>

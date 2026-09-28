@@ -2762,7 +2762,9 @@
         "listed": "Syn can see its name",
         "usable": "Syn can use it",
         "unknown": "Hidden from Syn"
-      }
+      },
+      "copy_link": "Copy link for a note",
+      "link_copied": "Link copied. Paste it into a note; Cmd/Ctrl-click it there to come back here."
     },
     "editor": {
       "new_title": "New {kind}",

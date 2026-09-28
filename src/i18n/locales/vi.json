@@ -2762,7 +2762,9 @@
         "listed": "Syn thấy được tên",
         "usable": "Syn được dùng",
         "unknown": "Ẩn với Syn"
-      }
+      },
+      "copy_link": "Copy link để dán vào ghi chú",
+      "link_copied": "Đã copy link. Dán vào ghi chú; Cmd/Ctrl+click vào đó để quay lại đây."
     },
     "editor": {
       "new_title": "{kind} mới",

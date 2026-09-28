@@ -377,6 +377,7 @@ const financeAppRef = ref<any>(null);
 const feedsAppRef = ref<any>(null);
 const filesAppRef = ref<any>(null);
 const nexusAppRef = ref<any>(null);
+const safeAppRef = ref<any>(null);
 
 const setAppRef = (el: any, name: string) => {
     if (!el) return;
@@ -391,6 +392,7 @@ const setAppRef = (el: any, name: string) => {
     else if (name === 'feeds') feedsAppRef.value = el;
     else if (name === 'file') filesAppRef.value = el;
     else if (name === 'nexus') nexusAppRef.value = el;
+    else if (name === 'safe') safeAppRef.value = el;
 };
 
 // ─── Floating Note (opened in new window) ─────────────────
@@ -662,6 +664,13 @@ const handleEditFromNexus = async (id: string, type: string, query?: string) => 
     else if (type === 'moment') {
         activeTool.value = 'note';
         callWhenReady(() => noteAppRef.value, 'openNoteById', id);
+    }
+    // A `synabit://safe/<id>` link in a note. It names the item by id only —
+    // the note never holds its title — and Safe opens it, after unlocking if
+    // it has to.
+    else if (type === 'safe') {
+        activeTool.value = 'safe';
+        callWhenReady(() => safeAppRef.value, 'openItemById', id);
     }
     else if (type === 'person') {
         activeTool.value = 'people';

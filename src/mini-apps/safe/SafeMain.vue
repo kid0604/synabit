@@ -20,8 +20,8 @@ import SafeSettings from './SafeSettings.vue';
 import DeviceSecrets from './DeviceSecrets.vue';
 import { useSafeError } from './useSafeError';
 
-const props = defineProps<{ api: SafeApi }>();
-const emit = defineEmits<{ (e: 'locked'): void }>();
+const props = defineProps<{ api: SafeApi; openId?: string | null }>();
+const emit = defineEmits<{ (e: 'locked'): void; (e: 'opened'): void }>();
 const { t } = useI18n();
 const explain = useSafeError();
 
@@ -124,6 +124,20 @@ const showDevice = ref(false);
 watch(selected, (item) => {
   if (item) showDevice.value = false;
 });
+
+// A link from a note asked for this item. Below `showDevice`, which it
+// touches: an immediate watch runs during setup, and above the declaration
+// it threw inside an async callback, where nothing reported it.
+watch(
+  () => props.openId,
+  async (id) => {
+    if (!id) return;
+    showDevice.value = false;
+    await select(id);
+    emit('opened');
+  },
+  { immediate: true },
+);
 
 async function lock() {
   await props.api.lock().catch(() => undefined);
