@@ -40,6 +40,14 @@ pub enum SafeError {
     NeedsSecretKey,
     #[error("that is not a valid Secret Key")]
     BadSecretKey,
+    #[error("this file is not an export Safe knows how to read")]
+    ImportUnknown,
+    #[error("this is a password-protected Bitwarden export; export it again without a password")]
+    EncryptedBitwarden,
+    #[error("a Safe export needs its export password")]
+    NeedsExportPassword,
+    #[error("the export password is wrong, or the file was altered")]
+    WrongExportPassword,
     #[error("the master password needs at least {} characters", super::keyset::MIN_PASSWORD_CHARS)]
     PasswordTooShort,
     #[error("no such item")]
@@ -67,6 +75,10 @@ impl SafeError {
             SafeError::WrongPassword => "wrong_password",
             SafeError::NeedsSecretKey => "needs_secret_key",
             SafeError::BadSecretKey => "bad_secret_key",
+            SafeError::ImportUnknown => "import_unknown",
+            SafeError::EncryptedBitwarden => "encrypted_bitwarden",
+            SafeError::NeedsExportPassword => "needs_export_password",
+            SafeError::WrongExportPassword => "wrong_export_password",
             SafeError::PasswordTooShort => "password_too_short",
             SafeError::NotFound => "not_found",
             SafeError::Item(ItemError::NoTitle) => "no_title",
@@ -404,6 +416,25 @@ impl Unlocked {
     pub fn totp(&self, id: &str, now: u64) -> Result<super::totp::Code, SafeError> {
         let id = parse_id(id)?;
         self.body(&id)?.totp.as_ref().map(|t| t.code_at(now)).ok_or(SafeError::NotFound)
+    }
+
+    /// Write items brought in from elsewhere, each under a new id.
+    pub fn import(&mut self, items: Vec<ItemBody>) -> Result<usize, SafeError> {
+        let mut written = 0;
+        for body in items {
+            let id = store::new_id()?;
+            self.write(id, &body)?;
+            written += 1;
+        }
+        Ok(written)
+    }
+
+    /// Every live and trashed item, decrypted, for an export. Tombstones are
+    /// not items.
+    pub fn all_items(&self) -> Result<Vec<ItemBody>, SafeError> {
+        let mut ids: Vec<ItemId> = self.entries.iter().filter(|(_, e)| e.summary.is_some()).map(|(id, _)| *id).collect();
+        ids.sort();
+        ids.iter().map(|id| self.body(id)).collect()
     }
 
     pub fn create(&mut self, edit: ItemEdit, now: i64) -> Result<ItemView, SafeError> {

@@ -2671,7 +2671,11 @@
       "keychain": "Không truy cập được keychain của máy này.",
       "clipboard": "Không truy cập được clipboard.",
       "failed": "Có lỗi xảy ra: {msg}",
-      "bad_totp": "Đây không phải link otpauth:// hay khoá thiết lập."
+      "bad_totp": "Đây không phải link otpauth:// hay khoá thiết lập.",
+      "import_unknown": "Safe không đọc được loại file này.",
+      "encrypted_bitwarden": "Đây là file xuất Bitwarden có mật khẩu. Hãy xuất lại mà không đặt mật khẩu.",
+      "needs_export_password": "File xuất của Safe cần mật khẩu của nó.",
+      "wrong_export_password": "Sai mật khẩu file xuất, hoặc file đã bị sửa."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2822,6 +2826,28 @@
       "remove": "Bỏ",
       "remaining": "còn {n} giây",
       "same_place": "Mục này giữ cả mật khẩu lẫn mã một lần, nên ai mở được Safe là có cả hai yếu tố."
+    },
+    "exchange": {
+      "exports": "File xuất",
+      "import": "Nhập dữ liệu",
+      "import_body": "Từ 1Password (.1pux), Bitwarden (.json), KeePass (.xml), trình duyệt hoặc CSV bất kỳ, hoặc file xuất của Safe.",
+      "choose": "Chọn file…",
+      "importing": "Đang nhập…",
+      "import_go": "Nhập",
+      "imported": "Đã nhập {n} mục.",
+      "delete_source": "File bạn vừa nhập không được mã hoá. Hãy xoá nó ngay và dọn thùng rác.",
+      "warnings": "{n} ghi chú về những gì bị bỏ qua",
+      "export": "Xuất, có mã hoá",
+      "export_body": "Mọi mục, niêm phong bằng một mật khẩu bạn chọn bây giờ. Mở được trong mọi Synabit, chỉ cần mật khẩu đó.",
+      "export_password": "Mật khẩu file xuất",
+      "export_go": "Xuất…",
+      "exported": "Đã xuất {n} mục.",
+      "plain": "Xuất CSV không mã hoá",
+      "plain_body": "Thao tác này ghi mọi mật khẩu vào một file ai cũng đọc được. Chỉ làm khi chuyển sang trình quản lý mật khẩu khác, và xoá file ngay sau đó.",
+      "plain_phrase": "XUẤT",
+      "plain_type": "Gõ {phrase} để xác nhận",
+      "plain_go": "Xuất CSV không mã hoá…",
+      "exported_plain": "Đã ghi {n} mục dạng văn bản thường. Hãy xoá file sau khi nhập xong."
     }
   }
 }

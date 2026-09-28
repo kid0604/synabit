@@ -86,6 +86,9 @@ hex = "0.4"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 
+# Reading KeePass XML exports into Safe. Already in the build, Android
+# included, through `feed-rs`; naming it adds no bytes.
+quick-xml = "0.37"
 lz4_flex = "0.13.1"
 chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"

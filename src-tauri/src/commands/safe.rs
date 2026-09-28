@@ -496,6 +496,108 @@ pub fn safe_purge(app: tauri::AppHandle, webview: tauri::Webview, vault_path: St
     with(&app, &vault_path, |s| s.purge(&id))
 }
 
+// ─── moving in and out ───────────────────────────────────
+
+#[derive(Serialize)]
+pub struct Imported {
+    format: crate::safe::exchange::Format,
+    imported: usize,
+    /// What was skipped and why. Never a value.
+    warnings: Vec<String>,
+    /// Whether the source file was plaintext — every format but Safe's own —
+    /// so the screen can say to delete it.
+    source_was_plaintext: bool,
+}
+
+/// Bring in another password manager's export, or a Safe export. The file is
+/// read here; the screen names it and gets counts back.
+#[tauri::command]
+pub async fn safe_import(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    path: String,
+    password: Option<String>,
+) -> AppResult<Imported> {
+    use crate::safe::exchange::{self, ExchangeError, Format};
+    gate(&webview)?;
+    let vault = vault(&vault_path)?;
+    let password = zeroize::Zeroizing::new(password.unwrap_or_default());
+    let handle = app.clone();
+    blocking(move || {
+        let file = std::path::Path::new(&path);
+        let bytes = zeroize::Zeroizing::new(std::fs::read(file).map_err(|e| SafeError::Failed(format!("could not read the file: {e}")))?);
+        let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let format = exchange::detect(&name, &bytes).ok_or(SafeError::ImportUnknown)?;
+        if format == Format::SafeExport && password.is_empty() {
+            return Err(SafeError::NeedsExportPassword);
+        }
+        let parsed = exchange::parse(format, &bytes, Some(&password), now()).map_err(|e| match e {
+            ExchangeError::Unknown => SafeError::ImportUnknown,
+            ExchangeError::EncryptedBitwarden => SafeError::EncryptedBitwarden,
+            ExchangeError::WrongExportPassword => SafeError::WrongExportPassword,
+            other => SafeError::Failed(other.to_string()),
+        })?;
+        let imported = handle.state::<SafeSession>().with(&vault, |s| s.import(parsed.items))?;
+        Ok(Imported { format, imported, warnings: parsed.warnings, source_was_plaintext: format != Format::SafeExport })
+    })
+    .await
+}
+
+/// Seal every item into a `.safe-export` under a password chosen for it.
+#[tauri::command]
+pub async fn safe_export(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    path: String,
+    export_password: String,
+) -> AppResult<usize> {
+    gate(&webview)?;
+    let vault = vault(&vault_path)?;
+    let export_password = zeroize::Zeroizing::new(export_password);
+    if export_password.chars().count() < keyset::MIN_PASSWORD_CHARS {
+        return Err(AppError::Safe(SafeError::PasswordTooShort));
+    }
+    let handle = app.clone();
+    blocking(move || {
+        let items = handle.state::<SafeSession>().with(&vault, |s| s.all_items())?;
+        let bytes = crate::safe::exchange::seal_export(&items, &export_password, crate::safe::crypto::KdfParams::FLOOR)
+            .map_err(|e| SafeError::Failed(e.to_string()))?;
+        crate::safe::store::write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| SafeError::Failed(e.to_string()))?;
+        Ok(items.len())
+    })
+    .await
+}
+
+/// Every item as a plaintext CSV, for leaving Synabit. Behind the master
+/// password even though the Safe is open: this is the one command that puts
+/// every secret in a file anyone can read.
+#[tauri::command]
+pub async fn safe_export_plain(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    path: String,
+    password: String,
+) -> AppResult<usize> {
+    gate(&webview)?;
+    let vault = vault(&vault_path)?;
+    let password = zeroize::Zeroizing::new(password);
+    let handle = app.clone();
+    blocking(move || {
+        let keyset = keyset::read(&vault)?;
+        let sk = stored_secret_key(&handle, &keyset.header.safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
+        keyset::unlock(&keyset, &password, &sk)?;
+        let items = handle.state::<SafeSession>().with(&vault, |s| s.all_items())?;
+        let csv = crate::safe::exchange::to_csv(&items);
+        crate::safe::store::write_atomic(std::path::Path::new(&path), csv.as_bytes()).map_err(|e| SafeError::Failed(e.to_string()))?;
+        log::warn!("[Safe] {} items were exported as plaintext", items.len());
+        Ok(items.iter().filter(|i| i.trashed_at.is_none()).count())
+    })
+    .await
+}
+
 // ─── tools ───────────────────────────────────────────────
 
 #[derive(Serialize)]

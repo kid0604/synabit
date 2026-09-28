@@ -8,9 +8,9 @@
  * screen should not be able to walk away with the second factor, or lock the
  * owner out.
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { save } from '@tauri-apps/plugin-dialog';
+import { open as openFile, save } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
 import ModalDialog from '../calendar/components/ModalDialog.vue';
 import type { SafeApi, Settings } from './api';
@@ -18,7 +18,7 @@ import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
 const props = defineProps<{ api: SafeApi }>();
-const emit = defineEmits<{ (e: 'close'): void }>();
+const emit = defineEmits<{ (e: 'close'): void; (e: 'changed'): void }>();
 const { t } = useI18n();
 const explain = useSafeError();
 
@@ -31,7 +31,7 @@ const CLIPBOARD = [10, 30, 90, 0];
 
 function duration(secs: number) {
   if (secs === 0) return t('safe.settings.never');
-  if (secs < 60) return t('safe.settings.seconds', { n: secs });
+  if (secs < 60 || secs % 60 !== 0) return t('safe.settings.seconds', { n: secs });
   if (secs < 3600) return t('safe.settings.minutes', { n: secs / 60 });
   return t('safe.settings.hours', { n: secs / 3600 });
 }
@@ -103,6 +103,76 @@ function close() {
   emit('close');
 }
 
+// ─── moving in and out ───────────────────────────────────
+
+const importPath = ref('');
+const importPassword = ref('');
+const importing = ref(false);
+const imported = ref<{ imported: number; warnings: string[]; source_was_plaintext: boolean } | null>(null);
+const needsExportPassword = computed(() => importPath.value.toLowerCase().endsWith('.safe-export'));
+
+async function chooseImport() {
+  error.value = '';
+  imported.value = null;
+  const picked = await openFile({
+    multiple: false,
+    filters: [{ name: t('safe.exchange.exports'), extensions: ['1pux', 'json', 'xml', 'csv', 'safe-export'] }],
+  });
+  if (typeof picked !== 'string') return;
+  importPath.value = picked;
+  if (!needsExportPassword.value) await runImport();
+}
+
+async function runImport() {
+  importing.value = true;
+  error.value = '';
+  try {
+    imported.value = await props.api.importFile(importPath.value, importPassword.value || undefined);
+    importPath.value = '';
+    emit('changed');
+  } catch (e) {
+    error.value = explain(e);
+  } finally {
+    importing.value = false;
+    importPassword.value = '';
+  }
+}
+
+const exportPassword = ref('');
+const exportPasswordAgain = ref('');
+async function exportSealed() {
+  error.value = '';
+  notice.value = '';
+  const path = await save({ defaultPath: 'Synabit Safe.safe-export', filters: [{ name: 'Safe export', extensions: ['safe-export'] }] });
+  if (!path) return;
+  try {
+    const n = await props.api.exportSealed(path, exportPassword.value);
+    notice.value = t('safe.exchange.exported', { n });
+  } catch (e) {
+    error.value = explain(e);
+  } finally {
+    exportPassword.value = exportPasswordAgain.value = '';
+  }
+}
+
+const plainPassword = ref('');
+const plainPhrase = ref('');
+const phrase = computed(() => t('safe.exchange.plain_phrase'));
+async function exportPlain() {
+  error.value = '';
+  notice.value = '';
+  const path = await save({ defaultPath: 'Synabit Safe.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+  if (!path) return;
+  try {
+    const n = await props.api.exportPlain(path, plainPassword.value);
+    notice.value = t('safe.exchange.exported_plain', { n });
+  } catch (e) {
+    error.value = explain(e);
+  } finally {
+    plainPassword.value = plainPhrase.value = '';
+  }
+}
+
 const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark focus:outline-none focus:ring-2 focus:ring-accent';
 </script>
 
@@ -163,6 +233,44 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
           </div>
         </template>
       </section>
+
+      <section class="space-y-2.5">
+        <h3 class="text-sm font-semibold">{{ t('safe.exchange.import') }}</h3>
+        <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.exchange.import_body') }}</p>
+        <form v-if="needsExportPassword" class="flex gap-2" @submit.prevent="runImport">
+          <input v-model="importPassword" type="password" :placeholder="t('safe.exchange.export_password')" :aria-label="t('safe.exchange.export_password')" autocomplete="off" :class="input" />
+          <button type="submit" :disabled="!importPassword || importing" class="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-40">{{ t('safe.exchange.import_go') }}</button>
+        </form>
+        <button v-else :disabled="importing" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm disabled:opacity-40" @click="chooseImport">
+          {{ importing ? t('safe.exchange.importing') : t('safe.exchange.choose') }}
+        </button>
+        <div v-if="imported" class="p-3 rounded-lg bg-surface dark:bg-surface-dark text-sm space-y-1.5" role="status">
+          <p class="font-medium">{{ t('safe.exchange.imported', { n: imported.imported }) }}</p>
+          <p v-if="imported.source_was_plaintext" class="text-warning text-xs">{{ t('safe.exchange.delete_source') }}</p>
+          <details v-if="imported.warnings.length" class="text-xs text-text-secondary dark:text-text-secondary-dark">
+            <summary>{{ t('safe.exchange.warnings', { n: imported.warnings.length }) }}</summary>
+            <ul class="mt-1 list-disc pl-4 space-y-0.5"><li v-for="(w, i) in imported.warnings" :key="i">{{ w }}</li></ul>
+          </details>
+        </div>
+      </section>
+
+      <form class="space-y-2.5" @submit.prevent="exportSealed">
+        <h3 class="text-sm font-semibold">{{ t('safe.exchange.export') }}</h3>
+        <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.exchange.export_body') }}</p>
+        <input v-model="exportPassword" type="password" :placeholder="t('safe.exchange.export_password')" :aria-label="t('safe.exchange.export_password')" autocomplete="off" :class="input" />
+        <input v-model="exportPasswordAgain" type="password" :placeholder="t('safe.settings.confirm_new')" :aria-label="t('safe.settings.confirm_new')" autocomplete="off" :class="input" />
+        <button type="submit" :disabled="exportPassword.length < 10 || exportPassword !== exportPasswordAgain" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm disabled:opacity-40">{{ t('safe.exchange.export_go') }}</button>
+      </form>
+
+      <details class="space-y-2.5">
+        <summary class="text-sm font-semibold cursor-pointer">{{ t('safe.exchange.plain') }}</summary>
+        <form class="space-y-2.5 pt-2" @submit.prevent="exportPlain">
+          <p class="text-xs text-danger">{{ t('safe.exchange.plain_body') }}</p>
+          <input v-model="plainPassword" type="password" :placeholder="t('safe.unlock.password')" :aria-label="t('safe.unlock.password')" autocomplete="off" :class="input" />
+          <input v-model="plainPhrase" :placeholder="t('safe.exchange.plain_type', { phrase })" :aria-label="t('safe.exchange.plain_type', { phrase })" autocomplete="off" spellcheck="false" :class="input" />
+          <button type="submit" :disabled="!plainPassword || plainPhrase.trim() !== phrase" class="px-4 py-2 rounded-lg text-sm text-danger border border-danger/40 hover:bg-danger/10 disabled:opacity-40">{{ t('safe.exchange.plain_go') }}</button>
+        </form>
+      </details>
 
       <p v-if="notice" class="text-sm text-success" role="status">{{ notice }}</p>
       <p v-if="error" class="text-sm text-danger" role="alert">{{ error }}</p>

@@ -30,6 +30,7 @@
 
 pub mod clipboard;
 pub mod crypto;
+pub mod exchange;
 pub mod format;
 pub mod generator;
 pub mod item;

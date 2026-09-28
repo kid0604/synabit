@@ -12,7 +12,8 @@ import { safeCode } from './api';
 
 const KNOWN = new Set([
   'locked', 'no_safe', 'already_exists', 'wrong_password', 'needs_secret_key', 'bad_secret_key',
-  'password_too_short', 'not_found', 'no_title', 'unknown_field', 'bad_totp', 'bad_recipe', 'keychain', 'clipboard',
+  'password_too_short', 'not_found', 'no_title', 'unknown_field', 'bad_totp',
+  'import_unknown', 'encrypted_bitwarden', 'needs_export_password', 'wrong_export_password', 'bad_recipe', 'keychain', 'clipboard',
 ]);
 
 export function useSafeError() {

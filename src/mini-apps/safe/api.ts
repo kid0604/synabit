@@ -161,6 +161,10 @@ export function useSafeApi(vaultPath: () => string) {
     purge: (id: string) => invoke<void>('safe_purge', { ...v(), id }),
     generate: (recipe?: Recipe) => invoke<{ value: string; bits: number }>('safe_generate', { recipe: recipe ?? null }),
     estimate: (password: string) => invoke<number>('safe_estimate', { password }),
+    importFile: (path: string, password?: string) =>
+      invoke<{ format: string; imported: number; warnings: string[]; source_was_plaintext: boolean }>('safe_import', { ...v(), path, password: password || null }),
+    exportSealed: (path: string, exportPassword: string) => invoke<number>('safe_export', { ...v(), path, exportPassword }),
+    exportPlain: (path: string, password: string) => invoke<number>('safe_export_plain', { ...v(), path, password }),
     getSettings: () => invoke<Settings>('safe_get_settings', v()),
     setSettings: (settings: Settings) => invoke<Settings>('safe_set_settings', { ...v(), settings }),
   };

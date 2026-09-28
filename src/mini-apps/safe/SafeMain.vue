@@ -250,7 +250,7 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
     </main>
 
     <ItemEditor v-if="editing" :api="api" :item="editing.item" :kind="editing.kind" @saved="saved" @close="editing = null" />
-    <SafeSettings v-if="showSettings" :api="api" @close="showSettings = false" />
+    <SafeSettings v-if="showSettings" :api="api" @close="showSettings = false" @changed="load" />
   </div>
 </template>
 

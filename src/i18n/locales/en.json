@@ -2671,7 +2671,11 @@
       "keychain": "This device's keychain could not be reached.",
       "clipboard": "The clipboard could not be reached.",
       "failed": "Something went wrong: {msg}",
-      "bad_totp": "That is neither an otpauth:// link nor a setup key."
+      "bad_totp": "That is neither an otpauth:// link nor a setup key.",
+      "import_unknown": "This file is not an export Safe knows how to read.",
+      "encrypted_bitwarden": "This is a password-protected Bitwarden export. Export again without a password.",
+      "needs_export_password": "This Safe export needs its export password.",
+      "wrong_export_password": "Wrong export password, or the file was altered."
     },
     "sidebar": {
       "all": "All items",
@@ -2822,6 +2826,28 @@
       "remove": "Remove",
       "remaining": "{n} seconds left",
       "same_place": "This item holds both the password and the one-time code, so whoever opens the Safe has both factors."
+    },
+    "exchange": {
+      "exports": "Exports",
+      "import": "Import",
+      "import_body": "From 1Password (.1pux), Bitwarden (.json), KeePass (.xml), a browser or any CSV, or a Safe export.",
+      "choose": "Choose a file…",
+      "importing": "Importing…",
+      "import_go": "Import",
+      "imported": "{n} item(s) imported.",
+      "delete_source": "The file you imported from is not encrypted. Delete it now, and empty the trash.",
+      "warnings": "{n} note(s) about what was skipped",
+      "export": "Export, encrypted",
+      "export_body": "Every item, sealed with a password you choose now. It opens in any Synabit, with that password alone.",
+      "export_password": "Export password",
+      "export_go": "Export…",
+      "exported": "{n} item(s) exported.",
+      "plain": "Export as plain CSV",
+      "plain_body": "This writes every password into a file anybody can read. Only do it to move to another password manager, and delete the file straight after.",
+      "plain_phrase": "EXPORT",
+      "plain_type": "Type {phrase} to confirm",
+      "plain_go": "Export plain CSV…",
+      "exported_plain": "{n} item(s) written as plain text. Delete the file once you have imported it."
     }
   }
 }
