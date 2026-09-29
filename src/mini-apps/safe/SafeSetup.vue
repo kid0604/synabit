@@ -27,12 +27,12 @@ const error = ref('');
 const password = ref('');
 const confirm = ref('');
 const shown = ref(false);
-const bits = ref(0);
-/** Below this, the form refuses. The meter asks for more. */
-const MIN_BITS = 50;
+const score = ref(0);
+/** zxcvbn's 3 of 4: not guessable in any time that matters. Below it, refused. */
+const MIN_SCORE = 3;
 
 const canCreate = computed(
-  () => password.value.length >= 10 && password.value === confirm.value && bits.value >= MIN_BITS,
+  () => password.value.length >= 10 && password.value === confirm.value && score.value >= MIN_SCORE,
 );
 
 async function suggest() {
@@ -160,7 +160,7 @@ const points = computed(() => (tm('safe.intro.points') as unknown[]).map((p) => 
             </button>
           </div>
         </label>
-        <PasswordStrength :api="api" :password="password" @bits="bits = $event" />
+        <PasswordStrength :api="api" :password="password" @score="score = $event" />
         <label class="block space-y-1.5">
           <span class="text-sm font-medium">{{ t('safe.setup.confirm') }}</span>
           <input

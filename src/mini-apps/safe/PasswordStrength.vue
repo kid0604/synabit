@@ -2,19 +2,21 @@
 /**
  * A strength bar under a master-password field.
  *
- * The estimate is Rust's (`generator::estimate_bits`), which is pessimistic on
- * purpose: it counts a run like `aaaa` or `1234` as one character. It still
- * over-rates clever substitutions; zxcvbn replaces it later. `bits` is emitted
- * so the form can refuse a password below the floor.
+ * The estimate is Rust's (`health::strength`): zxcvbn on a computer, which
+ * knows dictionaries, names, dates, keyboard walks and clever substitutions,
+ * and a coarser count on a phone. Its 0–4 score is emitted so a form can
+ * refuse anything below 3 — "guessable in hours offline" is not a master
+ * password.
  */
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SafeApi } from './api';
 
 const props = defineProps<{ api: SafeApi; password: string }>();
-const emit = defineEmits<{ (e: 'bits', bits: number): void }>();
+const emit = defineEmits<{ (e: 'score', score: number): void }>();
 const { t } = useI18n();
 
+const score = ref(0);
 const bits = ref(0);
 let timer: ReturnType<typeof setTimeout> | undefined;
 let asked = 0;
@@ -24,22 +26,25 @@ watch(
   (pw) => {
     clearTimeout(timer);
     if (!pw) {
+      score.value = 0;
       bits.value = 0;
-      emit('bits', 0);
+      emit('score', 0);
       return;
     }
     const mine = ++asked;
     timer = setTimeout(async () => {
-      const b = await props.api.estimate(pw).catch(() => 0);
+      const s = await props.api.estimate(pw).catch(() => ({ score: 0, bits: 0 }));
       if (mine !== asked) return;
-      bits.value = b;
-      emit('bits', b);
+      score.value = s.score;
+      bits.value = s.bits;
+      emit('score', s.score);
     }, 120);
   },
   { immediate: true },
 );
 
-const level = computed(() => (bits.value < 40 ? 0 : bits.value < 60 ? 1 : bits.value < 80 ? 2 : 3));
+/** Four steps on screen for five scores: 0 and 1 are both weak. */
+const level = computed(() => Math.max(0, score.value - 1));
 const label = computed(() => [t('safe.strength.weak'), t('safe.strength.fair'), t('safe.strength.strong'), t('safe.strength.very_strong')][level.value]);
 const colour = computed(() => ['bg-danger', 'bg-warning', 'bg-success', 'bg-success'][level.value]);
 </script>

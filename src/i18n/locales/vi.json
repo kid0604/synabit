@@ -2530,7 +2530,8 @@
     "consent_usesecret": "Syn muốn gửi mục “{item}” trong Safe tới {destination}. Syn không bao giờ thấy giá trị — Synabit điền vào lúc yêu cầu rời đi — nhưng đã gửi thì không lấy lại được.",
     "cap_usesecret": "Gửi mục “{item}” trong Safe tới {destination}",
     "doing_safe_list": "Xem những gì Safe chia sẻ với Syn",
-    "doing_safe_request": "Nhờ bạn thêm một secret vào Safe"
+    "doing_safe_request": "Nhờ bạn thêm một secret vào Safe",
+    "doing_safe_health": "Xem sức khoẻ các mật khẩu của bạn"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
@@ -2683,7 +2684,8 @@
       "bad_handle": "Tên cho Syn gồm 2–40 chữ thường, số và dấu gạch ngang.",
       "handle_taken": "Đã có mục khác dùng tên này.",
       "no_destination": "Hãy chọn ít nhất một connector Syn được gửi tới.",
-      "request_gone": "Yêu cầu này đã hết hạn. Hãy nhờ Syn hỏi lại."
+      "request_gone": "Yêu cầu này đã hết hạn. Hãy nhờ Syn hỏi lại.",
+      "breach_check_off": "Kiểm tra lộ lọt đang tắt. Hãy bật trong cài đặt Safe trước."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2792,7 +2794,8 @@
       "generate": "Sinh",
       "change": "Đổi",
       "keep": "Giữ giá trị hiện tại",
-      "unchanged": "Không đổi"
+      "unchanged": "Không đổi",
+      "expires": "Hết hạn"
     },
     "generator": {
       "random": "Ngẫu nhiên",
@@ -2907,6 +2910,39 @@
       "none_ticked": "Syn chỉ được gửi tới nơi bạn đánh dấu. Không đánh dấu nơi nào thì Syn chỉ biết nó tồn tại.",
       "save": "Lưu vào Safe",
       "not_now": "Để sau"
+    },
+    "health": {
+      "title": "Sức khoẻ",
+      "all": "Tất cả mục có vấn đề · {n}",
+      "flag": {
+        "breached": "Đã bị lộ",
+        "reused": "Dùng lại",
+        "weak": "Yếu",
+        "expired": "Đã hết hạn",
+        "expiring": "Sắp hết hạn",
+        "old": "Hơn một năm chưa đổi"
+      },
+      "explain": {
+        "breached": "Mật khẩu này có trong các vụ lộ dữ liệu đã biết. Hãy đổi ở mọi nơi đang dùng nó.",
+        "reused": "Một mục khác dùng cùng mật khẩu. Lộ một nơi là mất cả hai.",
+        "weak": "Mật khẩu này có thể bị đoán ra nhanh.",
+        "expired": "Ngày hết hạn của mục này đã qua.",
+        "expiring": "Mục này hết hạn trong vòng hai tuần.",
+        "old": "Mật khẩu này hơn một năm chưa được đổi."
+      },
+      "check": "Kiểm tra lộ lọt",
+      "checking": "Đang kiểm tra…",
+      "checked": "Đã kiểm tra {checked} mật khẩu; {breached} đã bị lộ.",
+      "check_failed": "{n} mật khẩu không kiểm tra được.",
+      "last_checked": "kiểm tra lúc {at}",
+      "check_off": "Kiểm tra lộ lọt đang tắt. Bật trong cài đặt Safe.",
+      "task": "Tạo task đổi mật khẩu",
+      "task_hint": "Task mang tên của mục này, trong Tasks.",
+      "task_title": "Đổi mật khẩu: {title}",
+      "task_created": "Đã tạo task trong Tasks.",
+      "open_in_safe": "Mở trong Safe",
+      "setting": "Kiểm tra mật khẩu với các vụ lộ dữ liệu",
+      "setting_body": "Dùng Have I Been Pwned. Chỉ 5 ký tự đầu của mã băm SHA-1 rời khỏi máy — không bao giờ là mật khẩu."
     }
   }
 }

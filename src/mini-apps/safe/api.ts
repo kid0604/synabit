@@ -26,7 +26,11 @@ export interface ItemSummary {
   trashed: boolean;
   updated_at: number;
   ai_level: AiLevel;
+  /** What the health check found; see `safe::health`. */
+  health: HealthFlag[];
 }
+
+export type HealthFlag = 'breached' | 'reused' | 'weak' | 'expired' | 'expiring' | 'old';
 
 export interface FieldView {
   id: string;
@@ -60,6 +64,7 @@ export interface ItemView {
   ai_level: AiLevel;
   handle: string | null;
   ai_destinations: string[];
+  health: HealthFlag[];
   expires_at: number | null;
   created_at: number;
   updated_at: number;
@@ -97,7 +102,8 @@ export type Filter =
   | { by: 'favorites' }
   | { by: 'kind'; kind: ItemKind }
   | { by: 'tag'; tag: string }
-  | { by: 'trash' };
+  | { by: 'trash' }
+  | { by: 'health'; flag?: HealthFlag | null };
 
 export interface Overview {
   all: number;
@@ -106,6 +112,9 @@ export interface Overview {
   kinds: [ItemKind, number][];
   tags: [string, number][];
   unreadable: { file: string; reason: string }[];
+  unhealthy: number;
+  health: [HealthFlag, number][];
+  breach_checked_at: number | null;
 }
 
 export interface Status {
@@ -117,6 +126,7 @@ export interface Status {
 export interface Settings {
   auto_lock_secs: number;
   clipboard_clear_secs: number;
+  breach_check: boolean;
 }
 
 export type Recipe =
@@ -170,7 +180,8 @@ export function useSafeApi(vaultPath: () => string) {
     setTrashed: (id: string, trashed: boolean) => invoke<void>('safe_set_trashed', { ...v(), id, trashed }),
     purge: (id: string) => invoke<void>('safe_purge', { ...v(), id }),
     generate: (recipe?: Recipe) => invoke<{ value: string; bits: number }>('safe_generate', { recipe: recipe ?? null }),
-    estimate: (password: string) => invoke<number>('safe_estimate', { password }),
+    estimate: (password: string) => invoke<{ score: number; bits: number }>('safe_estimate', { password }),
+    checkBreaches: () => invoke<{ checked: number; breached: number; failed: number }>('safe_check_breaches', v()),
     importFile: (path: string, password?: string) =>
       invoke<{ format: string; imported: number; warnings: string[]; source_was_plaintext: boolean }>('safe_import', { ...v(), path, password: password || null }),
     exportSealed: (path: string, exportPassword: string) => invoke<number>('safe_export', { ...v(), path, exportPassword }),

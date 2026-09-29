@@ -10,7 +10,9 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { Copy, ExternalLink, Eye, EyeOff, Link, Pencil, RotateCcw, Star, Trash2 } from 'lucide-vue-next';
+import { Copy, ExternalLink, Eye, EyeOff, Link, ListTodo, Pencil, RotateCcw, ShieldAlert, Star, Trash2 } from 'lucide-vue-next';
+import { useNodeService } from '../../composables/useNodeService';
+import { taskProperties } from '../task/types';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import SynAccess from './SynAccess.vue';
 import type { FieldView, ItemView, SafeApi } from './api';
@@ -146,6 +148,29 @@ async function copyLink() {
   }
 }
 
+/**
+ * A task to change this password, in Tasks, due in a week, linking back here.
+ * The task is named after the item — the user asked for it by pressing this,
+ * and a task that does not say what to change is no task.
+ */
+const ns = useNodeService();
+async function createTask() {
+  const due = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  try {
+    await ns.writeNode({
+      relPath: `Tasks/${crypto.randomUUID()}.md`,
+      nodeType: 'task',
+      title: t('safe.health.task_title', { title: props.item.title }),
+      properties: taskProperties({ status: 'todo', priority: 'high', due_date: due, tags: ['safe'] } as never),
+      content: `[${t('safe.health.open_in_safe')}](synabit://safe/${props.item.id})`,
+      eventType: 'created',
+    });
+    say(t('safe.health.task_created'));
+  } catch (e) {
+    say(explain(e));
+  }
+}
+
 async function favorite() {
   try {
     await props.api.setFavorite(props.item.id, !props.item.favorite);
@@ -223,6 +248,16 @@ const trashed = computed(() => props.item.trashed_at !== null);
     </header>
 
     <div class="flex-1 overflow-y-auto px-6 pb-8 space-y-6">
+      <section v-if="item.health.length && !trashed" class="rounded-xl border border-warning/40 bg-warning/5 p-4 space-y-2">
+        <p v-for="f in item.health" :key="f" class="flex gap-2 text-sm">
+          <ShieldAlert class="w-4 h-4 mt-0.5 flex-shrink-0 text-warning" />
+          <span><strong class="font-medium">{{ t(`safe.health.flag.${f}`) }}.</strong> {{ t(`safe.health.explain.${f}`) }}</span>
+        </p>
+        <button class="inline-flex items-center gap-1.5 text-sm text-accent hover:underline" :title="t('safe.health.task_hint')" @click="createTask">
+          <ListTodo class="w-4 h-4" /> {{ t('safe.health.task') }}
+        </button>
+      </section>
+
       <dl v-if="item.fields.length" class="rounded-xl border border-border dark:border-border-dark divide-y divide-border dark:divide-border-dark">
         <div v-for="f in item.fields" :key="f.id" class="group px-4 py-3 flex items-center gap-3">
           <div class="flex-1 min-w-0">

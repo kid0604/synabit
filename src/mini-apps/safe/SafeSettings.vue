@@ -48,7 +48,7 @@ async function update() {
 const current = ref('');
 const next = ref('');
 const nextAgain = ref('');
-const nextBits = ref(0);
+const nextScore = ref(0);
 async function changePassword() {
   error.value = '';
   notice.value = '';
@@ -201,13 +201,21 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
         </label>
       </section>
 
+      <label v-if="settings" class="flex items-start gap-3 text-sm">
+        <input v-model="settings.breach_check" type="checkbox" class="mt-1" @change="update" />
+        <span>
+          <span class="block">{{ t('safe.health.setting') }}</span>
+          <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.health.setting_body') }}</span>
+        </span>
+      </label>
+
       <form class="space-y-2.5" @submit.prevent="changePassword">
         <h3 class="text-sm font-semibold">{{ t('safe.settings.change_password') }}</h3>
         <input v-model="current" type="password" :placeholder="t('safe.settings.current')" :aria-label="t('safe.settings.current')" autocomplete="off" :class="input" />
         <input v-model="next" type="password" :placeholder="t('safe.settings.new')" :aria-label="t('safe.settings.new')" autocomplete="off" :class="input" />
-        <PasswordStrength :api="api" :password="next" @bits="nextBits = $event" />
+        <PasswordStrength :api="api" :password="next" @score="nextScore = $event" />
         <input v-model="nextAgain" type="password" :placeholder="t('safe.settings.confirm_new')" :aria-label="t('safe.settings.confirm_new')" autocomplete="off" :class="input" />
-        <button type="submit" :disabled="!current || next.length < 10 || nextBits < 50 || next !== nextAgain" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:opacity-90 disabled:opacity-40">
+        <button type="submit" :disabled="!current || next.length < 10 || nextScore < 3 || next !== nextAgain" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:opacity-90 disabled:opacity-40">
           {{ t('safe.settings.change_password') }}
         </button>
       </form>

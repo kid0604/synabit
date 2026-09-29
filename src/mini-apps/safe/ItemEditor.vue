@@ -40,6 +40,8 @@ let nextKey = 0;
 const kind = ref<ItemKind>(props.item?.kind ?? props.kind);
 const title = ref(props.item?.title ?? '');
 const notes = ref(props.item?.notes ?? '');
+/** `YYYY-MM-DD`, or empty for none; the item keeps Unix seconds. */
+const expires = ref(props.item?.expires_at ? new Date(props.item.expires_at * 1000).toISOString().slice(0, 10) : '');
 /** An existing setup is never sent here; the choice is keep, remove or replace. */
 const hasTotp = ref(!!props.item?.totp);
 const totpInput = ref('');
@@ -90,7 +92,7 @@ const edit = computed<ItemEdit>(() => ({
   favorite: props.item?.favorite ?? false,
   notes: notes.value,
   totp: totpEdit.value,
-  expires_at: props.item?.expires_at ?? null,
+  expires_at: expires.value ? Math.floor(new Date(`${expires.value}T00:00:00`).getTime() / 1000) : null,
 }));
 
 async function submit() {
@@ -220,6 +222,11 @@ onMounted(async () => {
             class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
           />
         </div>
+
+        <label class="block space-y-1">
+          <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.editor.expires') }}</span>
+          <input v-model="expires" type="date" class="px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
+        </label>
 
         <label class="block space-y-1">
           <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.editor.notes') }}</span>

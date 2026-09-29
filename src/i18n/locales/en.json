@@ -2530,7 +2530,8 @@
     "consent_usesecret": "Syn wants to send your Safe item “{item}” to {destination}. Syn never sees the value — Synabit puts it in as the request leaves — but once sent, it cannot be taken back.",
     "cap_usesecret": "Sends the Safe item “{item}” to {destination}",
     "doing_safe_list": "Looking at what Safe shares with Syn",
-    "doing_safe_request": "Asking you to add a secret to Safe"
+    "doing_safe_request": "Asking you to add a secret to Safe",
+    "doing_safe_health": "Looking at how healthy your passwords are"
   },
   "update": {
     "available": "Synabit {version} is available!",
@@ -2683,7 +2684,8 @@
       "bad_handle": "A name for Syn is 2–40 lower-case letters, digits and dashes.",
       "handle_taken": "Another item already has that name.",
       "no_destination": "Choose at least one connector Syn may send it to.",
-      "request_gone": "That request is no longer open. Ask Syn again."
+      "request_gone": "That request is no longer open. Ask Syn again.",
+      "breach_check_off": "Breach checking is off. Turn it on in Safe settings first."
     },
     "sidebar": {
       "all": "All items",
@@ -2792,7 +2794,8 @@
       "generate": "Generate",
       "change": "Change",
       "keep": "Keep current value",
-      "unchanged": "Unchanged"
+      "unchanged": "Unchanged",
+      "expires": "Expires"
     },
     "generator": {
       "random": "Random",
@@ -2907,6 +2910,39 @@
       "none_ticked": "Syn may send it only where you tick. With none ticked, Syn only knows it exists.",
       "save": "Save to Safe",
       "not_now": "Not now"
+    },
+    "health": {
+      "title": "Health",
+      "all": "All flagged · {n}",
+      "flag": {
+        "breached": "Found in a breach",
+        "reused": "Reused",
+        "weak": "Weak",
+        "expired": "Expired",
+        "expiring": "Expiring soon",
+        "old": "Not changed in a year"
+      },
+      "explain": {
+        "breached": "This password appears in known breaches. Change it everywhere it is used.",
+        "reused": "Another item has the same password. One leak would open both.",
+        "weak": "This password could be guessed quickly.",
+        "expired": "This item's expiry date has passed.",
+        "expiring": "This item expires within two weeks.",
+        "old": "This password has not been changed in over a year."
+      },
+      "check": "Check for breaches",
+      "checking": "Checking…",
+      "checked": "Checked {checked} password(s); {breached} found in breaches.",
+      "check_failed": "{n} could not be checked.",
+      "last_checked": "last checked {at}",
+      "check_off": "Breach checking is off. Turn it on in Safe settings.",
+      "task": "Create a task to change it",
+      "task_hint": "The task is named after this item, in your Tasks.",
+      "task_title": "Change password: {title}",
+      "task_created": "Task created in Tasks.",
+      "open_in_safe": "Open in Safe",
+      "setting": "Check passwords against known breaches",
+      "setting_body": "Uses Have I Been Pwned. Only the first five characters of each password's SHA-1 hash leave this device — never a password."
     }
   }
 }

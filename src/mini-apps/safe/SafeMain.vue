@@ -9,7 +9,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { AlertTriangle, LayoutGrid, Lock, Monitor, Plus, Search, Settings2, Star, Tag, Trash2 } from 'lucide-vue-next';
+import { AlertTriangle, HeartPulse, LayoutGrid, Lock, Monitor, Plus, Search, Settings2, ShieldAlert, Star, Tag, Trash2 } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
 import { useEventBus } from '../../composables/useEventBus';
 import { safeCode, type Filter, type ItemKind, type ItemSummary, type ItemView, type Overview, type SafeApi } from './api';
@@ -18,6 +18,7 @@ import ItemDetail from './ItemDetail.vue';
 import ItemEditor from './ItemEditor.vue';
 import SafeSettings from './SafeSettings.vue';
 import DeviceSecrets from './DeviceSecrets.vue';
+import HealthPanel from './HealthPanel.vue';
 import { useSafeError } from './useSafeError';
 
 const props = defineProps<{ api: SafeApi; openId?: string | null }>();
@@ -104,6 +105,18 @@ function isFilter(f: Filter) {
 
 const kindCounts = computed(() => new Map(overview.value?.kinds ?? []));
 
+/** Whether the breach check is on, for the health panel to offer it. */
+const breachCheck = ref(false);
+async function loadBreachSetting() {
+  try {
+    breachCheck.value = (await props.api.getSettings()).breach_check;
+  } catch {
+    breachCheck.value = false;
+  }
+}
+onMounted(loadBreachSetting);
+const healthFlag = computed(() => (filter.value.by === 'health' ? filter.value.flag ?? null : null));
+
 const editing = ref<{ item: ItemView | null; kind: ItemKind } | null>(null);
 const showNewMenu = ref(false);
 
@@ -187,6 +200,11 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
           </button>
         </div>
 
+        <button :class="[navButton, filter.by === 'health' ? navActive : navIdle]" @click="filter = { by: 'health', flag: null }">
+          <HeartPulse class="w-4 h-4" /><span class="flex-1">{{ t('safe.health.title') }}</span>
+          <span class="text-xs tabular-nums" :class="overview?.unhealthy ? 'text-warning' : 'text-text-tertiary dark:text-text-tertiary-dark'">{{ overview?.unhealthy || '' }}</span>
+        </button>
+
         <button :class="[navButton, isFilter({ by: 'trash' }) ? navActive : navIdle]" @click="filter = { by: 'trash' }">
           <Trash2 class="w-4 h-4" /><span class="flex-1">{{ t('safe.sidebar.trash') }}</span>
           <span class="text-xs tabular-nums text-text-tertiary dark:text-text-tertiary-dark">{{ overview?.trash || '' }}</span>
@@ -224,6 +242,16 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
         </div>
       </div>
 
+      <HealthPanel
+        v-if="filter.by === 'health'"
+        :api="api"
+        :overview="overview"
+        :flag="healthFlag"
+        :breach-check="breachCheck"
+        @flag="(f) => (filter = { by: 'health', flag: f })"
+        @checked="refreshAll"
+      />
+
       <div v-if="overview?.unreadable.length" class="m-2 p-2.5 rounded-lg bg-warning/10 text-xs flex gap-2">
         <AlertTriangle class="w-4 h-4 flex-shrink-0 text-warning" />
         <span>{{ t('safe.sidebar.unreadable', { n: overview.unreadable.length }) }}</span>
@@ -248,6 +276,7 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
             <p class="text-sm font-medium truncate">{{ s.title }}</p>
             <p class="text-xs text-text-secondary dark:text-text-secondary-dark truncate">{{ s.subtitle }}</p>
           </div>
+          <ShieldAlert v-if="s.health.length" class="w-3.5 h-3.5 text-warning flex-shrink-0" :aria-label="s.health.map((f) => t(`safe.health.flag.${f}`)).join(', ')" />
           <Star v-if="s.favorite" class="w-3.5 h-3.5 fill-warning text-warning flex-shrink-0" />
         </li>
         <li v-if="!items.length" class="px-3 py-10 text-center text-sm text-text-tertiary dark:text-text-tertiary-dark">
@@ -274,7 +303,7 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
     </main>
 
     <ItemEditor v-if="editing" :api="api" :item="editing.item" :kind="editing.kind" @saved="saved" @close="editing = null" />
-    <SafeSettings v-if="showSettings" :api="api" @close="showSettings = false" @changed="load" />
+    <SafeSettings v-if="showSettings" :api="api" @close="showSettings = false; loadBreachSetting()" @changed="load" />
   </div>
 </template>
 

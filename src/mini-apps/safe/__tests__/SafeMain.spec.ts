@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}), e
 
 const item = {
   id: 'abc', kind: 'login', title: 'Bank', fields: [], urls: [], tags: [], favorite: false, notes: '', links: [],
-  totp: null, ai_level: 'hidden', handle: null, ai_destinations: [], expires_at: null, created_at: 1, updated_at: 1, history_count: 0, trashed_at: null,
+  totp: null, ai_level: 'hidden', handle: null, ai_destinations: [], health: [], expires_at: null, created_at: 1, updated_at: 1, history_count: 0, trashed_at: null,
 };
 
 function fakeApi() {
@@ -22,7 +22,8 @@ function fakeApi() {
     // function there is taken for something it is not.
     get: (_, name) => typeof name !== 'string' || name.startsWith('__') || name === 'then' ? undefined : async (...args: unknown[]) => {
       calls.push([name, args]);
-      if (name === 'overview') return { all: 1, favorites: 0, trash: 0, kinds: [], tags: [], unreadable: [] };
+      if (name === 'overview') return { all: 1, favorites: 0, trash: 0, kinds: [], tags: [], unreadable: [], unhealthy: 0, health: [], breach_checked_at: null };
+      if (name === 'getSettings') return { auto_lock_secs: 600, clipboard_clear_secs: 30, breach_check: false };
       if (name === 'list') return [];
       if (name === 'get') return item;
       return undefined;
