@@ -40,6 +40,7 @@ pub mod egress;
 pub mod exchange;
 pub mod format;
 pub mod generator;
+pub mod kdbx;
 pub mod guard;
 pub mod health;
 pub mod item;

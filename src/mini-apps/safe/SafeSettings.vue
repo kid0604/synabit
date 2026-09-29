@@ -125,14 +125,16 @@ const importPath = ref('');
 const importPassword = ref('');
 const importing = ref(false);
 const imported = ref<{ imported: number; warnings: string[]; source_was_plaintext: boolean } | null>(null);
-const needsExportPassword = computed(() => importPath.value.toLowerCase().endsWith('.safe-export'));
+const isKdbx = computed(() => importPath.value.toLowerCase().endsWith('.kdbx'));
+const importPasswordLabel = computed(() => t(isKdbx.value ? 'safe.exchange.kdbx_password' : 'safe.exchange.export_password'));
+const needsExportPassword = computed(() => isKdbx.value || importPath.value.toLowerCase().endsWith('.safe-export'));
 
 async function chooseImport() {
   error.value = '';
   imported.value = null;
   const picked = await openFile({
     multiple: false,
-    filters: [{ name: t('safe.exchange.exports'), extensions: ['1pux', 'json', 'xml', 'csv', 'safe-export'] }],
+    filters: [{ name: t('safe.exchange.exports'), extensions: ['1pux', 'json', 'kdbx', 'xml', 'csv', 'safe-export'] }],
   });
   if (typeof picked !== 'string') return;
   importPath.value = picked;
@@ -310,7 +312,7 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
         <h3 class="text-sm font-semibold">{{ t('safe.exchange.import') }}</h3>
         <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.exchange.import_body') }}</p>
         <form v-if="needsExportPassword" class="flex gap-2" @submit.prevent="runImport">
-          <input v-model="importPassword" type="password" :placeholder="t('safe.exchange.export_password')" :aria-label="t('safe.exchange.export_password')" autocomplete="off" :class="input" />
+          <input v-model="importPassword" type="password" :placeholder="importPasswordLabel" :aria-label="importPasswordLabel" autocomplete="off" :class="input" />
           <button type="submit" :disabled="!importPassword || importing" class="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-40">{{ t('safe.exchange.import_go') }}</button>
         </form>
         <button v-else :disabled="importing" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm disabled:opacity-40" @click="chooseImport">

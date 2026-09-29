@@ -58,6 +58,8 @@ pub enum SafeError {
     NeedsExportPassword,
     #[error("the export password is wrong, or the file was altered")]
     WrongExportPassword,
+    #[error("the KeePass database's password is wrong, or it also needs a key file")]
+    WrongKdbxPassword,
     #[error("the master password needs at least {} characters", super::keyset::MIN_PASSWORD_CHARS)]
     PasswordTooShort,
     #[error("no such item")]
@@ -94,6 +96,7 @@ impl SafeError {
             SafeError::EncryptedBitwarden => "encrypted_bitwarden",
             SafeError::NeedsExportPassword => "needs_export_password",
             SafeError::WrongExportPassword => "wrong_export_password",
+            SafeError::WrongKdbxPassword => "wrong_kdbx_password",
             SafeError::PasswordTooShort => "password_too_short",
             SafeError::NotFound => "not_found",
             SafeError::Item(ItemError::NoTitle) => "no_title",

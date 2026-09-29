@@ -10,6 +10,7 @@
 //! | --- | --- | --- |
 //! | 1Password | `.1pux` | a zip with `export.data`; sections, one-time codes, archived items tagged |
 //! | Bitwarden | `.json` | unencrypted export only — the password-protected one is refused with a reason |
+//! | KeePass, KeePassXC | `.kdbx` | format 4, with the database's password; opened in memory, then read as the XML below |
 //! | KeePass, KeePassXC | `.xml` | groups become tags; entries' own history and the recycle bin are skipped |
 //! | Chrome, Edge, Firefox, Safari, Bitwarden, anything | `.csv` | columns recognised by name |
 //! | Safe | `.safe-export` | everything, history included; needs the export's own password |
@@ -39,6 +40,7 @@ pub enum Format {
     OnePux,
     BitwardenJson,
     KeePassXml,
+    Kdbx,
     Csv,
     SafeExport,
 }
@@ -51,6 +53,10 @@ pub enum ExchangeError {
     EncryptedBitwarden,
     #[error("the export password is wrong, or the file was altered")]
     WrongExportPassword,
+    #[error("the database's password is wrong, or it also needs a key file, which Safe cannot open yet")]
+    WrongKdbxPassword,
+    #[error("Safe cannot open this database: {0}")]
+    Unsupported(String),
     #[error("the file is damaged: {0}")]
     Damaged(String),
     #[error(transparent)]
@@ -68,6 +74,9 @@ pub fn detect(file_name: &str, bytes: &[u8]) -> Option<Format> {
     let lower = file_name.to_ascii_lowercase();
     if bytes.starts_with(EXPORT_MAGIC) {
         return Some(Format::SafeExport);
+    }
+    if bytes.starts_with(&super::kdbx::SIGNATURE) || lower.ends_with(".kdbx") {
+        return Some(Format::Kdbx);
     }
     if lower.ends_with(".1pux") || (bytes.starts_with(b"PK") && lower.ends_with(".zip")) {
         return Some(Format::OnePux);
@@ -89,6 +98,14 @@ pub fn parse(format: Format, bytes: &[u8], password: Option<&str>, now: i64) -> 
         Format::OnePux => onepux(bytes, now),
         Format::BitwardenJson => bitwarden(bytes, now),
         Format::KeePassXml => keepass(bytes, now),
+        Format::Kdbx => {
+            let (xml, attachments) = super::kdbx::open(bytes, password.unwrap_or(""))?;
+            let mut parsed = keepass(xml.as_bytes(), now)?;
+            if attachments > 0 {
+                parsed.warnings.push(format!("{attachments} attachment(s) were not imported: Safe does not hold files yet"));
+            }
+            Ok(parsed)
+        }
         Format::Csv => csv(bytes, now),
         Format::SafeExport => {
             let items = open_export(bytes, password.unwrap_or(""))?;
@@ -709,6 +726,33 @@ mod tests {
         assert!(p.items[1].tags.contains(&"archived".to_string()));
     }
 
+    /// A database KeePass's format written by pykeepass, not by this code:
+    /// groups, a protected custom field, history, TOTP, the recycle bin.
+    #[test]
+    fn a_real_kdbx_imports_like_its_xml_would() {
+        let db = include_bytes!("testdata/kdbx/chacha-argon2id.kdbx");
+        assert_eq!(detect("Passwords.kdbx", db), Some(Format::Kdbx));
+        assert_eq!(detect("renamed.bin", db), Some(Format::Kdbx), "by its signature too");
+        let p = parse(Format::Kdbx, db, Some("correct horse"), 1).unwrap();
+        let titles: Vec<&str> = p.items.iter().map(|i| i.title.as_str()).collect();
+        assert!(!titles.contains(&"Deleted"), "the recycle bin was imported: {titles:?}");
+        let gh = p.items.iter().find(|i| i.title == "GitHub").unwrap();
+        assert_eq!(gh.tags, vec!["Work".to_string()]);
+        assert_eq!(value(gh, FieldKind::Password), "kdbx-canary-3", "the current password, not the one in history");
+        assert_eq!(value(gh, FieldKind::Concealed), "kdbx-canary-2");
+        assert!(gh.fields.iter().any(|f| f.label == "Region" && f.kind == FieldKind::Text && f.value.expose() == "ap-southeast-1"));
+        assert!(gh.totp.is_some());
+        assert_eq!(gh.notes.expose(), "line one\nline two");
+        let db_prod = p.items.iter().find(|i| i.title == "db-prod").unwrap();
+        assert_eq!(db_prod.tags, vec!["Work".to_string(), "Servers".to_string()]);
+        let wifi = p.items.iter().find(|i| i.title == "Wi-Fi nhà").unwrap();
+        assert_eq!(value(wifi, FieldKind::Password), "mật-khẩu-ünïcode");
+        assert!(!p.items.iter().flat_map(|i| &i.fields).any(|f| f.value.expose() == "kdbx-canary-1"), "history was imported");
+        assert!(p.warnings.iter().all(|w| !w.contains("kdbx-canary")), "a warning carried a value");
+
+        assert!(matches!(parse(Format::Kdbx, db, Some("nope"), 1), Err(ExchangeError::WrongKdbxPassword)));
+    }
+
     #[test]
     fn keepass_groups_become_tags_and_history_and_recycle_bin_are_skipped() {
         let xml = r#"<?xml version="1.0" encoding="utf-8"?>
@@ -803,7 +847,7 @@ mod tests {
 
     #[test]
     fn junk_never_panics() {
-        for format in [Format::OnePux, Format::BitwardenJson, Format::KeePassXml, Format::Csv, Format::SafeExport] {
+        for format in [Format::OnePux, Format::BitwardenJson, Format::KeePassXml, Format::Kdbx, Format::Csv, Format::SafeExport] {
             for bytes in [&b""[..], b"{", b"<KeePassFile><Root><Group>", b"PK\x03\x04garbage", b"\"unterminated", b"SFX1"] {
                 let _ = parse(format, bytes, Some("pw"), 1);
             }

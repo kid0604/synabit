@@ -2685,7 +2685,8 @@
       "handle_taken": "Another item already has that name.",
       "no_destination": "Choose at least one connector Syn may send it to.",
       "request_gone": "That request is no longer open. Ask Syn again.",
-      "breach_check_off": "Breach checking is off. Turn it on in Safe settings first."
+      "breach_check_off": "Breach checking is off. Turn it on in Safe settings first.",
+      "wrong_kdbx_password": "The KeePass database's password is wrong, or it also needs a key file — Safe cannot open key files yet; export it as KeePass XML instead."
     },
     "sidebar": {
       "all": "All items",
@@ -2843,7 +2844,7 @@
     "exchange": {
       "exports": "Exports",
       "import": "Import",
-      "import_body": "From 1Password (.1pux), Bitwarden (.json), KeePass (.xml), a browser or any CSV, or a Safe export.",
+      "import_body": "From 1Password (.1pux), Bitwarden (.json), KeePass (.kdbx or .xml), a browser or any CSV, or a Safe export.",
       "choose": "Choose a file…",
       "importing": "Importing…",
       "import_go": "Import",
@@ -2860,7 +2861,8 @@
       "plain_phrase": "EXPORT",
       "plain_type": "Type {phrase} to confirm",
       "plain_go": "Export plain CSV…",
-      "exported_plain": "{n} item(s) written as plain text. Delete the file once you have imported it."
+      "exported_plain": "{n} item(s) written as plain text. Delete the file once you have imported it.",
+      "kdbx_password": "KeePass database password"
     },
     "quick": {
       "hint": "Enter: password · Shift+Enter: username · Alt+Enter: one-time code · Cmd/Ctrl+Enter: open website · Esc: close",

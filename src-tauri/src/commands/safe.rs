@@ -556,17 +556,18 @@ pub async fn safe_import(
         let bytes = zeroize::Zeroizing::new(std::fs::read(file).map_err(|e| SafeError::Failed(format!("could not read the file: {e}")))?);
         let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let format = exchange::detect(&name, &bytes).ok_or(SafeError::ImportUnknown)?;
-        if format == Format::SafeExport && password.is_empty() {
+        if matches!(format, Format::SafeExport | Format::Kdbx) && password.is_empty() {
             return Err(SafeError::NeedsExportPassword);
         }
         let parsed = exchange::parse(format, &bytes, Some(&password), now()).map_err(|e| match e {
             ExchangeError::Unknown => SafeError::ImportUnknown,
             ExchangeError::EncryptedBitwarden => SafeError::EncryptedBitwarden,
             ExchangeError::WrongExportPassword => SafeError::WrongExportPassword,
+            ExchangeError::WrongKdbxPassword => SafeError::WrongKdbxPassword,
             other => SafeError::Failed(other.to_string()),
         })?;
         let imported = crate::safe::session::global().with(&vault, |s| s.import(parsed.items))?;
-        Ok(Imported { format, imported, warnings: parsed.warnings, source_was_plaintext: format != Format::SafeExport })
+        Ok(Imported { format, imported, warnings: parsed.warnings, source_was_plaintext: !matches!(format, Format::SafeExport | Format::Kdbx) })
     })
     .await
 }

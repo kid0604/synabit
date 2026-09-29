@@ -7466,6 +7466,7 @@ dependencies = [
 name = "synabit"
 version = "0.9.16"
 dependencies = [
+ "aes 0.8.4",
  "ammonia",
  "arboard",
  "argon2",
@@ -7474,6 +7475,7 @@ dependencies = [
  "bip39",
  "blake3",
  "calamine",
+ "chacha20 0.9.1",
  "chacha20poly1305",
  "chrono",
  "chrono-tz",
@@ -7481,6 +7483,7 @@ dependencies = [
  "dotenvy",
  "ed25519-dalek",
  "feed-rs",
+ "flate2",
  "futures",
  "gray_matter",
  "hex",

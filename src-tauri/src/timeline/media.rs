@@ -1104,9 +1104,11 @@ mod tests {
     }
 
     /// The Rust crates that reach the Android build, as of the last size review.
+    /// `aes`, `chacha20` and `flate2` were already there, at the same versions
+    /// and features, through aes-gcm, chacha20poly1305 and zip (2026-09-29).
     const REVIEWED_CRATES: &[&str] = &[
-        "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20poly1305", "chrono", "chrono-tz",
-        "ctor", "feed-rs", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
+        "aes", "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20", "chacha20poly1305", "chrono", "chrono-tz",
+        "ctor", "feed-rs", "flate2", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
         "iroh", "jni", "keyring", "libc", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
         "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rusqlite", "rustls", "scraper",
         "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "synabit_protocol", "tauri",

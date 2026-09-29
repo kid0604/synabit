@@ -89,6 +89,11 @@ tauri-plugin-process = "2"
 # Reading KeePass XML exports into Safe. Already in the build, Android
 # included, through `feed-rs`; naming it adds no bytes.
 quick-xml = "0.37"
+# Opening KeePass databases (.kdbx 4) into Safe: AES-256-CBC or ChaCha20,
+# and gzip. All three already in the build at these versions.
+aes = "0.8"
+chacha20 = "0.9"
+flate2 = "1"
 lz4_flex = "0.13.1"
 chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"

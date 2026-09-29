@@ -2685,7 +2685,8 @@
       "handle_taken": "Đã có mục khác dùng tên này.",
       "no_destination": "Hãy chọn ít nhất một connector Syn được gửi tới.",
       "request_gone": "Yêu cầu này đã hết hạn. Hãy nhờ Syn hỏi lại.",
-      "breach_check_off": "Kiểm tra lộ lọt đang tắt. Hãy bật trong cài đặt Safe trước."
+      "breach_check_off": "Kiểm tra lộ lọt đang tắt. Hãy bật trong cài đặt Safe trước.",
+      "wrong_kdbx_password": "Sai mật khẩu của database KeePass, hoặc database cần thêm key file — Safe chưa mở được key file; hãy xuất ra KeePass XML."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2843,7 +2844,7 @@
     "exchange": {
       "exports": "File xuất",
       "import": "Nhập dữ liệu",
-      "import_body": "Từ 1Password (.1pux), Bitwarden (.json), KeePass (.xml), trình duyệt hoặc CSV bất kỳ, hoặc file xuất của Safe.",
+      "import_body": "Từ 1Password (.1pux), Bitwarden (.json), KeePass (.kdbx hoặc .xml), trình duyệt hoặc CSV bất kỳ, hoặc file xuất của Safe.",
       "choose": "Chọn file…",
       "importing": "Đang nhập…",
       "import_go": "Nhập",
@@ -2860,7 +2861,8 @@
       "plain_phrase": "XUẤT",
       "plain_type": "Gõ {phrase} để xác nhận",
       "plain_go": "Xuất CSV không mã hoá…",
-      "exported_plain": "Đã ghi {n} mục dạng văn bản thường. Hãy xoá file sau khi nhập xong."
+      "exported_plain": "Đã ghi {n} mục dạng văn bản thường. Hãy xoá file sau khi nhập xong.",
+      "kdbx_password": "Mật khẩu database KeePass"
     },
     "quick": {
       "hint": "Enter: mật khẩu · Shift+Enter: tên đăng nhập · Alt+Enter: mã một lần · Cmd/Ctrl+Enter: mở website · Esc: đóng",
