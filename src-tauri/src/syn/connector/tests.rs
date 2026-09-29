@@ -279,7 +279,7 @@ mod secrets {
 
     fn with_safe<'a>(
         ledger: &'a Ledger,
-        safe: &'a dyn Fn(&str, &str) -> Result<(String, String), String>,
+        safe: &'a crate::syn::gate::SafeCheck<'a>,
         until_done: &'a dyn Fn(&Capability) -> bool,
     ) -> gate::View<'a> {
         gate::View { safe, ..view(ledger, until_done) }

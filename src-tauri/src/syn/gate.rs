@@ -71,8 +71,12 @@ pub struct View<'a> {
     /// Whether the Safe item `handle` may go to the server behind `tool`:
     /// `Ok(destination)` as a consent scope names it, or the sentence to tell
     /// the model. See `safe::bridge::may_send`.
-    pub safe: &'a dyn Fn(&str, &str) -> Result<(String, String), String>,
+    pub safe: &'a SafeCheck<'a>,
 }
+
+/// `(tool, handle)` → the destination as a consent scope names it and the
+/// server's name, or the sentence to tell the model.
+pub type SafeCheck<'a> = dyn Fn(&str, &str) -> Result<(String, String), String> + 'a;
 
 /// What to do with the call.
 #[derive(Debug)]
