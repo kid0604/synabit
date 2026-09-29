@@ -745,6 +745,14 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "safe_health".to_string(),
+                description: "How healthy the user's saved passwords are: how many are weak, reused, old, breached or about to expire — counts only, plus the names of flagged items you may already know of. Use it when they ask about their passwords' safety, or to suggest changing some; never for values.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "safe_request".to_string(),
                 description: "Ask the user to add a secret to their Safe — an API key or token a connector needs — without it passing through you. A card appears where they type it; you are told only the name it will have. It exists only once they save it, and they may not. Use this instead of ever asking for a secret in chat.".to_string(),
                 parameters: serde_json::json!({
@@ -1446,6 +1454,10 @@ pub fn execute_tool<R: tauri::Runtime>(
         "trash_node" => over_each(ctx, args, tool_trash_node),
         "list_trash" => tool_list_trash(ctx),
         "safe_list" => tool_safe_list(ctx),
+        "safe_health" => Ok(match crate::safe::bridge::health(ctx.vault_path) {
+            Ok(v) => v.to_string(),
+            Err(said) => serde_json::json!({ "error": said }).to_string(),
+        }),
         "safe_request" => tool_safe_request(ctx, args),
         "restore_node" => tool_restore_node(ctx, args),
         "list_versions" => tool_list_versions(ctx, args),
@@ -5964,7 +5976,7 @@ mod tests {
         // vault's index, and its values are not Syn's to read at all. These
         // give Syn names and a way to ask; they cost nothing on a turn that
         // does not mention a secret, being the `safe` group's.
-        let safe = ["safe_list", "safe_request"];
+        let safe = ["safe_list", "safe_health", "safe_request"];
         for tool in safe {
             assert!(names.contains(&tool), "{tool} is missing");
         }

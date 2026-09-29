@@ -708,6 +708,71 @@ pub fn safe_request_submit(
     })
 }
 
+// ─── health ──────────────────────────────────────────────
+
+#[derive(Serialize)]
+pub struct BreachReport {
+    checked: usize,
+    breached: usize,
+    /// Ranges that could not be fetched; those passwords were not checked.
+    failed: usize,
+}
+
+/// Check every password against Have I Been Pwned, by k-anonymity: five hex
+/// characters of each SHA-1 leave this machine, never a password or a whole
+/// hash, and each five only once however many passwords share them. See
+/// `safe::health::breach`. Only when the user turned it on.
+#[tauri::command]
+pub async fn safe_check_breaches(webview: tauri::Webview, vault_path: String) -> AppResult<BreachReport> {
+    use crate::safe::health::breach;
+    use std::collections::{BTreeMap, HashSet};
+    gate(&webview)?;
+    let queries = with(&vault_path, |s| {
+        if !s.settings().breach_check {
+            return Err(SafeError::BreachCheckOff);
+        }
+        s.breach_queries()
+    })?;
+    let mut by_prefix: BTreeMap<String, Vec<(crate::safe::store::ItemId, String)>> = BTreeMap::new();
+    for (id, prefix, suffix) in queries {
+        by_prefix.entry(prefix).or_default().push((id, suffix));
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .user_agent("Synabit-Safe")
+        .build()
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let (mut breached, mut failed, mut checked) = (HashSet::new(), 0, 0);
+    for (prefix, entries) in &by_prefix {
+        let answer = client
+            .get(format!("{}{prefix}", breach::RANGE_URL))
+            .header("Add-Padding", "true")
+            .send()
+            .await
+            .and_then(|r| r.error_for_status());
+        let body = match answer {
+            Ok(r) => r.text().await.ok(),
+            Err(_) => None,
+        };
+        let Some(body) = body else {
+            failed += entries.len();
+            continue;
+        };
+        for (id, suffix) in entries {
+            checked += 1;
+            if breach::seen_in(&body, suffix).is_some() {
+                breached.insert(*id);
+            }
+        }
+    }
+    let found = breached.len();
+    with(&vault_path, |s| {
+        s.set_breached(breached, now());
+        Ok(())
+    })?;
+    Ok(BreachReport { checked, breached: found, failed })
+}
+
 // ─── this device ─────────────────────────────────────────
 
 /// The secrets this device's keychain holds beside the Safe — names only.
@@ -773,12 +838,12 @@ pub fn safe_generate(webview: tauri::Webview, recipe: Option<Recipe>) -> AppResu
     Ok(Generated { value, bits: generator::recipe_bits(&recipe) })
 }
 
-/// A pessimistic guess at a typed password's strength, in bits.
+/// How hard a typed password is to guess: zxcvbn's 0–4 score and bits.
 #[tauri::command]
-pub fn safe_estimate(webview: tauri::Webview, password: String) -> AppResult<f64> {
+pub fn safe_estimate(webview: tauri::Webview, password: String) -> AppResult<crate::safe::health::Strength> {
     gate(&webview)?;
     let password = zeroize::Zeroizing::new(password);
-    Ok(generator::estimate_bits(&password))
+    Ok(crate::safe::health::strength(&password, &[]))
 }
 
 #[tauri::command]

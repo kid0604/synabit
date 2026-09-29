@@ -263,6 +263,7 @@ impl ItemBody {
             trashed: self.trashed_at.is_some(),
             updated_at: self.updated_at,
             ai_level: self.ai.level,
+            health: Vec::new(),
         }
     }
 
@@ -296,6 +297,7 @@ impl ItemBody {
             ai_level: self.ai.level,
             handle: self.handle.clone(),
             ai_destinations: self.ai.destinations.clone(),
+            health: Vec::new(),
             expires_at: self.expires_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -500,6 +502,10 @@ pub struct ItemSummary {
     pub trashed: bool,
     pub updated_at: i64,
     pub ai_level: AiLevel,
+    /// What the health check found. Filled in by the session, which sees
+    /// every item; empty from `ItemBody::summary`, which sees one.
+    #[serde(default)]
+    pub health: Vec<super::health::Flag>,
 }
 
 impl ItemSummary {
@@ -543,6 +549,8 @@ pub struct ItemView {
     pub handle: Option<String>,
     /// Where Syn may send it — `connector:<id>` — when it may use it.
     pub ai_destinations: Vec<String>,
+    /// Filled in by the session, which sees every item.
+    pub health: Vec<super::health::Flag>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,

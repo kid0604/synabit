@@ -957,6 +957,7 @@ pub fn run() {
             commands::safe::safe_import,
             commands::safe::safe_device_secrets,
             commands::safe::safe_set_ai,
+            commands::safe::safe_check_breaches,
             commands::safe::safe_destinations,
             commands::safe::safe_request_submit,
             commands::safe::safe_forget_device_secret,

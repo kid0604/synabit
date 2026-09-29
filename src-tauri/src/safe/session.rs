@@ -8,7 +8,7 @@
 //! Every call names the vault it is about. A Safe opened for one vault is not
 //! open for another: switching vaults with a Safe open finds it locked.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -48,6 +48,8 @@ pub enum SafeError {
     NoDestination,
     #[error("that request is no longer open; ask Syn again")]
     RequestGone,
+    #[error("checking for breaches is turned off in Safe's settings")]
+    BreachCheckOff,
     #[error("this file is not an export Safe knows how to read")]
     ImportUnknown,
     #[error("this is a password-protected Bitwarden export; export it again without a password")]
@@ -87,6 +89,7 @@ impl SafeError {
             SafeError::HandleTaken => "handle_taken",
             SafeError::NoDestination => "no_destination",
             SafeError::RequestGone => "request_gone",
+            SafeError::BreachCheckOff => "breach_check_off",
             SafeError::ImportUnknown => "import_unknown",
             SafeError::EncryptedBitwarden => "encrypted_bitwarden",
             SafeError::NeedsExportPassword => "needs_export_password",
@@ -142,6 +145,11 @@ pub struct Settings {
     /// there. 0 is never.
     #[serde(default = "default_clipboard_clear")]
     pub clipboard_clear_secs: u64,
+    /// Whether passwords may be checked against Have I Been Pwned. Off until
+    /// the user turns it on: Synabit does not reach the network unasked, even
+    /// with five characters of a hash.
+    #[serde(default)]
+    pub breach_check: bool,
 }
 
 fn default_auto_lock() -> u64 {
@@ -156,7 +164,7 @@ pub const MAX_AUTO_LOCK_SECS: u64 = 8 * 60 * 60;
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { auto_lock_secs: default_auto_lock(), clipboard_clear_secs: default_clipboard_clear() }
+        Settings { auto_lock_secs: default_auto_lock(), clipboard_clear_secs: default_clipboard_clear(), breach_check: false }
     }
 }
 
@@ -182,6 +190,7 @@ impl Settings {
         Settings {
             auto_lock_secs: self.auto_lock_secs.clamp(60, MAX_AUTO_LOCK_SECS),
             clipboard_clear_secs: self.clipboard_clear_secs.min(600),
+            breach_check: self.breach_check,
         }
     }
 }
@@ -232,6 +241,15 @@ pub struct Unlocked {
     settings: Settings,
     /// Fingerprints of every concealed value, for the leak guard.
     prints: super::guard::Fingerprints,
+    /// Each live item judged on its own; see `health::Assessed`.
+    assessed: HashMap<ItemId, super::health::Assessed>,
+    /// What the last breach check found, this session.
+    breached: HashSet<ItemId>,
+    breach_checked_at: Option<i64>,
+    /// Every item's health flags, from the two above.
+    health: HashMap<ItemId, Vec<super::health::Flag>>,
+    /// For the reuse check's fingerprints; new every session.
+    health_key: [u8; 32],
 }
 
 /// What the list can be narrowed to.
@@ -248,6 +266,11 @@ pub enum Filter {
         tag: String,
     },
     Trash,
+    /// Items the health check flagged; with `flag`, only that one.
+    Health {
+        #[serde(default)]
+        flag: Option<super::health::Flag>,
+    },
 }
 
 /// The counts beside each entry of the sidebar.
@@ -260,6 +283,10 @@ pub struct Overview {
     pub tags: Vec<(String, usize)>,
     /// Files that did not open. Shown, never acted on.
     pub unreadable: Vec<Unreadable>,
+    /// Items with any health flag, and how many carry each.
+    pub unhealthy: usize,
+    pub health: Vec<(super::health::Flag, usize)>,
+    pub breach_checked_at: Option<i64>,
 }
 
 fn parse_id(id: &str) -> Result<ItemId, SafeError> {
@@ -279,6 +306,11 @@ impl Unlocked {
             last_used: Instant::now(),
             settings: Settings::load(vault),
             prints: super::guard::Fingerprints::default(),
+            assessed: HashMap::new(),
+            breached: HashSet::new(),
+            breach_checked_at: None,
+            health: HashMap::new(),
+            health_key: super::crypto::random_bytes().map_err(|e| SafeError::Failed(e.to_string()))?,
         };
         unlocked.reload()?;
         Ok(unlocked)
@@ -295,17 +327,24 @@ impl Unlocked {
         }
         let (loaded, unreadable) = store::load_all(&self.vault, &self.keyset, &self.safe_key)?;
         let mut prints = super::guard::Fingerprints::new(&self.safe_key, std::iter::empty());
+        let now = chrono::Utc::now().timestamp();
+        let mut assessed = HashMap::new();
         self.entries = loaded
             .into_iter()
             .map(|item| {
                 super::sync::saw_item(&self.vault, &item.id, item.revision);
                 if let Some(b) = item.body.as_ref() {
                     fingerprint(&mut prints, b);
+                    if let Some(a) = super::health::assess_one(b, now, &self.health_key) {
+                        assessed.insert(item.id, a);
+                    }
                 }
                 (item.id, Entry::of(item.revision, &item.id, item.body.as_ref()))
             })
             .collect();
         self.prints = prints;
+        self.assessed = assessed;
+        self.rejudge();
         self.unreadable = unreadable;
         self.resolve_conflicts();
         Ok(())
@@ -391,9 +430,14 @@ impl Unlocked {
         self.entries.values().filter_map(|e| e.summary.as_ref())
     }
 
+    fn flags_of(&self, s: &ItemSummary) -> Vec<super::health::Flag> {
+        parse_id(&s.id).ok().and_then(|id| self.health.get(&id).cloned()).unwrap_or_default()
+    }
+
     pub fn list(&self, filter: &Filter, query: &str) -> Vec<ItemSummary> {
         let mut out: Vec<ItemSummary> = self
             .live()
+            .map(|s| ItemSummary { health: self.flags_of(s), ..s.clone() })
             .filter(|s| match filter {
                 Filter::Trash => s.trashed,
                 _ if s.trashed => false,
@@ -401,16 +445,29 @@ impl Unlocked {
                 Filter::Favorites => s.favorite,
                 Filter::Kind { kind } => s.kind == *kind,
                 Filter::Tag { tag } => s.tags.iter().any(|t| t.eq_ignore_ascii_case(tag)),
+                Filter::Health { flag: None } => !s.health.is_empty(),
+                Filter::Health { flag: Some(f) } => s.health.contains(f),
             })
             .filter(|s| query.trim().is_empty() || s.matches(query))
-            .cloned()
             .collect();
         out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
         out
     }
 
     pub fn overview(&self) -> Overview {
-        let mut o = Overview { unreadable: self.unreadable.clone(), ..Default::default() };
+        let mut o = Overview {
+            unreadable: self.unreadable.clone(),
+            breach_checked_at: self.breach_checked_at,
+            ..Default::default()
+        };
+        let mut by_flag: std::collections::BTreeMap<super::health::Flag, usize> = Default::default();
+        for flags in self.health.values().filter(|f| !f.is_empty()) {
+            o.unhealthy += 1;
+            for f in flags {
+                *by_flag.entry(*f).or_default() += 1;
+            }
+        }
+        o.health = by_flag.into_iter().collect();
         let mut kinds: HashMap<ItemKind, usize> = HashMap::new();
         let mut tags: HashMap<String, (String, usize)> = HashMap::new();
         for s in self.live() {
@@ -446,7 +503,61 @@ impl Unlocked {
         super::sync::saw_item(&self.vault, &id, revision);
         fingerprint(&mut self.prints, body);
         self.entries.insert(id, Entry::of(revision, &id, Some(body)));
+        match super::health::assess_one(body, chrono::Utc::now().timestamp(), &self.health_key) {
+            Some(a) => self.assessed.insert(id, a),
+            None => self.assessed.remove(&id),
+        };
+        self.rejudge();
         Ok(())
+    }
+
+    fn rejudge(&mut self) {
+        self.health = super::health::combine(&self.assessed, &self.breached);
+    }
+
+    /// Every live item's passwords as the breach check sends them — five hex
+    /// characters of SHA-1 — and the rest it matches against, by item.
+    pub fn breach_queries(&self) -> Result<Vec<(ItemId, String, String)>, SafeError> {
+        let mut out = Vec::new();
+        for id in self.assessed.keys() {
+            let body = self.body(id)?;
+            for f in body.fields.iter().filter(|f| f.kind == super::item::FieldKind::Password && !f.value.is_empty()) {
+                let (prefix, suffix) = super::health::breach::split(f.value.expose());
+                out.push((*id, prefix, suffix));
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn set_breached(&mut self, breached: HashSet<ItemId>, at: i64) {
+        self.breached = breached;
+        self.breach_checked_at = Some(at);
+        self.rejudge();
+    }
+
+    pub fn breach_checked_at(&self) -> Option<i64> {
+        self.breach_checked_at
+    }
+
+    /// Counts per flag, for Syn: numbers only, and the names of items Syn may
+    /// already know of.
+    pub fn health_for_syn(&self) -> serde_json::Value {
+        let mut counts: std::collections::BTreeMap<super::health::Flag, usize> = Default::default();
+        for flags in self.health.values() {
+            for f in flags {
+                *counts.entry(*f).or_default() += 1;
+            }
+        }
+        let named: Vec<serde_json::Value> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.handle.is_some() && e.ai.level != super::item::AiLevel::Hidden && e.summary.as_ref().is_some_and(|s| !s.trashed))
+            .filter_map(|(id, e)| {
+                let flags = self.health.get(id).filter(|f| !f.is_empty())?;
+                Some(serde_json::json!({ "handle": e.handle, "flags": flags }))
+            })
+            .collect();
+        serde_json::json!({ "counts": counts, "items_you_may_know": named, "breach_checked": self.breach_checked_at.is_some() })
     }
 
     /// The leak guard's view of this Safe.
@@ -510,12 +621,14 @@ impl Unlocked {
         body.handle = handle;
         body.updated_at = now;
         self.write(id, &body)?;
-        Ok(body.view(&hex::encode(id)))
+        self.view(&hex::encode(id))
     }
 
     pub fn view(&self, id: &str) -> Result<ItemView, SafeError> {
         let id = parse_id(id)?;
-        Ok(self.body(&id)?.view(&hex::encode(id)))
+        let mut view = self.body(&id)?.view(&hex::encode(id));
+        view.health = self.health.get(&id).cloned().unwrap_or_default();
+        Ok(view)
     }
 
     /// One field's value. The only way a concealed value leaves this module.
@@ -553,7 +666,7 @@ impl Unlocked {
         let body = ItemBody::new_from(edit, now)?;
         let id = store::new_id()?;
         self.write(id, &body)?;
-        Ok(body.view(&hex::encode(id)))
+        self.view(&hex::encode(id))
     }
 
     pub fn update(&mut self, id: &str, edit: ItemEdit, now: i64) -> Result<ItemView, SafeError> {
@@ -561,7 +674,7 @@ impl Unlocked {
         let mut body = self.body(&id)?;
         body.apply(edit, now)?;
         self.write(id, &body)?;
-        Ok(body.view(&hex::encode(id)))
+        self.view(&hex::encode(id))
     }
 
     pub fn set_favorite(&mut self, id: &str, favorite: bool, now: i64) -> Result<(), SafeError> {
@@ -886,6 +999,34 @@ mod tests {
     }
 
     #[test]
+    fn health_is_kept_current_as_items_change() {
+        use crate::safe::health::Flag;
+        let dir = tempfile::tempdir().unwrap();
+        let mut safe = open_safe(dir.path());
+        let t = chrono::Utc::now().timestamp();
+        let a = safe.create(edit("A", "Vx7#qL9!mR2@tP5$wZ8&", &[]), t).unwrap();
+        let b = safe.create(edit("B", "Vx7#qL9!mR2@tP5$wZ8&", &[]), t).unwrap();
+        let reused = safe.list(&Filter::Health { flag: Some(Flag::Reused) }, "");
+        assert_eq!(reused.len(), 2);
+        assert_eq!(safe.overview().health.iter().find(|(f, _)| *f == Flag::Reused).map(|(_, n)| *n), Some(2));
+
+        // Change one: neither is reused any more.
+        let view = safe.view(&b.id).unwrap();
+        let mut e = edit("B", "Different-Str0ng#Pass!word", &[]);
+        e.fields[0].id = Some(view.fields[0].id.clone());
+        e.fields[1].id = Some(view.fields[1].id.clone());
+        safe.update(&b.id, e, t + 1).unwrap();
+        assert!(safe.list(&Filter::Health { flag: Some(Flag::Reused) }, "").is_empty());
+
+        // A weak one shows up, and trashing it takes it off the list.
+        let weak = safe.create(edit("C", "password1", &[]), t + 2).unwrap();
+        assert!(safe.list(&Filter::Health { flag: None }, "").iter().any(|s| s.id == weak.id && s.health.contains(&Flag::Weak)));
+        safe.set_trashed(&weak.id, true, t + 3).unwrap();
+        assert!(safe.list(&Filter::Health { flag: None }, "").is_empty(), "{:?}", safe.list(&Filter::Health { flag: None }, ""));
+        let _ = a;
+    }
+
+    #[test]
     fn a_long_gap_between_ticks_is_a_sleep() {
         use std::time::SystemTime;
         let tick = Duration::from_secs(10);
@@ -900,9 +1041,9 @@ mod tests {
     #[test]
     fn settings_are_clamped_and_kept_per_device() {
         let dir = tempfile::tempdir().unwrap();
-        Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999 }.save(dir.path()).unwrap();
+        Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999, breach_check: true }.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
-        assert_eq!(loaded, Settings { auto_lock_secs: 60, clipboard_clear_secs: 600 });
+        assert_eq!(loaded, Settings { auto_lock_secs: 60, clipboard_clear_secs: 600, breach_check: true });
         assert!(Settings::path(dir.path()).starts_with(dir.path().join(".synabit")), "a dotdir, so it does not sync");
     }
 }

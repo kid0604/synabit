@@ -124,6 +124,7 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     // Names only — never a value — and what Syn may know of is the user's
     // choice per item. Reading a page cannot make a name mean more.
     "safe_list",
+    "safe_health",
     // A card the user fills in, or does not. Nothing is sent and nothing is
     // written by the call itself; a page that asked for it gets a form the
     // user can see and dismiss.

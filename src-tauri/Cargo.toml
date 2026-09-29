@@ -118,6 +118,14 @@ rust_xlsxwriter = "0.99"
 # clipboard history to leave alone. Desktop only while Safe is: Android has its
 # own ClipboardManager and a flag of its own, reached through JNI in P2.
 arboard = { version = "3", default-features = false }
+# Safe's password health: zxcvbn estimates the guesses a password takes —
+# dictionaries, names, dates, keyboard walks, l33t — where our own estimate
+# only knows runs and character classes. Measured before it was added: about
+# 1.3 MB on a stripped, LTO, opt-level "s" arm64 binary. Desktop only, like
+# calamine, until it has been through the Android size review; a phone falls
+# back to `generator::estimate_bits`. No default features: the builder it
+# offers is not used.
+zxcvbn = { version = "3", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 # `mlock` for the page Safe keeps its keys in, and `setrlimit` to turn core

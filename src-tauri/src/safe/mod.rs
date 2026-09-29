@@ -37,6 +37,7 @@ pub mod exchange;
 pub mod format;
 pub mod generator;
 pub mod guard;
+pub mod health;
 pub mod item;
 pub mod keyset;
 pub mod memory;

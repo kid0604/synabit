@@ -139,7 +139,7 @@ pub fn group_of(tool: &str) -> Group {
         "list_trash" | "restore_node" | "list_versions" | "restore_version" => Group::History,
         "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => Group::Structure,
         "recall" | crate::syn::tools::LOOK_BACK_TOOL => Group::Past,
-        "safe_list" | "safe_request" => Group::Safe,
+        "safe_list" | "safe_health" | "safe_request" => Group::Safe,
         _ => Group::Core,
     }
 }

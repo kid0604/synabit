@@ -105,6 +105,15 @@ pub fn redact(text: &str) -> (String, usize) {
     })
 }
 
+/// How healthy the Safe is, for Syn: counts, and flags on the items Syn may
+/// already know of by name. Nothing about a hidden item but that it counts.
+pub fn health(vault: &str) -> Result<serde_json::Value, String> {
+    global().peek(Path::new(vault), |u| Ok(u.health_for_syn())).map_err(|e| match e {
+        SafeError::Locked => "The Safe is locked, so its health cannot be read. Say so.".into(),
+        other => other.to_string(),
+    })
+}
+
 /// The items Syn may know of, or why it cannot be told.
 pub fn list(vault: &str) -> Result<Vec<AiItem>, String> {
     global().peek(Path::new(vault), |u| Ok(u.ai_items())).map_err(|e| match e {

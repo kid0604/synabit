@@ -229,7 +229,7 @@ impl VaultTools {
     fn table(tool: &str, _args: &Value) -> Option<Capability> {
         use Capability::*;
         Some(match tool {
-            "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash" | "safe_list"
+            "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash" | "safe_list" | "safe_health"
             | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
             | "read_board" | "timeline" | "read_spreadsheet"
@@ -651,7 +651,7 @@ mod tests {
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
             "read_board", "draw_board", "edit_board", "capture", "timeline",
             "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
-            "safe_list", "safe_request",
+            "safe_list", "safe_health", "safe_request",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
