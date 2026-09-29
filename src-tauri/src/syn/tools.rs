@@ -737,6 +737,31 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "safe_list".to_string(),
+                description: "The user's Safe items you may know of: each by a short name (`handle`), with what it is and, if you may use it, which connectors it may be sent to. You never see a value. To send one, write `{{safe:<handle>}}` in the arguments of a connector tool that is listed as a destination — Synabit puts the value in as the call leaves and hides it in the answer. Never ask the user to paste a password or key into the chat; if what you need is not listed, use safe_request.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "safe_request".to_string(),
+                description: "Ask the user to add a secret to their Safe — an API key or token a connector needs — without it passing through you. A card appears where they type it; you are told only the name it will have. It exists only once they save it, and they may not. Use this instead of ever asking for a secret in chat.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "title": { "type": "string", "description": "What it is, as the user would call it: \"Linear API key\"." },
+                        "handle": { "type": "string", "description": "The short name you will use: lower-case letters, digits and dashes, e.g. \"linear-key\"." },
+                        "connectors": { "type": "array", "items": { "type": "string" }, "description": "The connectors it is for, by name. The user decides; this is a suggestion." },
+                        "why": { "type": "string", "description": "One sentence: what you will do with it." }
+                    },
+                    "required": ["title", "handle", "why"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "list_trash".to_string(),
                 description: "What is in the vault's trash and can still be restored, newest first. Use this when the user asks what was deleted, or wants something back and cannot say exactly what it was called.".to_string(),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
@@ -1420,6 +1445,8 @@ pub fn execute_tool<R: tauri::Runtime>(
         // rest exist so a wrong move can be undone in the same conversation.
         "trash_node" => over_each(ctx, args, tool_trash_node),
         "list_trash" => tool_list_trash(ctx),
+        "safe_list" => tool_safe_list(ctx),
+        "safe_request" => tool_safe_request(ctx, args),
         "restore_node" => tool_restore_node(ctx, args),
         "list_versions" => tool_list_versions(ctx, args),
         "restore_version" => tool_restore_version(ctx, args),
@@ -2981,6 +3008,54 @@ fn tool_trash_node<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
         "type": node_type,
         "trash_path": trash_path,
         "_note": "Moved to the trash, not deleted. Pass this trash_path to restore_node to put it back.",
+    })
+    .to_string())
+}
+
+/// What the Safe lets Syn know: names, never values. See `safe::bridge`.
+fn tool_safe_list<R: tauri::Runtime>(ctx: &ToolContext<R>) -> AppResult<String> {
+    match crate::safe::bridge::list(ctx.vault_path) {
+        Ok(items) if items.is_empty() => Ok(serde_json::json!({
+            "items": [],
+            "note": "No Safe item is shared with you. The user chooses, per item, in Safe. If you need one, use safe_request."
+        })
+        .to_string()),
+        Ok(items) => Ok(serde_json::json!({ "items": items }).to_string()),
+        Err(said) => Ok(serde_json::json!({ "error": said }).to_string()),
+    }
+}
+
+/// Put a card in front of the user to add a secret, and tell Syn only the
+/// name it will have. The value goes from the card to Rust; see
+/// `commands::safe::safe_request_submit`.
+fn tool_safe_request<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use tauri::Emitter;
+    let text = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let (title, handle, why) = (text("title"), text("handle"), text("why"));
+    if title.is_empty() || !crate::safe::session::is_handle(&handle) {
+        return Ok(serde_json::json!({
+            "error": "A request needs a title and a handle of 2–40 lower-case letters, digits and dashes."
+        })
+        .to_string());
+    }
+    let wanted: Vec<String> = args
+        .get("connectors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    let request = crate::safe::requests::open(ctx.vault_path, &title, &handle, &why, &wanted);
+    ctx.app
+        .emit(crate::safe::requests::EVENT, &request)
+        .map_err(|e| AppError::General(format!("could not show the request: {e}")))?;
+    Ok(serde_json::json!({
+        "asked": format!(
+            "A card is asking the user to add “{title}” to their Safe as `{handle}`. It does not exist until they \
+             save it, and they may not. Do not ask for the value in chat. Once they say it is done, use \
+             {{{{safe:{handle}}}}} in a connector tool they chose for it."
+        )
     })
     .to_string())
 }
@@ -5885,6 +5960,15 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // The Safe: a store no generic tool can reach — it is not in the
+        // vault's index, and its values are not Syn's to read at all. These
+        // give Syn names and a way to ask; they cost nothing on a turn that
+        // does not mention a secret, being the `safe` group's.
+        let safe = ["safe_list", "safe_request"];
+        for tool in safe {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -5899,6 +5983,7 @@ mod tests {
             .chain(outside)
             .chain(elsewhere)
             .chain(the_run)
+            .chain(safe)
             .collect();
         for name in &names {
             assert!(

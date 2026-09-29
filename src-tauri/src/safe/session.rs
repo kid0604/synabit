@@ -40,6 +40,14 @@ pub enum SafeError {
     NeedsSecretKey,
     #[error("that is not a valid Secret Key")]
     BadSecretKey,
+    #[error("a name for Syn is 2–40 lower-case letters, digits and dashes")]
+    BadHandle,
+    #[error("another item already has that name")]
+    HandleTaken,
+    #[error("an item Syn may use needs at least one place it may be sent")]
+    NoDestination,
+    #[error("that request is no longer open; ask Syn again")]
+    RequestGone,
     #[error("this file is not an export Safe knows how to read")]
     ImportUnknown,
     #[error("this is a password-protected Bitwarden export; export it again without a password")]
@@ -75,6 +83,10 @@ impl SafeError {
             SafeError::WrongPassword => "wrong_password",
             SafeError::NeedsSecretKey => "needs_secret_key",
             SafeError::BadSecretKey => "bad_secret_key",
+            SafeError::BadHandle => "bad_handle",
+            SafeError::HandleTaken => "handle_taken",
+            SafeError::NoDestination => "no_destination",
+            SafeError::RequestGone => "request_gone",
             SafeError::ImportUnknown => "import_unknown",
             SafeError::EncryptedBitwarden => "encrypted_bitwarden",
             SafeError::NeedsExportPassword => "needs_export_password",
@@ -179,6 +191,34 @@ struct Entry {
     /// `None` for a tombstone: the id is remembered so its revision is, and
     /// nothing else is.
     summary: Option<ItemSummary>,
+    /// What Syn may know of it. Kept beside the summary so that answering Syn
+    /// — "is there a usable `github-token`?" — decrypts nothing it need not.
+    ai: super::item::AiPolicy,
+    handle: Option<String>,
+}
+
+impl Entry {
+    fn of(revision: u64, id: &ItemId, body: Option<&ItemBody>) -> Entry {
+        Entry {
+            revision,
+            summary: body.map(|b| b.summary(&hex::encode(id))),
+            ai: body.map(|b| b.ai.clone()).unwrap_or_default(),
+            handle: body.and_then(|b| b.handle.clone()),
+        }
+    }
+}
+
+/// What Syn is told about an item it may see: never a value.
+#[derive(Debug, Clone, Serialize)]
+pub struct AiItem {
+    pub handle: String,
+    pub title: String,
+    pub kind: ItemKind,
+    pub hosts: Vec<String>,
+    /// Where it may be sent — only for an item Syn may use.
+    pub destinations: Vec<String>,
+    pub usable: bool,
+    pub expires_at: Option<i64>,
 }
 
 /// An open Safe.
@@ -190,6 +230,8 @@ pub struct Unlocked {
     unreadable: Vec<Unreadable>,
     last_used: Instant,
     settings: Settings,
+    /// Fingerprints of every concealed value, for the leak guard.
+    prints: super::guard::Fingerprints,
 }
 
 /// What the list can be narrowed to.
@@ -236,6 +278,7 @@ impl Unlocked {
             unreadable: Vec::new(),
             last_used: Instant::now(),
             settings: Settings::load(vault),
+            prints: super::guard::Fingerprints::default(),
         };
         unlocked.reload()?;
         Ok(unlocked)
@@ -251,14 +294,18 @@ impl Unlocked {
             }
         }
         let (loaded, unreadable) = store::load_all(&self.vault, &self.keyset, &self.safe_key)?;
+        let mut prints = super::guard::Fingerprints::new(&self.safe_key, std::iter::empty());
         self.entries = loaded
             .into_iter()
             .map(|item| {
                 super::sync::saw_item(&self.vault, &item.id, item.revision);
-                let summary = item.body.as_ref().map(|b| b.summary(&hex::encode(item.id)));
-                (item.id, Entry { revision: item.revision, summary })
+                if let Some(b) = item.body.as_ref() {
+                    fingerprint(&mut prints, b);
+                }
+                (item.id, Entry::of(item.revision, &item.id, item.body.as_ref()))
             })
             .collect();
+        self.prints = prints;
         self.unreadable = unreadable;
         self.resolve_conflicts();
         Ok(())
@@ -397,8 +444,73 @@ impl Unlocked {
         let revision = self.entries.get(&id).map_or(1, |e| e.revision + 1);
         store::save(&self.vault, &self.keyset, &self.safe_key, &id, revision, body)?;
         super::sync::saw_item(&self.vault, &id, revision);
-        self.entries.insert(id, Entry { revision, summary: Some(body.summary(&hex::encode(id))) });
+        fingerprint(&mut self.prints, body);
+        self.entries.insert(id, Entry::of(revision, &id, Some(body)));
         Ok(())
+    }
+
+    /// The leak guard's view of this Safe.
+    pub fn fingerprints(&self) -> &super::guard::Fingerprints {
+        &self.prints
+    }
+
+    /// The items Syn may know of, by handle.
+    pub fn ai_items(&self) -> Vec<AiItem> {
+        let mut out: Vec<AiItem> = self
+            .entries
+            .values()
+            .filter_map(|e| {
+                let s = e.summary.as_ref().filter(|s| !s.trashed)?;
+                let handle = e.handle.clone()?;
+                let usable = e.ai.level == super::item::AiLevel::Usable;
+                (usable || e.ai.level == super::item::AiLevel::Listed).then(|| AiItem {
+                    handle,
+                    title: s.title.clone(),
+                    kind: s.kind,
+                    hosts: s.hosts.clone(),
+                    destinations: if usable { e.ai.destinations.clone() } else { Vec::new() },
+                    usable,
+                    expires_at: None,
+                })
+            })
+            .collect();
+        out.sort_by(|a, b| a.handle.cmp(&b.handle));
+        out
+    }
+
+    /// Set what Syn may do with an item: its level, the handle it is called
+    /// by, and where it may be sent.
+    pub fn set_ai(
+        &mut self,
+        id: &str,
+        level: super::item::AiLevel,
+        handle: Option<String>,
+        destinations: Vec<String>,
+        now: i64,
+    ) -> Result<ItemView, SafeError> {
+        use super::item::AiLevel;
+        let id = parse_id(id)?;
+        let mut body = self.body(&id)?;
+        let handle = handle.map(|h| h.trim().to_string()).filter(|h| !h.is_empty());
+        if level != AiLevel::Hidden {
+            let h = handle.as_deref().ok_or(SafeError::BadHandle)?;
+            if !is_handle(h) {
+                return Err(SafeError::BadHandle);
+            }
+            if self.entries.iter().any(|(other, e)| *other != id && e.summary.is_some() && e.handle.as_deref() == Some(h)) {
+                return Err(SafeError::HandleTaken);
+            }
+        }
+        let destinations: Vec<String> = destinations.into_iter().map(|d| d.trim().to_string()).filter(|d| valid_destination(d)).collect();
+        if level == AiLevel::Usable && destinations.is_empty() {
+            return Err(SafeError::NoDestination);
+        }
+        body.ai.level = level;
+        body.ai.destinations = if level == AiLevel::Usable { destinations } else { Vec::new() };
+        body.handle = handle;
+        body.updated_at = now;
+        self.write(id, &body)?;
+        Ok(body.view(&hex::encode(id)))
     }
 
     pub fn view(&self, id: &str) -> Result<ItemView, SafeError> {
@@ -481,7 +593,7 @@ impl Unlocked {
         let revision = entry.revision + 1;
         store::bury(&self.vault, &self.keyset, &self.safe_key, &id, revision)?;
         super::sync::saw_item(&self.vault, &id, revision);
-        self.entries.insert(id, Entry { revision, summary: None });
+        self.entries.insert(id, Entry::of(revision, &id, None));
         Ok(())
     }
 }
@@ -503,13 +615,124 @@ pub fn slept(previous: std::time::SystemTime, now: std::time::SystemTime, tick: 
     }
 }
 
-/// The Safe of whichever vault is open, if it is unlocked. Managed by Tauri.
+fn fingerprint(prints: &mut super::guard::Fingerprints, body: &ItemBody) {
+    for f in body.fields.iter().filter(|f| f.kind.is_concealed()) {
+        prints.add(f.value.expose());
+    }
+    if let Some(t) = &body.totp {
+        prints.add(t.secret.expose());
+    }
+}
+
+/// `github-token`: lower-case letters, digits and single dashes, 2–40 long.
+pub fn is_handle(h: &str) -> bool {
+    (2..=40).contains(&h.len())
+        && h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !h.starts_with('-')
+        && !h.ends_with('-')
+        && !h.contains("--")
+}
+
+/// `connector:<id>` or `host:<name>`.
+fn valid_destination(d: &str) -> bool {
+    match d.split_once(':') {
+        Some(("connector", id)) => !id.is_empty(),
+        Some(("host", h)) => !h.is_empty() && !h.contains('/') && !h.contains(' '),
+        _ => false,
+    }
+}
+
+impl Unlocked {
+    /// Whether the item Syn calls `handle` may be sent to `destination` —
+    /// without decrypting anything.
+    pub fn permits(&self, handle: &str, destination: &super::egress::Destination) -> Result<(), super::egress::EgressError> {
+        use super::egress::EgressError;
+        let entry = self
+            .entries
+            .values()
+            .find(|e| e.handle.as_deref() == Some(handle) && e.summary.as_ref().is_some_and(|s| !s.trashed))
+            .filter(|e| e.ai.level == super::item::AiLevel::Usable)
+            // Hidden, only listed, trashed or absent: one answer, so Syn
+            // cannot tell an item it may not use from one that does not exist.
+            .ok_or_else(|| EgressError::Unknown(handle.to_string()))?;
+        if entry.ai.destinations.iter().any(|d| d.eq_ignore_ascii_case(&destination.key())) {
+            Ok(())
+        } else {
+            Err(EgressError::NotAllowed { handle: handle.to_string(), destination: destination.key() })
+        }
+    }
+}
+
+/// Egress asks the open Safe for values through this. Only an item Syn may
+/// *use*, only to a destination it was given, only a concealed field.
+impl super::egress::Lookup for Unlocked {
+    fn value(
+        &self,
+        p: &super::egress::Placeholder,
+        destination: &super::egress::Destination,
+    ) -> Result<SecretString, super::egress::EgressError> {
+        use super::egress::EgressError;
+        self.permits(&p.handle, destination)?;
+        let (id, _) = self
+            .entries
+            .iter()
+            .find(|(_, e)| e.handle.as_deref() == Some(p.handle.as_str()) && e.summary.is_some())
+            .ok_or_else(|| EgressError::Unknown(p.handle.clone()))?;
+        let body = self.body(id).map_err(|_| EgressError::Unknown(p.handle.clone()))?;
+        let field = match &p.field {
+            Some(label) => body.fields.iter().find(|f| f.label.eq_ignore_ascii_case(label)),
+            None => body
+                .ai
+                .fields
+                .first()
+                .and_then(|fid| body.fields.iter().find(|f| &f.id == fid))
+                .or_else(|| body.fields.iter().find(|f| f.kind.is_concealed() && !f.value.is_empty())),
+        };
+        match field {
+            Some(f) if f.kind.is_concealed() => Ok(f.value.clone()),
+            // A username or a URL is not what a placeholder is for; and saying
+            // so is better than sending it.
+            _ => Err(EgressError::NoSuchField(p.handle.clone())),
+        }
+    }
+}
+
+/// The Safe of whichever vault is open, if it is unlocked.
+///
+/// One for the process — [`global`] — rather than Tauri-managed state, because
+/// the places that need it are not all commands: Syn's gate asks whether an
+/// item may go somewhere, and a connector call fills a placeholder, deep in
+/// code that is handed a vault path and no `AppHandle`.
 #[derive(Default)]
 pub struct SafeSession {
     open: Mutex<Option<Unlocked>>,
 }
 
+static SESSION: SafeSession = SafeSession { open: Mutex::new(None) };
+
+/// The process's Safe session.
+pub fn global() -> &'static SafeSession {
+    &SESSION
+}
+
 impl SafeSession {
+    /// Like [`Self::with`], without counting as use. For Syn: a routine that
+    /// reaches for a secret every few minutes must not keep an unattended Safe
+    /// open for ever.
+    pub fn peek<R>(&self, vault: &Path, f: impl FnOnce(&Unlocked) -> Result<R, SafeError>) -> Result<R, SafeError> {
+        match self.guard().as_ref() {
+            Some(unlocked) if unlocked.vault == vault => f(unlocked),
+            _ => Err(SafeError::Locked),
+        }
+    }
+
+    /// Whatever Safe is open, whichever vault — for the leak guard, which
+    /// sits where no vault is named. Every Safe open in this process holds
+    /// secrets this process must not send.
+    pub fn peek_any<R>(&self, f: impl FnOnce(Option<&Unlocked>) -> R) -> R {
+        f(self.guard().as_ref())
+    }
+
     pub fn install(&self, unlocked: Unlocked) {
         *self.guard() = Some(unlocked);
     }
@@ -517,6 +740,11 @@ impl SafeSession {
     /// Lock. Dropping the `Unlocked` wipes the Safe Key.
     pub fn lock(&self) -> bool {
         self.guard().take().is_some()
+    }
+
+    /// The vault whose Safe is open, if one is.
+    pub fn open_vault(&self) -> Option<PathBuf> {
+        self.guard().as_ref().map(|u| u.vault.clone())
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, Option<Unlocked>> {

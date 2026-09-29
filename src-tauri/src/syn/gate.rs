@@ -68,6 +68,10 @@ pub struct View<'a> {
     /// Whether this is a sub-run: reads only, asks nobody. See `syn::delegate`.
     pub sub_run: bool,
     pub now: &'a str,
+    /// Whether the Safe item `handle` may go to the server behind `tool`:
+    /// `Ok(destination)` as a consent scope names it, or the sentence to tell
+    /// the model. See `safe::bridge::may_send`.
+    pub safe: &'a dyn Fn(&str, &str) -> Result<String, String>,
 }
 
 /// What to do with the call.
@@ -252,6 +256,60 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         }
     }
 
+    // 5½. Secrets. A connector call carrying `{{safe:…}}` sends a value from
+    // the Safe, and each (item, server) pair is its own permission — asked
+    // after the server's own, so the card says the thing only once it is the
+    // one thing left to decide. What the item allows is the Safe's to say;
+    // the model is not asked.
+    if crate::syn::connector::is_connector_tool(tool) {
+        for placeholder in crate::safe::egress::find(args) {
+            let destination = match (view.safe)(tool, &placeholder.handle) {
+                Ok(d) => d,
+                Err(said) => {
+                    return Decided {
+                        gate: Gate::Refuse {
+                            said,
+                            note: Some(format!("Refused `{tool}`: it asked for the Safe item `{}`.", placeholder.handle)),
+                        },
+                        audit: Some(Outcome::Refused),
+                    }
+                }
+            };
+            let secret = Capability::UseSecret { item: placeholder.handle.clone(), destination };
+            let mut decision = crate::syn::consent::decide(&secret, view.ledger, view.now);
+            if decision == Decision::Ask && (view.allowed_until_done)(&secret) {
+                decision = Decision::Allow;
+            }
+            match decision {
+                Decision::Allow => {}
+                Decision::Ask if view.sub_run => {
+                    return Decided {
+                        gate: Gate::Refuse {
+                            said: crate::syn::delegate::cannot_ask(&secret.describe()),
+                            note: None,
+                        },
+                        audit: Some(Outcome::Refused),
+                    }
+                }
+                Decision::Ask => {
+                    return Decided { gate: Gate::Ask(Box::new(Ask::about(tool, &secret, view.now))), audit: Some(Outcome::Asked) }
+                }
+                Decision::Refuse => {
+                    return Decided {
+                        gate: Gate::Refuse {
+                            said: format!(
+                                "The user has said never to {}. Do not ask again and do not look for another way.",
+                                secret.describe()
+                            ),
+                            note: None,
+                        },
+                        audit: Some(Outcome::Refused),
+                    }
+                }
+            }
+        }
+    }
+
     // 6. What running means.
     let how = if tool == crate::syn::tools::BROWSE_TOOL {
         How::Browse
@@ -310,6 +368,7 @@ mod tests {
             plan_only: false,
             sub_run: false,
             now: NOW,
+            safe: &|_, h| Err(format!("no Safe here ({h})")),
         }
     }
 

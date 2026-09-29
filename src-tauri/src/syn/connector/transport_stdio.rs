@@ -76,6 +76,9 @@ impl Stdio {
                 let mut lines = BufReader::new(stderr).lines();
                 while let Ok(Some(line)) = lines.next_line().await {
                     let line: String = line.chars().take(MAX_LOG_LINE).collect();
+                    // A server may print what it was sent — the secret Safe
+                    // filled in, included. The log is a file anyone may read.
+                    let (line, _) = crate::safe::bridge::redact(&line);
                     log::info!("[connector {label}] {line}");
                 }
             });

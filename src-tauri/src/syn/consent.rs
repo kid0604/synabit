@@ -35,6 +35,17 @@ use crate::error::{AppError, AppResult};
 /// said yes in September may not recognise what they agreed to in March.
 pub const ALWAYS_LASTS_DAYS: i64 = 90;
 
+/// A secret sent is not taken back, which reading a page never needs; so an
+/// `Always` to use one is asked about again three times as often.
+pub const SECRET_ALWAYS_LASTS_DAYS: i64 = 30;
+
+fn always_lasts_days(capability: &Capability) -> i64 {
+    match capability {
+        Capability::UseSecret { .. } => SECRET_ALWAYS_LASTS_DAYS,
+        _ => ALWAYS_LASTS_DAYS,
+    }
+}
+
 /// The kind of power a tool has.
 ///
 /// Coarse on purpose. This is not an access-control list; it is the answer to
@@ -81,6 +92,11 @@ pub enum Capability {
     Spend { cents_estimate: u32 },
     /// Runs code. Always asks, and the code is shown as it will run.
     Execute,
+    /// Sends a value from the Safe to one place: the item by the name Syn
+    /// uses for it, the place as `connector:<id>`. Per pair, because "may use
+    /// the GitHub token for GitHub" and "for anything else" are not one
+    /// decision. Syn never sees the value — see `safe::egress`.
+    UseSecret { item: String, destination: String },
 }
 
 /// What the user said.
@@ -151,6 +167,11 @@ impl Capability {
                 domain.to_lowercase(),
                 tool.to_lowercase()
             )),
+            Capability::UseSecret { item, destination } => Some(format!(
+                "use_secret:{}:{}",
+                item.to_lowercase(),
+                destination.to_lowercase()
+            )),
             _ => None,
         }
     }
@@ -168,6 +189,9 @@ impl Capability {
                 format!("spend about {:.2} USD", *cents_estimate as f64 / 100.0)
             }
             Capability::Execute => "run code on this computer".to_string(),
+            Capability::UseSecret { item, destination } => {
+                format!("use the Safe item “{item}” for {}", destination.trim_start_matches("connector:"))
+            }
         }
     }
 
@@ -188,7 +212,7 @@ impl Capability {
     pub fn can_be_remembered(&self) -> bool {
         matches!(
             self,
-            Capability::Browse | Capability::NetRead { .. } | Capability::NetWrite { .. }
+            Capability::Browse | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
         )
     }
 }
@@ -378,8 +402,7 @@ pub fn record(
         about: capability.describe(),
         answer,
         granted_at: now.to_rfc3339(),
-        expires_at: (answer == Answer::Always)
-            .then(|| (now + chrono::Duration::days(ALWAYS_LASTS_DAYS)).to_rfc3339()),
+        expires_at: (answer == Answer::Always).then(|| (now + chrono::Duration::days(always_lasts_days(capability))).to_rfc3339()),
     });
     save(vault_path, &ledger)
 }

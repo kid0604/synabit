@@ -101,6 +101,9 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
         Capability::Spend { .. } => Reversal::Manual {
             how: "a refund is asked for wherever the money went".into(),
         },
+        Capability::UseSecret { item, .. } => Reversal::Manual {
+            how: format!("a secret sent cannot be taken back; change “{item}” where it is used, then in Safe"),
+        },
         Capability::Execute => Reversal::Irreversible,
     }
 }
@@ -226,7 +229,7 @@ impl VaultTools {
     fn table(tool: &str, _args: &Value) -> Option<Capability> {
         use Capability::*;
         Some(match tool {
-            "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash"
+            "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash" | "safe_list"
             | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
             | "read_board" | "timeline" | "read_spreadsheet"
@@ -252,7 +255,7 @@ impl VaultTools {
             // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
             // out here. Under-declaring would be the dangerous direction; this
             // errs the other way and stays true.
-            "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version"
+            "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version" | "safe_request"
             | "update_feed_article" | "create_transaction" | "remember" | "run_recipe"
             // Enqueues a capture, which becomes a cap like any typed one.
             | "capture"
@@ -648,6 +651,7 @@ mod tests {
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
             "read_board", "draw_board", "edit_board", "capture", "timeline",
             "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
+            "safe_list", "safe_request",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,

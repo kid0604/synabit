@@ -303,6 +303,9 @@ impl Api {
     }
 
     async fn send_message(&self, chat_id: i64, text: &str, html: bool, reply_to: Option<i64>) -> Result<(), ApiError> {
+        // Telegram's servers see every message; nothing that looks like a
+        // secret goes through them. See `safe::guard`.
+        let (text, _) = crate::safe::bridge::redact(text);
         let mut body = json!({
             "chat_id": chat_id,
             "text": text,

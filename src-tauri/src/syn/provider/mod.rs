@@ -36,6 +36,7 @@
 pub mod anthropic;
 pub mod capability;
 pub mod gemini;
+pub mod guarded;
 pub mod ollama;
 pub mod openai;
 pub mod retry;
@@ -270,7 +271,8 @@ pub fn for_settings(
     settings: &crate::models::syn::SynSettings,
     api_key: Option<String>,
 ) -> Box<dyn ChatProvider> {
-    match settings.provider {
+    // Every provider, whichever, behind the leak guard. See `guarded`.
+    let provider: Box<dyn ChatProvider> = match settings.provider {
         SynProvider::Ollama => Box::new(ollama::OllamaProvider::new(&settings.ollama_url)),
         SynProvider::OpenAiCompat => Box::new(openai::OpenAiCompatProvider::new(
             &settings.openai_base_url,
@@ -279,7 +281,8 @@ pub fn for_settings(
         )),
         SynProvider::Gemini => Box::new(gemini::GeminiProvider::new(api_key)),
         SynProvider::Anthropic => Box::new(anthropic::AnthropicProvider::new(api_key)),
-    }
+    };
+    Box::new(guarded::Guarded(provider))
 }
 
 /// The media type of a base64 payload, read from its first bytes.

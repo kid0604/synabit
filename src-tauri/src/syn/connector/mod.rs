@@ -88,11 +88,26 @@ pub fn resolve(server: &Server, secrets: &HashMap<String, String>) -> Resolved {
     let mut headers = Vec::new();
     let mut env = Vec::new();
     for (kind, key) in server.secret_keys() {
-        let Some(value) = [config::slot(&server.id, kind, &key), config::legacy_slot(&server.id, kind, &key)]
+        let Some(stored) = [config::slot(&server.id, kind, &key), config::legacy_slot(&server.id, kind, &key)]
             .iter()
             .find_map(|slot| secrets.get(slot).filter(|v| !v.trim().is_empty()))
         else {
             continue;
+        };
+        // A setting may name a Safe item instead of holding the value itself:
+        // the value then lives in the Safe, goes only to the server the item
+        // was given to, and is here only while the Safe is open.
+        let filled;
+        let value = if crate::safe::egress::find(&serde_json::Value::String(stored.clone())).is_empty() {
+            stored
+        } else {
+            match crate::safe::bridge::fill_setting(&server.id, &server.name, stored) {
+                Some(v) => {
+                    filled = v;
+                    &filled
+                }
+                None => continue,
+            }
         };
         match kind {
             "header" => headers.push((key.trim().to_string(), value.trim().to_string())),
@@ -191,6 +206,34 @@ pub fn start_if_needed(vault_path: &str, app: Option<tauri::AppHandle>) {
     tauri::async_runtime::spawn(async move {
         let secrets = read_secrets(app.as_ref()).await;
         refresh(&vault, &secrets).await;
+    });
+}
+
+/// Whether any connector secret on this device names a Safe item.
+fn uses_safe(secrets: &HashMap<String, String>) -> bool {
+    secrets.values().any(|v| v.contains("{{safe:"))
+}
+
+/// The Safe opened: connect again the servers whose settings name its items,
+/// so they get their values.
+pub fn after_safe_unlocked(app: tauri::AppHandle, vault_path: String) {
+    tauri::async_runtime::spawn(async move {
+        let secrets = read_secrets(Some(&app)).await;
+        if uses_safe(&secrets) {
+            refresh(&vault_path, &secrets).await;
+        }
+    });
+}
+
+/// The Safe locked: close the servers whose settings named its items, so no
+/// connection outlives the Safe holding a value it was given. They connect
+/// again, without it, when next asked for.
+pub fn after_safe_locked(app: tauri::AppHandle, vault_path: String) {
+    tauri::async_runtime::spawn(async move {
+        let secrets = read_secrets(Some(&app)).await;
+        if uses_safe(&secrets) {
+            disconnect(&vault_path, None).await;
+        }
     });
 }
 
@@ -374,9 +417,31 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
             Ok(s) => s,
             Err(e) => return Called::ours(e, Reversal::Nothing),
         };
-        match session.call_tool(&tool.tool, args).await {
+        // Placeholders become values on a copy, here and nowhere else: the
+        // arguments the conversation records and the audit line quotes are
+        // `args`, which keeps them. See `safe::egress`.
+        let (sending, injected) = if crate::safe::egress::find(args).is_empty() {
+            (std::borrow::Cow::Borrowed(args), None)
+        } else {
+            match crate::safe::bridge::fill(vault_path, &tool.server_id, &tool.server_name, args) {
+                Ok((filled, injected)) => (std::borrow::Cow::Owned(filled), Some(injected)),
+                Err(said) => return Called::ours(said, Reversal::Nothing),
+            }
+        };
+        // What comes back is scrubbed of what went out before anything — the
+        // model, the run file, the conversation — sees it.
+        let scrub = |text: String| -> String {
+            let Some(injected) = injected.as_ref() else { return text };
+            let mut text = text;
+            if injected.scrub(&mut text) > 0 {
+                log::warn!("[Safe] {} echoed a secret it was sent; it was hidden from Syn", tool.server_name);
+                text.push_str("\n\n[Synabit: the server's answer contained the secret it was sent. It was hidden.]");
+            }
+            text
+        };
+        match session.call_tool(&tool.tool, &sending).await {
             Ok(result) => {
-                let fenced = wrap(&tool.server_name, &tool.tool, &result.text);
+                let fenced = wrap(&tool.server_name, &tool.tool, &scrub(result.text));
                 return Called {
                     content: if result.is_error {
                         serde_json::json!({ "error": fenced }).to_string()
@@ -397,7 +462,7 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
                 let fenced = wrap(
                     &tool.server_name,
                     &tool.tool,
-                    &format!("The server answered with an error ({code}): {message}"),
+                    &scrub(format!("The server answered with an error ({code}): {message}")),
                 );
                 return Called {
                     content: serde_json::json!({ "error": fenced }).to_string(),

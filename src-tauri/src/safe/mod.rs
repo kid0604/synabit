@@ -28,15 +28,19 @@
 //! key" is the sync E2EE key. The Safe Key is neither and is never derived from
 //! either — see [`crypto::derive_auk`] for where it comes from instead.
 
+pub mod bridge;
 pub mod clipboard;
 pub mod crypto;
 pub mod device;
+pub mod egress;
 pub mod exchange;
 pub mod format;
 pub mod generator;
+pub mod guard;
 pub mod item;
 pub mod keyset;
 pub mod memory;
+pub mod requests;
 pub mod session;
 pub mod store;
 pub mod sync;

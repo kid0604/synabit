@@ -825,6 +825,7 @@ impl SynEngine {
                         plan_only: run.plan_only,
                         sub_run,
                         now: &now,
+                        safe: &|tool, handle| crate::safe::bridge::may_send(req.vault_path, tool, handle),
                     },
                 );
                 if let (Some(outcome), Some(capability)) = (decided.audit, capability.as_ref()) {

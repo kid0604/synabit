@@ -22,7 +22,7 @@ use crate::safe::crypto::SecretKey;
 use crate::safe::generator::{self, Recipe};
 use crate::safe::item::{ItemEdit, ItemSummary, ItemView};
 use crate::safe::keyset;
-use crate::safe::session::{Filter, Overview, SafeError, SafeSession, Settings, Unlocked};
+use crate::safe::session::{Filter, Overview, SafeError, Settings, Unlocked};
 use crate::secrets::SecretManager;
 
 /// Emitted when the Safe locks by itself, so an open screen can follow.
@@ -115,7 +115,7 @@ pub struct Status {
 pub async fn safe_status(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<Status> {
     gate(&webview)?;
     let vault = vault(&vault_path)?;
-    let session = app.state::<SafeSession>();
+    let session = crate::safe::session::global();
     let keyset = match keyset::read(&vault) {
         Ok(k) => k,
         Err(keyset::KeysetError::Missing) => return Ok(Status { exists: false, unlocked: false, has_secret_key: false }),
@@ -162,7 +162,7 @@ pub async fn safe_create(
         };
         let secret_key = words_of(&created.secret_key);
         let unlocked = Unlocked::open(&vault, created.keyset, created.safe_key)?;
-        handle.state::<SafeSession>().install(unlocked);
+        crate::safe::session::global().install(unlocked);
         Ok(Created { secret_key, stored_on_device })
     })
     .await
@@ -202,7 +202,8 @@ pub async fn safe_unlock(
             }
         }
         let unlocked = Unlocked::open(&vault, keyset, safe_key)?;
-        handle.state::<SafeSession>().install(unlocked);
+        crate::safe::session::global().install(unlocked);
+        crate::syn::connector::after_safe_unlocked(handle.clone(), vault.to_string_lossy().into_owned());
         Ok(())
     })
     .await
@@ -211,7 +212,12 @@ pub async fn safe_unlock(
 #[tauri::command]
 pub fn safe_lock(app: tauri::AppHandle, webview: tauri::Webview) -> AppResult<()> {
     gate(&webview)?;
-    app.state::<SafeSession>().lock();
+    let vault = crate::safe::session::global().open_vault();
+    if crate::safe::session::global().lock() {
+        if let Some(v) = vault {
+            crate::syn::connector::after_safe_locked(app, v.to_string_lossy().into_owned());
+        }
+    }
     Ok(())
 }
 
@@ -237,7 +243,7 @@ pub async fn safe_change_password(
         let key = keyset::unlock(&keyset, &current, &sk)?;
         let kdf = keyset.header.kdf;
         let updated = keyset::change_password(&vault, &keyset, &key, &next, &sk, kdf)?;
-        handle.state::<SafeSession>().with(&vault, |open| {
+        crate::safe::session::global().with(&vault, |open| {
             open.replace_keyset(updated);
             Ok(())
         })
@@ -281,7 +287,7 @@ pub fn safe_save_emergency_kit(
     path: String,
 ) -> AppResult<()> {
     gate(&webview)?;
-    let safe_id = with(&app, &vault_path, |s| Ok(s.keyset().header.safe_id))?;
+    let safe_id = with(&vault_path, |s| Ok(s.keyset().header.safe_id))?;
     let sk = stored_secret_key(&app, &safe_id).map_err(AppError::Safe)?.ok_or(AppError::Safe(SafeError::NeedsSecretKey))?;
     let html = zeroize::Zeroizing::new(emergency_kit(&words_of(&sk), &safe_id, &chrono::Local::now().format("%Y-%m-%d").to_string()));
     crate::safe::store::write_atomic(std::path::Path::new(&path), html.as_bytes())
@@ -327,55 +333,53 @@ twelve words above and your master password. Nobody else can recover them — no
 
 // ─── items ───────────────────────────────────────────────
 
-fn with<R>(app: &tauri::AppHandle, vault_path: &str, f: impl FnOnce(&mut Unlocked) -> Result<R, SafeError>) -> AppResult<R> {
+fn with<R>(vault_path: &str, f: impl FnOnce(&mut Unlocked) -> Result<R, SafeError>) -> AppResult<R> {
     let vault = vault(vault_path)?;
-    app.state::<SafeSession>().with(&vault, f).map_err(AppError::Safe)
+    crate::safe::session::global().with(&vault, f).map_err(AppError::Safe)
 }
 
 /// Read the Safe again after sync brought items from another device, and
 /// fold in any version it set aside.
 #[tauri::command]
-pub fn safe_refresh(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<()> {
+pub fn safe_refresh(webview: tauri::Webview, vault_path: String) -> AppResult<()> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.reload())
+    with(&vault_path, |s| s.reload())
 }
 
 #[tauri::command]
-pub fn safe_overview(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<Overview> {
+pub fn safe_overview(webview: tauri::Webview, vault_path: String) -> AppResult<Overview> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| Ok(s.overview()))
+    with(&vault_path, |s| Ok(s.overview()))
 }
 
 #[tauri::command]
 pub fn safe_list(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     filter: Option<Filter>,
     query: Option<String>,
 ) -> AppResult<Vec<ItemSummary>> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| Ok(s.list(&filter.unwrap_or_default(), query.as_deref().unwrap_or(""))))
+    with(&vault_path, |s| Ok(s.list(&filter.unwrap_or_default(), query.as_deref().unwrap_or(""))))
 }
 
 #[tauri::command]
-pub fn safe_get(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String, id: String) -> AppResult<ItemView> {
+pub fn safe_get(webview: tauri::Webview, vault_path: String, id: String) -> AppResult<ItemView> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.view(&id))
+    with(&vault_path, |s| s.view(&id))
 }
 
 /// The one command that returns a secret value: one field, because the user
 /// asked to see it.
 #[tauri::command]
 pub fn safe_reveal(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     id: String,
     field: String,
 ) -> AppResult<String> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.reveal(&id, &field).map(|v| v.expose().to_string()))
+    with(&vault_path, |s| s.reveal(&id, &field).map(|v| v.expose().to_string()))
 }
 
 #[derive(Serialize)]
@@ -395,7 +399,7 @@ pub fn safe_copy(
     field: String,
 ) -> AppResult<Copied> {
     gate(&webview)?;
-    let (value, clear_after) = with(&app, &vault_path, |s| Ok((s.reveal(&id, &field)?, s.settings().clipboard_clear_secs)))?;
+    let (value, clear_after) = with(&vault_path, |s| Ok((s.reveal(&id, &field)?, s.settings().clipboard_clear_secs)))?;
     let generation = app.state::<SafeClipboard>().copy(&value).map_err(AppError::Safe)?;
     drop(value);
     if clear_after > 0 {
@@ -427,7 +431,7 @@ pub async fn safe_copy_primary(
         "username" => &[FieldKind::Username, FieldKind::Email],
         _ => &[FieldKind::Password, FieldKind::Concealed, FieldKind::Pin],
     };
-    let field = with(&app, &vault_path, |s| {
+    let field = with(&vault_path, |s| {
         let view = s.view(&id)?;
         view.fields.iter().find(|f| kinds.contains(&f.kind) && !f.empty).map(|f| f.id.clone()).ok_or(SafeError::NotFound)
     })?;
@@ -438,13 +442,12 @@ pub async fn safe_copy_primary(
 /// worth thirty seconds.
 #[tauri::command]
 pub fn safe_totp(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     id: String,
 ) -> AppResult<crate::safe::totp::Code> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.totp(&id, now() as u64))
+    with(&vault_path, |s| s.totp(&id, now() as u64))
 }
 
 /// Copy the current one-time code — or the next one, in the last five
@@ -457,7 +460,7 @@ pub fn safe_copy_totp(
     id: String,
 ) -> AppResult<Copied> {
     gate(&webview)?;
-    let (code, clear_after) = with(&app, &vault_path, |s| {
+    let (code, clear_after) = with(&vault_path, |s| {
         let t = now() as u64;
         let current = s.totp(&id, t)?;
         let code = if current.remaining <= 5 { s.totp(&id, t + u64::from(current.remaining))? } else { current };
@@ -476,51 +479,48 @@ pub fn safe_copy_totp(
 }
 
 #[tauri::command]
-pub fn safe_create_item(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String, item: ItemEdit) -> AppResult<ItemView> {
+pub fn safe_create_item(webview: tauri::Webview, vault_path: String, item: ItemEdit) -> AppResult<ItemView> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.create(item, now()))
+    with(&vault_path, |s| s.create(item, now()))
 }
 
 #[tauri::command]
 pub fn safe_update_item(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     id: String,
     item: ItemEdit,
 ) -> AppResult<ItemView> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.update(&id, item, now()))
+    with(&vault_path, |s| s.update(&id, item, now()))
 }
 
 #[tauri::command]
 pub fn safe_set_favorite(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     id: String,
     favorite: bool,
 ) -> AppResult<()> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.set_favorite(&id, favorite, now()))
+    with(&vault_path, |s| s.set_favorite(&id, favorite, now()))
 }
 
 #[tauri::command]
 pub fn safe_set_trashed(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     id: String,
     trashed: bool,
 ) -> AppResult<()> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.set_trashed(&id, trashed, now()))
+    with(&vault_path, |s| s.set_trashed(&id, trashed, now()))
 }
 
 #[tauri::command]
-pub fn safe_purge(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String, id: String) -> AppResult<()> {
+pub fn safe_purge(webview: tauri::Webview, vault_path: String, id: String) -> AppResult<()> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.purge(&id))
+    with(&vault_path, |s| s.purge(&id))
 }
 
 // ─── moving in and out ───────────────────────────────────
@@ -540,7 +540,6 @@ pub struct Imported {
 /// read here; the screen names it and gets counts back.
 #[tauri::command]
 pub async fn safe_import(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     path: String,
@@ -550,7 +549,6 @@ pub async fn safe_import(
     gate(&webview)?;
     let vault = vault(&vault_path)?;
     let password = zeroize::Zeroizing::new(password.unwrap_or_default());
-    let handle = app.clone();
     blocking(move || {
         let file = std::path::Path::new(&path);
         let bytes = zeroize::Zeroizing::new(std::fs::read(file).map_err(|e| SafeError::Failed(format!("could not read the file: {e}")))?);
@@ -565,7 +563,7 @@ pub async fn safe_import(
             ExchangeError::WrongExportPassword => SafeError::WrongExportPassword,
             other => SafeError::Failed(other.to_string()),
         })?;
-        let imported = handle.state::<SafeSession>().with(&vault, |s| s.import(parsed.items))?;
+        let imported = crate::safe::session::global().with(&vault, |s| s.import(parsed.items))?;
         Ok(Imported { format, imported, warnings: parsed.warnings, source_was_plaintext: format != Format::SafeExport })
     })
     .await
@@ -574,7 +572,6 @@ pub async fn safe_import(
 /// Seal every item into a `.safe-export` under a password chosen for it.
 #[tauri::command]
 pub async fn safe_export(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     path: String,
@@ -586,9 +583,8 @@ pub async fn safe_export(
     if export_password.chars().count() < keyset::MIN_PASSWORD_CHARS {
         return Err(AppError::Safe(SafeError::PasswordTooShort));
     }
-    let handle = app.clone();
     blocking(move || {
-        let items = handle.state::<SafeSession>().with(&vault, |s| s.all_items())?;
+        let items = crate::safe::session::global().with(&vault, |s| s.all_items())?;
         let bytes = crate::safe::exchange::seal_export(&items, &export_password, crate::safe::crypto::KdfParams::FLOOR)
             .map_err(|e| SafeError::Failed(e.to_string()))?;
         crate::safe::store::write_atomic(std::path::Path::new(&path), &bytes).map_err(|e| SafeError::Failed(e.to_string()))?;
@@ -616,13 +612,100 @@ pub async fn safe_export_plain(
         let keyset = keyset::read(&vault)?;
         let sk = stored_secret_key(&handle, &keyset.header.safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
         keyset::unlock(&keyset, &password, &sk)?;
-        let items = handle.state::<SafeSession>().with(&vault, |s| s.all_items())?;
+        let items = crate::safe::session::global().with(&vault, |s| s.all_items())?;
         let csv = crate::safe::exchange::to_csv(&items);
         crate::safe::store::write_atomic(std::path::Path::new(&path), csv.as_bytes()).map_err(|e| SafeError::Failed(e.to_string()))?;
         log::warn!("[Safe] {} items were exported as plaintext", items.len());
         Ok(items.iter().filter(|i| i.trashed_at.is_none()).count())
     })
     .await
+}
+
+// ─── Syn ─────────────────────────────────────────────────
+
+/// Set what Syn may do with an item: its level, its handle, and the places it
+/// may be sent. The user's decision, made here and nowhere else.
+#[tauri::command]
+pub fn safe_set_ai(
+    webview: tauri::Webview,
+    vault_path: String,
+    id: String,
+    level: crate::safe::item::AiLevel,
+    handle: Option<String>,
+    destinations: Vec<String>,
+) -> AppResult<ItemView> {
+    gate(&webview)?;
+    with(&vault_path, |s| s.set_ai(&id, level, handle, destinations, now()))
+}
+
+#[derive(Serialize)]
+pub struct Destination {
+    key: String,
+    label: String,
+}
+
+/// The places an item may be sent: the vault's connectors.
+#[tauri::command]
+pub fn safe_destinations(webview: tauri::Webview, vault_path: String) -> AppResult<Vec<Destination>> {
+    gate(&webview)?;
+    Ok(crate::syn::connector::config::load(&vault_path)
+        .servers
+        .into_iter()
+        .map(|s| Destination { key: format!("connector:{}", s.id), label: s.name })
+        .collect())
+}
+
+/// The card `safe_request` showed, answered: the value goes from the card to
+/// the Safe, and Syn learns only that the handle now exists.
+#[tauri::command]
+pub fn safe_request_submit(
+    webview: tauri::Webview,
+    vault_path: String,
+    request_id: String,
+    title: String,
+    handle: String,
+    value: String,
+    destinations: Vec<String>,
+) -> AppResult<String> {
+    use crate::safe::item::{AiLevel, EditValue, FieldEdit, FieldKind, ItemEdit, ItemKind, SecretString};
+    gate(&webview)?;
+    let value = SecretString::new(value);
+    let request = crate::safe::requests::take(&vault_path, &request_id).ok_or(AppError::Safe(SafeError::RequestGone))?;
+    // Only places the card offered: a destination is a decision the user
+    // makes by ticking it, not a string a request can smuggle in.
+    let offered: Vec<&str> = request.destinations.iter().map(|d| d.key.as_str()).collect();
+    let destinations: Vec<String> = destinations.into_iter().filter(|d| offered.contains(&d.as_str())).collect();
+    let level = if destinations.is_empty() { AiLevel::Listed } else { AiLevel::Usable };
+    with(&vault_path, |s| {
+        let view = s.create(
+            ItemEdit {
+                kind: ItemKind::ApiKey,
+                title,
+                fields: vec![FieldEdit {
+                    id: None,
+                    label: "token".into(),
+                    kind: FieldKind::Concealed,
+                    value: EditValue::Set { v: value },
+                }],
+                urls: vec![],
+                tags: vec![],
+                favorite: false,
+                notes: request.why.clone(),
+                totp: Default::default(),
+                expires_at: None,
+            },
+            now(),
+        )?;
+        match s.set_ai(&view.id, level, Some(handle.clone()), destinations, now()) {
+            Ok(_) => Ok(handle),
+            // The item is saved either way; a clashing name is the user's to fix
+            // in Safe, not a reason to lose what they typed.
+            Err(e) => {
+                log::warn!("[Safe] a requested item was saved without Syn's name: {e}");
+                Err(e)
+            }
+        }
+    })
 }
 
 // ─── this device ─────────────────────────────────────────
@@ -637,7 +720,7 @@ pub async fn safe_device_secrets(
     vault_path: String,
 ) -> AppResult<Vec<crate::safe::device::DeviceSecret>> {
     gate(&webview)?;
-    with(&app, &vault_path, |_| Ok(()))?;
+    with(&vault_path, |_| Ok(()))?;
     let handle = app.clone();
     blocking(move || {
         let secrets = SecretManager::load_secrets(Some(&handle));
@@ -660,7 +743,7 @@ pub async fn safe_forget_device_secret(
     slot: String,
 ) -> AppResult<()> {
     gate(&webview)?;
-    with(&app, &vault_path, |_| Ok(()))?;
+    with(&vault_path, |_| Ok(()))?;
     let handle = app.clone();
     blocking(move || {
         let secrets = SecretManager::load_secrets(Some(&handle));
@@ -699,20 +782,19 @@ pub fn safe_estimate(webview: tauri::Webview, password: String) -> AppResult<f64
 }
 
 #[tauri::command]
-pub fn safe_get_settings(app: tauri::AppHandle, webview: tauri::Webview, vault_path: String) -> AppResult<Settings> {
+pub fn safe_get_settings(webview: tauri::Webview, vault_path: String) -> AppResult<Settings> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| Ok(s.settings()))
+    with(&vault_path, |s| Ok(s.settings()))
 }
 
 #[tauri::command]
 pub fn safe_set_settings(
-    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     settings: Settings,
 ) -> AppResult<Settings> {
     gate(&webview)?;
-    with(&app, &vault_path, |s| s.set_settings(settings))
+    with(&vault_path, |s| s.set_settings(settings))
 }
 
 /// Lock whatever Safe has been left alone too long — or sat open while the
@@ -725,7 +807,8 @@ pub fn start_auto_lock(app: tauri::AppHandle) {
         loop {
             tokio::time::sleep(TICK).await;
             let now = std::time::SystemTime::now();
-            let session = app.state::<SafeSession>();
+            let session = crate::safe::session::global();
+            let vault = session.open_vault();
             let locked = if crate::safe::session::slept(last, now, TICK) {
                 session.lock().then(|| log::info!("[Safe] locked: the machine was asleep"))
             } else {
@@ -733,6 +816,9 @@ pub fn start_auto_lock(app: tauri::AppHandle) {
             };
             if locked.is_some() {
                 let _ = app.emit(LOCKED_EVENT, ());
+                if let Some(v) = vault {
+                    crate::syn::connector::after_safe_locked(app.clone(), v.to_string_lossy().into_owned());
+                }
             }
             last = now;
         }

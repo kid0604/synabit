@@ -364,7 +364,21 @@ pub fn save_conversation(vault_path: &str, conversation: &SynConversationFull) -
         title: conversation.meta.title.clone(),
         model: conversation.meta.model.clone(),
         provider: conversation.meta.provider,
-        messages: conversation.messages.clone(),
+        // A password typed into the chat is hidden before the conversation is
+        // kept: this file is in the vault, which syncs and may sit in git.
+        // See `safe::guard`.
+        messages: conversation
+            .messages
+            .iter()
+            .cloned()
+            .map(|mut m| {
+                let (text, hidden) = crate::safe::bridge::redact(&m.content);
+                if hidden > 0 {
+                    m.content = text;
+                }
+                m
+            })
+            .collect(),
         created_at: conversation.meta.created_at.clone(),
         updated_at: chrono::Utc::now().to_rfc3339(),
         pinned: conversation.meta.pinned,

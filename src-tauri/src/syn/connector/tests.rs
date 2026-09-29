@@ -248,6 +248,118 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         plan_only: false,
         sub_run: false,
         now: "2026-09-27T10:00:00+00:00",
+        safe: &|_, h| Err(format!("no Safe item `{h}` in this test")),
+    }
+}
+
+/// The gate's part in sending a Safe secret (`safe::bridge`, section 8.4 of
+/// `docs/safe-2026-09-28.md`): the Safe says whether the item may go to this
+/// server, and only then is the user asked — per item and server.
+mod secrets {
+    use super::*;
+    use crate::syn::consent::{Answer, Grant, Ledger};
+    use crate::syn::gate::{decide, Gate, How};
+
+    const TOOL: &str = "connector__jira__create_issue";
+
+    fn granted(caps: &[(&Capability, Answer)]) -> Ledger {
+        Ledger {
+            grants: caps
+                .iter()
+                .map(|(c, a)| Grant {
+                    scope: c.scope_key().unwrap(),
+                    about: c.describe(),
+                    answer: *a,
+                    granted_at: "2026-09-01T00:00:00+00:00".into(),
+                    expires_at: (*a == Answer::Always).then(|| "2027-01-01T00:00:00+00:00".into()),
+                })
+                .collect(),
+        }
+    }
+
+    fn with_safe<'a>(
+        ledger: &'a Ledger,
+        safe: &'a dyn Fn(&str, &str) -> Result<String, String>,
+        until_done: &'a dyn Fn(&Capability) -> bool,
+    ) -> gate::View<'a> {
+        gate::View { safe, ..view(ledger, until_done) }
+    }
+
+    fn write() -> Capability {
+        Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() }
+    }
+
+    fn secret() -> Capability {
+        Capability::UseSecret { item: "jira-token".into(), destination: "connector:jira".into() }
+    }
+
+    fn args() -> serde_json::Value {
+        serde_json::json!({ "summary": "x", "auth": "{{safe:jira-token}}" })
+    }
+
+    #[test]
+    fn what_the_safe_refuses_is_refused_in_its_words() {
+        let ledger = granted(&[(&write(), Answer::Always)]);
+        let no = |_: &Capability| false;
+        let safe = |_: &str, h: &str| -> Result<String, String> { Err(format!("`{h}` may not go there")) };
+        let decided = decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no));
+        match decided.gate {
+            Gate::Refuse { said, .. } => assert_eq!(said, "`jira-token` may not go there"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_allowed_pair_is_asked_about_once_then_remembered() {
+        let no = |_: &Capability| false;
+        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+
+        let first = granted(&[(&write(), Answer::Always)]);
+        match decide(TOOL, &args(), Some(&write()), &with_safe(&first, &safe, &no)).gate {
+            Gate::Ask(ask) => assert_eq!(ask.capability, secret()),
+            other => panic!("expected a question about the secret, got {other:?}"),
+        }
+
+        let later = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
+        assert!(matches!(
+            decide(TOOL, &args(), Some(&write()), &with_safe(&later, &safe, &no)).gate,
+            Gate::Go(How::Connector)
+        ));
+    }
+
+    #[test]
+    fn a_never_for_the_pair_is_final() {
+        let no = |_: &Capability| false;
+        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Never)]);
+        assert!(matches!(
+            decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate,
+            Gate::Refuse { .. }
+        ));
+    }
+
+    /// The server's own permission is asked first; the secret is not
+    /// mentioned until it is the one thing left.
+    #[test]
+    fn the_servers_permission_comes_first() {
+        let no = |_: &Capability| false;
+        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let ledger = Ledger::default();
+        match decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate {
+            Gate::Ask(ask) => assert_eq!(ask.capability, write()),
+            other => panic!("expected the server's question first, got {other:?}"),
+        }
+    }
+
+    /// A run that read something from outside does not reach a server at
+    /// all — secrets included — whatever the Safe would allow.
+    #[test]
+    fn a_tainted_run_sends_no_secret() {
+        let no = |_: &Capability| false;
+        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
+        let tainted = gate::View { tainted: true, ..with_safe(&ledger, &safe, &no) };
+        assert!(matches!(decide(TOOL, &args(), Some(&write()), &tainted).gate, Gate::Refuse { .. }));
     }
 }
 
@@ -404,4 +516,128 @@ async fn testing_a_server_lists_its_tools_and_keeps_nothing() {
     };
     let failed = test(&nowhere, &HashMap::new()).await;
     assert!(!failed.ok && failed.error.is_some() && !failed.desktop_only);
+}
+
+/// The canary (section 14.4 of `docs/safe-2026-09-28.md`), at the one door a
+/// secret leaves by. A value in the Safe goes to the connector it was given
+/// to — the server receives it — and nowhere else: not back to the model when
+/// the server echoes it, not to a server it was not given to.
+mod canary {
+    use super::*;
+    use crate::safe::crypto::{self, KdfParams, Key, SecretKey};
+    use crate::safe::format::{Keyset, KeysetHeader};
+    use crate::safe::item::{AiLevel, EditValue, FieldEdit, FieldKind, ItemEdit, ItemKind, SecretString};
+    use crate::safe::session::{global, Unlocked};
+
+    const CANARY: &str = "CANARY-7f3a91-do-not-leak";
+
+    /// The Safe session is one per process, so these take turns.
+    static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn open_safe(vault: &std::path::Path, destination: &str) {
+        let kdf = KdfParams { m_kib: 64, t: 1, p: 1 };
+        let auk = crypto::derive_auk(b"pw", &[0; 32], kdf, &SecretKey::from_bytes([1; 16])).unwrap();
+        let header = KeysetHeader { safe_id: [9; 16], key_epoch: 1, keyset_revision: 1, kdf, kdf_salt: [0; 32] };
+        let keyset = Keyset::seal(header, &auk, &Key::from_bytes([3; 32]), [0; 24]).unwrap();
+        let mut safe = Unlocked::open(vault, keyset, Key::from_bytes([3; 32])).unwrap();
+        let view = safe
+            .create(
+                ItemEdit {
+                    kind: ItemKind::ApiKey,
+                    title: "Jira".into(),
+                    fields: vec![FieldEdit {
+                        id: None,
+                        label: "token".into(),
+                        kind: FieldKind::Concealed,
+                        value: EditValue::Set { v: SecretString::new(CANARY.into()) },
+                    }],
+                    urls: vec![],
+                    tags: vec![],
+                    favorite: false,
+                    notes: String::new(),
+                    totp: Default::default(),
+                    expires_at: None,
+                },
+                1,
+            )
+            .unwrap();
+        safe.set_ai(&view.id, AiLevel::Usable, Some("jira-token".into()), vec![destination.into()], 2).unwrap();
+        global().install(safe);
+    }
+
+    #[tokio::test]
+    async fn a_secret_reaches_its_server_and_never_comes_back() {
+        let _turn = ONE_AT_A_TIME.lock().await;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut answers = HashMap::new();
+        // A server that quotes what it was sent, as an error page might.
+        answers.insert("create_issue".to_string(), fake::text(&format!("created, auth was {CANARY}")));
+        let fake_server = fake::serve(Script { tools: jira_tools(), answers, ..Default::default() }).await;
+        let server = fake::install(vault, "Jira Canary", &fake_server.url).await;
+        open_safe(dir.path(), &format!("connector:{}", server.id));
+
+        let write = Capability::NetWrite { domain: "Jira Canary".into(), tool: "create_issue".into() };
+        let args = json!({ "summary": "x", "auth": "Bearer {{safe:jira-token}}" });
+        let called = call(vault, "connector__jira_canary__create_issue", &args, Some(&write)).await;
+
+        let sent: Vec<Value> = fake_server.messages().into_iter().filter(|m| m["method"] == "tools/call").collect();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["params"]["arguments"]["auth"], format!("Bearer {CANARY}"), "the server did not get the value");
+        assert!(called.ok, "{}", called.content);
+        assert!(!called.content.contains(CANARY), "the echo reached the model: {}", called.content);
+        assert!(called.content.contains("‹safe:jira-token›"));
+        assert_eq!(args["auth"], "Bearer {{safe:jira-token}}", "the recorded arguments were changed");
+
+        global().lock();
+        disconnect(vault, None).await;
+    }
+
+    /// A connector's header may name a Safe item instead of holding a token:
+    /// filled while the Safe is open, for the server it was given to, and left
+    /// out when the Safe is locked.
+    #[tokio::test]
+    async fn a_setting_can_name_a_safe_item() {
+        let _turn = ONE_AT_A_TIME.lock().await;
+        use super::super::config::{Server, TransportConfig};
+        let dir = tempfile::tempdir().expect("temp");
+        let server = Server {
+            id: "id-linear".into(),
+            name: "Linear".into(),
+            transport: TransportConfig::Http { url: "https://example.test".into(), secret_headers: vec!["Authorization".into()] },
+            enabled: true,
+        };
+        let stored = HashMap::from([(super::super::config::slot("id-linear", "header", "Authorization"), "Bearer {{safe:jira-token}}".to_string())]);
+
+        open_safe(dir.path(), "connector:id-linear");
+        let resolved = super::super::resolve(&server, &stored);
+        assert_eq!(resolved.headers, vec![("Authorization".to_string(), format!("Bearer {CANARY}"))]);
+
+        global().lock();
+        assert!(super::super::resolve(&server, &stored).headers.is_empty(), "a locked Safe still filled a header");
+
+        let elsewhere = tempfile::tempdir().expect("temp");
+        open_safe(elsewhere.path(), "connector:someone-else");
+        assert!(super::super::resolve(&server, &stored).headers.is_empty(), "an item went to a server it was not given to");
+        global().lock();
+    }
+
+    #[tokio::test]
+    async fn a_server_the_item_was_not_given_to_gets_nothing() {
+        let _turn = ONE_AT_A_TIME.lock().await;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let fake_server = fake::serve(Script { tools: jira_tools(), ..Default::default() }).await;
+        fake::install(vault, "Jira Other", &fake_server.url).await;
+        open_safe(dir.path(), "connector:somewhere-else");
+
+        let write = Capability::NetWrite { domain: "Jira Other".into(), tool: "create_issue".into() };
+        let called = call(vault, "connector__jira_other__create_issue", &json!({ "auth": "{{safe:jira-token}}" }), Some(&write)).await;
+
+        assert!(!called.server_answered, "{}", called.content);
+        assert_eq!(fake_server.calls_to("create_issue"), 0, "a request left for a server the item was not given to");
+        assert!(called.content.contains("may not be sent"), "{}", called.content);
+        global().lock();
+        disconnect(vault, None).await;
+    }
 }

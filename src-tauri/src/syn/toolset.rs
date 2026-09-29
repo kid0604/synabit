@@ -54,6 +54,8 @@ pub enum Group {
     Structure,
     /// Syn's own past: earlier runs, and remembered things looked up by hand.
     Past,
+    /// The user's Safe: the names of what Syn may use, and asking for more.
+    Safe,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -71,6 +73,7 @@ impl Group {
             Group::History => "history".into(),
             Group::Structure => "structure".into(),
             Group::Past => "past".into(),
+            Group::Safe => "safe".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -86,6 +89,7 @@ impl Group {
             "history" => Group::History,
             "structure" => Group::Structure,
             "past" => Group::Past,
+            "safe" => Group::Safe,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -109,6 +113,7 @@ impl Group {
             Group::History => "the trash and earlier versions: restore what was removed or changed".into(),
             Group::Structure => "rename or remove a field or a kind across every note".into(),
             Group::Past => "your own earlier runs, and remembered things searched by hand".into(),
+            Group::Safe => "the user's Safe: names of secrets you may use with connectors, and asking the user to add one".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
@@ -134,6 +139,7 @@ pub fn group_of(tool: &str) -> Group {
         "list_trash" | "restore_node" | "list_versions" | "restore_version" => Group::History,
         "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => Group::Structure,
         "recall" | crate::syn::tools::LOOK_BACK_TOOL => Group::Past,
+        "safe_list" | "safe_request" => Group::Safe,
         _ => Group::Core,
     }
 }
@@ -182,6 +188,10 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "lần trước", "trước đây", "bạn đã nói", "hôm trước", "bạn nói", "earlier", "last time",
             "you said", "you told", "you answered", "nhớ lại",
         ],
+        Group::Safe => &[
+            "mật khẩu", "khoá", "khóa", "api key", "token", "secret", "safe", "đăng nhập", "tài khoản",
+            "password", "passwords", "key", "keys", "credential", "credentials", "login", "api",
+        ],
         Group::Core | Group::Connector(_) => &[],
     }
 }
@@ -223,6 +233,7 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::History,
         Group::Structure,
         Group::Past,
+        Group::Safe,
     ] {
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);

@@ -735,7 +735,6 @@ pub fn run() {
 
             // Safe: nothing open until the user unlocks it, and it locks
             // itself again when left alone.
-            app.manage(safe::session::SafeSession::default());
             app.manage(safe::clipboard::SafeClipboard::default());
             commands::safe::start_auto_lock(app.handle().clone());
 
@@ -957,6 +956,9 @@ pub fn run() {
             commands::safe::safe_save_emergency_kit,
             commands::safe::safe_import,
             commands::safe::safe_device_secrets,
+            commands::safe::safe_set_ai,
+            commands::safe::safe_destinations,
+            commands::safe::safe_request_submit,
             commands::safe::safe_forget_device_secret,
             commands::safe::safe_export,
             commands::safe::safe_export_plain,
