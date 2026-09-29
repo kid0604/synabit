@@ -202,8 +202,10 @@ pub async fn safe_unlock(
             }
         }
         let unlocked = Unlocked::open(&vault, keyset, safe_key)?;
+        let settings = unlocked.settings();
         crate::safe::session::global().install(unlocked);
         crate::syn::connector::after_safe_unlocked(handle.clone(), vault.to_string_lossy().into_owned());
+        ssh_agent_follow(&handle, &settings);
         Ok(())
     })
     .await
@@ -854,12 +856,84 @@ pub fn safe_get_settings(webview: tauri::Webview, vault_path: String) -> AppResu
 
 #[tauri::command]
 pub fn safe_set_settings(
+    app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     settings: Settings,
 ) -> AppResult<Settings> {
     gate(&webview)?;
-    with(&vault_path, |s| s.set_settings(settings))
+    let saved = with(&vault_path, |s| s.set_settings(settings))?;
+    ssh_agent_follow(&app, &saved);
+    Ok(saved)
+}
+
+/// Start or stop the SSH agent to match the settings.
+fn ssh_agent_follow(app: &tauri::AppHandle, settings: &Settings) {
+    #[cfg(all(desktop, unix))]
+    {
+        if settings.ssh_agent {
+            crate::safe::ssh_agent::start(app);
+        } else {
+            crate::safe::ssh_agent::stop();
+        }
+    }
+    #[cfg(not(all(desktop, unix)))]
+    {
+        let _ = (app, settings);
+    }
+}
+
+#[derive(Serialize)]
+pub struct SshKeyView {
+    title: String,
+    fingerprint: Option<String>,
+    /// The line for `authorized_keys`, or why the key cannot be used.
+    public: Option<String>,
+    problem: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SshStatus {
+    /// Whether this platform has the agent at all.
+    supported: bool,
+    running: bool,
+    socket: Option<String>,
+    keys: Vec<SshKeyView>,
+}
+
+/// What the SSH agent is doing, and which of the Safe's keys it offers.
+#[tauri::command]
+pub fn safe_ssh_status(webview: tauri::Webview, vault_path: String) -> AppResult<SshStatus> {
+    gate(&webview)?;
+    #[cfg(all(desktop, unix))]
+    {
+        let pems = with(&vault_path, |s| Ok(s.ssh_keys()))?;
+        let keys = pems
+            .into_iter()
+            .map(|(title, pem)| match crate::safe::ssh::parse(pem.expose()) {
+                Ok(k) => SshKeyView { title, fingerprint: Some(k.fingerprint()), public: Some(k.authorized_line()), problem: None },
+                Err(e) => SshKeyView { title, fingerprint: None, public: None, problem: Some(e.to_string()) },
+            })
+            .collect();
+        let at = crate::safe::ssh_agent::running_at();
+        Ok(SshStatus { supported: true, running: at.is_some(), socket: at.map(|p| p.display().to_string()), keys })
+    }
+    #[cfg(not(all(desktop, unix)))]
+    {
+        let _ = vault_path;
+        Ok(SshStatus { supported: false, running: false, socket: None, keys: Vec::new() })
+    }
+}
+
+/// The user's answer on an SSH approval card.
+#[tauri::command]
+pub fn safe_ssh_answer(webview: tauri::Webview, id: String, allow: bool) -> AppResult<()> {
+    gate(&webview)?;
+    #[cfg(all(desktop, unix))]
+    crate::safe::ssh_agent::answer(&id, allow);
+    #[cfg(not(all(desktop, unix)))]
+    let _ = (id, allow);
+    Ok(())
 }
 
 /// Lock whatever Safe has been left alone too long — or sat open while the

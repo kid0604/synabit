@@ -43,6 +43,10 @@ pub mod keyset;
 pub mod memory;
 pub mod requests;
 pub mod session;
+#[cfg(desktop)]
+pub mod ssh;
+#[cfg(all(desktop, unix))]
+pub mod ssh_agent;
 pub mod store;
 pub mod sync;
 pub mod totp;

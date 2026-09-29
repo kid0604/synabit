@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { open as openFile, save } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
 import ModalDialog from '../calendar/components/ModalDialog.vue';
-import type { SafeApi, Settings } from './api';
+import type { SafeApi, Settings, SshStatus } from './api';
 import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
@@ -40,9 +40,18 @@ async function update() {
   if (!settings.value) return;
   try {
     settings.value = await props.api.setSettings(settings.value);
+    ssh.value = await props.api.sshStatus().catch(() => null);
   } catch (e) {
     error.value = explain(e);
   }
+}
+
+/** The SSH agent: whether it runs, where, and which keys it offers. */
+const ssh = ref<SshStatus | null>(null);
+const exportLine = computed(() => (ssh.value?.socket ? `export SSH_AUTH_SOCK="${ssh.value.socket}"` : ''));
+async function copyExport() {
+  await navigator.clipboard.writeText(exportLine.value).catch(() => undefined);
+  notice.value = t('safe.ssh.copied');
 }
 
 const current = ref('');
@@ -91,6 +100,7 @@ async function saveKit() {
 }
 
 onMounted(async () => {
+  ssh.value = await props.api.sshStatus().catch(() => null);
   try {
     settings.value = await props.api.getSettings();
   } catch (e) {
@@ -208,6 +218,38 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
           <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.health.setting_body') }}</span>
         </span>
       </label>
+
+      <section v-if="settings && ssh?.supported" class="space-y-2.5">
+        <h3 class="text-sm font-semibold">{{ t('safe.ssh.title') }}</h3>
+        <label class="flex items-start gap-3 text-sm">
+          <input v-model="settings.ssh_agent" type="checkbox" class="mt-1" @change="update" />
+          <span>
+            <span class="block">{{ t('safe.ssh.enable') }}</span>
+            <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.enable_body') }}</span>
+          </span>
+        </label>
+        <template v-if="settings.ssh_agent">
+          <label class="flex items-center gap-3 text-sm">
+            <input v-model="settings.ssh_confirm" type="checkbox" @change="update" />
+            {{ t('safe.ssh.confirm') }}
+          </label>
+          <div v-if="exportLine" class="space-y-1">
+            <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.use') }}</p>
+            <div class="flex gap-2 items-center">
+              <code class="flex-1 min-w-0 px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ exportLine }}</code>
+              <button class="px-2 py-1 rounded border border-border dark:border-border-dark text-xs" @click="copyExport">{{ t('safe.detail.copy') }}</button>
+            </div>
+          </div>
+          <ul class="space-y-1.5">
+            <li v-for="k in ssh.keys" :key="k.title + (k.fingerprint ?? '')" class="text-xs">
+              <span class="font-medium">{{ k.title }}</span>
+              <span v-if="k.fingerprint" class="block font-mono text-text-tertiary dark:text-text-tertiary-dark break-all">{{ k.fingerprint }}</span>
+              <span v-else class="block text-warning">{{ k.problem }}</span>
+            </li>
+            <li v-if="!ssh.keys.length" class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.ssh.no_keys') }}</li>
+          </ul>
+        </template>
+      </section>
 
       <form class="space-y-2.5" @submit.prevent="changePassword">
         <h3 class="text-sm font-semibold">{{ t('safe.settings.change_password') }}</h3>

@@ -2943,6 +2943,20 @@
       "open_in_safe": "Mở trong Safe",
       "setting": "Kiểm tra mật khẩu với các vụ lộ dữ liệu",
       "setting_body": "Dùng Have I Been Pwned. Chỉ 5 ký tự đầu của mã băm SHA-1 rời khỏi máy — không bao giờ là mật khẩu."
+    },
+    "ssh": {
+      "title": "SSH agent",
+      "enable": "Dùng Safe làm SSH agent",
+      "enable_body": "ssh và git ký được bằng các khoá Ed25519 cất trong Safe, khi Safe đang mở. Khoá không bao giờ rời Synabit.",
+      "confirm": "Hỏi trước mỗi lần ký",
+      "use": "Thêm vào shell profile của bạn:",
+      "copied": "Đã copy. Thêm vào shell profile của bạn.",
+      "no_keys": "Safe chưa có khoá SSH nào. Thêm một mục loại SSH key với khoá riêng của nó.",
+      "approve_title": "Ký bằng khoá SSH?",
+      "approve_login": "Một chương trình trên máy này muốn đăng nhập với tên {user} bằng “{key}”.",
+      "approve_sign": "Một chương trình trên máy này muốn ký bằng “{key}”.",
+      "allow": "Cho phép",
+      "deny": "Từ chối"
     }
   }
 }

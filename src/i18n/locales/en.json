@@ -2943,6 +2943,20 @@
       "open_in_safe": "Open in Safe",
       "setting": "Check passwords against known breaches",
       "setting_body": "Uses Have I Been Pwned. Only the first five characters of each password's SHA-1 hash leave this device — never a password."
+    },
+    "ssh": {
+      "title": "SSH agent",
+      "enable": "Use Safe as an SSH agent",
+      "enable_body": "ssh and git can sign with the Ed25519 keys kept in Safe, while it is open. The keys never leave Synabit.",
+      "confirm": "Ask before each signature",
+      "use": "In your shell profile:",
+      "copied": "Copied. Add it to your shell profile.",
+      "no_keys": "No SSH keys in Safe yet. Add an item of kind SSH key with its private key.",
+      "approve_title": "Sign with an SSH key?",
+      "approve_login": "Something on this computer wants to log in as {user} with “{key}”.",
+      "approve_sign": "Something on this computer wants to sign with “{key}”.",
+      "allow": "Allow",
+      "deny": "Deny"
     }
   }
 }

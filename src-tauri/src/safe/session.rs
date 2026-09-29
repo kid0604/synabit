@@ -150,6 +150,16 @@ pub struct Settings {
     /// with five characters of a hash.
     #[serde(default)]
     pub breach_check: bool,
+    /// Whether the SSH agent runs. Off until turned on.
+    #[serde(default)]
+    pub ssh_agent: bool,
+    /// Whether each signature waits for a yes in the app. On by default.
+    #[serde(default = "yes")]
+    pub ssh_confirm: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn default_auto_lock() -> u64 {
@@ -164,7 +174,13 @@ pub const MAX_AUTO_LOCK_SECS: u64 = 8 * 60 * 60;
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { auto_lock_secs: default_auto_lock(), clipboard_clear_secs: default_clipboard_clear(), breach_check: false }
+        Settings {
+            auto_lock_secs: default_auto_lock(),
+            clipboard_clear_secs: default_clipboard_clear(),
+            breach_check: false,
+            ssh_agent: false,
+            ssh_confirm: true,
+        }
     }
 }
 
@@ -191,6 +207,8 @@ impl Settings {
             auto_lock_secs: self.auto_lock_secs.clamp(60, MAX_AUTO_LOCK_SECS),
             clipboard_clear_secs: self.clipboard_clear_secs.min(600),
             breach_check: self.breach_check,
+            ssh_agent: self.ssh_agent,
+            ssh_confirm: self.ssh_confirm,
         }
     }
 }
@@ -527,6 +545,23 @@ impl Unlocked {
             }
         }
         Ok(out)
+    }
+
+    /// Every OpenSSH private key in a live item's hidden fields, with the
+    /// item's title. For the SSH agent, in this process only.
+    pub fn ssh_keys(&self) -> Vec<(String, SecretString)> {
+        let mut out = Vec::new();
+        for (id, entry) in &self.entries {
+            if entry.summary.as_ref().is_none_or(|s| s.trashed) {
+                continue;
+            }
+            let Ok(body) = self.body(id) else { continue };
+            for f in body.fields.iter().filter(|f| f.kind.is_concealed() && f.value.expose().contains("-----BEGIN OPENSSH PRIVATE KEY-----")) {
+                out.push((body.title.clone(), f.value.clone()));
+            }
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     pub fn set_breached(&mut self, breached: HashSet<ItemId>, at: i64) {
@@ -1041,9 +1076,10 @@ mod tests {
     #[test]
     fn settings_are_clamped_and_kept_per_device() {
         let dir = tempfile::tempdir().unwrap();
-        Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999, breach_check: true }.save(dir.path()).unwrap();
+        let wild = Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999, breach_check: true, ssh_agent: true, ssh_confirm: false };
+        wild.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
-        assert_eq!(loaded, Settings { auto_lock_secs: 60, clipboard_clear_secs: 600, breach_check: true });
+        assert_eq!(loaded, Settings { auto_lock_secs: 60, clipboard_clear_secs: 600, ..wild });
         assert!(Settings::path(dir.path()).starts_with(dir.path().join(".synabit")), "a dotdir, so it does not sync");
     }
 }

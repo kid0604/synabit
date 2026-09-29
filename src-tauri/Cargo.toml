@@ -126,6 +126,10 @@ arboard = { version = "3", default-features = false }
 # back to `generator::estimate_bits`. No default features: the builder it
 # offers is not used.
 zxcvbn = { version = "3", default-features = false }
+# Safe's SSH agent signs with Ed25519. Already in the build through iroh, at
+# this exact version — named here, not added. Desktop only: the agent is a
+# socket for `ssh` and `git`, which phones do not run.
+ed25519-dalek = "=3.0.0-rc.0"
 
 [target.'cfg(unix)'.dependencies]
 # `mlock` for the page Safe keeps its keys in, and `setrlimit` to turn core

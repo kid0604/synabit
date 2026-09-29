@@ -127,6 +127,15 @@ export interface Settings {
   auto_lock_secs: number;
   clipboard_clear_secs: number;
   breach_check: boolean;
+  ssh_agent: boolean;
+  ssh_confirm: boolean;
+}
+
+export interface SshStatus {
+  supported: boolean;
+  running: boolean;
+  socket: string | null;
+  keys: { title: string; fingerprint: string | null; public: string | null; problem: string | null }[];
 }
 
 export type Recipe =
@@ -193,6 +202,7 @@ export function useSafeApi(vaultPath: () => string) {
       invoke<string>('safe_request_submit', { ...v(), requestId, title, handle, value, destinations }),
     deviceSecrets: () => invoke<DeviceSecret[]>('safe_device_secrets', v()),
     forgetDeviceSecret: (slot: string) => invoke<void>('safe_forget_device_secret', { ...v(), slot }),
+    sshStatus: () => invoke<SshStatus>('safe_ssh_status', v()),
     getSettings: () => invoke<Settings>('safe_get_settings', v()),
     setSettings: (settings: Settings) => invoke<Settings>('safe_set_settings', { ...v(), settings }),
   };
