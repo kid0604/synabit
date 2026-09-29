@@ -32,6 +32,9 @@ watch(
       return;
     }
     const mine = ++asked;
+    // Until this password is judged, it is not strong enough: a form must not
+    // pass on the score of the one typed before it.
+    emit('score', 0);
     timer = setTimeout(async () => {
       const s = await props.api.estimate(pw).catch(() => ({ score: 0, bits: 0 }));
       if (mine !== asked) return;

@@ -54,6 +54,43 @@ fn the_command_runs_with_the_secret_and_keeps_its_exit_code() {
     let _ = std::fs::remove_file(&path);
 }
 
+/// A reply is trusted for the variables asked for and nothing else.
+#[test]
+fn a_reply_cannot_set_variables_nobody_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let path = sock("extra");
+    let server = one_request(path.clone(), r#"{"ok":true,"env":{"T":"v","SNEAKY":"injected"}}"#);
+    let run = Command::new(env!("CARGO_BIN_EXE_synabit-safe"))
+        .args(["run", "--env", "T=safe:x", "--", "sh", "-c"])
+        .arg(format!("printf %s \"$T/${{SNEAKY:-unset}}\" > '{}'", out.display()))
+        .env("SYNABIT_SAFE_SOCK", &path)
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "v/unset");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_reply_missing_a_value_runs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let path = sock("short");
+    let server = one_request(path.clone(), r#"{"ok":true,"env":{"A":"1"}}"#);
+    let run = Command::new(env!("CARGO_BIN_EXE_synabit-safe"))
+        .args(["run", "--env", "A=safe:a", "--env", "B=safe:b", "--", "touch"])
+        .arg(&out)
+        .env("SYNABIT_SAFE_SOCK", &path)
+        .output()
+        .unwrap();
+    server.join().unwrap();
+    assert_eq!(run.status.code(), Some(1));
+    assert!(!out.exists(), "ran with B still set to its reference");
+    let _ = std::fs::remove_file(&path);
+}
+
 #[test]
 fn a_refusal_runs_nothing() {
     let dir = tempfile::tempdir().unwrap();

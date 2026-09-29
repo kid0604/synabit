@@ -38,8 +38,14 @@ const ARGON2D: [u8; 16] = hex16("ef636ddf8c29444b91f7a9a403e30a0c");
 const ARGON2ID: [u8; 16] = hex16("9e298b1956db4773b23dfc3ec6f0a1e6");
 const AES_KDF: [u8; 16] = hex16("c9d9f39a628a4460bf740d08c18a4fea");
 
-/// A database asking for more than this to open it is not one to open here.
+/// A database asking for more than these to open it is not one to open here.
+/// KeePass and KeePassXC write a few passes over tens or hundreds of MiB, or a
+/// few million AES rounds; the limits leave room for anyone who turned the
+/// dial up, and stop a file built to hold the app for hours.
 const MAX_ARGON2_BYTES: u64 = 2 << 30;
+const MAX_ARGON2_WORK: u64 = 64 << 30; // memory × passes, in bytes
+const MAX_ARGON2_LANES: u32 = 64;
+const MAX_AES_ROUNDS: u64 = 500_000_000;
 /// What decompressing may produce: a bomb stops here.
 const MAX_XML: u64 = 256 << 20;
 
@@ -149,6 +155,9 @@ fn transform(kdf: &Kdf, composite: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Exc
         if kdf.memory > MAX_ARGON2_BYTES {
             return Err(unsupported("it asks for more than 2 GiB of memory to open"));
         }
+        if kdf.memory.saturating_mul(kdf.iterations) > MAX_ARGON2_WORK || kdf.parallelism > MAX_ARGON2_LANES {
+            return Err(unsupported("its key derivation asks for far more work than KeePass ever sets"));
+        }
         let algorithm = if uuid == ARGON2D { argon2::Algorithm::Argon2d } else { argon2::Algorithm::Argon2id };
         let version = if kdf.version == 0x10 { argon2::Version::V0x10 } else { argon2::Version::V0x13 };
         let params = argon2::Params::new(
@@ -163,6 +172,9 @@ fn transform(kdf: &Kdf, composite: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>, Exc
             .map_err(|e| damaged(&format!("Argon2: {e}")))?;
     } else if uuid == AES_KDF {
         use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+        if kdf.rounds > MAX_AES_ROUNDS {
+            return Err(unsupported("its key derivation asks for far more work than KeePass ever sets"));
+        }
         let seed: [u8; 32] = kdf.salt.as_slice().try_into().map_err(|_| damaged("the AES-KDF seed is not 32 bytes"))?;
         let aes = aes::Aes256::new(GenericArray::from_slice(&seed));
         let mut key = Zeroizing::new(*composite);
@@ -437,6 +449,19 @@ mod tests {
                 other => panic!("byte {at}: {:?}", other.map(|_| ())),
             }
         }
+    }
+
+    #[test]
+    fn a_database_asking_for_hours_of_work_is_refused_at_once() {
+        let started = std::time::Instant::now();
+        for kdf in [
+            Kdf { uuid: ARGON2D.to_vec(), salt: vec![0; 32], parallelism: 1, memory: 1 << 30, iterations: 4_000_000_000, version: 0x13, rounds: 0 },
+            Kdf { uuid: ARGON2ID.to_vec(), salt: vec![0; 32], parallelism: 100_000, memory: 64 << 20, iterations: 2, version: 0x13, rounds: 0 },
+            Kdf { uuid: AES_KDF.to_vec(), salt: vec![0; 32], rounds: u64::MAX, ..Default::default() },
+        ] {
+            assert!(matches!(transform(&kdf, &[0; 32]), Err(ExchangeError::Unsupported(_))));
+        }
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
     }
 
     #[test]

@@ -115,6 +115,11 @@ export interface Overview {
   unhealthy: number;
   health: [HealthFlag, number][];
   breach_checked_at: number | null;
+  /** Items older on disk than this device has seen them, by title. */
+  rolled_back: string[];
+  keyset_rolled_back: boolean;
+  /** The master password was changed on another device since this one last opened the Safe. */
+  keyset_changed_elsewhere: boolean;
 }
 
 export interface Status {
@@ -158,7 +163,13 @@ export interface DeviceSecret {
   forgettable: boolean;
 }
 
-/** Emitted by Rust when the Safe locks itself after being left alone. */
+/** What creating the Safe, or changing its Secret Key, gives back once. */
+export interface Created {
+  secret_key: string;
+  stored_on_device: boolean;
+}
+
+/** Emitted by Rust whenever the Safe locks: by itself, by a click, on quitting. */
 export const LOCKED_EVENT = 'safe://locked';
 
 /**
@@ -174,14 +185,20 @@ export function useSafeApi(vaultPath: () => string) {
   const v = () => ({ vaultPath: vaultPath() });
   return {
     status: () => invoke<Status>('safe_status', v()),
-    create: (password: string) =>
-      invoke<{ secret_key: string; stored_on_device: boolean }>('safe_create', { ...v(), password }),
-    unlock: (password: string, secretKey?: string) =>
-      invoke<void>('safe_unlock', { ...v(), password, secretKey: secretKey || null }),
+    create: (password: string) => invoke<Created>('safe_create', { ...v(), password }),
+    /** `previous`: the user never changed the password; open the keyset another device replaced. */
+    unlock: (password: string, secretKey?: string, previous = false) =>
+      invoke<void>('safe_unlock', { ...v(), password, secretKey: secretKey || null, previous }),
     lock: () => invoke<void>('safe_lock'),
-    changePassword: (current: string, next: string) => invoke<void>('safe_change_password', { ...v(), current, next }),
+    changePassword: (current: string, next: string, secretKey?: string) =>
+      invoke<void>('safe_change_password', { ...v(), current, next, secretKey: secretKey || null }),
     secretKey: (password: string) => invoke<string>('safe_secret_key', { ...v(), password }),
-    saveEmergencyKit: (path: string) => invoke<void>('safe_save_emergency_kit', { ...v(), path }),
+    /** The master password is needed except right after the words were shown. */
+    saveEmergencyKit: (path: string, password?: string) =>
+      invoke<void>('safe_save_emergency_kit', { ...v(), path, password: password || null }),
+    rotateKey: (password: string, secretKey?: string) =>
+      invoke<number>('safe_rotate_key', { ...v(), password, secretKey: secretKey || null }),
+    changeSecretKey: (password: string) => invoke<Created>('safe_change_secret_key', { ...v(), password }),
     refresh: () => invoke<void>('safe_refresh', v()),
     overview: () => invoke<Overview>('safe_overview', v()),
     list: (filter: Filter, query: string) => invoke<ItemSummary[]>('safe_list', { ...v(), filter, query }),
@@ -201,7 +218,8 @@ export function useSafeApi(vaultPath: () => string) {
     importFile: (path: string, password?: string) =>
       invoke<{ format: string; imported: number; warnings: string[]; source_was_plaintext: boolean }>('safe_import', { ...v(), path, password: password || null }),
     exportSealed: (path: string, exportPassword: string) => invoke<number>('safe_export', { ...v(), path, exportPassword }),
-    exportPlain: (path: string, password: string) => invoke<number>('safe_export_plain', { ...v(), path, password }),
+    exportPlain: (path: string, password: string, secretKey?: string) =>
+      invoke<number>('safe_export_plain', { ...v(), path, password, secretKey: secretKey || null }),
     setAi: (id: string, level: AiLevel, handle: string | null, destinations: string[]) =>
       invoke<ItemView>('safe_set_ai', { ...v(), id, level, handle, destinations }),
     destinations: () => invoke<{ key: string; label: string }[]>('safe_destinations', v()),

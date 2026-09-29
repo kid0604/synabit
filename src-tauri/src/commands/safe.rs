@@ -25,8 +25,42 @@ use crate::safe::keyset;
 use crate::safe::session::{Filter, Overview, SafeError, Settings, Unlocked};
 use crate::secrets::SecretManager;
 
-/// Emitted when the Safe locks by itself, so an open screen can follow.
+/// Emitted whenever the Safe locks — by itself, by a click, by the app
+/// quitting — so every open screen and card can follow.
 pub const LOCKED_EVENT: &str = "safe://locked";
+
+/// Lock the Safe, if one is open, and do everything a lock means.
+pub fn lock_now(app: &tauri::AppHandle) -> bool {
+    let session = crate::safe::session::global();
+    let vault = session.open_vault();
+    let locked = session.lock();
+    if locked {
+        after_lock(app, vault);
+    }
+    locked
+}
+
+/// What follows a lock, whichever way it came: no approval card still waiting
+/// can be answered yes, a secret copied from the Safe comes off the clipboard,
+/// every window hears, and connectors drop what they were given.
+fn after_lock(app: &tauri::AppHandle, vault: Option<PathBuf>) {
+    crate::safe::approvals::abandon_all();
+    if let Some(clipboard) = app.try_state::<SafeClipboard>() {
+        clipboard.clear_now();
+    }
+    let _ = app.emit(LOCKED_EVENT, ());
+    if let Some(v) = vault {
+        crate::syn::connector::after_safe_locked(app.clone(), v.to_string_lossy().into_owned());
+    }
+}
+
+/// Hold a newly opened Safe; a different vault's Safe open until now is locked
+/// the whole way, not just forgotten.
+fn install(app: &tauri::AppHandle, unlocked: Unlocked) {
+    if let Some(replaced) = crate::safe::session::global().install(unlocked) {
+        after_lock(app, Some(replaced));
+    }
+}
 
 /// Which webviews may use Safe: the main window, Safe's own Quick Access
 /// window, and a note opened in a window of its own. Not the capture box —
@@ -88,9 +122,31 @@ fn stored_secret_key(app: &tauri::AppHandle, safe_id: &[u8; 16]) -> Result<Optio
     Ok(Some(SecretKey::from_bytes(array)))
 }
 
+/// The Secret Key the user typed, or else the one this device keeps. A
+/// device whose keychain refused it can still do everything the words allow.
+fn secret_key_for(app: &tauri::AppHandle, safe_id: &[u8; 16], typed: &str) -> Result<SecretKey, SafeError> {
+    if typed.trim().is_empty() {
+        stored_secret_key(app, safe_id)?.ok_or(SafeError::NeedsSecretKey)
+    } else {
+        secret_key_from_words(typed)
+    }
+}
+
 fn store_secret_key(app: &tauri::AppHandle, safe_id: &[u8; 16], secret_key: &SecretKey) -> Result<(), SafeError> {
     let hex_key = zeroize::Zeroizing::new(hex::encode(secret_key.as_bytes()));
     SecretManager::set_named(Some(app), &secret_key_entry(safe_id), &hex_key).map_err(SafeError::Keychain)
+}
+
+/// A master password is judged here too, not only by the screen's meter: the
+/// same bar — zxcvbn's 3 of 4 — whatever sent it.
+fn strong_enough(password: &str) -> Result<(), SafeError> {
+    if password.chars().count() < keyset::MIN_PASSWORD_CHARS {
+        return Err(SafeError::PasswordTooShort);
+    }
+    if crate::safe::health::strength(password, &[]).score < 3 {
+        return Err(SafeError::PasswordTooWeak);
+    }
+    Ok(())
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, SafeError> + Send + 'static) -> AppResult<T> {
@@ -150,6 +206,7 @@ pub async fn safe_create(
     let password = zeroize::Zeroizing::new(password);
     let handle = app.clone();
     blocking(move || {
+        strong_enough(&password)?;
         let kdf = keyset::calibrate();
         log::info!("[Safe] creating a Safe with Argon2id m={} KiB t={} p={}", kdf.m_kib, kdf.t, kdf.p);
         let created = keyset::create(&vault, &password, kdf)?;
@@ -161,8 +218,17 @@ pub async fn safe_create(
             }
         };
         let secret_key = words_of(&created.secret_key);
-        let unlocked = Unlocked::open(&vault, created.keyset, created.safe_key)?;
-        crate::safe::session::global().install(unlocked);
+        let words_for_guard = zeroize::Zeroizing::new(secret_key.clone());
+        // The words are all there is of the Secret Key if the keychain said no:
+        // they go back to the screen whatever happens next.
+        match Unlocked::open(&vault, created.keyset, created.safe_key) {
+            Ok(mut unlocked) => {
+                unlocked.words_just_shown();
+                unlocked.guard_secret_key(&words_for_guard);
+                install(&handle, unlocked)
+            }
+            Err(e) => log::error!("[Safe] created, but could not open it: {e}"),
+        }
         Ok(Created { secret_key, stored_on_device })
     })
     .await
@@ -178,15 +244,17 @@ pub async fn safe_unlock(
     vault_path: String,
     password: String,
     secret_key: Option<String>,
+    previous: Option<bool>,
 ) -> AppResult<()> {
     gate(&webview)?;
     let vault = vault(&vault_path)?;
     let password = zeroize::Zeroizing::new(password);
     let typed = zeroize::Zeroizing::new(secret_key.unwrap_or_default());
+    let previous = previous.unwrap_or(false);
     let handle = app.clone();
     blocking(move || {
-        let keyset = keyset::read(&vault)?;
-        let safe_id = keyset.header.safe_id;
+        let current = keyset::read(&vault)?;
+        let safe_id = current.header.safe_id;
         let (sk, from_user) = if typed.trim().is_empty() {
             match stored_secret_key(&handle, &safe_id)? {
                 Some(sk) => (sk, false),
@@ -195,15 +263,63 @@ pub async fn safe_unlock(
         } else {
             (secret_key_from_words(&typed)?, true)
         };
-        let safe_key = keyset::unlock(&keyset, &password, &sk)?;
+        let asides = crate::safe::sync::keyset_asides(&vault);
+        let (keyset, safe_key) = if previous {
+            // The user says they never changed the password: open a keyset
+            // set aside with it, and make that one current again everywhere.
+            let found = asides.iter().find_map(|path| {
+                let older = std::fs::read(path).ok().and_then(|b| crate::safe::format::Keyset::decode(&b).ok())?;
+                if older.header.safe_id != safe_id {
+                    return None;
+                }
+                keyset::unlock(&older, &password, &sk).ok().map(|key| (older, key))
+            });
+            let (older, key) = found.ok_or(SafeError::WrongPassword)?;
+            let above = current.header.keyset_revision.max(crate::safe::sync::Seen::load(&vault).keyset);
+            let restored = keyset::restore(&vault, &older, &key, &password, &sk, above)?;
+            log::warn!("[Safe] the keyset from before another device's change was put back at the user's word");
+            (restored, key)
+        } else {
+            match keyset::unlock(&current, &password, &sk) {
+                Ok(key) => (current, key),
+                // Another device's keyset is here now. Saying so beats "wrong
+                // password" to someone typing the one they have always used.
+                Err(keyset::KeysetError::Open(crate::safe::format::OpenError::WrongPassword)) if !asides.is_empty() => {
+                    return Err(SafeError::PasswordChangedElsewhere)
+                }
+                Err(e) => return Err(e.into()),
+            }
+        };
         if from_user {
             if let Err(e) = store_secret_key(&handle, &safe_id, &sk) {
                 log::error!("[Safe] opened, but {e}");
             }
         }
-        let unlocked = Unlocked::open(&vault, keyset, safe_key)?;
+        let mut unlocked = Unlocked::open(&vault, keyset, safe_key)?;
+        unlocked.guard_secret_key(&zeroize::Zeroizing::new(words_of(&sk)));
+        // A keyset set aside that opens with the same password and Secret Key
+        // but holds another Safe Key: two devices rotated at once. Its key
+        // goes on the ring, so what that device sealed opens here.
+        for path in &asides {
+            let older = std::fs::read(path).ok().and_then(|b| crate::safe::format::Keyset::decode(&b).ok());
+            if let Some(key) = older.filter(|k| k.header.safe_id == safe_id).and_then(|k| keyset::unlock(&k, &password, &sk).ok()) {
+                if let Err(e) = unlocked.remember_older_key(key) {
+                    log::warn!("[Safe] could not keep another device's Safe Key: {e}");
+                }
+            }
+        }
+        // The keyset that opened is the one in force; those set aside have
+        // done their job. Said once, on the screen.
+        if !asides.is_empty() {
+            if !previous {
+                unlocked.note_keyset_changed_elsewhere();
+            }
+            for path in &asides {
+                let _ = std::fs::remove_file(path);
+            }
+        }
         let settings = unlocked.settings();
-        crate::safe::session::global().install(unlocked);
+        install(&handle, unlocked);
         crate::syn::connector::after_safe_unlocked(handle.clone(), vault.to_string_lossy().into_owned());
         sockets_follow(&handle, &settings);
         Ok(())
@@ -214,12 +330,7 @@ pub async fn safe_unlock(
 #[tauri::command]
 pub fn safe_lock(app: tauri::AppHandle, webview: tauri::Webview) -> AppResult<()> {
     gate(&webview)?;
-    let vault = crate::safe::session::global().open_vault();
-    if crate::safe::session::global().lock() {
-        if let Some(v) = vault {
-            crate::syn::connector::after_safe_locked(app, v.to_string_lossy().into_owned());
-        }
-    }
+    lock_now(&app);
     Ok(())
 }
 
@@ -233,22 +344,32 @@ pub async fn safe_change_password(
     vault_path: String,
     current: String,
     next: String,
+    secret_key: Option<String>,
 ) -> AppResult<()> {
     gate(&webview)?;
     let vault = vault(&vault_path)?;
     let current = zeroize::Zeroizing::new(current);
     let next = zeroize::Zeroizing::new(next);
+    let typed = zeroize::Zeroizing::new(secret_key.unwrap_or_default());
     let handle = app.clone();
     blocking(move || {
+        // From the open Safe only — and checked before anything is written, so
+        // a refusal never follows a change that already happened.
+        crate::safe::session::global().peek(&vault, |_| Ok(()))?;
+        strong_enough(&next)?;
         let keyset = keyset::read(&vault)?;
-        let sk = stored_secret_key(&handle, &keyset.header.safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
+        let sk = secret_key_for(&handle, &keyset.header.safe_id, &typed)?;
         let key = keyset::unlock(&keyset, &current, &sk)?;
         let kdf = keyset.header.kdf;
         let updated = keyset::change_password(&vault, &keyset, &key, &next, &sk, kdf)?;
-        crate::safe::session::global().with(&vault, |open| {
+        // The new keyset is on disk: the new password is the one now, whether
+        // or not the Safe locked during the two Argon2 runs. If it did, the
+        // next unlock reads the new keyset; nothing is owed the open session.
+        let _ = crate::safe::session::global().peek_mut(&vault, |open| {
             open.replace_keyset(updated);
             Ok(())
-        })
+        });
+        Ok(())
     })
     .await
 }
@@ -275,25 +396,109 @@ pub async fn safe_secret_key(
     .await
 }
 
+/// Replace the Safe Key and seal every item again under the new one. Behind
+/// the master password: it is the answer to "an old copy of my keyset and an
+/// old password may be out there".
+#[tauri::command]
+pub async fn safe_rotate_key(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    password: String,
+    secret_key: Option<String>,
+) -> AppResult<usize> {
+    gate(&webview)?;
+    let vault = vault(&vault_path)?;
+    let password = zeroize::Zeroizing::new(password);
+    let typed = zeroize::Zeroizing::new(secret_key.unwrap_or_default());
+    let handle = app.clone();
+    blocking(move || {
+        let keyset = keyset::read(&vault)?;
+        let sk = secret_key_for(&handle, &keyset.header.safe_id, &typed)?;
+        keyset::unlock(&keyset, &password, &sk)?;
+        let words = zeroize::Zeroizing::new(words_of(&sk));
+        crate::safe::session::global().with(&vault, |s| {
+            let sealed = s.rotate_safe_key(&password, &sk)?;
+            s.guard_secret_key(&words);
+            log::info!("[Safe] the Safe Key was replaced; {sealed} files sealed again");
+            Ok(sealed)
+        })
+    })
+    .await
+}
+
+/// A new Secret Key for the same Safe. The new words go back to the screen —
+/// the one other time they do after creation — for a new Emergency Kit.
+#[tauri::command]
+pub async fn safe_change_secret_key(
+    app: tauri::AppHandle,
+    webview: tauri::Webview,
+    vault_path: String,
+    password: String,
+) -> AppResult<Created> {
+    gate(&webview)?;
+    let vault = vault(&vault_path)?;
+    let password = zeroize::Zeroizing::new(password);
+    let handle = app.clone();
+    blocking(move || {
+        crate::safe::session::global().peek(&vault, |_| Ok(()))?;
+        let current = keyset::read(&vault)?;
+        let sk = stored_secret_key(&handle, &current.header.safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
+        let key = keyset::unlock(&current, &password, &sk)?;
+        let (next, new_sk) = keyset::change_secret_key(&vault, &current, &key, &password)?;
+        let stored_on_device = match store_secret_key(&handle, &next.header.safe_id, &new_sk) {
+            Ok(()) => true,
+            Err(e) => {
+                log::error!("[Safe] the Secret Key was changed, but {e}");
+                false
+            }
+        };
+        let words = words_of(&new_sk);
+        let guard_words = zeroize::Zeroizing::new(words.clone());
+        let _ = crate::safe::session::global().peek_mut(&vault, |s| {
+            s.replace_keyset(next);
+            s.guard_secret_key(&guard_words);
+            s.words_just_shown();
+            Ok(())
+        });
+        Ok(Created { secret_key: words, stored_on_device })
+    })
+    .await
+}
+
 /// Write the Emergency Kit to `path`: a page to print, with the Secret Key and
 /// a blank for the master password to be written in by hand.
 ///
 /// The Secret Key comes from the keychain here rather than from the screen, so
-/// the words do not travel back through the WebView to be written out. Only
-/// while the Safe is open.
+/// the words do not travel back through the WebView to be written out. Behind
+/// the master password, like showing the words: the kit *is* the words —
+/// except in the half hour after the words were shown (the Safe created, its
+/// Secret Key changed), when the password was typed a moment ago and the
+/// words are on the screen already.
 #[tauri::command]
-pub fn safe_save_emergency_kit(
+pub async fn safe_save_emergency_kit(
     app: tauri::AppHandle,
     webview: tauri::Webview,
     vault_path: String,
     path: String,
+    password: Option<String>,
 ) -> AppResult<()> {
     gate(&webview)?;
-    let safe_id = with(&vault_path, |s| Ok(s.keyset().header.safe_id))?;
-    let sk = stored_secret_key(&app, &safe_id).map_err(AppError::Safe)?.ok_or(AppError::Safe(SafeError::NeedsSecretKey))?;
-    let html = zeroize::Zeroizing::new(emergency_kit(&words_of(&sk), &safe_id, &chrono::Local::now().format("%Y-%m-%d").to_string()));
-    crate::safe::store::write_atomic(std::path::Path::new(&path), html.as_bytes())
-        .map_err(|e| AppError::Safe(SafeError::Failed(format!("could not write the Emergency Kit: {e}"))))
+    let vault = vault(&vault_path)?;
+    let password = zeroize::Zeroizing::new(password.unwrap_or_default());
+    let handle = app.clone();
+    blocking(move || {
+        let safe_id = crate::safe::session::global().peek(&vault, |s| Ok(s.keyset().header.safe_id))?;
+        let keyset = keyset::read(&vault)?;
+        let sk = stored_secret_key(&handle, &safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
+        if !crate::safe::session::global().peek(&vault, |s| Ok(s.words_shown_recently()))? {
+            keyset::unlock(&keyset, &password, &sk)?;
+        }
+        let html = zeroize::Zeroizing::new(emergency_kit(&words_of(&sk), &safe_id, &chrono::Local::now().format("%Y-%m-%d").to_string()));
+        crate::safe::store::write_atomic(std::path::Path::new(&path), html.as_bytes())
+            .map_err(|e| SafeError::Failed(format!("could not write the Emergency Kit: {e}")))
+    })
+    .await
 }
 
 /// The kit itself. Plain HTML with its own styles, so it prints the same from
@@ -343,9 +548,11 @@ fn with<R>(vault_path: &str, f: impl FnOnce(&mut Unlocked) -> Result<R, SafeErro
 /// Read the Safe again after sync brought items from another device, and
 /// fold in any version it set aside.
 #[tauri::command]
-pub fn safe_refresh(webview: tauri::Webview, vault_path: String) -> AppResult<()> {
+pub async fn safe_refresh(webview: tauri::Webview, vault_path: String) -> AppResult<()> {
     gate(&webview)?;
-    with(&vault_path, |s| s.reload())
+    let vault = vault(&vault_path)?;
+    // Every item is decrypted again: off the main thread.
+    blocking(move || crate::safe::session::global().peek_mut(&vault, |s| s.reload())).await
 }
 
 #[tauri::command]
@@ -449,7 +656,10 @@ pub fn safe_totp(
     id: String,
 ) -> AppResult<crate::safe::totp::Code> {
     gate(&webview)?;
-    with(&vault_path, |s| s.totp(&id, now() as u64))
+    // Not use: the item's screen asks every thirty seconds by itself, and an
+    // item left showing its code must not keep the Safe from locking.
+    let vault = vault(&vault_path)?;
+    crate::safe::session::global().peek(&vault, |s| s.totp(&id, now() as u64)).map_err(AppError::Safe)
 }
 
 /// Copy the current one-time code — or the next one, in the last five
@@ -566,7 +776,15 @@ pub async fn safe_import(
             ExchangeError::WrongKdbxPassword => SafeError::WrongKdbxPassword,
             other => SafeError::Failed(other.to_string()),
         })?;
-        let imported = crate::safe::session::global().with(&vault, |s| s.import(parsed.items))?;
+        // In batches, letting go of the Safe between them: a list or a code
+        // asked for meanwhile waits for fifty items, not for two thousand.
+        let mut items = parsed.items;
+        let mut imported = 0;
+        while !items.is_empty() {
+            let rest = items.split_off(items.len().min(50));
+            let batch = std::mem::replace(&mut items, rest);
+            imported += crate::safe::session::global().with(&vault, |s| s.import(batch))?;
+        }
         Ok(Imported { format, imported, warnings: parsed.warnings, source_was_plaintext: !matches!(format, Format::SafeExport | Format::Kdbx) })
     })
     .await
@@ -606,14 +824,16 @@ pub async fn safe_export_plain(
     vault_path: String,
     path: String,
     password: String,
+    secret_key: Option<String>,
 ) -> AppResult<usize> {
     gate(&webview)?;
     let vault = vault(&vault_path)?;
     let password = zeroize::Zeroizing::new(password);
+    let typed = zeroize::Zeroizing::new(secret_key.unwrap_or_default());
     let handle = app.clone();
     blocking(move || {
         let keyset = keyset::read(&vault)?;
-        let sk = stored_secret_key(&handle, &keyset.header.safe_id)?.ok_or(SafeError::NeedsSecretKey)?;
+        let sk = secret_key_for(&handle, &keyset.header.safe_id, &typed)?;
         keyset::unlock(&keyset, &password, &sk)?;
         let items = crate::safe::session::global().with(&vault, |s| s.all_items())?;
         let csv = crate::safe::exchange::to_csv(&items);
@@ -673,6 +893,9 @@ pub fn safe_request_submit(
     use crate::safe::item::{AiLevel, EditValue, FieldEdit, FieldKind, ItemEdit, ItemKind, SecretString};
     gate(&webview)?;
     let value = SecretString::new(value);
+    // Locked, the request stays open: what the user typed can be sent again
+    // once they unlock, rather than the card answering "gone".
+    with(&vault_path, |_| Ok(()))?;
     let request = crate::safe::requests::take(&vault_path, &request_id).ok_or(AppError::Safe(SafeError::RequestGone))?;
     // Only places the card offered: a destination is a decision the user
     // makes by ticking it, not a string a request can smuggle in.
@@ -909,11 +1132,13 @@ pub struct SshStatus {
 
 /// What the SSH agent is doing, and which of the Safe's keys it offers.
 #[tauri::command]
-pub fn safe_ssh_status(webview: tauri::Webview, vault_path: String) -> AppResult<SshStatus> {
+pub async fn safe_ssh_status(webview: tauri::Webview, vault_path: String) -> AppResult<SshStatus> {
     gate(&webview)?;
     #[cfg(all(desktop, unix))]
     {
-        let pems = with(&vault_path, |s| Ok(s.ssh_keys()))?;
+        let vault = vault(&vault_path)?;
+        // Every item is decrypted to find the keys: off the main thread.
+        let pems = blocking(move || crate::safe::session::global().peek(&vault, |s| Ok(s.ssh_keys()))).await?;
         let keys = pems
             .into_iter()
             .map(|(title, pem)| match crate::safe::ssh::parse(pem.expose()) {
@@ -970,10 +1195,7 @@ pub fn start_auto_lock(app: tauri::AppHandle) {
                 session.lock_if_idle(std::time::Instant::now()).then(|| log::info!("[Safe] locked after being left alone"))
             };
             if locked.is_some() {
-                let _ = app.emit(LOCKED_EVENT, ());
-                if let Some(v) = vault {
-                    crate::syn::connector::after_safe_locked(app.clone(), v.to_string_lossy().into_owned());
-                }
+                after_lock(&app, vault);
             }
             last = now;
         }

@@ -616,6 +616,13 @@ pub struct Run {
     /// on with, whether or not they are in its history.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_untrusted: bool,
+    /// Whether an earlier turn of this conversation read something nobody
+    /// here wrote. Not a taint — the user has spoken since — but a stranger's
+    /// words may be what they said "ok" to, so a Safe secret is not sent on
+    /// an earlier "always" in such a conversation: the card is shown again.
+    /// Carried from turn to turn. See `gate` step 5½.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub untrusted_before: bool,
     /// The steps the model said this work would take, as it last said them.
     /// See `PlanStep`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -798,6 +805,7 @@ impl Run {
             error: None,
             plan_only: false,
             read_untrusted: false,
+            untrusted_before: false,
             plan: Vec::new(),
             ceiling: None,
             parent_run_id: None,
@@ -1150,6 +1158,18 @@ pub const ALREADY_ANSWERED: &str =
     "This question has already been answered, and the work it was waiting on has carried on.";
 
 /// The newest run in a conversation, not counting helpers.
+/// Whether a turn of `conversation_id` before `run_id` read something
+/// untrusted, or itself followed one that did.
+pub fn untrusted_before(vault_path: &str, conversation_id: &str, run_id: &str) -> bool {
+    load_all(vault_path)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|r| r.parent_run_id.is_none() && r.id != run_id && r.conversation_id.as_deref() == Some(conversation_id))
+        .max_by(|a, b| a.created_at.cmp(&b.created_at))
+        .is_some_and(|r| r.read_untrusted || r.untrusted_before)
+}
+
 pub fn latest_for(vault_path: &str, conversation_id: &str) -> Option<Run> {
     load_all(vault_path)
         .ok()?

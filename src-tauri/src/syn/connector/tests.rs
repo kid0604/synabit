@@ -247,6 +247,7 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         skills_opened: 0,
         plan_only: false,
         sub_run: false,
+        untrusted_before: false,
         now: "2026-09-27T10:00:00+00:00",
         safe: &|_, h| Err(format!("no Safe item `{h}` in this test")),
     }
@@ -289,8 +290,23 @@ mod secrets {
         Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() }
     }
 
+    fn route() -> crate::safe::bridge::Route {
+        crate::safe::bridge::Route {
+            destination: "connector:jira".into(),
+            label: "Jira".into(),
+            tool: "create_issue".into(),
+            item_id: "0a0a".into(),
+        }
+    }
+
     fn secret() -> Capability {
-        Capability::UseSecret { item: "jira-token".into(), destination: "connector:jira".into(), label: "Jira".into() }
+        Capability::UseSecret {
+            item: "jira-token".into(),
+            destination: "connector:jira".into(),
+            label: "Jira".into(),
+            tool: "create_issue".into(),
+            item_id: "0a0a".into(),
+        }
     }
 
     fn args() -> serde_json::Value {
@@ -301,7 +317,7 @@ mod secrets {
     fn what_the_safe_refuses_is_refused_in_its_words() {
         let ledger = granted(&[(&write(), Answer::Always)]);
         let no = |_: &Capability| false;
-        let safe = |_: &str, h: &str| -> Result<(String, String), String> { Err(format!("`{h}` may not go there")) };
+        let safe = |_: &str, h: &str| -> Result<crate::safe::bridge::Route, String> { Err(format!("`{h}` may not go there")) };
         let decided = decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no));
         match decided.gate {
             Gate::Refuse { said, .. } => assert_eq!(said, "`jira-token` may not go there"),
@@ -312,7 +328,7 @@ mod secrets {
     #[test]
     fn an_allowed_pair_is_asked_about_once_then_remembered() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
+        let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
 
         let first = granted(&[(&write(), Answer::Always)]);
         match decide(TOOL, &args(), Some(&write()), &with_safe(&first, &safe, &no)).gate {
@@ -327,10 +343,42 @@ mod secrets {
         ));
     }
 
+    /// An "always" is for one item, one server, one tool. Another tool of
+    /// the same server — a public gist where the answer was an issue lookup —
+    /// or another item that took the name since, is asked about afresh.
+    #[test]
+    fn an_always_covers_one_tool_of_one_item_only() {
+        let no = |_: &Capability| false;
+        let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
+        let other_tool = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> {
+            Ok(crate::safe::bridge::Route { tool: "create_gist".into(), ..route() })
+        };
+        let renamed = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> {
+            Ok(crate::safe::bridge::Route { item_id: "0b0b".into(), ..route() })
+        };
+        for safe in [&other_tool as &crate::syn::gate::SafeCheck, &renamed] {
+            assert!(matches!(decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, safe, &no)).gate, Gate::Ask(_)));
+        }
+    }
+
+    /// A conversation that read a stranger's words earlier: the "ok" that
+    /// started this turn may be theirs, so an earlier "always" is not enough.
+    #[test]
+    fn after_untrusted_reading_an_always_asks_again() {
+        let no = |_: &Capability| false;
+        let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
+        let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
+        let after = gate::View { untrusted_before: true, ..with_safe(&ledger, &safe, &no) };
+        match decide(TOOL, &args(), Some(&write()), &after).gate {
+            Gate::Ask(ask) => assert_eq!(ask.capability, secret()),
+            other => panic!("expected the card again, got {other:?}"),
+        }
+    }
+
     #[test]
     fn a_never_for_the_pair_is_final() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
+        let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Never)]);
         assert!(matches!(
             decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate,
@@ -343,7 +391,7 @@ mod secrets {
     #[test]
     fn the_servers_permission_comes_first() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
+        let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
         let ledger = Ledger::default();
         match decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate {
             Gate::Ask(ask) => assert_eq!(ask.capability, write()),
@@ -356,7 +404,7 @@ mod secrets {
     #[test]
     fn a_tainted_run_sends_no_secret() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
+        let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
         let tainted = gate::View { tainted: true, ..with_safe(&ledger, &safe, &no) };
         assert!(matches!(decide(TOOL, &args(), Some(&write()), &tainted).gate, Gate::Refuse { .. }));
@@ -640,4 +688,24 @@ mod canary {
         global().lock();
         disconnect(vault, None).await;
     }
+}
+
+/// A secret goes over TLS or to this machine, never across a network in the
+/// clear (design 8.4).
+#[test]
+fn secrets_travel_only_over_https_or_to_this_machine() {
+    let http = |url: &str| Server {
+        id: "s".into(),
+        name: "S".into(),
+        transport: TransportConfig::Http { url: url.into(), secret_headers: vec![] },
+        enabled: true,
+    };
+    for url in ["https://mcp.example.com/mcp", "http://localhost:8080/mcp", "http://127.0.0.1:3000", "http://[::1]:9/x"] {
+        assert!(http(url).carries_secrets_safely(), "{url}");
+    }
+    for url in ["http://mcp.example.com/mcp", "http://192.168.1.10/mcp", "http://localhost.evil.example/", "ftp://x", "not a url"] {
+        assert!(!http(url).carries_secrets_safely(), "{url}");
+    }
+    // Filling a header for such a server is refused before the Safe is asked.
+    assert_eq!(crate::safe::bridge::fill_setting(&http("http://mcp.example.com"), "Bearer {{safe:tok}}"), None);
 }

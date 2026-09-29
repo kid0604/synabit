@@ -10,30 +10,44 @@
 //! the same id.
 //!
 //! So `Safe/` gets a rule of its own, decided here from the **cleartext
-//! header** alone — which Safe, which item, which revision. No key is needed,
-//! so it works while the Safe is locked, which is most of the time sync runs.
+//! header** alone — which Safe, which item, which revision — and from which
+//! versions this device has held. No key is needed, so it works while the
+//! Safe is locked, which is most of the time sync runs.
 //!
-//! # The rule (section 5.6 of the design)
+//! # The rule (section 5.6 of the design, as revised in section 24)
 //!
-//! * A different Safe, a header that does not match the file name, or bytes
-//!   that do not parse: **refused**, and the local file is left alone.
-//! * A revision lower than the highest this device has seen for the item:
-//!   **refused**. That is a replay — an old password handed back — and the
-//!   heart of why this module exists.
-//! * A higher revision: **written**.
-//! * The same revision with different bytes: two devices edited at once. Both
-//!   devices keep the version whose bytes hash higher, so they agree without
-//!   talking, and set the other **aside** in `Safe/conflicts/` for the open
-//!   Safe to fold into the winner's history — see `Unlocked::resolve_conflicts`.
-//!   Nothing is lost and no second copy of the item appears in the list.
+//! * A different Safe, a header that does not match the file name, bytes that
+//!   do not parse, or a revision that jumps implausibly far: **refused**, and
+//!   the local file is left alone.
+//! * A version this device has already held — by the hash of its bytes: an old
+//!   one handed back. **Refused.** That is a replay, and the heart of why this
+//!   module exists.
+//! * A higher revision: **written**, and ours **set aside**. Revisions are
+//!   counted per device, so "higher" does not mean "made after seeing ours":
+//!   the open Safe folds ours back in (`ItemBody::absorb`, newest edit wins,
+//!   every other password kept in history) and finds nothing to add when theirs
+//!   did come after.
+//! * A lower revision we never held: another device's edit made without seeing
+//!   ours. Ours stays; **theirs is set aside** to be folded in the same way —
+//!   never thrown away, which is how two devices once kept different passwords
+//!   for good.
+//! * The same revision with different bytes: both devices keep the version
+//!   whose bytes hash higher, so they agree without talking, and set the other
+//!   aside.
 //!
-//! # Where "the highest revision seen" lives
+//! Folding happens when the Safe is next open (`Unlocked::resolve_conflicts`);
+//! its result is a new revision above both, which settles the other device
+//! the same way. An item deleted on one device and edited on the other at the
+//! same time comes back — losing an edit is worse than a delete to redo — but
+//! a delete made after the edit arrived is a delete.
+//!
+//! # Where "what this device has seen" lives
 //!
 //! `.synabit/safe/seen.json`, per device and never synced — a dotdir. In the
 //! clear, unlike the design's first draft: it has to be read while the Safe
-//! is locked, and it holds item ids and revision numbers, which the file names
-//! and headers beside it already show. Losing it costs only rollback
-//! protection until the items are next written or read.
+//! is locked, and it holds item ids, revision numbers and hashes of files
+//! that sit encrypted beside it. Losing it costs only rollback protection
+//! until the items are next written or read.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -55,10 +69,19 @@ pub fn is_safe_path(rel_path: &str) -> bool {
 /// merged here, and anything a crashed write left behind.
 pub fn is_local_only(rel_path: &str) -> bool {
     let rel = rel_path.replace('\\', "/");
-    rel.starts_with("Safe/conflicts/") || rel.ends_with(".tmp") || rel.ends_with(".safe.new")
+    rel.starts_with("Safe/conflicts/") || (rel.starts_with(PREFIX) && (rel.ends_with(".tmp") || rel.ends_with(".new")))
 }
 
-// ─── the highest revision seen ───────────────────────────
+// ─── what this device has seen ──────────────────────────
+
+/// How many versions of each file are remembered as held.
+const KNOWN_PER_FILE: usize = 64;
+
+/// A revision further than this above anything this device has seen for the
+/// file is not a real one: nobody edits an item a million times offline. A
+/// forged header claiming `u64::MAX` would otherwise pin the mark there and
+/// every real revision after it would look like a replay.
+pub const MAX_JUMP: u64 = 1_000_000;
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Seen {
@@ -66,10 +89,21 @@ pub struct Seen {
     pub keyset: u64,
     #[serde(default)]
     pub items: BTreeMap<String, u64>,
+    /// Short hashes of the versions held, newest last, by item id or `keyset`.
+    #[serde(default)]
+    pub known: BTreeMap<String, Vec<String>>,
 }
 
 fn seen_path(vault: &Path) -> PathBuf {
     vault.join(".synabit").join("safe").join("seen.json")
+}
+
+/// One writer of `seen.json` at a time in this process: sync and the open
+/// Safe both move its marks.
+static SEEN_WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn version_tag(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex()[..32].to_string()
 }
 
 impl Seen {
@@ -87,23 +121,69 @@ impl Seen {
     pub fn item(&self, id: &ItemId) -> u64 {
         self.items.get(&hex::encode(id)).copied().unwrap_or(0)
     }
+
+    /// Whether this device has held exactly these bytes for `key`.
+    pub fn held(&self, key: &str, bytes: &[u8]) -> bool {
+        self.known.get(key).is_some_and(|tags| tags.contains(&version_tag(bytes)))
+    }
+
+    fn hold(&mut self, key: &str, bytes: &[u8]) -> bool {
+        let tag = version_tag(bytes);
+        let tags = self.known.entry(key.to_string()).or_default();
+        if tags.contains(&tag) {
+            return false;
+        }
+        tags.push(tag);
+        if tags.len() > KNOWN_PER_FILE {
+            tags.remove(0);
+        }
+        true
+    }
 }
 
-/// Remember that `id` has been seen at `revision`. Never lowers a mark.
-pub fn saw_item(vault: &Path, id: &ItemId, revision: u64) {
+/// Read, change and write `seen.json` as one step.
+fn update(vault: &Path, change: impl FnOnce(&mut Seen) -> bool) {
+    let _one = SEEN_WRITE.lock().unwrap_or_else(|p| p.into_inner());
     let mut seen = Seen::load(vault);
-    let mark = seen.items.entry(hex::encode(id)).or_default();
-    if revision > *mark {
-        *mark = revision;
+    if change(&mut seen) {
         seen.save(vault);
     }
 }
 
+/// Remember that `id` has been seen at `revision`. Never lowers a mark.
+pub fn saw_item(vault: &Path, id: &ItemId, revision: u64) {
+    update(vault, |seen| {
+        let mark = seen.items.entry(hex::encode(id)).or_default();
+        if revision > *mark {
+            *mark = revision;
+            true
+        } else {
+            false
+        }
+    });
+}
+
 pub fn saw_keyset(vault: &Path, revision: u64) {
-    let mut seen = Seen::load(vault);
-    if revision > seen.keyset {
-        seen.keyset = revision;
-        seen.save(vault);
+    update(vault, |seen| {
+        if revision > seen.keyset {
+            seen.keyset = revision;
+            true
+        } else {
+            false
+        }
+    });
+}
+
+/// Remember holding these bytes of a file: written here, or taken from sync.
+/// `key` is the item's id in hex, or `keyset`.
+pub fn held(vault: &Path, key: &str, bytes: &[u8]) {
+    update(vault, |seen| seen.hold(key, bytes));
+}
+
+/// Remember holding whatever is on disk at `rel_path` now.
+pub fn held_file(vault: &Path, key: &str, rel_path: &str) {
+    if let Ok(bytes) = std::fs::read(vault.join(rel_path)) {
+        held(vault, key, &bytes);
     }
 }
 
@@ -112,12 +192,12 @@ pub fn saw_keyset(vault: &Path, revision: u64) {
 /// What to do with another device's version of a file under `Safe/`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Incoming {
-    /// Write theirs over ours (or where there was nothing).
+    /// Write theirs where there was nothing.
     Write,
     /// Leave ours; say why in the log.
     Refuse(String),
-    /// Same revision, different bytes. `write` says whether theirs wins; the
-    /// loser — theirs or ours — goes to `aside`.
+    /// Two versions, both kept: `write` says whether theirs takes the file's
+    /// place; the other goes to `aside`, to be folded in when the Safe opens.
     Conflict { write: bool, aside: PathBuf },
 }
 
@@ -137,9 +217,25 @@ fn header(bytes: &[u8]) -> Option<Header> {
     })
 }
 
-fn aside_path(vault: &Path, stem: &str, loser: &[u8]) -> PathBuf {
+/// The revision in a Safe file's cleartext header, if it is one.
+pub fn revision_of(bytes: &[u8]) -> Option<u64> {
+    match header(bytes)? {
+        Header::Keyset { revision, .. } | Header::Item { revision, .. } => Some(revision),
+    }
+}
+
+/// Where a version is set aside. `.over` marks one that a higher revision
+/// replaced — for a delete, that says the delete came after it.
+fn aside_path(vault: &Path, stem: &str, loser: &[u8], replaced_by_higher: bool) -> PathBuf {
     let tag = &blake3::hash(loser).to_hex()[..16];
-    vault.join(PREFIX).join(CONFLICTS_DIR).join(format!("{stem}.{tag}.safe"))
+    let kind = if replaced_by_higher { ".over" } else { "" };
+    vault.join(PREFIX).join(CONFLICTS_DIR).join(format!("{stem}.{tag}{kind}.safe"))
+}
+
+/// Whether a version set aside was replaced by a higher revision, rather than
+/// arriving beside ours.
+pub fn replaced_by_higher(aside: &Path) -> bool {
+    aside.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".over.safe"))
 }
 
 /// Decide about `theirs`, arriving for `rel_path`.
@@ -154,14 +250,14 @@ pub fn decide(vault: &Path, rel_path: &str, theirs: &[u8]) -> Incoming {
         return Incoming::Refuse(format!("{rel}: not a Safe file"));
     };
 
-    let (safe_id, revision, floor, stem) = match (&their_header, rel.as_str()) {
-        (Header::Keyset { safe_id, revision }, "Safe/keyset.safe") => (*safe_id, *revision, seen.keyset, "keyset".to_string()),
+    let (safe_id, revision, floor, stem, is_keyset) = match (&their_header, rel.as_str()) {
+        (Header::Keyset { safe_id, revision }, "Safe/keyset.safe") => (*safe_id, *revision, seen.keyset, "keyset".to_string(), true),
         (Header::Item { safe_id, item_id, revision }, path) if path.starts_with("Safe/items/") => {
             let named = path.strip_prefix("Safe/items/").and_then(|n| n.strip_suffix(".safe"));
             if named != Some(hex::encode(item_id).as_str()) {
                 return Incoming::Refuse(format!("{rel}: holds a different item than its name says"));
             }
-            (*safe_id, *revision, seen.item(item_id), hex::encode(item_id))
+            (*safe_id, *revision, seen.item(item_id), hex::encode(item_id), false)
         }
         _ => return Incoming::Refuse(format!("{rel}: not a place Safe files arrive")),
     };
@@ -171,28 +267,46 @@ pub fn decide(vault: &Path, rel_path: &str, theirs: &[u8]) -> Incoming {
             return Incoming::Refuse(format!("{rel}: belongs to a different Safe"));
         }
     }
-    if revision < floor {
-        return Incoming::Refuse(format!("{rel}: revision {revision} is older than {floor}, already seen here — refused as a replay"));
+    let our_revision = ours.as_deref().and_then(revision_of);
+    let highest = floor.max(our_revision.unwrap_or(0));
+    if revision > highest.saturating_add(MAX_JUMP) {
+        return Incoming::Refuse(format!("{rel}: revision {revision} is too far above {highest} to be real"));
+    }
+    if ours.as_deref() == Some(theirs) {
+        return Incoming::Refuse(format!("{rel}: already here"));
+    }
+    if seen.held(&stem, theirs) {
+        return Incoming::Refuse(format!("{rel}: a version this device already had — refused as a replay"));
     }
 
-    let Some(ours) = ours else { return Incoming::Write };
-    let our_revision = match header(&ours) {
-        Some(Header::Keyset { revision, .. }) | Some(Header::Item { revision, .. }) => revision,
+    let Some(ours) = ours else {
+        // Nothing here to fold into: below what this device has seen, it is
+        // an old version handed back.
+        if revision < floor {
+            return Incoming::Refuse(format!("{rel}: revision {revision} is older than {floor}, already seen here — refused as a replay"));
+        }
+        return Incoming::Write;
+    };
+    let Some(our_revision) = our_revision else {
         // Ours does not parse: theirs, which does, is the better copy — but
         // ours is kept aside rather than destroyed.
-        None => return Incoming::Conflict { write: true, aside: aside_path(vault, &stem, &ours) },
+        return Incoming::Conflict { write: true, aside: aside_path(vault, &stem, &ours, true) };
     };
 
     match revision.cmp(&our_revision) {
-        std::cmp::Ordering::Greater => Incoming::Write,
-        std::cmp::Ordering::Less => Incoming::Refuse(format!("{rel}: ours is newer ({our_revision} > {revision})")),
-        std::cmp::Ordering::Equal if ours == theirs => Incoming::Refuse(format!("{rel}: already here")),
+        std::cmp::Ordering::Greater => Incoming::Conflict { write: true, aside: aside_path(vault, &stem, &ours, true) },
+        // A keyset is not folded: an older one we never held is a password
+        // changed there before a change here, and the newer change stands.
+        std::cmp::Ordering::Less if is_keyset => {
+            Incoming::Refuse(format!("{rel}: ours is newer ({our_revision} > {revision})"))
+        }
+        std::cmp::Ordering::Less => Incoming::Conflict { write: false, aside: aside_path(vault, &stem, theirs, false) },
         std::cmp::Ordering::Equal => {
             // Both devices run this with the two versions swapped and must
             // reach the same answer: keep the higher hash.
             let theirs_wins = blake3::hash(theirs).as_bytes() > blake3::hash(&ours).as_bytes();
             let loser: &[u8] = if theirs_wins { &ours } else { theirs };
-            Incoming::Conflict { write: theirs_wins, aside: aside_path(vault, &stem, loser) }
+            Incoming::Conflict { write: theirs_wins, aside: aside_path(vault, &stem, loser, false) }
         }
     }
 }
@@ -218,10 +332,18 @@ pub fn apply(vault: &Path, rel_path: &str, theirs: &[u8], decision: &Incoming) -
             if *write {
                 store::write_atomic(&local_path, theirs)?;
             }
-            log::info!("[Safe] sync: two versions of {rel_path} at the same revision; one kept aside to merge");
+            log::info!("[Safe] sync: two versions of {rel_path}; one kept aside to fold in when the Safe opens");
             *write
         }
     };
+    if !matches!(decision, Incoming::Refuse(_)) {
+        // Held now, written or set aside: the same bytes again are a replay.
+        match header(theirs) {
+            Some(Header::Keyset { .. }) => held(vault, "keyset", theirs),
+            Some(Header::Item { item_id, .. }) => held(vault, &hex::encode(item_id), theirs),
+            None => {}
+        }
+    }
     if wrote {
         match header(theirs) {
             Some(Header::Keyset { revision, .. }) => saw_keyset(vault, revision),
@@ -230,6 +352,21 @@ pub fn apply(vault: &Path, rel_path: &str, theirs: &[u8], decision: &Incoming) -
         }
     }
     Ok(wrote)
+}
+
+/// Keysets set aside — replaced by another device's, or tied with one — newest
+/// first. Kept so that a password changed elsewhere, or a keyset a peer
+/// forged, can be undone by the user at unlock.
+pub fn keyset_asides(vault: &Path) -> Vec<PathBuf> {
+    let dir = vault.join(PREFIX).join(CONFLICTS_DIR);
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("keyset."))
+        .map(|e| (e.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), e.path()))
+        .collect();
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out.into_iter().map(|(_, p)| p).collect()
 }
 
 /// Every version set aside for an item, oldest file first.
@@ -290,12 +427,34 @@ mod tests {
         assert_eq!(Seen::load(v.path()).item(&ITEM), 1);
     }
 
+    /// Revisions are counted per device: a higher one replaces ours with ours
+    /// kept aside, a lower one we never held is kept aside beside ours — both
+    /// folded when the Safe opens. Neither is thrown away.
     #[test]
-    fn a_newer_revision_replaces_ours_and_an_older_one_does_not() {
+    fn a_newer_revision_replaces_ours_and_an_older_unknown_one_is_kept_aside() {
+        let v = vault();
+        let ours = item(SAFE, 3, b"{}");
+        store::write_atomic(&v.path().join(PATH), &ours).unwrap();
+        assert!(matches!(decide(v.path(), PATH, &item(SAFE, 4, b"{}")), Incoming::Conflict { write: true, aside } if replaced_by_higher(&aside)));
+        let older = item(SAFE, 2, b"{}");
+        let d = decide(v.path(), PATH, &older);
+        assert!(matches!(&d, Incoming::Conflict { write: false, aside } if !replaced_by_higher(aside)), "{d:?}");
+        apply(v.path(), PATH, &older, &d).unwrap();
+        assert_eq!(std::fs::read(v.path().join(PATH)).unwrap(), ours, "ours stays");
+        assert_eq!(conflicts_for(v.path()).len(), 1);
+        // The same version again is one this device has held: a replay.
+        assert!(matches!(decide(v.path(), PATH, &older), Incoming::Refuse(r) if r.contains("replay")));
+    }
+
+    /// A forged header cannot pin the mark: a revision far past anything seen
+    /// is not taken at all.
+    #[test]
+    fn an_implausible_revision_is_refused() {
         let v = vault();
         store::write_atomic(&v.path().join(PATH), &item(SAFE, 3, b"{}")).unwrap();
-        assert_eq!(decide(v.path(), PATH, &item(SAFE, 4, b"{}")), Incoming::Write);
-        assert!(matches!(decide(v.path(), PATH, &item(SAFE, 2, b"{}")), Incoming::Refuse(_)));
+        assert!(matches!(decide(v.path(), PATH, &item(SAFE, u64::MAX, b"{}")), Incoming::Refuse(r) if r.contains("too far")));
+        assert!(matches!(decide(v.path(), PATH, &item(SAFE, 3 + MAX_JUMP, b"{}")), Incoming::Conflict { write: true, .. }));
+        assert!(matches!(decide(v.path(), "Safe/keyset.safe", &keyset(SAFE, u64::MAX)), Incoming::Refuse(_)));
     }
 
     /// The attack this module is for: the item file is gone here (deleted, or
@@ -371,6 +530,9 @@ mod tests {
         assert!(is_local_only("Safe/items/.x.safe.1a2b.tmp"));
         assert!(!is_local_only("Safe/items/09.safe"));
         assert!(!is_local_only("Safe/keyset.safe"));
+        assert!(is_local_only("Safe/keyset.safe.1a2b3c4d.new"), "a crashed create's leftover");
+        assert!(!is_local_only("Notes/draft.tmp"), "a note of the user's is not Safe's leftover");
+        assert!(!is_local_only("Projects/idea.new"));
         assert!(is_safe_path("Safe\\items\\x.safe"));
         assert!(!is_safe_path("Projects/Safe/x.md"));
     }

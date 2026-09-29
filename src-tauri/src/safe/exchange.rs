@@ -108,8 +108,14 @@ pub fn parse(format: Format, bytes: &[u8], password: Option<&str>, now: i64) -> 
         }
         Format::Csv => csv(bytes, now),
         Format::SafeExport => {
-            let items = open_export(bytes, password.unwrap_or(""))?;
-            Ok(Parsed { items, warnings: Vec::new() })
+            let mut items = open_export(bytes, password.unwrap_or(""))?;
+            let mut warnings = Vec::new();
+            for item in &mut items {
+                if item.drop_unusable_totp() {
+                    warnings.push(format!("“{}”: its one-time code settings were impossible and were left out", item.title));
+                }
+            }
+            Ok(Parsed { items, warnings })
         }
     }
 }
@@ -284,9 +290,9 @@ fn onepux(bytes: &[u8], now: i64) -> Result<Parsed, ExchangeError> {
         .map_err(|_| ExchangeError::Damaged("no export.data inside".into()))?
         .take(256 * 1024 * 1024)
         .read_to_string(&mut data)
-        .map_err(|e| ExchangeError::Damaged(e.to_string()))?;
+        .map_err(|_| ExchangeError::Damaged("export.data could not be read".into()))?;
     let data = zeroize::Zeroizing::new(data);
-    let root: Value = serde_json::from_str(&data).map_err(|e| ExchangeError::Damaged(e.to_string()))?;
+    let root: Value = serde_json::from_str(&data).map_err(|e| ExchangeError::Damaged(format!("export.data {}", super::item::json_problem(&e))))?;
 
     let mut warnings = Vec::new();
     let mut out = Vec::new();
@@ -376,7 +382,9 @@ fn keepass(bytes: &[u8], now: i64) -> Result<Parsed, ExchangeError> {
     use quick_xml::events::Event;
     let text = std::str::from_utf8(bytes).map_err(|_| ExchangeError::Unknown)?;
     let mut reader = quick_xml::Reader::from_str(text);
-    reader.config_mut().trim_text(true);
+    // Not trimmed: a value's leading and trailing spaces are part of it. The
+    // whitespace between elements comes through as text nobody reads.
+    reader.config_mut().trim_text(false);
 
     let mut path: Vec<String> = Vec::new(); // element names, outermost first
     let mut groups: Vec<String> = Vec::new(); // group names, outermost first
@@ -537,13 +545,16 @@ fn csv(bytes: &[u8], now: i64) -> Result<Parsed, ExchangeError> {
         warnings.push(format!("these columns were not imported: {}", ignored.join(", ")));
     }
     let cell = |row: &Vec<String>, i: Option<usize>| i.and_then(|i| row.get(i)).map(|v| v.trim().to_string()).unwrap_or_default();
+    // A password and a note are kept exactly: a space at either end of a
+    // password is part of it.
+    let exact = |row: &Vec<String>, i: Option<usize>| i.and_then(|i| row.get(i)).cloned().unwrap_or_default();
 
     let mut out = Vec::new();
     for row in body {
-        let mut d = Draft { title: cell(row, title), notes: cell(row, notes), ..Default::default() };
+        let mut d = Draft { title: cell(row, title), notes: exact(row, notes), ..Default::default() };
         d.kind = if cell(row, kind).eq_ignore_ascii_case("note") { ItemKind::SecureNote } else { ItemKind::Login };
         d.field("username", FieldKind::Username, &cell(row, user));
-        d.field("password", FieldKind::Password, &cell(row, pass));
+        d.field("password", FieldKind::Password, &exact(row, pass));
         let u = cell(row, url);
         if !u.is_empty() {
             d.urls.push(u);
@@ -647,11 +658,16 @@ pub fn open_export(bytes: &[u8], password: &str) -> Result<Vec<ItemBody>, Exchan
     if !kdf.meets_floor() {
         return Err(ExchangeError::Damaged("asks for less protection than Synabit writes".into()));
     }
+    // Nor one that asks for more than any machine should spend: this is
+    // checked before the password, so anyone could send such a file.
+    if !kdf.within_ceiling() {
+        return Err(ExchangeError::Damaged("asks for more work than Synabit ever writes".into()));
+    }
     let salt: [u8; SALT_LEN] = header[15..15 + SALT_LEN].try_into().expect("salt length");
     let nonce: [u8; NONCE_LEN] = bytes[EXPORT_HEADER_LEN..EXPORT_HEADER_LEN + NONCE_LEN].try_into().expect("nonce length");
     let key = export_key(password, &salt, kdf)?;
     let json = crypto::open(&key, &nonce, header, &bytes[EXPORT_HEADER_LEN + NONCE_LEN..]).map_err(|_| ExchangeError::WrongExportPassword)?;
-    serde_json::from_slice(&json).map_err(|e| ExchangeError::Damaged(e.to_string()))
+    serde_json::from_slice(&json).map_err(|e| ExchangeError::Damaged(format!("its contents {}", super::item::json_problem(&e))))
 }
 
 #[cfg(test)]
@@ -751,6 +767,24 @@ mod tests {
         assert!(p.warnings.iter().all(|w| !w.contains("kdbx-canary")), "a warning carried a value");
 
         assert!(matches!(parse(Format::Kdbx, db, Some("nope"), 1), Err(ExchangeError::WrongKdbxPassword)));
+    }
+
+    /// A space at either end of a password is part of it. An import that
+    /// trimmed it would leave the user, told to delete the source, with a
+    /// password that no longer works.
+    #[test]
+    fn spaces_around_a_password_survive_every_import() {
+        let xml = "<KeePassFile><Root><Group><Name>Database</Name>\n  <Entry>\n    <String><Key>Title</Key><Value>Spaced</Value></String>\n    <String><Key>Password</Key><Value ProtectInMemory=\"True\">  two spaces  </Value></String>\n  </Entry>\n</Group></Root></KeePassFile>";
+        let p = parse(Format::KeePassXml, xml.as_bytes(), None, 1).unwrap();
+        assert_eq!(p.items.len(), 1);
+        assert_eq!(p.items[0].title, "Spaced");
+        assert_eq!(value(&p.items[0], FieldKind::Password), "  two spaces  ");
+
+        let csv = "name,url,username,password,note\nSite,https://a.example, anh , pass with space ,\" keep \"\n";
+        let p = parse(Format::Csv, csv.as_bytes(), None, 1).unwrap();
+        assert_eq!(value(&p.items[0], FieldKind::Password), " pass with space ");
+        assert_eq!(value(&p.items[0], FieldKind::Username), "anh", "a username is still tidied");
+        assert_eq!(p.items[0].notes.expose(), " keep ");
     }
 
     #[test]

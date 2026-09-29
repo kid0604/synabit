@@ -101,7 +101,7 @@ pub fn resolve(server: &Server, secrets: &HashMap<String, String>) -> Resolved {
         let value = if crate::safe::egress::find(&serde_json::Value::String(stored.clone())).is_empty() {
             stored
         } else {
-            match crate::safe::bridge::fill_setting(&server.id, &server.name, stored) {
+            match crate::safe::bridge::fill_setting(server, stored) {
                 Some(v) => {
                     filled = v;
                     &filled
@@ -234,6 +234,9 @@ pub fn after_safe_locked(app: tauri::AppHandle, vault_path: String) {
         if uses_safe(&secrets) {
             disconnect(&vault_path, None).await;
         }
+        // Only now: until the connections closed, their answers still needed
+        // scrubbing of what their settings were given.
+        crate::safe::bridge::forget_settings();
     });
 }
 
@@ -429,11 +432,16 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
             }
         };
         // What comes back is scrubbed of what went out before anything — the
-        // model, the run file, the conversation — sees it.
+        // model, the run file, the conversation — sees it: this call's
+        // arguments, and whatever the server's own settings were filled with
+        // (a header it may echo in a "whoami" or a debug tool).
+        let mut sent = crate::safe::bridge::sent_in_settings(&tool.server_id).unwrap_or_default();
+        if let Some(injected) = injected.as_ref() {
+            sent.absorb(injected.clone());
+        }
         let scrub = |text: String| -> String {
-            let Some(injected) = injected.as_ref() else { return text };
             let mut text = text;
-            if injected.scrub(&mut text) > 0 {
+            if sent.scrub(&mut text) > 0 {
                 log::warn!("[Safe] {} echoed a secret it was sent; it was hidden from Syn", tool.server_name);
                 text.push_str("\n\n[Synabit: the server's answer contained the secret it was sent. It was hidden.]");
             }
@@ -459,11 +467,10 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
                 drop_session(vault_path, &tool.server_id).await;
             }
             Err(ConnectorError::Rpc { code, message }) => {
-                let fenced = wrap(
-                    &tool.server_name,
-                    &tool.tool,
-                    &scrub(format!("The server answered with an error ({code}): {message}")),
-                );
+                // Scrubbed whole, then cut: a value straddling the cut would
+                // otherwise leave its first half behind.
+                let said: String = scrub(format!("The server answered with an error ({code}): {message}")).chars().take(2_000).collect();
+                let fenced = wrap(&tool.server_name, &tool.tool, &said);
                 return Called {
                     content: serde_json::json!({ "error": fenced }).to_string(),
                     server_answered: true,

@@ -495,6 +495,8 @@ impl SynEngine {
             crate::syn::taint::Taint::new()
         };
         run.read_untrusted = taint.is_set();
+        run.untrusted_before = run.untrusted_before
+            || run.conversation_id.as_deref().is_some_and(|c| crate::syn::run::untrusted_before(req.vault_path, c, &run.id));
 
         // Where `browse` may still go once that has happened: links the run
         // was shown, exactly, and sites the user named. See
@@ -817,6 +819,7 @@ impl SynEngine {
                     capability.as_ref(),
                     &crate::syn::gate::View {
                         tainted: taint.is_set(),
+                        untrusted_before: run.untrusted_before,
                         surface: run.surface,
                         seen: &seen,
                         ledger: &ledger,

@@ -52,9 +52,14 @@ fn register_capture_hotkey(app: &tauri::AppHandle) {
     // Cmd/Ctrl+Shift+Space. Chosen to sit clear of the obvious neighbours —
     // Spotlight owns Cmd+Space, and input-source switching owns Ctrl+Space.
     let shortcut = Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::Space);
-    // Cmd/Ctrl+Alt+Backslash: Safe's Quick Access. One plugin holds both, so
-    // the handler tells them apart by id.
-    let safe_shortcut = Shortcut::new(Some(Modifiers::ALT | Modifiers::SUPER), Code::Backslash);
+    // Cmd+Alt+Backslash on a Mac, Ctrl+Alt+Backslash elsewhere — `SUPER`
+    // there is the Windows key. Safe's Quick Access. One plugin holds both,
+    // so the handler tells them apart by id.
+    #[cfg(target_os = "macos")]
+    let safe_modifiers = Modifiers::ALT | Modifiers::SUPER;
+    #[cfg(not(target_os = "macos"))]
+    let safe_modifiers = Modifiers::ALT | Modifiers::CONTROL;
+    let safe_shortcut = Shortcut::new(Some(safe_modifiers), Code::Backslash);
     let safe_id = safe_shortcut.id();
 
     let handler_app = app.clone();
@@ -961,6 +966,8 @@ pub fn run() {
             commands::safe::safe_ssh_status,
             commands::safe::safe_ssh_answer,
             commands::safe::safe_cli_status,
+            commands::safe::safe_rotate_key,
+            commands::safe::safe_change_secret_key,
             commands::safe::safe_destinations,
             commands::safe::safe_request_submit,
             commands::safe::safe_forget_device_secret,
@@ -1133,6 +1140,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
+            // Quitting locks the Safe the whole way: a password copied a few
+            // seconds ago comes off the clipboard, since the timer that would
+            // have taken it off dies with the process.
+            if let tauri::RunEvent::Exit = event {
+                commands::safe::lock_now(app);
+            }
             // Clicking the Dock icon of an app with no open windows fires
             // this, and nothing else does. Without handling it, closing the
             // window and then clicking Synabit in the Dock does nothing at

@@ -69,14 +69,16 @@ pub struct View<'a> {
     pub sub_run: bool,
     pub now: &'a str,
     /// Whether the Safe item `handle` may go to the server behind `tool`:
-    /// `Ok(destination)` as a consent scope names it, or the sentence to tell
-    /// the model. See `safe::bridge::may_send`.
+    /// where it would go, or the sentence to tell the model. See
+    /// `safe::bridge::may_send`.
     pub safe: &'a SafeCheck<'a>,
+    /// Whether an earlier turn of the conversation read something untrusted.
+    /// See `Run::untrusted_before`.
+    pub untrusted_before: bool,
 }
 
-/// `(tool, handle)` → the destination as a consent scope names it and the
-/// server's name, or the sentence to tell the model.
-pub type SafeCheck<'a> = dyn Fn(&str, &str) -> Result<(String, String), String> + 'a;
+/// `(tool, handle)` → where the item would go, or the sentence to tell the model.
+pub type SafeCheck<'a> = dyn Fn(&str, &str) -> Result<crate::safe::bridge::Route, String> + 'a;
 
 /// What to do with the call.
 #[derive(Debug)]
@@ -267,8 +269,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // the model is not asked.
     if crate::syn::connector::is_connector_tool(tool) {
         for placeholder in crate::safe::egress::find(args) {
-            let (destination, label) = match (view.safe)(tool, &placeholder.handle) {
-                Ok(d) => d,
+            let route = match (view.safe)(tool, &placeholder.handle) {
+                Ok(route) => route,
                 Err(said) => {
                     return Decided {
                         gate: Gate::Refuse {
@@ -279,8 +281,20 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
                     }
                 }
             };
-            let secret = Capability::UseSecret { item: placeholder.handle.clone(), destination, label };
+            let secret = Capability::UseSecret {
+                item: placeholder.handle.clone(),
+                destination: route.destination,
+                label: route.label,
+                tool: route.tool,
+                item_id: route.item_id,
+            };
             let mut decision = crate::syn::consent::decide(&secret, view.ledger, view.now);
+            // An "always" was said about ordinary use. In a conversation that
+            // has read a stranger's words, the "ok" this run answers may be
+            // theirs: the card is shown again, naming the item and the tool.
+            if decision == Decision::Allow && view.untrusted_before {
+                decision = Decision::Ask;
+            }
             if decision == Decision::Ask && (view.allowed_until_done)(&secret) {
                 decision = Decision::Allow;
             }
@@ -371,6 +385,7 @@ mod tests {
             skills_opened: 0,
             plan_only: false,
             sub_run: false,
+            untrusted_before: false,
             now: NOW,
             safe: &|_, h| Err(format!("no Safe here ({h})")),
         }

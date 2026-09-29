@@ -175,6 +175,17 @@ impl KdfParams {
     pub fn meets_floor(&self) -> bool {
         self.m_kib >= Self::FLOOR.m_kib && self.t >= Self::FLOOR.t && self.p >= Self::FLOOR.p
     }
+
+    /// The most a file may ask for: 4 GiB, 64 passes, 16 lanes. Far above
+    /// anything calibration writes (256 MiB, 12 passes, 4 lanes). Argon2 itself
+    /// accepts up to `u32::MAX` of each — asking for that would abort the app
+    /// trying to allocate 4 TiB, or run for ever — and these settings come
+    /// from files: a synced keyset, an export somebody sent.
+    pub const CEILING: Self = Self { m_kib: 4 * 1024 * 1024, t: 64, p: 16 };
+
+    pub fn within_ceiling(&self) -> bool {
+        self.m_kib <= Self::CEILING.m_kib && self.t <= Self::CEILING.t && self.p <= Self::CEILING.p
+    }
 }
 
 /// `N` bytes from the operating system's random number generator.

@@ -10,7 +10,9 @@
 //! already in the environment — is resolved by the running app, after the user
 //! says yes on a card naming the command and each secret. The command then runs
 //! with the values in its environment, in place of this process, so its exit
-//! code and signals are its own. The values are never printed.
+//! code and signals are its own. The values are never printed. Only the
+//! variables asked for are set from the reply: whatever answers on the socket
+//! cannot slip `PATH` or `LD_PRELOAD` in beside them.
 //!
 //! This file is shared: the app's library compiles it for the server's types,
 //! and the `synabit-safe` binary compiles it on its own (`#[path]`), so it uses
@@ -175,8 +177,12 @@ pub fn run(args: &[String], replace: bool) -> i32 {
         eprintln!("synabit-safe: {}", reply.error.as_deref().unwrap_or("refused"));
         return 1;
     }
+    if let Some(missing) = request.secrets.keys().find(|name| !reply.env.contains_key(*name)) {
+        eprintln!("synabit-safe: Synabit did not give a value for {missing}; nothing was run");
+        return 1;
+    }
     let mut cmd = std::process::Command::new(&parsed.command[0]);
-    cmd.args(&parsed.command[1..]).envs(reply.env.iter());
+    cmd.args(&parsed.command[1..]).envs(reply.env.iter().filter(|(name, _)| request.secrets.contains_key(*name)));
     if replace {
         use std::os::unix::process::CommandExt;
         let e = cmd.exec();

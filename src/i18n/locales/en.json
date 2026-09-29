@@ -2616,7 +2616,8 @@
         "Opening it takes your master password and a Secret Key only this device holds.",
         "Syn never sees a value. Later, you can let it use one without seeing it."
       ],
-      "start": "Create my Safe"
+      "start": "Create my Safe",
+      "other_device": "Already have a Safe on another device? Don't make a new one here — let sync bring it, and this screen asks for its password by itself."
     },
     "setup": {
       "password_title": "Choose a master password",
@@ -2659,7 +2660,10 @@
       "secret_key": "Secret Key",
       "secret_key_body": "This device does not have the Secret Key for this Safe. Type the twelve words from your Emergency Kit.",
       "submit": "Unlock",
-      "unlocking": "Unlocking…"
+      "unlocking": "Unlocking…",
+      "changed_elsewhere": "If you changed the master password or the Secret Key on another device, use the new one here. If you did not, the Safe can go back to the password you have been using — it then replaces the other device's change everywhere.",
+      "type_secret_key": "Type a new Secret Key",
+      "use_previous": "I did not change it — use my password"
     },
     "errors": {
       "locked": "The Safe is locked.",
@@ -2686,7 +2690,9 @@
       "no_destination": "Choose at least one connector Syn may send it to.",
       "request_gone": "That request is no longer open. Ask Syn again.",
       "breach_check_off": "Breach checking is off. Turn it on in Safe settings first.",
-      "wrong_kdbx_password": "The KeePass database's password is wrong, or it also needs a key file — Safe cannot open key files yet; export it as KeePass XML instead."
+      "wrong_kdbx_password": "The KeePass database's password is wrong, or it also needs a key file — Safe cannot open key files yet; export it as KeePass XML instead.",
+      "password_changed_elsewhere": "That is not the master password now — it may have been changed on another device.",
+      "password_too_weak": "That master password is too easy to guess. Add words, or use the suggestion."
     },
     "sidebar": {
       "all": "All items",
@@ -2696,7 +2702,10 @@
       "tags": "Tags",
       "lock": "Lock",
       "settings": "Settings",
-      "unreadable": "{n} file(s) could not be opened and were left untouched."
+      "unreadable": "{n} file(s) could not be opened and were left untouched.",
+      "changed_elsewhere": "The master password was changed on another device. The one you just used is the password now.",
+      "keyset_rolled_back": "This Safe's keys on disk are older than this device has seen — restored from a backup or an old copy? A master password you changed may work again. Change it again to be sure.",
+      "rolled_back": "Older versions than this device has seen are on disk for: {items}. Something other than Synabit put them back. Check them, and edit them again if they are wrong."
     },
     "kind": {
       "login": "Login",
@@ -2796,7 +2805,9 @@
       "change": "Change",
       "keep": "Keep current value",
       "unchanged": "Unchanged",
-      "expires": "Expires"
+      "expires": "Expires",
+      "key_hidden": "Private key · {n} lines, hidden — click to show",
+      "key_paste": "Paste the private key here"
     },
     "generator": {
       "random": "Random",
@@ -2911,7 +2922,8 @@
       "value": "The secret",
       "none_ticked": "Syn may send it only where you tick. With none ticked, Syn only knows it exists.",
       "save": "Save to Safe",
-      "not_now": "Not now"
+      "not_now": "Not now",
+      "suggested": "Syn's suggestion"
     },
     "health": {
       "title": "Health",
@@ -2972,7 +2984,20 @@
       "folder": "In",
       "secrets": "Secrets",
       "allow": "Allow this run",
-      "deny": "Deny"
-    }
+      "deny": "Deny",
+      "approve_caveat": "Only allow a command you just ran yourself: any program on this computer can ask in its name."
+    },
+    "keys": {
+      "title": "Keys",
+      "secret_key_body": "Replace the Secret Key if an Emergency Kit may have been seen. Every other device asks for the new words once.",
+      "secret_key_go": "New Secret Key",
+      "secret_key_changed": "The Secret Key was replaced. Save a new Emergency Kit now; the old one no longer opens this Safe.",
+      "rotate_body": "Replace the key everything is encrypted with, and encrypt every item again. After this, an old copy of the Safe's keys and an old master password open nothing written since.",
+      "rotate_go": "Replace the key",
+      "rotating": "Replacing…",
+      "rotated": "Done: {n} files were encrypted again with a new key.",
+      "type_to_continue": "This device does not hold the Secret Key. Type its twelve words, then try again."
+    },
+    "no_vault": "Open a vault first: the Safe lives in its vault."
   }
 }

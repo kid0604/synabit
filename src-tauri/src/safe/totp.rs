@@ -122,17 +122,26 @@ impl Totp {
         TotpView { algorithm: self.algorithm, digits: self.digits, period: self.period }
     }
 
-    /// The code for Unix time `now`.
+    /// Whether a code can be made from these settings: what [`Self::parse`]
+    /// accepts. One read from a file whole may not be.
+    pub fn is_usable(&self) -> bool {
+        (6..=8).contains(&self.digits) && (1..=300).contains(&self.period)
+    }
+
+    /// The code for Unix time `now`. Impossible settings — a period of zero,
+    /// twenty digits — give the standard six digits every thirty seconds
+    /// rather than a crash.
     pub fn code_at(&self, now: u64) -> Code {
+        let (digits, period) = if self.is_usable() { (self.digits, self.period) } else { (6, 30) };
         let key = zeroize::Zeroizing::new(base32_decode(self.secret.expose()).unwrap_or_default());
-        let counter = now / u64::from(self.period);
+        let counter = now / u64::from(period);
         let mac = hmac(self.algorithm, &key, &counter.to_be_bytes());
         // Dynamic truncation, RFC 4226 §5.3.
         let offset = (mac[mac.len() - 1] & 0x0f) as usize;
         let binary = u32::from_be_bytes([mac[offset] & 0x7f, mac[offset + 1], mac[offset + 2], mac[offset + 3]]);
-        let modulus = 10u64.pow(u32::from(self.digits));
-        let code = format!("{:0width$}", u64::from(binary) % modulus, width = usize::from(self.digits));
-        Code { code, remaining: self.period - (now % u64::from(self.period)) as u32, period: self.period }
+        let modulus = 10u64.pow(u32::from(digits));
+        let code = format!("{:0width$}", u64::from(binary) % modulus, width = usize::from(digits));
+        Code { code, remaining: period - (now % u64::from(period)) as u32, period }
     }
 
     /// Read what a person pasted: an `otpauth://totp/…` link from a QR code,
@@ -316,4 +325,15 @@ mod tests {
         assert_eq!(Totp::parse("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&digits=12").unwrap_err(), TotpError::Unreadable);
         assert_eq!(Totp::parse("otpauth://totp/x?issuer=nothing").unwrap_err(), TotpError::Unreadable);
     }
+
+    #[test]
+    fn impossible_settings_from_a_file_do_not_crash() {
+        for (digits, period) in [(6, 0), (20, 30), (0, 30), (8, 100_000)] {
+            let t = Totp { secret: SecretString::new("JBSWY3DPEHPK3PXP".into()), algorithm: Algorithm::Sha1, digits, period };
+            assert!(!t.is_usable());
+            let c = t.code_at(59);
+            assert_eq!((c.code.len(), c.period), (6, 30));
+        }
+    }
+
 }

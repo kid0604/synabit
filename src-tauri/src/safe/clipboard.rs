@@ -121,6 +121,20 @@ impl SafeClipboard {
         false
     }
 
+    /// Clear the clipboard now if it still holds the last thing copied from
+    /// the Safe: the Safe locked, or the app is quitting — a clear scheduled
+    /// for later would not run.
+    #[cfg(desktop)]
+    pub fn clear_now(&self) -> bool {
+        let generation = self.inner.lock().unwrap_or_else(|p| p.into_inner()).generation;
+        self.clear_if_unchanged(generation)
+    }
+
+    #[cfg(mobile)]
+    pub fn clear_now(&self) -> bool {
+        false
+    }
+
     /// Phones reach the clipboard through Android's own service, with a flag
     /// of its own. That arrives with Safe on Android, in P2.
     #[cfg(mobile)]

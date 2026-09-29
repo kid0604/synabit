@@ -80,6 +80,25 @@ impl Server {
         matches!(self.transport, TransportConfig::Stdio { .. })
     }
 
+    /// Whether a secret from the Safe may travel to this server: to a program
+    /// on this machine, or over HTTPS. Plain HTTP only to this machine itself —
+    /// anywhere else, anyone on the network path reads it.
+    pub fn carries_secrets_safely(&self) -> bool {
+        match &self.transport {
+            TransportConfig::Stdio { .. } => true,
+            TransportConfig::Http { url, .. } => match url::Url::parse(url.trim()) {
+                Ok(u) if u.scheme() == "https" => true,
+                Ok(u) if u.scheme() == "http" => match u.host() {
+                    Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+                    Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                    Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                    None => false,
+                },
+                _ => false,
+            },
+        }
+    }
+
     /// Every secret this server needs, as `(kind, key)`.
     pub fn secret_keys(&self) -> Vec<(&'static str, String)> {
         match &self.transport {

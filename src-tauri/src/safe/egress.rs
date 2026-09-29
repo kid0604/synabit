@@ -135,6 +135,7 @@ pub enum EgressError {
 
 /// The values one call put into its arguments, kept only to scrub its result.
 /// Dropping it wipes them.
+#[derive(Default, Clone)]
 pub struct Injected {
     values: Vec<(Placeholder, SecretString)>,
 }
@@ -180,6 +181,15 @@ pub fn fill(args: &Value, destination: &Destination, lookup: &dyn Lookup) -> Res
 }
 
 impl Injected {
+    /// Hold `other`'s values too: one scrub for everything sent to a server.
+    pub fn absorb(&mut self, other: Injected) {
+        for (p, v) in other.values {
+            if !self.values.iter().any(|(q, _)| *q == p) {
+                self.values.push((p, v));
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
@@ -213,6 +223,7 @@ impl Injected {
                     *text = text.replace(form.as_str(), &marker);
                 }
             }
+            found += hide_in_base64(text, v.as_bytes(), &marker);
         }
         found
     }
@@ -225,8 +236,40 @@ impl Injected {
     }
 }
 
+/// Base64 the value sits *inside* rather than being all of: `user:password`
+/// in a reflected `Authorization: Basic` header, a token inside an encoded
+/// JSON blob. Base64 of a value only appears in base64 of a longer text when
+/// the value happens to start on a three-byte boundary, so each run of
+/// base64-looking text is decoded and looked in instead. The whole run goes.
+fn hide_in_base64(text: &mut String, value: &[u8], marker: &str) -> usize {
+    use base64::Engine;
+    static RUN: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let run = RUN.get_or_init(|| regex::Regex::new(r"[A-Za-z0-9+/_\-]{8,}={0,2}").expect("the pattern compiles"));
+    let engines = [
+        base64::engine::general_purpose::STANDARD,
+        base64::engine::general_purpose::STANDARD_NO_PAD,
+        base64::engine::general_purpose::URL_SAFE,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD,
+    ];
+    let holds = |candidate: &str| {
+        engines.iter().any(|e| {
+            e.decode(candidate)
+                .map(|decoded| zeroize::Zeroizing::new(decoded).windows(value.len()).any(|w| w == value))
+                .unwrap_or(false)
+        })
+    };
+    let spans: Vec<std::ops::Range<usize>> =
+        run.find_iter(text).filter(|m| m.as_str().len() * 3 / 4 >= value.len() && holds(m.as_str())).map(|m| m.range()).collect();
+    for r in spans.iter().rev() {
+        text.replace_range(r.clone(), marker);
+    }
+    spans.len()
+}
+
 /// The forms a value may come back in: itself, base64 (standard and URL-safe,
-/// padded or not), percent-encoded, hex, and escaped inside a JSON string.
+/// padded or not), percent-encoded (either case, and as a form with `+` for a
+/// space), hex, escaped inside a JSON string (with non-ASCII as `\uXXXX` or
+/// not), and escaped for HTML (named or numbered entities).
 fn encodings(v: &str) -> Vec<String> {
     use base64::Engine;
     let b = v.as_bytes();
@@ -241,12 +284,49 @@ fn encodings(v: &str) -> Vec<String> {
         hex::encode_upper(b),
     ];
     if let Ok(json) = serde_json::to_string(v) {
-        forms.push(json.trim_matches('"').to_string());
+        let json = json.trim_matches('"').to_string();
+        let mut ascii = String::new();
+        for c in json.chars() {
+            if c.is_ascii() {
+                ascii.push(c);
+            } else {
+                let mut units = [0u16; 2];
+                for u in c.encode_utf16(&mut units) {
+                    ascii.push_str(&format!("\\u{:04x}", u));
+                }
+            }
+        }
+        forms.push(ascii.replace('/', "\\/"));
+        forms.push(ascii.to_uppercase().replace("\\U", "\\u"));
+        forms.push(ascii);
+        forms.push(json);
+    }
+    let percent = urlencoding::encode(v).into_owned();
+    forms.push(lower_percent(&percent));
+    forms.push(percent.replace("%20", "+"));
+    forms.push(lower_percent(&percent.replace("%20", "+")));
+    for (quote, apostrophe) in [("&quot;", "&#39;"), ("&#34;", "&#x27;"), ("&quot;", "&apos;")] {
+        forms.push(
+            v.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', quote).replace('\'', apostrophe),
+        );
     }
     // Longest first, so a form that contains another is replaced whole.
     forms.sort_by_key(|f| std::cmp::Reverse(f.len()));
     forms.dedup();
     forms
+}
+
+/// `%2F` as `%2f`: servers write either.
+fn lower_percent(encoded: &str) -> String {
+    let mut out = String::with_capacity(encoded.len());
+    let mut chars = encoded.chars();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '%' {
+            out.extend(chars.by_ref().take(2).map(|h| h.to_ascii_lowercase()));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -342,4 +422,33 @@ mod tests {
         assert!(n >= 5, "found {n}");
         assert!(text.contains("‹safe:github-token›"));
     }
+
+    /// The echoes a real server makes of a password with symbols in it: inside
+    /// a Basic header, in an HTML error page, in a form, in JSON with its
+    /// non-ASCII escaped.
+    #[test]
+    fn echoes_inside_other_text_and_other_escapings_are_scrubbed() {
+        use base64::Engine;
+        let v = "p@ss w/rd&<é>\"'42";
+        let injected = Injected {
+            values: vec![(Placeholder { handle: "pw".into(), field: None }, SecretString::new(v.into()))],
+        };
+        let basic = base64::engine::general_purpose::STANDARD.encode(format!("anh:{v}"));
+        let blob = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("{{\"user\":\"anh\",\"pass\":\"{v}\"}}"));
+        for echo in [
+            format!("Authorization: Basic {basic}"),
+            format!("state={blob}&x=1"),
+            "<p>Bad password: p@ss w/rd&amp;&lt;é&gt;&quot;&#39;42</p>".to_string(),
+            "<p>p@ss w/rd&amp;&lt;é&gt;&#34;&#x27;42</p>".to_string(),
+            "password=p%40ss+w%2frd%26%3c%c3%a9%3e%22%2742".to_string(),
+            "{\"pw\":\"p@ss w\\/rd&<\\u00e9>\\\"'42\"}".to_string(),
+        ] {
+            let mut text = echo.clone();
+            assert!(injected.scrub(&mut text) > 0, "missed: {echo}");
+            assert!(text.contains("‹safe:pw›"), "{text}");
+        }
+        let mut plain = "nothing to see: aGVsbG8gd29ybGQ=".to_string();
+        assert_eq!(injected.scrub(&mut plain), 0, "{plain}");
+    }
+
 }

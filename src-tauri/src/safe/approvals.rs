@@ -43,6 +43,15 @@ impl Question {
     }
 }
 
+/// Every open question is a no: the Safe locked. A card answered after this
+/// finds nothing to answer.
+pub fn abandon_all() {
+    if let Some(m) = WAITING.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+        // Dropping each sender wakes its waiter with a disconnect: a no.
+        m.clear();
+    }
+}
+
 /// Answer a question by id. False when no question has that id — answered
 /// already, timed out, or never asked.
 pub fn answer(id: &str, yes: bool) -> bool {
@@ -54,8 +63,17 @@ pub fn answer(id: &str, yes: bool) -> bool {
 mod tests {
     use super::*;
 
+    /// The questions are the process's: a test that abandons them all must
+    /// not run beside one that is waiting on its own.
+    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+    fn alone() -> std::sync::MutexGuard<'static, ()> {
+        ONE_AT_A_TIME.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn an_answer_reaches_its_question_once() {
+        let _alone = alone();
         let q = ask();
         let id = q.id.clone();
         let waiter = std::thread::spawn(move || q.wait(Duration::from_secs(5)));
@@ -66,7 +84,20 @@ mod tests {
     }
 
     #[test]
+    fn locking_turns_every_open_question_into_a_no() {
+        let _alone = alone();
+        let q = ask();
+        let id = q.id.clone();
+        let waiter = std::thread::spawn(move || q.wait(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(20));
+        abandon_all();
+        assert!(!waiter.join().unwrap());
+        assert!(!answer(&id, true), "a card answered after the lock");
+    }
+
+    #[test]
     fn silence_is_a_no() {
+        let _alone = alone();
         let q = ask();
         assert!(!q.wait(Duration::from_millis(30)));
         assert!(!answer("never-asked", true));

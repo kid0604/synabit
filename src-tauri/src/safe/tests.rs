@@ -352,6 +352,31 @@ fn kdf_parameters_below_the_floor_are_recognised() {
     assert!(!TEST_KDF.meets_floor());
 }
 
+/// A keyset or export whose settings would have Argon2 allocate terabytes, or
+/// run for ever, is refused as damaged before Argon2 is asked — the header is
+/// read long before any key could tell the file is forged.
+#[test]
+fn kdf_parameters_above_the_ceiling_are_refused_before_argon2_runs() {
+    assert!(KdfParams::STARTING.within_ceiling() && KdfParams::FLOOR.within_ceiling());
+    let auk = Key::from_bytes([1; 32]);
+    for kdf in [
+        KdfParams { m_kib: u32::MAX, ..KdfParams::FLOOR },
+        KdfParams { t: u32::MAX, ..KdfParams::FLOOR },
+        KdfParams { p: 255, m_kib: 255 * 1024, ..KdfParams::FLOOR },
+    ] {
+        let header = KeysetHeader { safe_id: SAFE_ID, key_epoch: 1, keyset_revision: 1, kdf, kdf_salt: SALT };
+        let bytes = Keyset::seal(header, &auk, &Key::from_bytes(SAFE_KEY), WRAP_NONCE).unwrap().encode();
+        assert!(matches!(Keyset::decode(&bytes), Err(FormatError::BadKdfParams)), "{kdf:?}");
+    }
+
+    // The same for a .safe-export: the header asks, and is refused.
+    let mut export = super::exchange::seal_export(&[], "export password", KdfParams::FLOOR).unwrap();
+    export[10..14].copy_from_slice(&u32::MAX.to_le_bytes());
+    let started = std::time::Instant::now();
+    assert!(super::exchange::open_export(&export, "export password").is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(5), "Argon2 ran");
+}
+
 #[test]
 fn keys_do_not_print() {
     let key = Key::from_bytes(SAFE_KEY);

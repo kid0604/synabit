@@ -28,12 +28,39 @@ pub fn clean(messages: &[ChatMessage]) -> Option<Vec<ChatMessage>> {
             let all = out.get_or_insert_with(|| messages.to_vec());
             all[i].content = text;
         }
+        // The arguments of calls the model made, echoed back to it: a value
+        // it copied out of a note into a call goes back guarded too.
+        for (j, call) in m.tool_calls.iter().flatten().enumerate() {
+            let mut arguments = call.function.arguments.clone();
+            if redact_strings(&mut arguments) > 0 {
+                let all = out.get_or_insert_with(|| messages.to_vec());
+                if let Some(calls) = all[i].tool_calls.as_mut() {
+                    calls[j].function.arguments = arguments;
+                }
+            }
+        }
     }
     if let Some(all) = &out {
-        let n = all.iter().zip(messages).filter(|(a, b)| a.content != b.content).count();
+        let n = all.iter().zip(messages).filter(|(a, b)| a.content != b.content || a.tool_calls.as_ref().map(|c| serde_json::to_string(c).ok()) != b.tool_calls.as_ref().map(|c| serde_json::to_string(c).ok())).count();
         log::info!("[Safe] hid what looked like a secret in {n} message(s) before sending them to the model");
     }
     out
+}
+
+/// Every string in `value`, guarded. Returns how many secrets were hidden.
+fn redact_strings(value: &mut serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::String(s) => {
+            let (text, hidden) = crate::safe::bridge::redact(s);
+            if hidden > 0 {
+                *s = text;
+            }
+            hidden
+        }
+        serde_json::Value::Array(items) => items.iter_mut().map(redact_strings).sum(),
+        serde_json::Value::Object(map) => map.values_mut().map(redact_strings).sum(),
+        _ => 0,
+    }
 }
 
 fn with<'a>(req: &ChatRequest<'a>, messages: &'a [ChatMessage]) -> ChatRequest<'a> {
@@ -102,6 +129,23 @@ mod tests {
         assert_eq!(cleaned[0].content, "hello");
         assert!(!cleaned[1].content.contains("sk-ant"), "{}", cleaned[1].content);
         assert!(messages[1].content.contains("sk-ant"), "the conversation itself is not rewritten here");
+    }
+
+    #[test]
+    fn a_key_in_a_tool_calls_arguments_is_hidden_too() {
+        let mut asked = msg("");
+        asked.tool_calls = Some(vec![crate::models::syn::ToolCall {
+            id: Some("c1".into()),
+            function: crate::models::syn::ToolCallFunction {
+                name: "connector__x__post".into(),
+                arguments: serde_json::json!({ "body": { "text": "key sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123" }, "auth": "{{safe:x}}" }),
+            },
+            thought_signature: None,
+        }]);
+        let cleaned = clean(&[asked]).expect("something was hidden");
+        let args = cleaned[0].tool_calls.as_ref().unwrap()[0].function.arguments.to_string();
+        assert!(!args.contains("sk-ant-api03"), "{args}");
+        assert!(args.contains("{{safe:x}}"), "a placeholder is not a secret: {args}");
     }
 
     #[test]

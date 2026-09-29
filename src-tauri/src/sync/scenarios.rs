@@ -2527,6 +2527,123 @@ mod safe_between_devices {
         }
     }
 
+    /// Settle: open both (which folds what was set aside), sync both, twice.
+    async fn settle(a: &HarnessDevice, b: &HarnessDevice) {
+        for _ in 0..3 {
+            let _ = open(a);
+            let _ = open(b);
+            a.sync_ok().await;
+            b.sync_ok().await;
+            a.sync_ok().await;
+        }
+    }
+
+    /// Offline apart, A edits twice and B once — different revisions, not a
+    /// tie. They must end the same, with the newer edit and the others in its
+    /// history: neither device may keep its own version for good.
+    #[tokio::test]
+    async fn edits_made_apart_at_different_revisions_converge() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Wi-Fi", "original"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+        {
+            let mut s = open(a);
+            change_password(&mut s, &id, "a1", 10);
+            change_password(&mut s, &id, "a2", 11);
+        }
+        change_password(&mut open(b), &id, "from-b", 12);
+        a.sync_ok().await;
+        b.sync_ok().await;
+        settle(a, b).await;
+
+        let (on_a, on_b) = (open(a), open(b));
+        assert_eq!(password(&on_a, &id), "from-b", "the newer edit should win on A");
+        assert_eq!(password(&on_b, &id), "from-b");
+        assert!(on_a.view(&id).unwrap().history_count >= 2, "a2 and the rest are kept in history");
+        for device in [a, b] {
+            assert!(crate::safe::sync::conflicts_for(device.vault_path()).is_empty(), "{}: a version was left unmerged", device.name);
+        }
+    }
+
+    /// B stays unlocked while A's edits arrive; B then edits from its stale
+    /// view. Its write must not go out under a revision already used.
+    #[tokio::test]
+    async fn an_edit_from_a_session_that_missed_a_sync_is_not_lost() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Wi-Fi", "original"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+        let mut b_open = open(b);
+        {
+            let mut s = open(a);
+            change_password(&mut s, &id, "a1", 10);
+            change_password(&mut s, &id, "a2", 11);
+        }
+        a.sync_ok().await;
+        b.sync_ok().await;
+        change_password(&mut b_open, &id, "b-edit", 12);
+        drop(b_open);
+        b.sync_ok().await;
+        a.sync_ok().await;
+        settle(a, b).await;
+
+        let (on_a, on_b) = (open(a), open(b));
+        assert_eq!(password(&on_a, &id), "b-edit");
+        assert_eq!(password(&on_b, &id), "b-edit");
+    }
+
+    /// A delete and an edit, both from the trash, at once: the edit — the
+    /// item brought back — is kept on both devices, not thrown away by a
+    /// coin toss.
+    #[tokio::test]
+    async fn an_edit_at_the_same_time_as_a_delete_is_kept() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Old router", "admin"), 1).unwrap().id;
+        open(a).set_trashed(&id, true, 2).unwrap();
+        a.sync_ok().await;
+        b.sync_ok().await;
+        open(a).purge(&id).unwrap();
+        change_password(&mut open(b), &id, "restored-and-changed", 20);
+        a.sync_ok().await;
+        b.sync_ok().await;
+        settle(a, b).await;
+
+        let (on_a, on_b) = (open(a), open(b));
+        assert_eq!(password(&on_a, &id), "restored-and-changed");
+        assert_eq!(password(&on_b, &id), "restored-and-changed");
+    }
+
+    /// A delete that came after the other device's edit is a delete: it is
+    /// not undone by the edit it followed.
+    #[tokio::test]
+    async fn a_delete_after_seeing_the_edit_stays_deleted() {
+        let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+        let (a, b) = (&devices[0], &devices[1]);
+        create_safe(a);
+        let id = open(a).create(login("Old router", "admin"), 1).unwrap().id;
+        a.sync_ok().await;
+        b.sync_ok().await;
+        change_password(&mut open(b), &id, "last-change", 5);
+        open(b).set_trashed(&id, true, 6).unwrap();
+        b.sync_ok().await;
+        a.sync_ok().await;
+        open(a).purge(&id).unwrap();
+        a.sync_ok().await;
+        b.sync_ok().await;
+        settle(a, b).await;
+
+        for device in [a, b] {
+            assert!(open(device).view(&id).is_err(), "{}: the purged item came back", device.name);
+        }
+    }
+
     /// Safe never deletes a file — a deleted item becomes a tombstone — so a
     /// delete arriving from sync is not applied.
     #[tokio::test]

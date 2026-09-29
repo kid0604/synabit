@@ -2616,7 +2616,8 @@
         "Mở Safe cần master password và một Secret Key chỉ máy này giữ.",
         "Syn không bao giờ thấy giá trị. Sau này, bạn có thể cho Syn dùng mà không thấy."
       ],
-      "start": "Tạo Safe"
+      "start": "Tạo Safe",
+      "other_device": "Đã có Safe trên máy khác? Đừng tạo mới ở đây — hãy để đồng bộ mang nó về, màn hình này sẽ tự hỏi mật khẩu."
     },
     "setup": {
       "password_title": "Chọn master password",
@@ -2659,7 +2660,10 @@
       "secret_key": "Secret Key",
       "secret_key_body": "Máy này chưa có Secret Key của Safe này. Gõ mười hai từ trong Emergency Kit.",
       "submit": "Mở khoá",
-      "unlocking": "Đang mở khoá…"
+      "unlocking": "Đang mở khoá…",
+      "changed_elsewhere": "Nếu bạn đã đổi master password hoặc Secret Key trên máy khác, hãy dùng cái mới ở đây. Nếu bạn không đổi, Safe có thể quay về mật khẩu bạn vẫn dùng — thay đổi của máy kia sẽ bị thay thế ở mọi nơi.",
+      "type_secret_key": "Nhập Secret Key mới",
+      "use_previous": "Tôi không đổi — dùng mật khẩu của tôi"
     },
     "errors": {
       "locked": "Safe đang khoá.",
@@ -2686,7 +2690,9 @@
       "no_destination": "Hãy chọn ít nhất một connector Syn được gửi tới.",
       "request_gone": "Yêu cầu này đã hết hạn. Hãy nhờ Syn hỏi lại.",
       "breach_check_off": "Kiểm tra lộ lọt đang tắt. Hãy bật trong cài đặt Safe trước.",
-      "wrong_kdbx_password": "Sai mật khẩu của database KeePass, hoặc database cần thêm key file — Safe chưa mở được key file; hãy xuất ra KeePass XML."
+      "wrong_kdbx_password": "Sai mật khẩu của database KeePass, hoặc database cần thêm key file — Safe chưa mở được key file; hãy xuất ra KeePass XML.",
+      "password_changed_elsewhere": "Đó không phải master password hiện tại — có thể nó đã được đổi trên máy khác.",
+      "password_too_weak": "Master password đó quá dễ đoán. Hãy thêm từ, hoặc dùng gợi ý."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2696,7 +2702,10 @@
       "tags": "Thẻ",
       "lock": "Khoá",
       "settings": "Cài đặt",
-      "unreadable": "{n} file không mở được và được giữ nguyên."
+      "unreadable": "{n} file không mở được và được giữ nguyên.",
+      "changed_elsewhere": "Master password đã được đổi trên một máy khác. Mật khẩu bạn vừa dùng là mật khẩu hiện tại.",
+      "keyset_rolled_back": "Khoá của Safe trên đĩa cũ hơn cái máy này từng thấy — được khôi phục từ bản sao lưu hay bản sao cũ? Một master password bạn đã đổi có thể lại dùng được. Hãy đổi lại cho chắc.",
+      "rolled_back": "Trên đĩa có phiên bản cũ hơn máy này từng thấy của: {items}. Thứ gì đó ngoài Synabit đã đặt chúng lại. Hãy kiểm tra, và sửa lại nếu sai."
     },
     "kind": {
       "login": "Đăng nhập",
@@ -2796,7 +2805,9 @@
       "change": "Đổi",
       "keep": "Giữ giá trị hiện tại",
       "unchanged": "Không đổi",
-      "expires": "Hết hạn"
+      "expires": "Hết hạn",
+      "key_hidden": "Khoá riêng · {n} dòng, đang ẩn — bấm để hiện",
+      "key_paste": "Dán khoá riêng vào đây"
     },
     "generator": {
       "random": "Ngẫu nhiên",
@@ -2911,7 +2922,8 @@
       "value": "Secret",
       "none_ticked": "Syn chỉ được gửi tới nơi bạn đánh dấu. Không đánh dấu nơi nào thì Syn chỉ biết nó tồn tại.",
       "save": "Lưu vào Safe",
-      "not_now": "Để sau"
+      "not_now": "Để sau",
+      "suggested": "Syn gợi ý"
     },
     "health": {
       "title": "Sức khoẻ",
@@ -2972,7 +2984,20 @@
       "folder": "Tại",
       "secrets": "Secret",
       "allow": "Cho phép lần này",
-      "deny": "Từ chối"
-    }
+      "deny": "Từ chối",
+      "approve_caveat": "Chỉ cho phép lệnh bạn vừa tự chạy: bất kỳ chương trình nào trên máy này cũng có thể xin nhân danh nó."
+    },
+    "keys": {
+      "title": "Khoá",
+      "secret_key_body": "Thay Secret Key nếu có thể ai đó đã thấy Emergency Kit. Mỗi máy khác sẽ hỏi các từ mới một lần.",
+      "secret_key_go": "Secret Key mới",
+      "secret_key_changed": "Đã thay Secret Key. Hãy lưu Emergency Kit mới ngay; kit cũ không còn mở được Safe này.",
+      "rotate_body": "Thay khoá dùng để mã hoá mọi thứ và mã hoá lại mọi mục. Sau đó, một bản sao cũ của khoá Safe cùng master password cũ không mở được gì được ghi từ lúc này.",
+      "rotate_go": "Thay khoá",
+      "rotating": "Đang thay…",
+      "rotated": "Xong: {n} file đã được mã hoá lại bằng khoá mới.",
+      "type_to_continue": "Máy này không giữ Secret Key. Hãy nhập mười hai từ, rồi thử lại."
+    },
+    "no_vault": "Hãy mở một vault trước: Safe nằm trong vault của nó."
   }
 }

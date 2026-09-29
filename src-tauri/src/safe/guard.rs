@@ -11,10 +11,13 @@
 //!
 //! * **The user's own secrets**, while the Safe is open. Each concealed value
 //!   of eight characters or more is remembered as a keyed BLAKE3 fingerprint —
-//!   under a key derived from the Safe Key, never the value itself — and every
-//!   word of the outgoing text is fingerprinted the same way and looked up. This
-//!   is the layer that catches `correct-horse-battery` pasted into a note, which
-//!   no pattern could.
+//!   under a key derived from the Safe Key, never the value itself — with its
+//!   length. The outgoing text is searched for every stretch of those lengths
+//!   that starts where a secret could: at the beginning, or after anything that
+//!   is not a letter or a digit. Each is fingerprinted the same way and looked
+//!   up. This is the layer that catches `correct-horse-battery` pasted into a
+//!   note, which no pattern could — and `k(9]x;Q=2…` or a passphrase with
+//!   spaces, which no split into words would.
 //! * **Shapes**, always: the prefixes providers put on their keys, private-key
 //!   blocks, JWTs, `otpauth://` links.
 //!
@@ -22,7 +25,7 @@
 //! alarm is a word Syn cannot read, the cost of a miss is a key in someone's
 //! logs.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::OnceLock;
 
 use super::crypto::Key;
@@ -39,6 +42,11 @@ type Print = [u8; 16];
 pub struct Fingerprints {
     key: Option<[u8; 32]>,
     prints: HashSet<Print>,
+    /// The byte lengths of the values printed: what to look for.
+    lengths: BTreeSet<usize>,
+    /// Each value's length and first byte, so that almost every stretch of
+    /// text is ruled out without hashing it.
+    openings: HashSet<(usize, u8)>,
 }
 
 impl Drop for Fingerprints {
@@ -53,7 +61,7 @@ impl Fingerprints {
     /// Fingerprints of `values`, under a key derived from `safe_key`.
     pub fn new<'a>(safe_key: &Key, values: impl IntoIterator<Item = &'a str>) -> Fingerprints {
         let key = *super::crypto::subkey(super::crypto::ctx::FINGERPRINT, safe_key).as_bytes();
-        let mut f = Fingerprints { key: Some(key), prints: HashSet::new() };
+        let mut f = Fingerprints { key: Some(key), prints: HashSet::new(), lengths: BTreeSet::new(), openings: HashSet::new() };
         for v in values {
             f.add(v);
         }
@@ -65,6 +73,8 @@ impl Fingerprints {
         if value.chars().count() >= MIN_FINGERPRINTED {
             if let Some(p) = self.print(value) {
                 self.prints.insert(p);
+                self.lengths.insert(value.len());
+                self.openings.insert((value.len(), value.as_bytes()[0]));
             }
         }
     }
@@ -73,6 +83,16 @@ impl Fingerprints {
         let key = self.key.as_ref()?;
         let hash = blake3::keyed_hash(key, word.as_bytes());
         Some(hash.as_bytes()[..16].try_into().expect("16 of 32"))
+    }
+
+    /// Take in `other`'s fingerprints. Both must be under the same key —
+    /// made from the same Safe Key — or `other`'s mean nothing here.
+    pub fn merge(&mut self, other: &Fingerprints) {
+        if other.key.is_some() && other.key == self.key {
+            self.prints.extend(other.prints.iter().copied());
+            self.lengths.extend(other.lengths.iter().copied());
+            self.openings.extend(other.openings.iter().copied());
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -109,44 +129,31 @@ fn shapes() -> &'static regex::Regex {
     })
 }
 
-/// Words split the way a pasted secret is bounded: whitespace, and the
-/// punctuation that wraps or labels one — quotes, brackets, `=`, `:`, commas.
-fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
-    let bound = |c: char| c.is_whitespace() || "\"'`()[]{}<>,;=|".contains(c);
-    let mut out = Vec::new();
-    let mut start = None;
-    for (i, c) in text.char_indices() {
-        match (bound(c), start) {
-            (true, Some(s)) => {
-                out.push((s, &text[s..i]));
-                start = None;
-            }
-            (false, None) => start = Some(i),
-            _ => {}
-        }
-    }
-    if let Some(s) = start {
-        out.push((s, &text[s..]));
-    }
-    out.into_iter().flat_map(|(s, w)| {
-        // A trailing full stop or colon ends a sentence, not a password. Try
-        // the word both with and without it.
-        let trimmed = w.trim_end_matches(['.', ':', '!', '?']);
-        let mut both = vec![(s, w)];
-        if trimmed.len() != w.len() && !trimmed.is_empty() {
-            both.push((s, trimmed));
-        }
-        both
-    })
+/// Where a secret may start in `text`: the beginning, and after every
+/// character that is not a letter or a digit — a space, a quote, `=`, `:`, a
+/// bracket, a slash.
+fn starts(text: &str) -> impl Iterator<Item = usize> + '_ {
+    std::iter::once(0).chain(text.char_indices().filter(|(_, c)| !c.is_alphanumeric()).map(|(i, c)| i + c.len_utf8()))
 }
 
 /// `text` with every secret it holds replaced by [`MARK`], and how many there
 /// were. `prints` may be empty (the Safe is locked); shapes are always checked.
 pub fn redact(text: &str, prints: &Fingerprints) -> (String, usize) {
     let mut spans: Vec<std::ops::Range<usize>> = shapes().find_iter(text).map(|m| m.range()).collect();
-    for (start, word) in words(text) {
-        if word.chars().count() >= MIN_FINGERPRINTED && prints.matches(word) {
-            spans.push(start..start + word.len());
+    if !prints.is_empty() {
+        for start in starts(text) {
+            for &len in &prints.lengths {
+                let end = start + len;
+                if end > text.len() {
+                    break;
+                }
+                if prints.openings.contains(&(len, text.as_bytes()[start]))
+                    && text.is_char_boundary(end)
+                    && prints.matches(&text[start..end])
+                {
+                    spans.push(start..end);
+                }
+            }
         }
     }
     if spans.is_empty() {
@@ -194,6 +201,47 @@ mod tests {
         }
         let (out, n) = redact("this is short and fine", &p);
         assert_eq!((out.as_str(), n), ("this is short and fine", 0), "values under 8 characters are not fingerprinted");
+    }
+
+    /// What Safe's own generator makes — symbols that quote, bracket and
+    /// separate — and passphrases with spaces, glued to what labels them.
+    #[test]
+    fn generated_passwords_and_passphrases_are_caught_too() {
+        let p = prints(&["k(9]x;Q=2{a,\"b|<z>", "correct horse battery staple", "dGVzdDp0ZXN0MTIz=="]);
+        for (text, n) in [
+            ("the new one is k(9]x;Q=2{a,\"b|<z> ok", 1),
+            ("pw=k(9]x;Q=2{a,\"b|<z>", 1),
+            ("{\"password\":\"k(9]x;Q=2{a,\"b|<z>\"}", 1),
+            ("phrase: correct horse battery staple.", 1),
+            ("token dGVzdDp0ZXN0MTIz==, thanks", 1),
+            ("correct horse battery is not the whole phrase", 0),
+        ] {
+            let (out, got) = redact(text, &p);
+            assert_eq!(got, n, "{text} → {out}");
+            if n > 0 {
+                assert!(!out.contains("k(9]x") && !out.contains("battery staple") && !out.contains("dGVzdDp0"), "{out}");
+            }
+        }
+    }
+
+    /// It runs over whole conversations before every request.
+    #[test]
+    fn a_long_text_against_many_secrets_is_quick() {
+        let values: Vec<String> = (0..300).map(|i| format!("S3cret-{i}-{}", "x".repeat(i % 40))).collect();
+        let p = prints(&values.iter().map(String::as_str).collect::<Vec<_>>());
+        let text = "Lorem ipsum, dolor sit amet; (consectetur) \"adipiscing\" elit = 42. ".repeat(3_000);
+        let started = std::time::Instant::now();
+        let (_, n) = redact(&text, &p);
+        assert_eq!(n, 0);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?} for {} bytes", started.elapsed(), text.len());
+    }
+
+    #[test]
+    fn non_ascii_text_around_a_secret_is_cut_on_character_boundaries() {
+        let p = prints(&["mật-khẩu-ünïcode"]);
+        let (out, n) = redact("mật khẩu là «mật-khẩu-ünïcode» nhé", &p);
+        assert_eq!(n, 1, "{out}");
+        assert_eq!(out, format!("mật khẩu là «{MARK}» nhé"));
     }
 
     #[test]

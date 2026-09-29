@@ -140,8 +140,11 @@ pub fn answer_to(id: u64, message: &Value) -> Option<Result<Value, ConnectorErro
                 .get("message")
                 .and_then(Value::as_str)
                 .unwrap_or("no message")
+                // Cut short only after the secrets it may hold are scrubbed
+                // (`connector::call`); this bound is only against a server
+                // that answers with megabytes.
                 .chars()
-                .take(2_000)
+                .take(200_000)
                 .collect(),
         }));
     }

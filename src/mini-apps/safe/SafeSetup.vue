@@ -7,7 +7,7 @@
  * year later. Asking for three words from the twelve costs ten seconds and is
  * the only proof, short of losing the device, that the kit exists.
  */
-import { computed, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { save } from '@tauri-apps/plugin-dialog';
 import { AlertTriangle, Check, Dices, Eye, EyeOff, KeyRound, Loader2, ShieldCheck } from 'lucide-vue-next';
@@ -16,12 +16,19 @@ import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
 const props = defineProps<{ api: SafeApi }>();
-const emit = defineEmits<{ (e: 'done'): void }>();
+const emit = defineEmits<{ (e: 'done'): void; (e: 'started'): void }>();
 const { t, tm, rt } = useI18n();
 const explain = useSafeError();
 
 type Step = 'intro' | 'password' | 'creating' | 'kit' | 'verify';
 const step = ref<Step>('intro');
+/** `autofocus` does nothing for a field shown after the page loaded. */
+const passwordInput = ref<HTMLInputElement | null>(null);
+watch(step, async (s) => {
+  if (s !== 'password') return;
+  await nextTick();
+  passwordInput.value?.focus();
+});
 const error = ref('');
 
 const password = ref('');
@@ -49,6 +56,9 @@ async function create() {
   if (!canCreate.value) return;
   error.value = '';
   step.value = 'creating';
+  // From here the Safe exists and is open: the screens after this one — the
+  // words, the check — must stay until they are done.
+  emit('started');
   try {
     const created = await props.api.create(password.value);
     words.value = created.secret_key.split(' ');
@@ -137,6 +147,7 @@ const points = computed(() => (tm('safe.intro.points') as unknown[]).map((p) => 
         <button class="w-full py-2.5 rounded-xl bg-accent text-white font-medium hover:opacity-90" @click="step = 'password'">
           {{ t('safe.intro.start') }}
         </button>
+        <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.intro.other_device') }}</p>
       </section>
 
       <!-- Master password -->
@@ -153,7 +164,7 @@ const points = computed(() => (tm('safe.intro.points') as unknown[]).map((p) => 
               :type="shown ? 'text' : 'password'"
               autocomplete="off" spellcheck="false" autocapitalize="off"
               class="w-full pl-3 pr-10 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark font-mono focus:outline-none focus:ring-2 focus:ring-accent"
-              autofocus
+              ref="passwordInput"
             />
             <button type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary dark:text-text-tertiary-dark" :aria-label="shown ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="shown = !shown">
               <EyeOff v-if="shown" class="w-4 h-4" /><Eye v-else class="w-4 h-4" />

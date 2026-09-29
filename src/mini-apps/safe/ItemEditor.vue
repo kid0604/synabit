@@ -63,6 +63,9 @@ const fields = reactive<DraftField[]>(
 );
 
 const isConcealed = (k: FieldKind) => CONCEALED.includes(k);
+/** A concealed value made of lines: an SSH private key, or anything pasted with line breaks. */
+const isKeyBlock = (f: { label: string; kind: FieldKind; value: string }) =>
+  isConcealed(f.kind) && (f.label === 'private_key' || f.value.includes('\n'));
 
 function addField() {
   fields.push({ key: nextKey++, id: null, label: '', kind: 'text', value: '', keep: false, shown: false, generating: false });
@@ -158,11 +161,23 @@ onMounted(async () => {
           </div>
           <div v-else class="flex items-start gap-2">
             <textarea
-              v-if="f.kind === 'multiline'"
-              v-model="f.value" rows="3"
-              spellcheck="false"
+              v-if="f.kind === 'multiline' || (isKeyBlock(f) && f.shown)"
+              v-model="f.value" :rows="isKeyBlock(f) ? 8 : 3"
+              autocomplete="off" spellcheck="false" autocapitalize="off"
               class="flex-1 px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark font-mono text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+              :class="{ 'text-xs': isKeyBlock(f) }"
             />
+            <!-- A private key is lines: a one-line field would join them and the
+                 key would no longer read. Hidden until asked for, like any
+                 concealed value, and typed or pasted where the lines survive. -->
+            <button
+              v-else-if="isKeyBlock(f)"
+              type="button"
+              class="flex-1 px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-left text-sm text-text-tertiary dark:text-text-tertiary-dark"
+              @click="f.shown = true"
+            >
+              {{ f.value ? t('safe.editor.key_hidden', { n: f.value.split('\n').length }) : t('safe.editor.key_paste') }}
+            </button>
             <div v-else class="relative flex-1">
               <input
                 v-model="f.value"
@@ -171,7 +186,7 @@ onMounted(async () => {
                 class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark focus:outline-none focus:ring-2 focus:ring-accent"
                 :class="{ 'font-mono pr-9': isConcealed(f.kind) }"
               />
-              <button v-if="isConcealed(f.kind)" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary dark:text-text-tertiary-dark" :aria-label="f.shown ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="f.shown = !f.shown">
+              <button v-if="isConcealed(f.kind) && !isKeyBlock(f)" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary dark:text-text-tertiary-dark" :aria-label="f.shown ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="f.shown = !f.shown">
                 <EyeOff v-if="f.shown" class="w-4 h-4" /><Eye v-else class="w-4 h-4" />
               </button>
             </div>

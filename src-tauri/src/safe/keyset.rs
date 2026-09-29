@@ -92,7 +92,9 @@ pub fn create(vault: &Path, password: &str, kdf: KdfParams) -> Result<Created, K
 
     let dir = safe_dir(vault);
     std::fs::create_dir_all(&dir).map_err(|e| KeysetError::io("create", &dir, e))?;
-    write_new(&path, &keyset.encode())?;
+    let bytes = keyset.encode();
+    write_new(&path, &bytes)?;
+    super::sync::held(vault, "keyset", &bytes);
     Ok(Created { keyset, safe_key, secret_key })
 }
 
@@ -143,28 +145,100 @@ pub fn change_password(
     };
     let auk = crypto::derive_auk(new_password.as_bytes(), &header.kdf_salt, kdf, secret_key)?;
     let next = Keyset::seal(header, &auk, safe_key, crypto::random_bytes()?)?;
-    super::store::write_atomic(&keyset_path(vault), &next.encode())
-        .map_err(|e| KeysetError::io("write", &keyset_path(vault), e))?;
+    let bytes = next.encode();
+    super::store::write_atomic(&keyset_path(vault), &bytes).map_err(|e| KeysetError::io("write", &keyset_path(vault), e))?;
+    super::sync::held(vault, "keyset", &bytes);
+    super::sync::saw_keyset(vault, next.header.keyset_revision);
+    Ok(next)
+}
+
+/// A keyset for a new Safe Key — the next epoch, the next revision, a fresh
+/// salt — under the same password and Secret Key. Not written: see
+/// [`write_rotated`], and `Unlocked::rotate_safe_key` for the order.
+pub fn rotated(vault: &Path, keyset: &Keyset, new_key: &Key, password: &str, secret_key: &SecretKey) -> Result<Keyset, KeysetError> {
+    let seen = super::sync::Seen::load(vault).keyset;
+    let header = KeysetHeader {
+        key_epoch: keyset.header.key_epoch.saturating_add(1),
+        keyset_revision: keyset.header.keyset_revision.max(seen).saturating_add(1),
+        kdf_salt: crypto::random_bytes()?,
+        ..keyset.header.clone()
+    };
+    let auk = crypto::derive_auk(password.as_bytes(), &header.kdf_salt, header.kdf, secret_key)?;
+    Ok(Keyset::seal(header, &auk, new_key, crypto::random_bytes()?)?)
+}
+
+pub fn write_rotated(vault: &Path, keyset: &Keyset) -> Result<(), KeysetError> {
+    let bytes = keyset.encode();
+    super::store::write_atomic(&keyset_path(vault), &bytes).map_err(|e| KeysetError::io("write", &keyset_path(vault), e))?;
+    super::sync::held(vault, "keyset", &bytes);
+    super::sync::saw_keyset(vault, keyset.header.keyset_revision);
+    Ok(())
+}
+
+/// The same Safe Key under a new Secret Key: for a Secret Key that may have
+/// been seen — an Emergency Kit left somewhere. Every other device then needs
+/// the new words once.
+pub fn change_secret_key(vault: &Path, keyset: &Keyset, safe_key: &Key, password: &str) -> Result<(Keyset, SecretKey), KeysetError> {
+    let secret_key = SecretKey::random()?;
+    let seen = super::sync::Seen::load(vault).keyset;
+    let header = KeysetHeader {
+        keyset_revision: keyset.header.keyset_revision.max(seen).saturating_add(1),
+        kdf_salt: crypto::random_bytes()?,
+        ..keyset.header.clone()
+    };
+    let auk = crypto::derive_auk(password.as_bytes(), &header.kdf_salt, header.kdf, &secret_key)?;
+    let next = Keyset::seal(header, &auk, safe_key, crypto::random_bytes()?)?;
+    write_rotated(vault, &next)?;
+    Ok((next, secret_key))
+}
+
+/// Make `from` — an older keyset the user just opened with its password —
+/// the Safe's keyset again, above `above` so that it replaces the current one
+/// on every device. The Safe Key inside is the same; only its wrapping moves.
+pub fn restore(
+    vault: &Path,
+    from: &Keyset,
+    safe_key: &Key,
+    password: &str,
+    secret_key: &SecretKey,
+    above: u64,
+) -> Result<Keyset, KeysetError> {
+    let header = KeysetHeader {
+        kdf_salt: crypto::random_bytes()?,
+        keyset_revision: above.max(from.header.keyset_revision).saturating_add(1),
+        ..from.header.clone()
+    };
+    let auk = crypto::derive_auk(password.as_bytes(), &header.kdf_salt, header.kdf, secret_key)?;
+    let next = Keyset::seal(header, &auk, safe_key, crypto::random_bytes()?)?;
+    let bytes = next.encode();
+    super::store::write_atomic(&keyset_path(vault), &bytes).map_err(|e| KeysetError::io("write", &keyset_path(vault), e))?;
+    super::sync::held(vault, "keyset", &bytes);
+    super::sync::saw_keyset(vault, next.header.keyset_revision);
     Ok(next)
 }
 
 /// Write a file that must not already exist, in one step: to a temporary name
-/// beside it, then renamed into place only if nothing appeared meanwhile.
+/// beside it, then linked into place — which fails, rather than replacing,
+/// if something appeared there meanwhile. The temporary name is new each
+/// time, so one left by a crash does not block every later try.
 fn write_new(path: &Path, bytes: &[u8]) -> Result<(), KeysetError> {
     use std::io::Write;
-    let tmp = path.with_extension("safe.new");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp)
-        .map_err(|e| KeysetError::io("create", &tmp, e))?;
-    file.write_all(bytes).and_then(|_| file.sync_all()).map_err(|e| KeysetError::io("write", &tmp, e))?;
+    let suffix = hex::encode(crypto::random_bytes::<4>()?);
+    let tmp = path.with_extension(format!("safe.{suffix}.new"));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&tmp).map_err(|e| KeysetError::io("create", &tmp, e))?;
+    let written = file.write_all(bytes).and_then(|_| file.sync_all());
     drop(file);
-    if path.exists() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(KeysetError::AlreadyExists);
+    let placed = written.and_then(|_| std::fs::hard_link(&tmp, path));
+    let _ = std::fs::remove_file(&tmp);
+    match placed {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(KeysetError::AlreadyExists),
+        Err(e) => Err(KeysetError::io("write", path, e)),
     }
-    std::fs::rename(&tmp, path).map_err(|e| KeysetError::io("rename", &tmp, e))
 }
 
 // ─── calibration ─────────────────────────────────────────
@@ -314,6 +388,45 @@ mod tests {
         let header = KeysetHeader { safe_id: [0; 16], key_epoch: 1, keyset_revision: 1, kdf: weak, kdf_salt: [0; 32] };
         let keyset = Keyset::seal(header, &auk, &Key::from_bytes([9; 32]), [0; 24]).unwrap();
         assert!(matches!(unlock(&keyset, "pw", &sk), Err(KeysetError::BelowFloor)));
+    }
+
+    /// Another device's keyset arrives — a password changed there, or one a
+    /// peer forged. Ours is kept aside; the user who never changed the
+    /// password opens that one and makes it current again, above the other.
+    #[test]
+    fn a_keyset_replaced_by_another_devices_can_be_put_back() {
+        let a = tempfile::tempdir().unwrap();
+        let created = create(a.path(), "correct horse battery", KdfParams::FLOOR).unwrap();
+        let sk = SecretKey::from_bytes(*created.secret_key.as_bytes());
+        let ours = std::fs::read(keyset_path(a.path())).unwrap();
+
+        // The other device: same Safe, another password, a higher revision.
+        let b = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(safe_dir(b.path())).unwrap();
+        std::fs::write(keyset_path(b.path()), &ours).unwrap();
+        let theirs = change_password(b.path(), &created.keyset, &created.safe_key, "someone elses pass", &sk, KdfParams::FLOOR).unwrap();
+
+        let decision = super::super::sync::decide(a.path(), "Safe/keyset.safe", &theirs.encode());
+        super::super::sync::apply(a.path(), "Safe/keyset.safe", &theirs.encode(), &decision).unwrap();
+        assert!(unlock(&read(a.path()).unwrap(), "correct horse battery", &sk).is_err());
+        let asides = super::super::sync::keyset_asides(a.path());
+        assert_eq!(asides.len(), 1);
+
+        let older = Keyset::decode(&std::fs::read(&asides[0]).unwrap()).unwrap();
+        let key = unlock(&older, "correct horse battery", &sk).unwrap();
+        let restored = restore(a.path(), &older, &key, "correct horse battery", &sk, theirs.header.keyset_revision).unwrap();
+        assert!(restored.header.keyset_revision > theirs.header.keyset_revision, "it must replace theirs elsewhere too");
+        assert_eq!(unlock(&read(a.path()).unwrap(), "correct horse battery", &sk).unwrap().as_bytes(), created.safe_key.as_bytes());
+    }
+
+    #[test]
+    fn a_leftover_from_a_crashed_create_does_not_block_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(safe_dir(dir.path())).unwrap();
+        std::fs::write(keyset_path(dir.path()).with_extension("safe.new"), b"half").unwrap();
+        create(dir.path(), "correct horse battery", KdfParams::FLOOR).unwrap();
+        let left: Vec<_> = std::fs::read_dir(safe_dir(dir.path())).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(left.len(), 2, "the keyset and the old leftover, no new one: {left:?}");
     }
 
     #[test]

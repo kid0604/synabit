@@ -164,7 +164,9 @@ impl Keyset {
         // What Argon2id itself would refuse: no lanes, no passes, less than
         // eight blocks per lane. Weak-but-valid is for the caller to judge
         // against `KdfParams::FLOOR`; this only rejects the impossible.
-        if kdf.p == 0 || kdf.t == 0 || kdf.m_kib < 8 * u32::from(kdf.p) {
+        // And more than any Safe would ask for: a tampered keyset must fail
+        // here, not take the app down asking Argon2 for terabytes.
+        if kdf.p == 0 || kdf.t == 0 || kdf.m_kib < 8 * u32::from(kdf.p) || !kdf.within_ceiling() {
             return Err(FormatError::BadKdfParams);
         }
         let kdf_salt = r.array();

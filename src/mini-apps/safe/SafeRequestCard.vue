@@ -46,7 +46,9 @@ async function show(r: Request) {
   title.value = r.title;
   handle.value = r.handle;
   value.value = '';
-  chosen.value = r.destinations.filter((d) => d.suggested).map((d) => d.key);
+  // Nothing ticked for the user: Syn's suggestion may be a stranger's words
+  // it read. Suggested ones are marked; the user ticks what they mean.
+  chosen.value = [];
   error.value = '';
   try {
     const status = await api.status();
@@ -143,6 +145,7 @@ const input =
           <span class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ai.destinations') }}</span>
           <label v-for="d in request.destinations" :key="d.key" class="flex items-center gap-2 text-sm">
             <input v-model="chosen" type="checkbox" :value="d.key" /> {{ d.label }}
+            <span v-if="d.suggested" class="text-xs text-text-tertiary dark:text-text-tertiary-dark">· {{ t('safe.request.suggested') }}</span>
           </label>
           <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.request.none_ticked') }}</p>
         </div>

@@ -132,15 +132,16 @@ pub fn looks_like_key(text: &str) -> bool {
 /// Read an OpenSSH private key (`-----BEGIN OPENSSH PRIVATE KEY-----`).
 pub fn parse(pem: &str) -> Result<Ed25519Key, KeyError> {
     use base64::Engine;
-    let body: String = pem
-        .lines()
-        .map(str::trim)
-        .skip_while(|l| *l != "-----BEGIN OPENSSH PRIVATE KEY-----")
-        .skip(1)
-        .take_while(|l| *l != "-----END OPENSSH PRIVATE KEY-----")
-        .collect();
+    const BEGIN: &str = "-----BEGIN OPENSSH PRIVATE KEY-----";
+    const END: &str = "-----END OPENSSH PRIVATE KEY-----";
+    // Between the markers, whatever the line breaks: a key pasted into a
+    // one-line field arrives with them removed, and one copied from a web page
+    // may have spaces or `\r` in their place.
+    let start = pem.find(BEGIN).ok_or(KeyError::NotOpenSsh)? + BEGIN.len();
+    let end = pem[start..].find(END).ok_or(KeyError::NotOpenSsh)? + start;
+    let body = zeroize::Zeroizing::new(pem[start..end].chars().filter(|c| !c.is_whitespace()).collect::<String>());
     let raw = zeroize::Zeroizing::new(
-        base64::engine::general_purpose::STANDARD.decode(body).map_err(|_| KeyError::NotOpenSsh)?,
+        base64::engine::general_purpose::STANDARD.decode(body.as_bytes()).map_err(|_| KeyError::NotOpenSsh)?,
     );
     let rest = raw.strip_prefix(MAGIC).ok_or(KeyError::NotOpenSsh)?;
     let mut r = Reader { b: rest };
@@ -288,6 +289,16 @@ C6IS9CmJVcasvX4iysYlAAAADHRlc3RAc3luYWJpdAE=
         let key = parse(KEY).unwrap();
         assert_eq!(key.comment, "test@synabit");
         assert!(key.authorized_line().starts_with("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA"));
+    }
+
+    /// What a one-line password field does to a pasted key: the line breaks
+    /// are gone. And what a web page or Windows may do: `\r\n`, or spaces.
+    #[test]
+    fn a_key_whose_line_breaks_were_lost_or_changed_is_still_read() {
+        let expected = parse(KEY).unwrap().authorized_line();
+        for mangled in [KEY.replace('\n', ""), KEY.replace('\n', "\r\n"), KEY.replace('\n', " ")] {
+            assert_eq!(parse(&mangled).map(|k| k.authorized_line()).ok().as_deref(), Some(expected.as_str()), "{mangled:?}");
+        }
     }
 
     #[test]

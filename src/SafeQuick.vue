@@ -25,8 +25,14 @@ import { i18n } from './i18n';
 import { logger } from './utils/logger';
 import { safeCode, useSafeApi, type ItemSummary } from './mini-apps/safe/api';
 import { kindInfo } from './mini-apps/safe/kinds';
+import { errorText } from './shared/errorText';
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {});
+/** A Safe refusal in words: its own sentence when it has one, never a bare key. */
+function explain(e: unknown): string {
+  const code = safeCode(e);
+  return code && i18n.global.te(`safe.errors.${code}`) ? t(`safe.errors.${code}`) : t('safe.errors.failed', { msg: errorText(e) });
+}
 const win = getCurrentWindow();
 
 const vaultPath = ref('');
@@ -88,7 +94,9 @@ async function unlock() {
     await refresh();
   } catch (e) {
     const code = safeCode(e);
-    message.value = code === 'needs_secret_key' ? t('safe.quick.open_app_for_key') : t(`safe.errors.${code ?? 'wrong_password'}`);
+    // What only the main window can do — type the Secret Key, choose between
+    // two passwords — is sent there; anything else is said as it is.
+    message.value = code === 'needs_secret_key' || code === 'password_changed_elsewhere' ? t('safe.quick.open_app_for_key') : explain(e);
   } finally {
     busy.value = false;
   }
@@ -97,6 +105,8 @@ async function unlock() {
 async function hide() {
   query.value = '';
   message.value = '';
+  // A password typed and not sent does not wait in a hidden window.
+  password.value = '';
   await win.hide();
 }
 
@@ -122,7 +132,7 @@ async function act(what: 'password' | 'username' | 'totp' | 'open') {
       state.value = 'locked';
       return;
     }
-    message.value = code === 'not_found' ? t(`safe.quick.none_${what}`) : t('safe.errors.failed', { msg: String((e as { message?: string })?.message ?? e) });
+    message.value = code === 'not_found' ? t(`safe.quick.none_${what}`) : explain(e);
   }
 }
 
@@ -140,6 +150,9 @@ function onKeydown(e: KeyboardEvent) {
     e.preventDefault();
     selected.value = Math.max(selected.value - 1, 0);
   } else if (e.key === 'Enter') {
+    // Enter that ends a word being composed — Telex, Pinyin — is the input
+    // method's, not a request to copy and close.
+    if (e.isComposing || e.keyCode === 229) return;
     e.preventDefault();
     void act(e.metaKey || e.ctrlKey ? 'open' : e.shiftKey ? 'username' : e.altKey ? 'totp' : 'password');
   }

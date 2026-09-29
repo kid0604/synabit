@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { open as openFile, save } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
 import ModalDialog from '../calendar/components/ModalDialog.vue';
-import type { CliStatus, SafeApi, Settings, SshStatus } from './api';
+import { safeCode, type CliStatus, type SafeApi, type Settings, type SshStatus } from './api';
 import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
@@ -59,6 +59,17 @@ async function copyExport() {
 const cli = ref<CliStatus | null>(null);
 const cliExample = 'GITHUB_TOKEN=safe:github-token synabit-safe run -- gh repo list';
 
+/**
+ * The Secret Key, typed: for a device whose keychain does not hold it —
+ * refused by the keychain, or changed on another device. Asked for only once
+ * an action says it is needed.
+ */
+const deviceLacksKey = ref(false);
+const typedKey = ref('');
+function noteMissingKey(e: unknown) {
+  if (safeCode(e) === 'needs_secret_key') deviceLacksKey.value = true;
+}
+
 const current = ref('');
 const next = ref('');
 const nextAgain = ref('');
@@ -71,9 +82,10 @@ async function changePassword() {
     return;
   }
   try {
-    await props.api.changePassword(current.value, next.value);
+    await props.api.changePassword(current.value, next.value, typedKey.value || undefined);
     notice.value = t('safe.settings.changed');
   } catch (e) {
+    noteMissingKey(e);
     error.value = explain(e);
   } finally {
     current.value = next.value = nextAgain.value = '';
@@ -82,25 +94,75 @@ async function changePassword() {
 
 const keyPassword = ref('');
 const words = ref<string[]>([]);
+/** The password that showed the words, kept only while they show: the kit is the words, behind the same password. */
+const wordsPassword = ref('');
 async function showSecretKey() {
   error.value = '';
   try {
     words.value = (await props.api.secretKey(keyPassword.value)).split(' ');
+    wordsPassword.value = keyPassword.value;
   } catch (e) {
+    noteMissingKey(e);
     error.value = explain(e);
   } finally {
     keyPassword.value = '';
   }
 }
 
+function hideWords() {
+  words.value = [];
+  wordsPassword.value = '';
+}
+
 async function saveKit() {
   const path = await save({ defaultPath: 'Synabit Safe Emergency Kit.html', filters: [{ name: 'HTML', extensions: ['html'] }] });
   if (!path) return;
   try {
-    await props.api.saveEmergencyKit(path);
+    await props.api.saveEmergencyKit(path, wordsPassword.value || undefined);
     notice.value = t('safe.kit.saved');
   } catch (e) {
     error.value = explain(e);
+  }
+}
+
+// ─── keys ────────────────────────────────────────────────
+
+const newKeyPassword = ref('');
+const newKeyStored = ref(true);
+/** A new Secret Key: the old one may have been seen — a kit left somewhere. */
+async function changeSecretKey() {
+  error.value = '';
+  notice.value = '';
+  try {
+    const created = await props.api.changeSecretKey(newKeyPassword.value);
+    words.value = created.secret_key.split(' ');
+    newKeyStored.value = created.stored_on_device;
+    notice.value = t('safe.keys.secret_key_changed');
+  } catch (e) {
+    noteMissingKey(e);
+    error.value = explain(e);
+  } finally {
+    newKeyPassword.value = '';
+  }
+}
+
+const rotatePassword = ref('');
+const rotating = ref(false);
+/** A new Safe Key, every item sealed again: an old keyset copy and an old password open nothing written since. */
+async function rotateKey() {
+  error.value = '';
+  notice.value = '';
+  rotating.value = true;
+  try {
+    const n = await props.api.rotateKey(rotatePassword.value, typedKey.value || undefined);
+    notice.value = t('safe.keys.rotated', { n });
+    emit('changed');
+  } catch (e) {
+    noteMissingKey(e);
+    error.value = explain(e);
+  } finally {
+    rotatePassword.value = '';
+    rotating.value = false;
   }
 }
 
@@ -115,7 +177,8 @@ onMounted(async () => {
 });
 
 function close() {
-  words.value = [];
+  hideWords();
+  typedKey.value = '';
   emit('close');
 }
 
@@ -182,9 +245,10 @@ async function exportPlain() {
   const path = await save({ defaultPath: 'Synabit Safe.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
   if (!path) return;
   try {
-    const n = await props.api.exportPlain(path, plainPassword.value);
+    const n = await props.api.exportPlain(path, plainPassword.value, typedKey.value || undefined);
     notice.value = t('safe.exchange.exported_plain', { n });
   } catch (e) {
+    noteMissingKey(e);
     error.value = explain(e);
   } finally {
     plainPassword.value = plainPhrase.value = '';
@@ -303,9 +367,30 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
           </ol>
           <div class="flex gap-2">
             <button class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm" @click="saveKit">{{ t('safe.kit.save') }}</button>
-            <button class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" @click="words = []">{{ t('safe.detail.hide') }}</button>
+            <button class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" @click="hideWords">{{ t('safe.detail.hide') }}</button>
           </div>
+          <p v-if="!newKeyStored" class="text-xs text-warning">{{ t('safe.kit.not_stored') }}</p>
         </template>
+      </section>
+
+      <section class="space-y-3">
+        <h3 class="text-sm font-semibold">{{ t('safe.keys.title') }}</h3>
+        <form class="space-y-1.5" @submit.prevent="changeSecretKey">
+          <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.keys.secret_key_body') }}</p>
+          <div class="flex gap-2">
+            <input v-model="newKeyPassword" type="password" :placeholder="t('safe.unlock.password')" :aria-label="t('safe.unlock.password')" autocomplete="off" :class="input" />
+            <button type="submit" :disabled="!newKeyPassword" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm whitespace-nowrap disabled:opacity-40">{{ t('safe.keys.secret_key_go') }}</button>
+          </div>
+        </form>
+        <form class="space-y-1.5" @submit.prevent="rotateKey">
+          <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.keys.rotate_body') }}</p>
+          <div class="flex gap-2">
+            <input v-model="rotatePassword" type="password" :placeholder="t('safe.unlock.password')" :aria-label="t('safe.unlock.password')" autocomplete="off" :class="input" />
+            <button type="submit" :disabled="!rotatePassword || rotating" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm whitespace-nowrap disabled:opacity-40">
+              {{ rotating ? t('safe.keys.rotating') : t('safe.keys.rotate_go') }}
+            </button>
+          </div>
+        </form>
       </section>
 
       <section class="space-y-2.5">
@@ -346,6 +431,11 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
         </form>
       </details>
 
+      <label v-if="deviceLacksKey" class="block space-y-1.5">
+        <span class="text-sm font-medium">{{ t('safe.unlock.secret_key') }}</span>
+        <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.keys.type_to_continue') }}</span>
+        <textarea v-model="typedKey" rows="2" autocomplete="off" spellcheck="false" autocapitalize="off" :class="input + ' font-mono text-sm'" />
+      </label>
       <p v-if="notice" class="text-sm text-success" role="status">{{ notice }}</p>
       <p v-if="error" class="text-sm text-danger" role="alert">{{ error }}</p>
     </div>

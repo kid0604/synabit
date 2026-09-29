@@ -236,6 +236,32 @@ impl ItemBody {
     pub fn from_json(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
+}
+
+/// What went wrong reading JSON, without the text it was reading. serde's own
+/// message quotes the offending value — `invalid type: string "hunter2"` —
+/// and these messages reach the screen and the log.
+pub fn json_problem(e: &serde_json::Error) -> String {
+    let kind = match e.classify() {
+        serde_json::error::Category::Io => "could not be read",
+        serde_json::error::Category::Syntax => "is not valid JSON",
+        serde_json::error::Category::Data => "does not have the expected shape",
+        serde_json::error::Category::Eof => "ends early",
+    };
+    format!("{kind} (line {}, column {})", e.line(), e.column())
+}
+
+impl ItemBody {
+    /// Drop a one-time code setup no code can be made from. Every way in
+    /// through the editor checks this; a file brought in whole — a Safe export
+    /// — is checked here. Returns whether one was dropped.
+    pub fn drop_unusable_totp(&mut self) -> bool {
+        let unusable = self.totp.as_ref().is_some_and(|t| !t.is_usable());
+        if unusable {
+            self.totp = None;
+        }
+        unusable
+    }
 
     /// The field the list shows under the title: a username, else an email.
     fn account(&self) -> Option<&str> {

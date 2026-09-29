@@ -103,6 +103,14 @@ pub enum Capability {
         /// never part of the scope: renaming a server does not undo a decision.
         #[serde(default)]
         label: String,
+        /// The server's tool the value goes into: allowing a token for
+        /// `list_issues` is not allowing it for `create_gist`.
+        #[serde(default)]
+        tool: String,
+        /// The item behind the name, so an "always" follows the item and is not
+        /// inherited by another that later takes the name.
+        #[serde(default)]
+        item_id: String,
     },
 }
 
@@ -174,10 +182,12 @@ impl Capability {
                 domain.to_lowercase(),
                 tool.to_lowercase()
             )),
-            Capability::UseSecret { item, destination, .. } => Some(format!(
-                "use_secret:{}:{}",
+            Capability::UseSecret { item, destination, tool, item_id, .. } => Some(format!(
+                "use_secret:{}:{}:{}:{}",
                 item.to_lowercase(),
-                destination.to_lowercase()
+                item_id.to_lowercase(),
+                destination.to_lowercase(),
+                tool.to_lowercase()
             )),
             _ => None,
         }
@@ -196,9 +206,13 @@ impl Capability {
                 format!("spend about {:.2} USD", *cents_estimate as f64 / 100.0)
             }
             Capability::Execute => "run code on this computer".to_string(),
-            Capability::UseSecret { item, destination, label } => {
+            Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
-                format!("use the Safe item “{item}” for {to}")
+                if tool.is_empty() {
+                    format!("use the Safe item “{item}” for {to}")
+                } else {
+                    format!("use the Safe item “{item}” for {to} ({tool})")
+                }
             }
         }
     }

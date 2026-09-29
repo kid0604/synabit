@@ -381,7 +381,14 @@ async fn write_one(
     // revision in the clear, and `safe::sync` decides from that.
     if crate::safe::sync::is_safe_path(&asset.rel_path) {
         let decision = crate::safe::sync::decide(vault, &asset.rel_path, &contents);
-        if crate::safe::sync::apply(vault, &asset.rel_path, &contents, &decision)? {
+        let changed = !matches!(decision, crate::safe::sync::Incoming::Refuse(_));
+        let wrote = crate::safe::sync::apply(vault, &asset.rel_path, &contents, &decision)?;
+        if changed {
+            // An open Safe reads what arrived before it is next used — not
+            // only when its screen happens to be showing.
+            crate::safe::session::global().changed_on_disk(vault);
+        }
+        if wrote {
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.upsert_document_path(vault_id, &asset.node_id, &asset.rel_path)?;
             db.upsert_document_baseline(

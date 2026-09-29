@@ -330,6 +330,9 @@ impl Api {
         html: &str,
         rows: &[Vec<(String, String)>],
     ) -> Result<i64, ApiError> {
+        // Every way out through Telegram is guarded, not only plain messages:
+        // a reminder or a question can quote a note too.
+        let (html, _) = crate::safe::bridge::redact(html);
         let keyboard: Vec<Vec<Value>> = rows
             .iter()
             .map(|row| {
@@ -355,6 +358,7 @@ impl Api {
 
     /// Replace a message's text. Its buttons go with the old text.
     pub async fn edit(&self, chat_id: i64, message_id: i64, html: &str) -> Result<(), ApiError> {
+        let (html, _) = crate::safe::bridge::redact(html);
         self.call::<Value>(
             "editMessageText",
             json!({ "chat_id": chat_id, "message_id": message_id, "text": html, "parse_mode": "HTML" }),

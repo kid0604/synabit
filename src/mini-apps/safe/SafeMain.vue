@@ -8,6 +8,7 @@
  * back to the unlock screen rather than showing an error on each pane.
  */
 import { computed, onMounted, ref, watch } from 'vue';
+import { onClickOutside, onKeyStroke } from '@vueuse/core';
 import { useI18n } from 'vue-i18n';
 import { AlertTriangle, HeartPulse, LayoutGrid, Lock, Monitor, Plus, Search, Settings2, ShieldAlert, Star, Tag, Trash2 } from 'lucide-vue-next';
 import NavButtons from '../../shared/components/NavButtons.vue';
@@ -119,6 +120,9 @@ const healthFlag = computed(() => (filter.value.by === 'health' ? filter.value.f
 
 const editing = ref<{ item: ItemView | null; kind: ItemKind } | null>(null);
 const showNewMenu = ref(false);
+const newMenu = ref<HTMLElement | null>(null);
+onClickOutside(newMenu, () => (showNewMenu.value = false));
+onKeyStroke('Escape', () => (showNewMenu.value = false));
 
 function startNew(kind: ItemKind) {
   showNewMenu.value = false;
@@ -230,7 +234,7 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
           <Search class="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-text-tertiary dark:text-text-tertiary-dark" />
           <input v-model="query" type="search" :placeholder="t('safe.list.search')" :aria-label="t('safe.list.search')" spellcheck="false" class="w-full pl-8 pr-2 py-1.5 rounded-lg bg-surface dark:bg-surface-dark text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
-        <div class="relative">
+        <div ref="newMenu" class="relative">
           <button class="p-1.5 rounded-lg bg-accent text-white hover:opacity-90" :aria-label="t('safe.list.new')" :title="t('safe.list.new')" :aria-expanded="showNewMenu" @click="showNewMenu = !showNewMenu">
             <Plus class="w-4 h-4" />
           </button>
@@ -252,6 +256,17 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
         @checked="refreshAll"
       />
 
+      <div v-if="overview?.keyset_changed_elsewhere" class="m-2 p-2.5 rounded-lg bg-accent/10 text-xs flex gap-2" role="status">
+        <ShieldAlert class="w-4 h-4 flex-shrink-0 text-accent" />
+        <span>{{ t('safe.sidebar.changed_elsewhere') }}</span>
+      </div>
+      <div v-if="overview?.keyset_rolled_back || overview?.rolled_back?.length" class="m-2 p-2.5 rounded-lg bg-warning/10 text-xs flex gap-2" role="alert">
+        <AlertTriangle class="w-4 h-4 flex-shrink-0 text-warning" />
+        <span>
+          <span v-if="overview.keyset_rolled_back" class="block">{{ t('safe.sidebar.keyset_rolled_back') }}</span>
+          <span v-if="overview.rolled_back?.length" class="block">{{ t('safe.sidebar.rolled_back', { items: overview.rolled_back.join(', ') }) }}</span>
+        </span>
+      </div>
       <div v-if="overview?.unreadable.length" class="m-2 p-2.5 rounded-lg bg-warning/10 text-xs flex gap-2">
         <AlertTriangle class="w-4 h-4 flex-shrink-0 text-warning" />
         <span>{{ t('safe.sidebar.unreadable', { n: overview.unreadable.length }) }}</span>

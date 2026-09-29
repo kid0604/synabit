@@ -42,6 +42,11 @@ pub async fn serve(path: PathBuf, agent: Arc<dyn Agent + Send + Sync>) -> std::i
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
     if let Ok(meta) = std::fs::symlink_metadata(&path) {
         if meta.file_type().is_socket() {
+            // A socket someone answers on is another Synabit's, running now —
+            // not a leftover to clear away.
+            if std::os::unix::net::UnixStream::connect(&path).is_ok() {
+                return Err(std::io::Error::new(std::io::ErrorKind::AddrInUse, format!("another Synabit is already listening at {}", path.display())));
+            }
             std::fs::remove_file(&path)?;
         } else {
             return Err(std::io::Error::other(format!("{} exists and is not a socket", path.display())));
@@ -55,7 +60,16 @@ pub async fn serve(path: PathBuf, agent: Arc<dyn Agent + Send + Sync>) -> std::i
     // SAFETY: getuid cannot fail.
     let me = unsafe { libc::getuid() };
     loop {
-        let (stream, _) = listener.accept().await?;
+        // One failed accept — out of file descriptors, a client gone before it
+        // was taken — is not the end of the socket.
+        let stream = match listener.accept().await {
+            Ok((stream, _)) => stream,
+            Err(e) => {
+                log::warn!("[Safe] the SSH agent socket could not take a connection: {e}");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                continue;
+            }
+        };
         let same_user = stream.peer_cred().map(|c| c.uid() == me).unwrap_or(false);
         if !same_user {
             log::warn!("[Safe] refused an SSH agent connection from another user");
@@ -111,7 +125,9 @@ impl Agent for SafeAgent {
     fn keys(&self) -> Vec<(String, ssh::Ed25519Key)> {
         let session = super::session::global();
         let Some(vault) = session.open_vault() else { return Vec::new() };
-        let pems = session.peek(&vault, |u| Ok(u.ssh_keys())).unwrap_or_default();
+        // Turned off while a connection was open — a forwarded agent, say — is
+        // off for that connection too.
+        let pems = session.peek(&vault, |u| Ok(if u.settings().ssh_agent { u.ssh_keys() } else { Vec::new() })).unwrap_or_default();
         pems.into_iter()
             .filter_map(|(title, pem)| match ssh::parse(pem.expose()) {
                 Ok(key) => Some((title, key)),
@@ -126,14 +142,17 @@ impl Agent for SafeAgent {
     fn allow(&self, request: &ssh::SignRequest) -> bool {
         use tauri::Emitter;
         use tauri_plugin_notification::NotificationExt;
-        let Some(settings) = settings() else { return false };
+        let Some(settings) = settings().filter(|s| s.ssh_agent) else { return false };
         let who = request.login_as.as_deref().map(|u| format!(" as {u}")).unwrap_or_default();
         let allowed = if !settings.ssh_confirm {
             true
         } else {
             let question = super::approvals::ask();
-            if self.app.emit(APPROVE_EVENT, serde_json::json!({ "id": question.id, "request": request })).is_ok() {
-                question.wait(super::approvals::WAIT)
+            let card = serde_json::json!({ "id": question.id, "request": request, "timeout_secs": super::approvals::WAIT.as_secs() });
+            if self.app.emit(APPROVE_EVENT, card).is_ok() {
+                // A yes given after the Safe locked, or the agent was turned
+                // off, is not a yes to sign with a locked Safe's key.
+                question.wait(super::approvals::WAIT) && self::settings().is_some_and(|s| s.ssh_agent)
             } else {
                 question.abandon()
             }
@@ -289,6 +308,21 @@ mod tests {
             .unwrap();
         assert!(!signed.status.success(), "a refused signature was made");
         server.abort();
+        let _ = std::fs::remove_file(&sock);
+    }
+
+    /// No single-instance guard keeps a second Synabit from starting; it must
+    /// not take the first one's agent away.
+    #[tokio::test]
+    async fn a_second_agent_does_not_take_over_a_live_socket() {
+        let sock = std::env::temp_dir().join(format!("ss-take-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&sock);
+        let first = tokio::spawn(serve(sock.clone(), Arc::new(One { pem: String::new(), allow: false })));
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let second = serve(sock.clone(), Arc::new(One { pem: String::new(), allow: false })).await;
+        assert_eq!(second.err().map(|e| e.kind()), Some(std::io::ErrorKind::AddrInUse));
+        assert!(std::os::unix::net::UnixStream::connect(&sock).is_ok(), "the first agent lost its socket");
+        first.abort();
         let _ = std::fs::remove_file(&sock);
     }
 
