@@ -100,17 +100,6 @@ pub struct SafeAgent {
 }
 
 pub const APPROVE_EVENT: &str = "safe://ssh-approve";
-/// How long a signature waits for an answer before it is refused.
-const APPROVE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
-
-static WAITING: std::sync::Mutex<Option<std::collections::HashMap<String, std::sync::mpsc::Sender<bool>>>> =
-    std::sync::Mutex::new(None);
-
-/// The user's answer to one approval card.
-pub fn answer(id: &str, allow: bool) -> bool {
-    let mut guard = WAITING.lock().unwrap_or_else(|p| p.into_inner());
-    guard.as_mut().and_then(|m| m.remove(id)).is_some_and(|tx| tx.send(allow).is_ok())
-}
 
 fn settings() -> Option<super::session::Settings> {
     let session = super::session::global();
@@ -142,16 +131,12 @@ impl Agent for SafeAgent {
         let allowed = if !settings.ssh_confirm {
             true
         } else {
-            let id = hex::encode(super::crypto::random_bytes::<8>().unwrap_or_default());
-            let (tx, rx) = std::sync::mpsc::channel();
-            WAITING.lock().unwrap_or_else(|p| p.into_inner()).get_or_insert_with(Default::default).insert(id.clone(), tx);
-            let shown = self
-                .app
-                .emit(APPROVE_EVENT, serde_json::json!({ "id": id, "request": request }))
-                .is_ok();
-            let answer = if shown { rx.recv_timeout(APPROVE_WAIT).unwrap_or(false) } else { false };
-            WAITING.lock().unwrap_or_else(|p| p.into_inner()).as_mut().map(|m| m.remove(&id));
-            answer
+            let question = super::approvals::ask();
+            if self.app.emit(APPROVE_EVENT, serde_json::json!({ "id": question.id, "request": request })).is_ok() {
+                question.wait(super::approvals::WAIT)
+            } else {
+                question.abandon()
+            }
         };
         if allowed {
             // Every signature is seen, asked about or not.

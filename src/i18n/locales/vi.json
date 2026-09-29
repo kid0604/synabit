@@ -2957,6 +2957,20 @@
       "approve_sign": "Một chương trình trên máy này muốn ký bằng “{key}”.",
       "allow": "Cho phép",
       "deny": "Từ chối"
+    },
+    "cli": {
+      "title": "Dòng lệnh",
+      "enable": "Cho synabit-safe chạy lệnh kèm secret",
+      "enable_body": "Lệnh bạn chạy nhận secret từ Safe qua biến môi trường, sau khi bạn cho phép ở đây. Mỗi lần chạy đều hỏi; không có gì được ghi ra đĩa.",
+      "use": "Ví dụ:",
+      "reference": "Sau safe: là tên cho Syn hoặc tiêu đề của mục, có thể thêm .tên_trường nếu không muốn trường ẩn đầu tiên.",
+      "approve_title": "Đưa secret cho lệnh này?",
+      "approve_body": "Một lệnh trên máy này muốn nhận secret từ Safe qua biến môi trường.",
+      "command": "Lệnh",
+      "folder": "Tại",
+      "secrets": "Secret",
+      "allow": "Cho phép lần này",
+      "deny": "Từ chối"
     }
   }
 }

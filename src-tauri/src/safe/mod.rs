@@ -28,7 +28,11 @@
 //! key" is the sync E2EE key. The Safe Key is neither and is never derived from
 //! either — see [`crypto::derive_auk`] for where it comes from instead.
 
+pub mod approvals;
 pub mod bridge;
+pub mod cli;
+#[cfg(all(desktop, unix))]
+pub mod cli_server;
 pub mod clipboard;
 pub mod crypto;
 pub mod device;

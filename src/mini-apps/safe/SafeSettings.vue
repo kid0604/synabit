@@ -13,7 +13,7 @@ import { useI18n } from 'vue-i18n';
 import { open as openFile, save } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
 import ModalDialog from '../calendar/components/ModalDialog.vue';
-import type { SafeApi, Settings, SshStatus } from './api';
+import type { CliStatus, SafeApi, Settings, SshStatus } from './api';
 import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
@@ -41,6 +41,7 @@ async function update() {
   try {
     settings.value = await props.api.setSettings(settings.value);
     ssh.value = await props.api.sshStatus().catch(() => null);
+    cli.value = await props.api.cliStatus().catch(() => null);
   } catch (e) {
     error.value = explain(e);
   }
@@ -53,6 +54,10 @@ async function copyExport() {
   await navigator.clipboard.writeText(exportLine.value).catch(() => undefined);
   notice.value = t('safe.ssh.copied');
 }
+
+/** `synabit-safe run`: off until turned on, and a card for every run. */
+const cli = ref<CliStatus | null>(null);
+const cliExample = 'GITHUB_TOKEN=safe:github-token synabit-safe run -- gh repo list';
 
 const current = ref('');
 const next = ref('');
@@ -101,6 +106,7 @@ async function saveKit() {
 
 onMounted(async () => {
   ssh.value = await props.api.sshStatus().catch(() => null);
+  cli.value = await props.api.cliStatus().catch(() => null);
   try {
     settings.value = await props.api.getSettings();
   } catch (e) {
@@ -249,6 +255,22 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
             <li v-if="!ssh.keys.length" class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.ssh.no_keys') }}</li>
           </ul>
         </template>
+      </section>
+
+      <section v-if="settings && cli?.supported" class="space-y-2.5">
+        <h3 class="text-sm font-semibold">{{ t('safe.cli.title') }}</h3>
+        <label class="flex items-start gap-3 text-sm">
+          <input v-model="settings.cli" type="checkbox" class="mt-1" @change="update" />
+          <span>
+            <span class="block">{{ t('safe.cli.enable') }}</span>
+            <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.enable_body') }}</span>
+          </span>
+        </label>
+        <div v-if="settings.cli" class="space-y-1">
+          <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.use') }}</p>
+          <code class="block px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ cliExample }}</code>
+          <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.cli.reference') }}</p>
+        </div>
       </section>
 
       <form class="space-y-2.5" @submit.prevent="changePassword">

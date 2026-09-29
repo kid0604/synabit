@@ -205,7 +205,7 @@ pub async fn safe_unlock(
         let settings = unlocked.settings();
         crate::safe::session::global().install(unlocked);
         crate::syn::connector::after_safe_unlocked(handle.clone(), vault.to_string_lossy().into_owned());
-        ssh_agent_follow(&handle, &settings);
+        sockets_follow(&handle, &settings);
         Ok(())
     })
     .await
@@ -863,18 +863,23 @@ pub fn safe_set_settings(
 ) -> AppResult<Settings> {
     gate(&webview)?;
     let saved = with(&vault_path, |s| s.set_settings(settings))?;
-    ssh_agent_follow(&app, &saved);
+    sockets_follow(&app, &saved);
     Ok(saved)
 }
 
-/// Start or stop the SSH agent to match the settings.
-fn ssh_agent_follow(app: &tauri::AppHandle, settings: &Settings) {
+/// Start or stop the SSH agent and the command-line socket to match the settings.
+fn sockets_follow(app: &tauri::AppHandle, settings: &Settings) {
     #[cfg(all(desktop, unix))]
     {
         if settings.ssh_agent {
             crate::safe::ssh_agent::start(app);
         } else {
             crate::safe::ssh_agent::stop();
+        }
+        if settings.cli {
+            crate::safe::cli_server::start(app);
+        } else {
+            crate::safe::cli_server::stop(app);
         }
     }
     #[cfg(not(all(desktop, unix)))]
@@ -925,14 +930,24 @@ pub fn safe_ssh_status(webview: tauri::Webview, vault_path: String) -> AppResult
     }
 }
 
-/// The user's answer on an SSH approval card.
+/// Whether `synabit-safe run` can reach the app, and the socket it uses.
+#[tauri::command]
+pub fn safe_cli_status(app: tauri::AppHandle, webview: tauri::Webview) -> AppResult<serde_json::Value> {
+    use tauri::Manager;
+    gate(&webview)?;
+    let socket = app.path().app_data_dir().ok().map(|d| d.join(crate::safe::cli::SOCKET_NAME).display().to_string());
+    #[cfg(all(desktop, unix))]
+    let (supported, running) = (true, crate::safe::cli_server::running());
+    #[cfg(not(all(desktop, unix)))]
+    let (supported, running) = (false, false);
+    Ok(serde_json::json!({ "supported": supported, "running": running, "socket": socket }))
+}
+
+/// The user's answer on an SSH or command-line approval card.
 #[tauri::command]
 pub fn safe_ssh_answer(webview: tauri::Webview, id: String, allow: bool) -> AppResult<()> {
     gate(&webview)?;
-    #[cfg(all(desktop, unix))]
-    crate::safe::ssh_agent::answer(&id, allow);
-    #[cfg(not(all(desktop, unix)))]
-    let _ = (id, allow);
+    crate::safe::approvals::answer(&id, allow);
     Ok(())
 }
 

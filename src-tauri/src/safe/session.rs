@@ -156,6 +156,9 @@ pub struct Settings {
     /// Whether each signature waits for a yes in the app. On by default.
     #[serde(default = "yes")]
     pub ssh_confirm: bool,
+    /// Whether `synabit-safe run` may ask. Off until turned on.
+    #[serde(default)]
+    pub cli: bool,
 }
 
 fn yes() -> bool {
@@ -180,6 +183,7 @@ impl Default for Settings {
             breach_check: false,
             ssh_agent: false,
             ssh_confirm: true,
+            cli: false,
         }
     }
 }
@@ -209,6 +213,7 @@ impl Settings {
             breach_check: self.breach_check,
             ssh_agent: self.ssh_agent,
             ssh_confirm: self.ssh_confirm,
+            cli: self.cli,
         }
     }
 }
@@ -562,6 +567,40 @@ impl Unlocked {
         }
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
+    }
+
+    /// The value `synabit-safe run` asked for: an item by its Syn name or its
+    /// title, and its first hidden field — or, after a dot, the field of that
+    /// label. Only a live item; a title two items share is refused by name.
+    pub fn cli_value(&self, reference: &str) -> Result<SecretString, String> {
+        let live = || self.entries.iter().filter(|(_, e)| e.summary.as_ref().is_some_and(|s| !s.trashed));
+        let find = |name: &str| -> Result<Option<ItemId>, String> {
+            if let Some((id, _)) = live().find(|(_, e)| e.handle.as_deref() == Some(name)) {
+                return Ok(Some(*id));
+            }
+            let titled: Vec<ItemId> = live()
+                .filter(|(_, e)| e.summary.as_ref().is_some_and(|s| s.title.eq_ignore_ascii_case(name)))
+                .map(|(id, _)| *id)
+                .collect();
+            match titled.len() {
+                0 => Ok(None),
+                1 => Ok(Some(titled[0])),
+                _ => Err(format!("more than one item is called “{name}”; give one of them a name for Syn and use that")),
+            }
+        };
+        let (id, field) = match find(reference)? {
+            Some(id) => (id, None),
+            None => match reference.rsplit_once('.') {
+                Some((item, field)) => (find(item)?.ok_or_else(|| format!("no item called “{item}”"))?, Some(field)),
+                None => return Err(format!("no item called “{reference}”")),
+            },
+        };
+        let body = self.body(&id).map_err(|e| e.to_string())?;
+        let chosen = match field {
+            Some(label) => body.fields.iter().find(|f| f.label.eq_ignore_ascii_case(label)),
+            None => body.fields.iter().find(|f| f.kind.is_concealed() && !f.value.is_empty()),
+        };
+        chosen.map(|f| f.value.clone()).ok_or_else(|| format!("“{reference}” has no such field"))
     }
 
     pub fn set_breached(&mut self, breached: HashSet<ItemId>, at: i64) {
@@ -1074,9 +1113,31 @@ mod tests {
     }
 
     #[test]
+    fn the_command_line_finds_items_by_name_or_title_and_field() {
+        use crate::safe::item::AiLevel;
+        let dir = tempfile::tempdir().unwrap();
+        let mut safe = open_safe(dir.path());
+        let gh = safe.create(edit("GitHub token", "gh-canary", &[]), 1).unwrap();
+        safe.set_ai(&gh.id, AiLevel::Listed, Some("github-token".into()), vec![], 2).unwrap();
+        safe.create(edit("Twin", "a", &[]), 1).unwrap();
+        safe.create(edit("twin", "b", &[]), 1).unwrap();
+        let gone = safe.create(edit("Old", "old-canary", &[]), 1).unwrap();
+        safe.set_trashed(&gone.id, true, 2).unwrap();
+
+        assert_eq!(safe.cli_value("github-token").unwrap().expose(), "gh-canary");
+        assert_eq!(safe.cli_value("github token").unwrap().expose(), "gh-canary", "by title, any case");
+        assert_eq!(safe.cli_value("github-token.username").unwrap().expose(), "anh");
+        assert_eq!(safe.cli_value("GitHub token.USERNAME").unwrap().expose(), "anh");
+        assert!(safe.cli_value("twin").unwrap_err().contains("more than one"));
+        assert!(safe.cli_value("Old").is_err(), "a trashed item is not handed out");
+        assert!(safe.cli_value("github-token.nope").is_err());
+        assert!(safe.cli_value("missing").is_err());
+    }
+
+    #[test]
     fn settings_are_clamped_and_kept_per_device() {
         let dir = tempfile::tempdir().unwrap();
-        let wild = Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999, breach_check: true, ssh_agent: true, ssh_confirm: false };
+        let wild = Settings { auto_lock_secs: 1, clipboard_clear_secs: 99_999, breach_check: true, ssh_agent: true, ssh_confirm: false, cli: true };
         wild.save(dir.path()).unwrap();
         let loaded = Settings::load(dir.path());
         assert_eq!(loaded, Settings { auto_lock_secs: 60, clipboard_clear_secs: 600, ..wild });

@@ -960,6 +960,7 @@ pub fn run() {
             commands::safe::safe_check_breaches,
             commands::safe::safe_ssh_status,
             commands::safe::safe_ssh_answer,
+            commands::safe::safe_cli_status,
             commands::safe::safe_destinations,
             commands::safe::safe_request_submit,
             commands::safe::safe_forget_device_secret,

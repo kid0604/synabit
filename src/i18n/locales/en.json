@@ -2957,6 +2957,20 @@
       "approve_sign": "Something on this computer wants to sign with “{key}”.",
       "allow": "Allow",
       "deny": "Deny"
+    },
+    "cli": {
+      "title": "Command line",
+      "enable": "Let synabit-safe run commands with secrets",
+      "enable_body": "A command you run gets secrets from Safe in its environment, after you allow it here. Each run asks; nothing is written to disk.",
+      "use": "For example:",
+      "reference": "After safe: comes an item's name for Syn or its title, optionally .field for a field other than its first hidden one.",
+      "approve_title": "Give a command its secrets?",
+      "approve_body": "A command on this computer wants secrets from Safe in its environment.",
+      "command": "Command",
+      "folder": "In",
+      "secrets": "Secrets",
+      "allow": "Allow this run",
+      "deny": "Deny"
     }
   }
 }

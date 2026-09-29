@@ -129,6 +129,13 @@ export interface Settings {
   breach_check: boolean;
   ssh_agent: boolean;
   ssh_confirm: boolean;
+  cli: boolean;
+}
+
+export interface CliStatus {
+  supported: boolean;
+  running: boolean;
+  socket: string | null;
 }
 
 export interface SshStatus {
@@ -203,6 +210,7 @@ export function useSafeApi(vaultPath: () => string) {
     deviceSecrets: () => invoke<DeviceSecret[]>('safe_device_secrets', v()),
     forgetDeviceSecret: (slot: string) => invoke<void>('safe_forget_device_secret', { ...v(), slot }),
     sshStatus: () => invoke<SshStatus>('safe_ssh_status', v()),
+    cliStatus: () => invoke<CliStatus>('safe_cli_status'),
     getSettings: () => invoke<Settings>('safe_get_settings', v()),
     setSettings: (settings: Settings) => invoke<Settings>('safe_set_settings', { ...v(), settings }),
   };

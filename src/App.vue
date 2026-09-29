@@ -126,6 +126,7 @@ const SetupPinModal = defineAsyncComponent(() => import('./shared/components/Set
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
 const SafeRequestCard = defineAsyncComponent(() => import('./mini-apps/safe/SafeRequestCard.vue'));
 const SshApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/SshApproveCard.vue'));
+const CliApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/CliApproveCard.vue'));
 const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
 const VaultBackupNotice = defineAsyncComponent(() => import('./shared/components/VaultBackupNotice.vue'));
 
@@ -1689,6 +1690,7 @@ onUnmounted(() => {
     <SafeRequestCard v-if="vaultPath && !isFloatingView" :vault-path="vaultPath" />
     <!-- Safe's SSH agent asking before it signs. -->
     <SshApproveCard v-if="!isFloatingView" />
+    <CliApproveCard v-if="!isFloatingView" />
 
     <!-- E2EE Onboarding Modal -->
     <E2eeOnboarding v-if="showE2eeOnboarding" @done="showE2eeOnboarding = false" />
