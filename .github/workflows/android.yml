@@ -75,7 +75,9 @@ jobs:
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            libdbus-1-dev \
+            pkg-config
 
       - uses: swatinem/rust-cache@v2
         with:
