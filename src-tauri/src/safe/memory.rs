@@ -168,17 +168,29 @@ pub fn harden() {
 mod tests {
     use super::*;
 
+    /// The slots are shared by the whole process: a test that frees one and
+    /// looks at it must not race a test that takes it.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn alone() -> std::sync::MutexGuard<'static, ()> {
+        ONE_AT_A_TIME.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn a_slot_holds_its_bytes_and_wipes_them() {
-        let slot = Slot::new(&[7; KEY_LEN]);
-        assert_eq!(slot.bytes(), &[7; KEY_LEN]);
+        let _alone = alone();
+        // A pattern no other test uses: another test may take the slot the
+        // moment it is released, so what is checked is that ours is gone.
+        let ours = [0xA5; KEY_LEN];
+        let slot = Slot::new(&ours);
+        assert_eq!(slot.bytes(), &ours);
         if let Slot::Locked { ptr, .. } = &slot {
             let ptr = *ptr;
             drop(slot);
             // SAFETY: the page lives for the whole process; the slot was
             // released, not freed.
             let after = unsafe { std::slice::from_raw_parts(ptr, KEY_LEN) };
-            assert_eq!(after, &[0; KEY_LEN], "the slot was not wiped");
+            assert_ne!(after, &ours, "the slot was not wiped");
         }
     }
 
@@ -186,12 +198,14 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn keys_live_in_locked_memory_on_unix() {
+        let _alone = alone();
         let slot = Slot::new(&[1; KEY_LEN]);
         assert!(slot.is_locked(), "mlock was refused on this machine");
     }
 
     #[test]
     fn more_keys_than_slots_fall_back_rather_than_fail() {
+        let _alone = alone();
         let many: Vec<Slot> = (0..SLOTS + 8).map(|i| Slot::new(&[i as u8; KEY_LEN])).collect();
         for (i, slot) in many.iter().enumerate() {
             assert_eq!(slot.bytes(), &[i as u8; KEY_LEN]);
