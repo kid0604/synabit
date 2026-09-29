@@ -26,7 +26,7 @@ const github: ItemView = {
     { id: 'p', label: 'Password', kind: 'password', concealed: true, value: null, length_bucket: 16, empty: false },
   ],
   urls: [{ url: 'https://github.com', match: 'domain' }], tags: ['work'], favorite: true, notes: '', links: [],
-  totp: { algorithm: 'sha1', digits: 6, period: 30 },
+  totp: { algorithm: 'sha1', digits: 6, period: 30 }, handle: null, ai_destinations: [],
   ai_level: 'hidden', expires_at: null, created_at: 1, updated_at: 2, history_count: 0, trashed_at: null,
 };
 

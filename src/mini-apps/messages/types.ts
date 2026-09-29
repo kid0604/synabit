@@ -506,7 +506,10 @@ export type Capability =
   | 'Browse'
   | { NetWrite: { domain: string; tool: string } }
   | { Spend: { cents_estimate: number } }
-  | 'Execute';
+  | 'Execute'
+  // A value from Safe, to one server. `label` is the server's name, for the
+  // card; the scope is the item and `destination`.
+  | { UseSecret: { item: string; destination: string; label: string } };
 
 /**
  * One tool, as somebody deciding whether to trust Syn would read it.

@@ -96,7 +96,14 @@ pub enum Capability {
     /// uses for it, the place as `connector:<id>`. Per pair, because "may use
     /// the GitHub token for GitHub" and "for anything else" are not one
     /// decision. Syn never sees the value — see `safe::egress`.
-    UseSecret { item: String, destination: String },
+    UseSecret {
+        item: String,
+        destination: String,
+        /// What the person calls the destination — a connector's name. Shown,
+        /// never part of the scope: renaming a server does not undo a decision.
+        #[serde(default)]
+        label: String,
+    },
 }
 
 /// What the user said.
@@ -167,7 +174,7 @@ impl Capability {
                 domain.to_lowercase(),
                 tool.to_lowercase()
             )),
-            Capability::UseSecret { item, destination } => Some(format!(
+            Capability::UseSecret { item, destination, .. } => Some(format!(
                 "use_secret:{}:{}",
                 item.to_lowercase(),
                 destination.to_lowercase()
@@ -189,8 +196,9 @@ impl Capability {
                 format!("spend about {:.2} USD", *cents_estimate as f64 / 100.0)
             }
             Capability::Execute => "run code on this computer".to_string(),
-            Capability::UseSecret { item, destination } => {
-                format!("use the Safe item “{item}” for {}", destination.trim_start_matches("connector:"))
+            Capability::UseSecret { item, destination, label } => {
+                let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
+                format!("use the Safe item “{item}” for {to}")
             }
         }
     }

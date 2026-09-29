@@ -25,6 +25,8 @@ const every: Capability[] = [
   { NetWrite: { domain: 'example.com', tool: 'post_message' } },
   { Spend: { cents_estimate: 250 } },
   'Execute',
+  // A Safe value to one server: named by the server's name, not its uuid.
+  { UseSecret: { item: 'linear-key', destination: 'connector:3f2a-uuid', label: 'Linear' } },
 ];
 
 describe('what a consent card says', () => {
@@ -67,5 +69,10 @@ describe('what a consent card says', () => {
   it('turns cents into the amount a person reads', () => {
     expect(askPhrase({ Spend: { cents_estimate: 250 } }).values.amount).toBe('2.50');
     expect(askPhrase({ Spend: { cents_estimate: 7 } }).values.amount).toBe('0.07');
+  });
+
+  it('names the server a secret goes to, not its id', () => {
+    const { values } = askPhrase({ UseSecret: { item: 'linear-key', destination: 'connector:3f2a-uuid', label: 'Linear' } });
+    expect(values).toEqual({ item: 'linear-key', destination: 'Linear' });
   });
 });

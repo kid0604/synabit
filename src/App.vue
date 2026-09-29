@@ -124,6 +124,7 @@ const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2
 const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
+const SafeRequestCard = defineAsyncComponent(() => import('./mini-apps/safe/SafeRequestCard.vue'));
 const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
 const VaultBackupNotice = defineAsyncComponent(() => import('./shared/components/VaultBackupNotice.vue'));
 
@@ -1682,6 +1683,9 @@ onUnmounted(() => {
       <!-- Sync Conflict Toast (floating bottom-right) -->
       <SyncConflictToast />
     </template>
+
+    <!-- Syn asking for a secret: the value goes from this card to the Safe, never through Syn. -->
+    <SafeRequestCard v-if="vaultPath && !isFloatingView" :vault-path="vaultPath" />
 
     <!-- E2EE Onboarding Modal -->
     <E2eeOnboarding v-if="showE2eeOnboarding" @done="showE2eeOnboarding = false" />

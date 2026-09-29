@@ -294,6 +294,8 @@ impl ItemBody {
             links: self.links.clone(),
             totp: self.totp.as_ref().map(|t| t.view()),
             ai_level: self.ai.level,
+            handle: self.handle.clone(),
+            ai_destinations: self.ai.destinations.clone(),
             expires_at: self.expires_at,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -537,6 +539,10 @@ pub struct ItemView {
     /// How the item's codes are made, never the secret behind them.
     pub totp: Option<super::totp::TotpView>,
     pub ai_level: AiLevel,
+    /// The name Syn uses for it, when Syn may know of it.
+    pub handle: Option<String>,
+    /// Where Syn may send it — `connector:<id>` — when it may use it.
+    pub ai_destinations: Vec<String>,
     pub expires_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,

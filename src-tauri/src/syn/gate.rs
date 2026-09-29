@@ -71,7 +71,7 @@ pub struct View<'a> {
     /// Whether the Safe item `handle` may go to the server behind `tool`:
     /// `Ok(destination)` as a consent scope names it, or the sentence to tell
     /// the model. See `safe::bridge::may_send`.
-    pub safe: &'a dyn Fn(&str, &str) -> Result<String, String>,
+    pub safe: &'a dyn Fn(&str, &str) -> Result<(String, String), String>,
 }
 
 /// What to do with the call.
@@ -263,7 +263,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // the model is not asked.
     if crate::syn::connector::is_connector_tool(tool) {
         for placeholder in crate::safe::egress::find(args) {
-            let destination = match (view.safe)(tool, &placeholder.handle) {
+            let (destination, label) = match (view.safe)(tool, &placeholder.handle) {
                 Ok(d) => d,
                 Err(said) => {
                     return Decided {
@@ -275,7 +275,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
                     }
                 }
             };
-            let secret = Capability::UseSecret { item: placeholder.handle.clone(), destination };
+            let secret = Capability::UseSecret { item: placeholder.handle.clone(), destination, label };
             let mut decision = crate::syn::consent::decide(&secret, view.ledger, view.now);
             if decision == Decision::Ask && (view.allowed_until_done)(&secret) {
                 decision = Decision::Allow;

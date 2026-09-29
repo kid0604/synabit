@@ -279,7 +279,7 @@ mod secrets {
 
     fn with_safe<'a>(
         ledger: &'a Ledger,
-        safe: &'a dyn Fn(&str, &str) -> Result<String, String>,
+        safe: &'a dyn Fn(&str, &str) -> Result<(String, String), String>,
         until_done: &'a dyn Fn(&Capability) -> bool,
     ) -> gate::View<'a> {
         gate::View { safe, ..view(ledger, until_done) }
@@ -290,7 +290,7 @@ mod secrets {
     }
 
     fn secret() -> Capability {
-        Capability::UseSecret { item: "jira-token".into(), destination: "connector:jira".into() }
+        Capability::UseSecret { item: "jira-token".into(), destination: "connector:jira".into(), label: "Jira".into() }
     }
 
     fn args() -> serde_json::Value {
@@ -301,7 +301,7 @@ mod secrets {
     fn what_the_safe_refuses_is_refused_in_its_words() {
         let ledger = granted(&[(&write(), Answer::Always)]);
         let no = |_: &Capability| false;
-        let safe = |_: &str, h: &str| -> Result<String, String> { Err(format!("`{h}` may not go there")) };
+        let safe = |_: &str, h: &str| -> Result<(String, String), String> { Err(format!("`{h}` may not go there")) };
         let decided = decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no));
         match decided.gate {
             Gate::Refuse { said, .. } => assert_eq!(said, "`jira-token` may not go there"),
@@ -312,7 +312,7 @@ mod secrets {
     #[test]
     fn an_allowed_pair_is_asked_about_once_then_remembered() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
 
         let first = granted(&[(&write(), Answer::Always)]);
         match decide(TOOL, &args(), Some(&write()), &with_safe(&first, &safe, &no)).gate {
@@ -330,7 +330,7 @@ mod secrets {
     #[test]
     fn a_never_for_the_pair_is_final() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Never)]);
         assert!(matches!(
             decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate,
@@ -343,7 +343,7 @@ mod secrets {
     #[test]
     fn the_servers_permission_comes_first() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
         let ledger = Ledger::default();
         match decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no)).gate {
             Gate::Ask(ask) => assert_eq!(ask.capability, write()),
@@ -356,7 +356,7 @@ mod secrets {
     #[test]
     fn a_tainted_run_sends_no_secret() {
         let no = |_: &Capability| false;
-        let safe = |_: &str, _: &str| -> Result<String, String> { Ok("connector:jira".into()) };
+        let safe = |_: &str, _: &str| -> Result<(String, String), String> { Ok(("connector:jira".into(), "Jira".into())) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
         let tainted = gate::View { tainted: true, ..with_safe(&ledger, &safe, &no) };
         assert!(matches!(decide(TOOL, &args(), Some(&write()), &tainted).gate, Gate::Refuse { .. }));

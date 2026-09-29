@@ -2526,7 +2526,11 @@
     "activity_from_routine": "định kỳ",
     "stats_skills_injected": "Kỹ năng Syn tự chọn cho câu hỏi",
     "stats_skills_injected_why": "Số lượt câu hỏi khớp một kỹ năng đủ rõ để Syn tự đưa vào, không cần model gọi. Cộng với số lượt nạp ở trên, đây là mức kỹ năng thực sự được dùng.",
-    "doing_find_tools": "Lấy thêm công cụ"
+    "doing_find_tools": "Lấy thêm công cụ",
+    "consent_usesecret": "Syn muốn gửi mục “{item}” trong Safe tới {destination}. Syn không bao giờ thấy giá trị — Synabit điền vào lúc yêu cầu rời đi — nhưng đã gửi thì không lấy lại được.",
+    "cap_usesecret": "Gửi mục “{item}” trong Safe tới {destination}",
+    "doing_safe_list": "Xem những gì Safe chia sẻ với Syn",
+    "doing_safe_request": "Nhờ bạn thêm một secret vào Safe"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
@@ -2675,7 +2679,11 @@
       "import_unknown": "Safe không đọc được loại file này.",
       "encrypted_bitwarden": "Đây là file xuất Bitwarden có mật khẩu. Hãy xuất lại mà không đặt mật khẩu.",
       "needs_export_password": "File xuất của Safe cần mật khẩu của nó.",
-      "wrong_export_password": "Sai mật khẩu file xuất, hoặc file đã bị sửa."
+      "wrong_export_password": "Sai mật khẩu file xuất, hoặc file đã bị sửa.",
+      "bad_handle": "Tên cho Syn gồm 2–40 chữ thường, số và dấu gạch ngang.",
+      "handle_taken": "Đã có mục khác dùng tên này.",
+      "no_destination": "Hãy chọn ít nhất một connector Syn được gửi tới.",
+      "request_gone": "Yêu cầu này đã hết hạn. Hãy nhờ Syn hỏi lại."
     },
     "sidebar": {
       "all": "Tất cả",
@@ -2875,6 +2883,30 @@
       "none": "Máy này không lưu gì.",
       "forget_title": "Quên {name}?",
       "forget_body": "Nó bị xoá khỏi keychain của máy này. Thứ đang dùng nó sẽ ngừng chạy ở đây cho tới khi bạn nhập lại."
+    },
+    "ai": {
+      "title": "Syn",
+      "hidden": "Ẩn",
+      "listed": "Biết tên",
+      "usable": "Được dùng",
+      "hidden_body": "Syn không biết mục này tồn tại.",
+      "listed_body": "Syn biết tên và mục này là gì — để nhắc bạn hoặc hỏi về nó. Không bao giờ biết giá trị.",
+      "usable_body": "Syn được gửi mục này tới các connector bên dưới, hỏi bạn lần đầu với mỗi nơi. Syn không bao giờ thấy giá trị.",
+      "handle": "Tên Syn dùng",
+      "placeholder_hint": "Syn viết {placeholder}; Synabit điền giá trị vào lúc yêu cầu rời đi.",
+      "destinations": "Được gửi tới",
+      "no_connectors": "Chưa có connector nào. Hãy thêm trong cài đặt của Syn trước.",
+      "save": "Lưu",
+      "saved": "Đã lưu."
+    },
+    "request": {
+      "title": "Syn đang xin một secret",
+      "body": "“{why}” Hãy gõ vào đây: nó vào Safe của bạn, Syn chỉ biết tên của nó.",
+      "locked": "Safe đang khoá. Mở khoá để thêm.",
+      "value": "Secret",
+      "none_ticked": "Syn chỉ được gửi tới nơi bạn đánh dấu. Không đánh dấu nơi nào thì Syn chỉ biết nó tồn tại.",
+      "save": "Lưu vào Safe",
+      "not_now": "Để sau"
     }
   }
 }

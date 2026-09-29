@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}), e
 
 const item = {
   id: 'abc', kind: 'login', title: 'Bank', fields: [], urls: [], tags: [], favorite: false, notes: '', links: [],
-  totp: null, ai_level: 'hidden', expires_at: null, created_at: 1, updated_at: 1, history_count: 0, trashed_at: null,
+  totp: null, ai_level: 'hidden', handle: null, ai_destinations: [], expires_at: null, created_at: 1, updated_at: 1, history_count: 0, trashed_at: null,
 };
 
 function fakeApi() {

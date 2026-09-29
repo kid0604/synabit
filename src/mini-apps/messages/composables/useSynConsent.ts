@@ -204,6 +204,13 @@ export const askPhrase = (
       values: { domain: capability.NetWrite.domain, tool: capability.NetWrite.tool },
     };
   }
+  if ('UseSecret' in capability) {
+    const { item, destination, label } = capability.UseSecret;
+    return {
+      key: 'syn.consent_usesecret',
+      values: { item, destination: label || destination.replace(/^connector:/, '') },
+    };
+  }
   return {
     key: 'syn.consent_spend',
     values: { amount: (capability.Spend.cents_estimate / 100).toFixed(2) },

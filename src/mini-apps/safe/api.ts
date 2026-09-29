@@ -58,6 +58,8 @@ export interface ItemView {
   /** How its one-time codes are made — never the secret behind them. */
   totp: { algorithm: 'sha1' | 'sha256' | 'sha512'; digits: number; period: number } | null;
   ai_level: AiLevel;
+  handle: string | null;
+  ai_destinations: string[];
   expires_at: number | null;
   created_at: number;
   updated_at: number;
@@ -173,6 +175,11 @@ export function useSafeApi(vaultPath: () => string) {
       invoke<{ format: string; imported: number; warnings: string[]; source_was_plaintext: boolean }>('safe_import', { ...v(), path, password: password || null }),
     exportSealed: (path: string, exportPassword: string) => invoke<number>('safe_export', { ...v(), path, exportPassword }),
     exportPlain: (path: string, password: string) => invoke<number>('safe_export_plain', { ...v(), path, password }),
+    setAi: (id: string, level: AiLevel, handle: string | null, destinations: string[]) =>
+      invoke<ItemView>('safe_set_ai', { ...v(), id, level, handle, destinations }),
+    destinations: () => invoke<{ key: string; label: string }[]>('safe_destinations', v()),
+    requestSubmit: (requestId: string, title: string, handle: string, value: string, destinations: string[]) =>
+      invoke<string>('safe_request_submit', { ...v(), requestId, title, handle, value, destinations }),
     deviceSecrets: () => invoke<DeviceSecret[]>('safe_device_secrets', v()),
     forgetDeviceSecret: (slot: string) => invoke<void>('safe_forget_device_secret', { ...v(), slot }),
     getSettings: () => invoke<Settings>('safe_get_settings', v()),

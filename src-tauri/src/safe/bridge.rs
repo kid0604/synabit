@@ -51,15 +51,16 @@ fn locked(e: SafeError) -> EgressError {
 }
 
 /// Whether the item Syn calls `handle` may go to the server behind `tool`.
-/// `Ok` carries the destination, as a consent scope names it.
-pub fn may_send(vault: &str, tool: &str, handle: &str) -> Result<String, String> {
+/// `Ok` carries the destination as a consent scope names it, and the server's
+/// name for the card.
+pub fn may_send(vault: &str, tool: &str, handle: &str) -> Result<(String, String), String> {
     let (destination, server) =
         destination_of(tool).ok_or_else(|| format!("`{tool}` is not connected right now."))?;
     global()
         .peek(Path::new(vault), |u| Ok(u.permits(handle, &destination)))
         .map_err(locked)
         .and_then(|r| r)
-        .map(|()| destination.key())
+        .map(|()| (destination.key(), server.clone()))
         .map_err(|e| said(&e, &server))
 }
 

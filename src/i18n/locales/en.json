@@ -2526,7 +2526,11 @@
     "activity_from_routine": "routine",
     "stats_skills_injected": "Skill picked by Syn for the question",
     "stats_skills_injected_why": "Runs where the question matched a skill closely enough for Syn to hand it over without being asked. With the loads above, this is how often skills are actually used.",
-    "doing_find_tools": "Getting more tools"
+    "doing_find_tools": "Getting more tools",
+    "consent_usesecret": "Syn wants to send your Safe item “{item}” to {destination}. Syn never sees the value — Synabit puts it in as the request leaves — but once sent, it cannot be taken back.",
+    "cap_usesecret": "Sends the Safe item “{item}” to {destination}",
+    "doing_safe_list": "Looking at what Safe shares with Syn",
+    "doing_safe_request": "Asking you to add a secret to Safe"
   },
   "update": {
     "available": "Synabit {version} is available!",
@@ -2675,7 +2679,11 @@
       "import_unknown": "This file is not an export Safe knows how to read.",
       "encrypted_bitwarden": "This is a password-protected Bitwarden export. Export again without a password.",
       "needs_export_password": "This Safe export needs its export password.",
-      "wrong_export_password": "Wrong export password, or the file was altered."
+      "wrong_export_password": "Wrong export password, or the file was altered.",
+      "bad_handle": "A name for Syn is 2–40 lower-case letters, digits and dashes.",
+      "handle_taken": "Another item already has that name.",
+      "no_destination": "Choose at least one connector Syn may send it to.",
+      "request_gone": "That request is no longer open. Ask Syn again."
     },
     "sidebar": {
       "all": "All items",
@@ -2875,6 +2883,30 @@
       "none": "Nothing is stored on this device.",
       "forget_title": "Forget {name}?",
       "forget_body": "It is removed from this device's keychain. Whatever used it stops working here until it is entered again."
+    },
+    "ai": {
+      "title": "Syn",
+      "hidden": "Hidden",
+      "listed": "Knows the name",
+      "usable": "May use",
+      "hidden_body": "Syn does not know this item exists.",
+      "listed_body": "Syn knows its name and what it is — to remind you or ask about it. Never its value.",
+      "usable_body": "Syn may have it sent to the connectors below, asking you the first time each. It never sees the value.",
+      "handle": "Name Syn uses",
+      "placeholder_hint": "Syn writes {placeholder}; Synabit puts the value in as the request leaves.",
+      "destinations": "May be sent to",
+      "no_connectors": "No connectors yet. Add one in Syn's settings first.",
+      "save": "Save",
+      "saved": "Saved."
+    },
+    "request": {
+      "title": "Syn is asking for a secret",
+      "body": "“{why}” Type it here: it goes into your Safe, and Syn only learns its name.",
+      "locked": "Your Safe is locked. Unlock it to add this.",
+      "value": "The secret",
+      "none_ticked": "Syn may send it only where you tick. With none ticked, Syn only knows it exists.",
+      "save": "Save to Safe",
+      "not_now": "Not now"
     }
   }
 }

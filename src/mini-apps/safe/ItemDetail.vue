@@ -12,6 +12,7 @@ import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Copy, ExternalLink, Eye, EyeOff, Link, Pencil, RotateCcw, Star, Trash2 } from 'lucide-vue-next';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import SynAccess from './SynAccess.vue';
 import type { FieldView, ItemView, SafeApi } from './api';
 import { kindInfo } from './kinds';
 import { useSafeError } from './useSafeError';
@@ -275,10 +276,11 @@ const trashed = computed(() => props.item.trashed_at !== null);
         <span v-for="tag in item.tags" :key="tag" class="px-2 py-0.5 rounded-full bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-xs">#{{ tag }}</span>
       </section>
 
+      <SynAccess v-if="!trashed" :api="api" :item="item" @saved="emit('changed')" />
+
       <footer class="text-xs text-text-tertiary dark:text-text-tertiary-dark space-y-0.5">
         <p>{{ updated }}</p>
         <p v-if="item.history_count">{{ t('safe.detail.history', { n: item.history_count }) }}</p>
-        <p>{{ t(`safe.detail.syn.${item.ai_level}`) }}</p>
       </footer>
     </div>
 

@@ -10,6 +10,7 @@
 export const LABELLED_TOOLS = [
   'query_nodes', 'get_node', 'list_schemas', 'get_linked_nodes', 'create_node', 'update_node',
   'trash_node', 'restore_node', 'list_trash', 'list_versions', 'restore_version',
+  'safe_list', 'safe_request',
   'search_feed_articles', 'read_feed_article', 'update_feed_article', 'search_files',
   'read_file_text', 'get_finance_summary', 'search_finance', 'get_transactions',
   'create_transaction', 'update_transaction', 'delete_transaction', 'read_spreadsheet',
