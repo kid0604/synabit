@@ -24,19 +24,19 @@ const isGrouped = computed(() => {
 });
 
 const COLORS = [
-  { value: '#7c3aed', label: 'Purple' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' },
-  { value: '#ef4444', label: 'Red' },
-  { value: '#ec4899', label: 'Pink' },
-  { value: '#06b6d4', label: 'Cyan' },
-  { value: '#6b7280', label: 'Gray' },
-  { value: '#000000', label: 'Black' },
+  { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
+  { value: '#3b82f6', labelKey: 'whiteboard.colors.blue' },
+  { value: '#10b981', labelKey: 'whiteboard.colors.green' },
+  { value: '#f59e0b', labelKey: 'whiteboard.colors.amber' },
+  { value: '#ef4444', labelKey: 'whiteboard.colors.red' },
+  { value: '#ec4899', labelKey: 'whiteboard.colors.pink' },
+  { value: '#06b6d4', labelKey: 'whiteboard.colors.cyan' },
+  { value: '#6b7280', labelKey: 'whiteboard.colors.gray' },
+  { value: '#000000', labelKey: 'whiteboard.colors.black' },
 ];
 
 const FILL_COLORS = [
-  { value: '', label: 'None' },
+  { value: '', labelKey: 'whiteboard.colors.none' },
   ...COLORS,
 ];
 
@@ -52,12 +52,12 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
   <div class="sp-panel" @mousedown.stop @click.stop>
     <!-- Header -->
     <div class="sp-header">
-      <span class="sp-title">{{ selectedNodes.length }} Selected</span>
+      <span class="sp-title">{{ $t('whiteboard.n_selected', { count: selectedNodes.length }) }}</span>
       <div class="sp-header-actions">
-        <button @click="doDelete" class="sp-icon-btn sp-delete-btn" title="Delete All">
+        <button @click="doDelete" class="sp-icon-btn sp-delete-btn" :title="$t('whiteboard.delete_all')" :aria-label="$t('whiteboard.delete_all')">
           <Trash2 :size="14" />
         </button>
-        <button @click="doClose" class="sp-icon-btn" :title="$t('whiteboard.close')">
+        <button @click="doClose" class="sp-icon-btn" :title="$t('whiteboard.close')" :aria-label="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -66,14 +66,14 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
     <div class="sp-body">
       <!-- Group / Ungroup -->
       <div class="sp-section">
-        <span class="sp-label">Organize</span>
+        <span class="sp-label">{{ $t('whiteboard.organize') }}</span>
         <button
           v-if="!isGrouped"
           class="sp-action-btn"
           @click="doGroup"
         >
           <Group :size="14" />
-          <span>Group</span>
+          <span>{{ $t('whiteboard.group') }}</span>
         </button>
         <button
           v-else
@@ -81,13 +81,13 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
           @click="doUngroup"
         >
           <Ungroup :size="14" />
-          <span>Ungroup</span>
+          <span>{{ $t('whiteboard.ungroup') }}</span>
         </button>
       </div>
 
       <!-- Bulk Border Color -->
       <div class="sp-section">
-        <span class="sp-label">Border Color</span>
+        <span class="sp-label">{{ $t('whiteboard.border_color') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in COLORS"
@@ -95,14 +95,14 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
             @click="setStrokeColor(c.value)"
             class="sp-swatch"
             :style="{ '--sw-color': c.value }"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Bulk Fill Color -->
       <div class="sp-section">
-        <span class="sp-label">Fill Color</span>
+        <span class="sp-label">{{ $t('whiteboard.fill_color') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in FILL_COLORS"
@@ -110,7 +110,7 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
             @click="setFillColor(c.value)"
             :class="['sp-swatch', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
@@ -155,7 +155,7 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
   border-bottom-color: var(--color-border-dark, #333);
 }
 .sp-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -206,7 +206,7 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
 }
 .sp-label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -241,12 +241,12 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
 }
 .sp-action-btn:hover {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .sp-action-btn:hover {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .sp-action-ungroup {
   border-color: #fbbf24;

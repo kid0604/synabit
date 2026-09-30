@@ -1,6 +1,7 @@
 import { ref, computed } from 'vue';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 
 /**
  * A way of looking at the vault, kept.
@@ -59,7 +60,7 @@ function toView(node: any): SavedView {
 
   return {
     id: node.id,
-    name: node.title || 'Untitled',
+    name: node.title || i18n.global.t('things.untitled'),
     query: typeof p.query === 'string' ? p.query : '',
     layout: oneOf(p.layout, LAYOUTS, 'list'),
     sort: typeof p.sort === 'string' ? p.sort : 'updated_at',

@@ -12,6 +12,7 @@ import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
 import ChoiceCard from './ChoiceCard.vue';
 import NotificationCard from './NotificationCard.vue';
+import SynSetupCard from './SynSetupCard.vue';
 import { tidyComposerText } from '../../../shared/syn/composerText';
 
 const MAX_IMAGES = 4;
@@ -29,6 +30,12 @@ const props = defineProps<{
   progress?: Progress | null;
   vaultPath?: string;
   connectionLost?: boolean;
+  /** The provider in use, by name — the banner says which one is not answering. */
+  providerName?: string;
+  /** Whether that provider is Ollama, on this machine. */
+  localProvider?: boolean;
+  /** A phone or tablet, where Ollama cannot run. */
+  onPhone?: boolean;
   chatError?: string | null;
   /** The question a run stopped on, when one has. */
   consentAsk?: ConsentAsk | null;
@@ -55,6 +62,10 @@ const emit = defineEmits<{
   'notification-action': [notification: any];
   consent: [choice: ConsentAnswer];
   choice: [nodeId: string];
+  /** Syn's tab of Settings, from the setup card. */
+  'open-settings': [];
+  /** Ask the provider again, from the setup card. */
+  retry: [];
 }>();
 
 const inputText = ref('');
@@ -359,7 +370,7 @@ const handleStop = () => {
         class="flex items-center gap-2 px-4 py-2.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-600 dark:text-amber-400 text-sm flex-shrink-0"
       >
         <WifiOff class="w-4 h-4 flex-shrink-0" />
-        <span>{{ $t('syn.connection_lost') }}</span>
+        <span>{{ localProvider ? $t('syn.connection_lost') : $t('syn.connection_lost_remote', { provider: providerName }) }}</span>
       </div>
     </Transition>
 
@@ -379,10 +390,23 @@ const handleStop = () => {
         sentences get longer.
       -->
       <div class="max-w-5xl mx-auto flex flex-col gap-5">
+        <!-- Nothing to answer with yet: say what is missing and how to fix it,
+             rather than inviting a first message that cannot be answered. -->
+        <div v-if="messages.length === 0 && !isStreaming && connectionLost" class="py-12">
+          <SynSetupCard
+            :local="localProvider ?? true"
+            :provider-name="providerName ?? 'Ollama'"
+            :on-phone="onPhone"
+            :vault-path="vaultPath"
+            @open-settings="emit('open-settings')"
+            @retry="emit('retry')"
+          />
+        </div>
+
         <!-- Empty state -->
         <div
-          v-if="messages.length === 0 && !isStreaming"
-          class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500"
+          v-else-if="messages.length === 0 && !isStreaming"
+          class="flex flex-col items-center justify-center py-20 text-gray-500 dark:text-gray-400"
         >
           <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20 flex items-center justify-center mb-4">
             <Sparkles class="w-7 h-7 text-violet-500/60" />
@@ -497,8 +521,9 @@ const handleStop = () => {
                 @click="removeImage(i)"
                 class="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-500 hover:bg-red-600
                        text-white rounded-full flex items-center justify-center text-xs
-                       opacity-0 group-hover/img:opacity-100 transition-opacity cursor-pointer shadow-sm"
+                       opacity-0 group-hover/img:opacity-100 group-focus-within/img:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity cursor-pointer shadow-sm"
                 :title="$t('syn.remove_image')"
+                :aria-label="$t('syn.remove_image')"
               >
                 ✕
               </button>
@@ -507,7 +532,7 @@ const handleStop = () => {
             <!-- Max images hint -->
             <div
               v-if="pendingImages.length >= MAX_IMAGES"
-              class="flex items-center text-[11px] text-gray-400 dark:text-gray-500 pl-1"
+              class="flex items-center text-xs text-gray-500 dark:text-gray-400 pl-1"
             >
               {{ $t('syn.max_images') }}
             </div>
@@ -525,7 +550,7 @@ const handleStop = () => {
               @compositionend="isComposing = false"
               :placeholder="$t('syn.input_placeholder')"
               rows="1"
-              class="flex-1 resize-none bg-transparent px-4 py-3.5 text-sm text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500 outline-none max-h-[200px] leading-relaxed"
+              class="flex-1 resize-none bg-transparent px-4 py-3.5 text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none max-h-[200px] leading-relaxed"
             />
 
             <!-- Attach + Send / Stop buttons -->
@@ -536,8 +561,8 @@ const handleStop = () => {
                 :disabled="pendingImages.length >= MAX_IMAGES"
                 class="p-2 rounded-xl transition-all cursor-pointer"
                 :class="pendingImages.length >= MAX_IMAGES
-                  ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
+                  ? 'text-gray-500 dark:text-gray-400 cursor-not-allowed'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
                 :title="$t('syn.attach_image')"
               >
                 <ImagePlus class="w-5 h-5" />
@@ -552,7 +577,7 @@ const handleStop = () => {
                 class="flex items-center gap-1 px-2 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-violet-500"
                 :class="planFirst
                   ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300'
-                  : 'text-gray-400 dark:text-gray-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
+                  : 'text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
                 :title="$t('syn.plan_toggle_hint')"
               >
                 <ListChecks class="w-4 h-4" aria-hidden="true" />
@@ -575,7 +600,7 @@ const handleStop = () => {
                 class="p-2.5 rounded-xl transition-all cursor-pointer shadow-sm"
                 :class="canSend
                   ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white shadow-violet-500/20'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 cursor-not-allowed'"
                 :title="$t('syn.send')"
               >
                 <Send class="w-4 h-4" />
@@ -585,7 +610,7 @@ const handleStop = () => {
         </div>
 
         <!-- Bottom hint -->
-        <p class="text-center text-[11px] text-gray-400 dark:text-gray-600 mt-2">
+        <p class="text-center text-xs text-gray-500 dark:text-gray-400 mt-2">
           {{ $t('syn.input_hint') }}
         </p>
       </div>

@@ -6,6 +6,8 @@ import { marked } from 'marked';
 import html2pdf from 'html2pdf.js';
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
+import { showAppNotice } from '../../../composables/useAppNotice';
 import type { ExportOptions } from '../NoteExportModal.vue';
 import type { NoteItem } from '../helpers';
 
@@ -60,14 +62,14 @@ export function useNoteExport(params: {
     if (!note) return;
 
     try {
-        const defaultFileName = note.title ? note.title.replace(/[/\\?%*:|"<>]/g, '-') : 'Untitled';
+        const defaultFileName = note.title ? note.title.replace(/[/\\?%*:|"<>]/g, '-') : i18n.global.t('note.untitled_note');
         if (options.format === 'md') {
             const filePath = await save({ defaultPath: `${defaultFileName}.md`, filters: [{ name: 'Markdown', extensions: ['md'] }] });
             if (!filePath) return;
             
             let content = '';
             if (options.includeTitle) content += `# ${note.title}\n\n`;
-            if (options.includeTags && note.tags.length > 0) content += `Tags: ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
+            if (options.includeTags && note.tags.length > 0) content += `${i18n.global.t('note.tags_col')}: ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
             content += currentContent.value;
             
             await writeTextFile(filePath, content);
@@ -77,7 +79,7 @@ export function useNoteExport(params: {
             
             let mdContent = '';
             if (options.includeTitle) mdContent += `# ${note.title}\n\n`;
-            if (options.includeTags && note.tags.length > 0) mdContent += `**Tags:** ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
+            if (options.includeTags && note.tags.length > 0) mdContent += `**${i18n.global.t('note.tags_col')}:** ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
             mdContent += currentContent.value;
             
             let htmlBody = await marked.parse(mdContent);
@@ -119,7 +121,7 @@ ${htmlBody}
             
             let mdContent = '';
             if (options.includeTitle) mdContent += `# ${note.title}\n\n`;
-            if (options.includeTags && note.tags.length > 0) mdContent += `**Tags:** ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
+            if (options.includeTags && note.tags.length > 0) mdContent += `**${i18n.global.t('note.tags_col')}:** ${note.tags.map(t => '#' + t.split('/').pop()).join(', ')}\n\n`;
             mdContent += currentContent.value;
             
             let htmlBody = await marked.parse(mdContent);
@@ -174,7 +176,7 @@ ${htmlBody}
         }
     } catch (e) {
         logger.error('Export failed:', e);
-        alert('Export failed. Check the logs for details.');
+        showAppNotice(i18n.global.t('note.export_failed_retry'), 'error');
     }
   };
 

@@ -50,7 +50,7 @@ defineExpose({ zoomIn, zoomOut, rotate, resetView, zoom });
     <!-- Toolbar -->
     <div class="flex items-center justify-center gap-2 px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5">
       <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_out')"><ZoomOut class="w-4 h-4" /></button>
-      <span class="text-xs font-mono text-gray-500 w-12 text-center">{{ Math.round(zoom * 100) }}%</span>
+      <span class="text-xs font-mono text-gray-500 dark:text-gray-400 w-12 text-center">{{ Math.round(zoom * 100) }}%</span>
       <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_in')"><ZoomIn class="w-4 h-4" /></button>
       <div class="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
       <button @click="rotate" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.rotate')"><RotateCw class="w-4 h-4" /></button>

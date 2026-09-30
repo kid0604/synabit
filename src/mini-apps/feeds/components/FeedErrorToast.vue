@@ -43,7 +43,7 @@ watch(() => props.errors, () => { expanded.value = false; });
           </button>
           <button
             @click="emit('dismiss')"
-            class="shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
             :aria-label="t('feeds.dismiss')"
           >
             <X class="w-3.5 h-3.5" />

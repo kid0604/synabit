@@ -45,11 +45,11 @@ const hasMore = computed(
   <div v-if="result" class="overflow-x-auto">
     <table class="w-full text-[13px] border-collapse">
       <thead>
-        <tr class="border-b border-[#e6e6e6] dark:border-[#3f3f46]">
+        <tr class="border-b border-border dark:border-[#3f3f46]">
           <th
             v-for="column in result.columns"
             :key="column"
-            class="text-left font-semibold text-[11px] uppercase tracking-wider text-gray-500 py-2 px-3 whitespace-nowrap"
+            class="text-left font-semibold text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 py-2 px-3 whitespace-nowrap"
           >
             {{ column }}
           </th>
@@ -61,17 +61,17 @@ const hasMore = computed(
           v-for="row in result.rows"
           :key="row.id"
           @click="emit('open', row)"
-          class="group border-b last:border-b-0 border-[#f0f0f0] dark:border-[#2c2c2c] cursor-pointer
+          class="group border-b last:border-b-0 border-[#f0f0f0] dark:border-border-dark cursor-pointer
                  hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors"
           :class="row.id === selectedId ? 'bg-gray-100 dark:bg-white/10' : ''"
         >
           <td
             v-for="(cell, i) in row.cells"
             :key="i"
-            class="py-2 px-3 text-[#1c1c1e] dark:text-[#f4f4f5] align-top"
+            class="py-2 px-3 text-text dark:text-text-dark align-top"
           >
             <span v-if="i === 0" class="flex items-center gap-2">
-              <component :is="iconForNodeType(row.node_type)" class="w-3.5 h-3.5 text-gray-400 shrink-0" />
+              <component :is="iconForNodeType(row.node_type)" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 shrink-0" />
               <span class="truncate">{{ cell || untitledLabel || row.id }}</span>
             </span>
             <span v-else class="text-gray-500 dark:text-gray-400">{{ asShown(cell) }}</span>
@@ -82,7 +82,7 @@ const hasMore = computed(
               data-put-away
               :aria-label="t('nexus.put_away_person')"
               :title="t('nexus.put_away_person')"
-              class="text-[13px] leading-none text-gray-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
+              class="text-[13px] leading-none text-gray-500 dark:text-gray-400 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
               @click.stop="emit('putAway', row)"
             >
               ×
@@ -96,7 +96,7 @@ const hasMore = computed(
       `total` counts what matched, `rows` is what came back. Saying so beats a
       table that silently stops, which reads as "that is all there is".
     -->
-    <p class="text-[11px] text-gray-400 pt-2 px-3">
+    <p class="text-xs text-gray-500 dark:text-gray-400 pt-2 px-3">
       {{ t('note.query_summary', { shown: result.rows.length, ms: result.query_time_ms }) }}
       <span v-if="hasMore"> · {{ t('note.query_more') }}</span>
     </p>

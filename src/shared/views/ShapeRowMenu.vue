@@ -73,7 +73,7 @@ const position = computed(() => {
         class="w-full flex items-center gap-2 px-3 py-2 text-xs text-left cursor-pointer
                hover:bg-gray-100 dark:hover:bg-gray-600"
       >
-        <ChevronUp class="w-3.5 h-3.5 text-gray-400" />
+        <ChevronUp class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
         {{ t('things.move_up') }}
       </button>
       <button
@@ -83,7 +83,7 @@ const position = computed(() => {
         class="w-full flex items-center gap-2 px-3 py-2 text-xs text-left cursor-pointer
                hover:bg-gray-100 dark:hover:bg-gray-600"
       >
-        <ChevronDown class="w-3.5 h-3.5 text-gray-400" />
+        <ChevronDown class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
         {{ t('things.move_down') }}
       </button>
 
@@ -109,7 +109,7 @@ const position = computed(() => {
         class="w-full flex items-center gap-2 px-3 py-2 text-xs text-left cursor-pointer
                hover:bg-gray-100 dark:hover:bg-gray-600"
       >
-        <X class="w-3.5 h-3.5 text-gray-400" />
+        <X class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
         {{ t('things.drop_short') }}
       </button>
       <button

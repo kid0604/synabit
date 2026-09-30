@@ -35,6 +35,7 @@ import { i18n } from './i18n';
 import synAvatar from './assets/syn-avatar.jpg';
 import { useSynEnabled } from './shared/syn/useSynEnabled';
 import { nextMode, quickEntryAction, type QuickEntryMode } from './shared/syn/quickAsk';
+import { applyUiScale } from './utils/uiScale';
 
 const text = ref('');
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -60,7 +61,25 @@ const mode = ref<QuickEntryMode>('capture');
  */
 const vaultPath = ref('');
 const { enabled: synEnabled, refresh: refreshSyn } = useSynEnabled(() => vaultPath.value);
-const askAvailable = computed(() => !!vaultPath.value && synEnabled.value);
+/** Simple mode hides Syn in the main window, so it is not offered here either. */
+const simpleMode = ref(false);
+const askAvailable = computed(() => !!vaultPath.value && synEnabled.value && !simpleMode.value);
+
+/**
+ * The settings that can change in the main window while this one sleeps:
+ * simple mode and the interface size. Read on open and every time the box
+ * comes back, from the store the main window writes.
+ */
+let settingsStore: Awaited<ReturnType<typeof load>> | null = null;
+const readLiveSettings = async () => {
+  if (!settingsStore) return;
+  try {
+    simpleMode.value = (await settingsStore.get<boolean>('simpleMode')) === true;
+    await applyUiScale((await settingsStore.get<number>('uiScale')) ?? 1);
+  } catch (e) {
+    logger.warn('Quick entry could not re-read settings', e);
+  }
+};
 
 const focusInput = async () => {
   await nextTick();
@@ -148,10 +167,12 @@ onMounted(async () => {
   // app's language and theme without running the app's whole setup.
   try {
     const settings = await load('settings.json', { autoSave: false } as never);
+    settingsStore = settings;
     const language = await settings.get<'en' | 'vi'>('appLanguage');
     if (language) i18n.global.locale.value = language;
 
     vaultPath.value = (await settings.get<string>('vaultPath')) || '';
+    await readLiveSettings();
     void refreshSyn();
 
     const theme = await settings.get<'light' | 'dark' | 'system'>('themeMode');
@@ -169,6 +190,7 @@ onMounted(async () => {
     if (focused) {
       void focusInput();
       void refreshSyn();
+      void readLiveSettings();
     } else {
       // Clicking back into their work dismisses this, the way every other
       // quick-entry panel behaves. The draft survives; see `dismiss`.
@@ -187,18 +209,18 @@ onUnmounted(() => {
 
 <template>
   <div
-    class="h-screen w-screen flex flex-col bg-white dark:bg-[#1e1e1e] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden"
+    class="h-screen w-screen flex flex-col bg-white dark:bg-surface-dark border border-border dark:border-border-dark overflow-hidden"
   >
     <textarea
       ref="inputRef"
       v-model="text"
       :placeholder="mode === 'ask' ? t('quickcap.placeholder_quick_ask') : t('quickcap.placeholder_quick_entry')"
-      class="flex-1 w-full resize-none bg-transparent px-5 pt-4 pb-2 text-[15px] leading-relaxed outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400"
+      class="flex-1 w-full resize-none bg-transparent px-5 pt-4 pb-2 text-[15px] leading-relaxed outline-none text-text dark:text-text-dark placeholder:text-gray-500 dark:placeholder:text-gray-400"
       spellcheck="false"
     ></textarea>
 
     <div
-      class="shrink-0 flex items-center justify-between px-5 pb-3 text-[11px] text-gray-400 dark:text-gray-500 select-none"
+      class="shrink-0 flex items-center justify-between px-5 pb-3 text-xs text-gray-500 dark:text-gray-400 select-none"
     >
       <span>{{
         !askAvailable

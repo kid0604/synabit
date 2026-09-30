@@ -47,7 +47,7 @@ const sections = [
 
       <p
         v-if="loaded && !activity.working.length && !activity.waiting.length && !activity.finished.length"
-        class="text-sm text-gray-400"
+        class="text-sm text-gray-500 dark:text-gray-400"
       >
         {{ t('syn.activity_none') }}
       </p>
@@ -68,7 +68,7 @@ const sections = [
             <div class="flex items-start gap-3">
               <div class="min-w-0 flex-1">
                 <p class="text-sm text-text dark:text-text-dark line-clamp-2">{{ run.goal }}</p>
-                <p class="mt-1 flex flex-wrap items-center gap-x-2 text-[11px] text-gray-500 dark:text-gray-400">
+                <p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-gray-500 dark:text-gray-400">
                   <span class="font-medium">{{ t(`syn.run_state_${run.state}`) }}</span>
                   <span>{{ when(run) }}</span>
                   <span v-if="run.tool_calls">{{ t('syn.tool_calls_count', { n: run.tool_calls }, run.tool_calls) }}</span>
@@ -99,7 +99,7 @@ const sections = [
                 </button>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-violet-500"
+                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-violet-500"
                   @click="emit('inspect-run', run.id)"
                 >
                   <FileSearch class="w-3 h-3" aria-hidden="true" />{{ t('syn.activity_details') }}

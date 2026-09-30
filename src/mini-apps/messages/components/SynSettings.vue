@@ -10,6 +10,10 @@ import { useSynSettings } from '../composables/useSynSettings';
 import SynTelegramSettings from './SynTelegramSettings.vue';
 import SynConnectorSettings from './SynConnectorSettings.vue';
 import SettingsSection from './SettingsSection.vue';
+import LockScreen from '../../../shared/components/LockScreen.vue';
+import { useAppLockStore, pinErrorKey } from '../../../stores/useAppLockStore';
+import { needsPinToSave, setFamilySafe } from '../familySafe';
+import { showAppNotice } from '../../../composables/useAppNotice';
 import type { ModelInfo } from '../types';
 
 const props = defineProps<{
@@ -97,7 +101,55 @@ const providerSays = computed(() => {
   return t('syn.provider_openai_desc');
 });
 
+const appLock = useAppLockStore();
+
+/**
+ * Family-safe answers as they are in force on this device — what was loaded
+ * or last saved.
+ *
+ * What the PIN check compares against. The form's own value is what somebody
+ * is proposing; this is what is actually in force. The backend owns the flag
+ * (see `familySafe.ts`); `syn_get_settings` reports it and `syn_save_settings`
+ * ignores it, so a change goes through `setFamilySafe` below.
+ */
+const familySafeOnDisk = ref(false);
+
+/** A save waiting on the PIN, because it would switch family-safe off. */
+const askingPin = ref(false);
+
 const handleSave = async () => {
+  if (needsPinToSave(familySafeOnDisk.value, settings.value.family_safe, appLock.isEnabled)) {
+    askingPin.value = true;
+    return;
+  }
+  await save();
+};
+
+/** The PIN the lock screen checked, handed on so the backend checks it too. */
+const pinGiven = async (pin?: string) => {
+  askingPin.value = false;
+  await save(pin);
+};
+
+/** Cancelling puts the switch back, so the screen shows what is in force. */
+const pinRefused = () => {
+  askingPin.value = false;
+  settings.value.family_safe = familySafeOnDisk.value;
+};
+
+const save = async (pin?: string) => {
+  if (settings.value.family_safe !== familySafeOnDisk.value) {
+    try {
+      await setFamilySafe(settings.value.family_safe, { pin, vaultPath: props.vaultPath });
+      familySafeOnDisk.value = settings.value.family_safe;
+    } catch (e) {
+      // Refused (or the keychain would not answer): the switch goes back to
+      // what is in force, and the rest of the form still saves.
+      logger.warn('[Syn] Family-safe change refused', e);
+      settings.value.family_safe = familySafeOnDisk.value;
+      showAppNotice(t(pinErrorKey(e) ?? 'syn.family_safe_failed'), 'error');
+    }
+  }
   await saveSettings();
   // The provider may have changed, and the list with it.
   await loadModels();
@@ -112,13 +164,18 @@ const handleReset = () => {
   resetToDefaults();
 };
 
-onMounted(async () => {
+const load = async () => {
   await loadSettings();
+  familySafeOnDisk.value = settings.value.family_safe;
+};
+
+onMounted(async () => {
+  await load();
   await loadModels();
 });
 
 watch(() => props.vaultPath, async () => {
-  await loadSettings();
+  await load();
   await loadModels();
 });
 </script>
@@ -157,8 +214,43 @@ watch(() => props.vaultPath, async () => {
           <span class="block text-sm font-medium text-text dark:text-text-dark">
             {{ t('syn.enabled') }}
           </span>
-          <span class="block text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
             {{ t('syn.enabled_hint') }}
+          </span>
+        </span>
+      </label>
+
+      <!-- Family-safe answers. Right under the switch, because it is the
+           other answer to "should it" rather than "how": who Syn may be
+           talking to. The instruction is the app's, appended after SYN.md
+           in the backend (`syn::family_safe`), so it is on here and nowhere
+           else — and off only with the PIN when one is set. -->
+      <label
+        class="flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
+        :class="settings.family_safe
+          ? 'border-emerald-300 dark:border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-500/5'
+          : 'border-gray-200 dark:border-gray-700/50'"
+      >
+        <input
+          type="checkbox"
+          v-model="settings.family_safe"
+          class="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+        />
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-text dark:text-text-dark">
+            {{ t('syn.family_safe') }}
+          </span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+            {{ t('syn.family_safe_hint') }}
+          </span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+            {{ t('syn.family_safe_device') }}
+          </span>
+          <span
+            v-if="appLock.isEnabled && familySafeOnDisk"
+            class="block text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed"
+          >
+            {{ t('syn.family_safe_pin') }}
           </span>
         </span>
       </label>
@@ -186,6 +278,12 @@ watch(() => props.vaultPath, async () => {
             <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
               {{ providerSays }}
             </p>
+            <!-- Said once, plainly, beside the choice of who answers: every
+                 provider on this list can be wrong, and none of them knows
+                 who is reading. -->
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('syn.answers_can_be_wrong') }}
+            </p>
           </div>
 
           <!-- Ollama URL -->
@@ -197,7 +295,7 @@ watch(() => props.vaultPath, async () => {
               v-model="settings.ollama_url"
               type="text"
               class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                     text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                     text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
                      focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                      transition-all"
               placeholder="http://localhost:11434"
@@ -218,7 +316,7 @@ watch(() => props.vaultPath, async () => {
                 spellcheck="false"
                 autocomplete="off"
                 class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                       text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                       text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
                        focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                        transition-all"
                 placeholder="https://api.openai.com/v1"
@@ -239,7 +337,7 @@ watch(() => props.vaultPath, async () => {
                   spellcheck="false"
                   autocomplete="off"
                   class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                         text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                         text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
                          focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                          transition-all"
                   :placeholder="hasApiKey ? t('syn.api_key_stored') : keyLooksLike"
@@ -327,7 +425,7 @@ watch(() => props.vaultPath, async () => {
                      bg-gray-200 dark:bg-gray-700
                      accent-violet-500"
             />
-            <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+            <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
               <span>{{ t('syn.temperature_precise') }}</span>
               <span>{{ t('syn.temperature_creative') }}</span>
             </div>
@@ -403,7 +501,7 @@ watch(() => props.vaultPath, async () => {
             <button
               @click="settings.rag_enabled = !settings.rag_enabled"
               class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
-              :class="settings.rag_enabled ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
+              :class="settings.rag_enabled ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'"
               role="switch"
               :aria-checked="settings.rag_enabled"
               :aria-label="t('syn.enable_vault_context')">
@@ -420,7 +518,7 @@ watch(() => props.vaultPath, async () => {
             <button
               @click="settings.include_finance = !settings.include_finance"
               class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
-              :class="settings.include_finance ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
+              :class="settings.include_finance ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'"
               role="switch"
               :aria-checked="settings.include_finance"
               :aria-label="t('syn.include_finance')">
@@ -437,7 +535,7 @@ watch(() => props.vaultPath, async () => {
             <button
               @click="settings.include_feeds = !settings.include_feeds"
               class="relative w-11 h-6 rounded-full transition-colors duration-200 cursor-pointer"
-              :class="settings.include_feeds ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-600'"
+              :class="settings.include_feeds ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'"
               role="switch"
               :aria-checked="settings.include_feeds"
               :aria-label="t('syn.include_feeds')">
@@ -540,7 +638,7 @@ watch(() => props.vaultPath, async () => {
            thing that shapes every answer from living in a settings
            modal. -->
       <section>
-        <h3 class="text-[11px] font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3">
+        <h3 class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3">
           {{ t('syn.settings_instructions') }}
         </h3>
         <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
@@ -575,5 +673,14 @@ watch(() => props.vaultPath, async () => {
         <span>{{ t('syn.reset_defaults') }}</span>
       </button>
     </div>
+
+    <!-- Switching family-safe answers off, when the app has a PIN. The PIN it
+         checked is passed on to `set_family_safe`, which checks it again. -->
+    <LockScreen
+      v-if="askingPin"
+      :title="t('syn.family_safe_pin_title')"
+      @unlocked="pinGiven"
+      @cancelled="pinRefused"
+    />
   </div>
 </template>

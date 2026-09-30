@@ -361,23 +361,23 @@ const fetchFullText = () => extractArticle(true);
     <!-- Empty state -->
     <div v-if="!article" class="flex flex-col items-center justify-center h-full text-center px-6">
       <div class="w-20 h-20 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
-        <Rss class="w-10 h-10 text-gray-300 dark:text-gray-600" />
+        <Rss class="w-10 h-10 text-gray-500 dark:text-gray-400" aria-hidden="true" />
       </div>
       <p class="text-lg font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('feeds.empty_reader') }}</p>
-      <p class="text-sm text-gray-400 dark:text-gray-500">{{ t('feeds.select_article_to_read') }}</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('feeds.select_article_to_read') }}</p>
     </div>
 
     <!-- Article content -->
     <template v-else>
       <!-- Reading progress bar -->
       <div class="h-0.5 bg-gray-100 dark:bg-gray-800 shrink-0">
-        <div class="h-full bg-orange-500 transition-all duration-150 ease-out" :style="{ width: readingProgress + '%' }"></div>
+        <div class="h-full bg-accent transition-all duration-150 ease-out" :style="{ width: readingProgress + '%' }"></div>
       </div>
 
       <!-- Toolbar -->
       <div class="shrink-0 border-b border-border dark:border-border-dark">
         <div class="flex items-center gap-2 px-4 py-2">
-          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1" :aria-label="t('feeds.a11y_back_to_list')">
+          <button v-if="showBackButton" @click="emit('back')" class="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors mr-1" :aria-label="t('feeds.a11y_back_to_list')">
             <ArrowLeft class="w-5 h-5" />
           </button>
           <ReaderToolbar
@@ -409,22 +409,22 @@ const fetchFullText = () => extractArticle(true);
             {{ article.title }}
           </h1>
           <div class="flex items-center gap-3 text-sm text-gray-500 dark:text-gray-400 mb-6">
-            <span class="font-medium text-orange-600 dark:text-orange-400">{{ sourceName }}</span>
+            <span class="font-medium text-accent dark:text-accent-dark">{{ sourceName }}</span>
             <span v-if="article.author" class="truncate">· {{ article.author }}</span>
             <span>· {{ formattedDate }}</span>
           </div>
-          <div v-if="article.readTimeMinutes" class="flex items-center gap-2 text-xs text-gray-400 mb-4">
+          <div v-if="article.readTimeMinutes" class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-4">
             <span>{{ article.readTimeMinutes }} {{ t('feeds.read_time_min') }}</span>
             <span v-if="article.wordCount">· {{ article.wordCount.toLocaleString() }} {{ t('feeds.words') }}</span>
           </div>
-          <a v-if="article.url" @click.prevent="openOriginal" class="inline-flex items-center gap-1.5 text-sm text-orange-500 hover:text-orange-600 font-medium mb-6 pb-6 border-b border-border dark:border-border-dark transition-colors cursor-pointer">
+          <a v-if="article.url" @click.prevent="openOriginal" class="inline-flex items-center gap-1.5 text-sm text-accent dark:text-accent-dark hover:underline font-medium mb-6 pb-6 border-b border-border dark:border-border-dark transition-colors cursor-pointer">
             {{ t('feeds.view_original') }} →
           </a>
 
           <!-- Loading content for scrape articles -->
           <div v-if="loadingContent" class="flex flex-col items-center justify-center py-16">
-            <div class="w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p class="text-sm text-gray-400">{{ t('feeds.loading_content') }}</p>
+            <div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('feeds.loading_content') }}</p>
           </div>
           <!-- Article body -->
           <div v-else class="article-prose" :style="{ fontSize: config.readingFontSize + 'px' }" v-html="renderedContent"></div>
@@ -440,7 +440,7 @@ const fetchFullText = () => extractArticle(true);
               </h2>
               <button
                 @click="sendHighlightsToNote"
-                class="px-3 py-1.5 rounded-lg bg-orange-500 text-white text-xs font-medium hover:bg-orange-600 transition-colors shadow-sm"
+                class="btn-primary"
               >
                 {{ t('feeds.highlights_to_note') }}
               </button>
@@ -454,8 +454,9 @@ const fetchFullText = () => extractArticle(true);
                 <span class="flex-1 min-w-0 text-[13px] leading-relaxed text-gray-600 dark:text-gray-300">{{ highlight.text }}</span>
                 <button
                   @click="removeHighlightById(highlight.id)"
-                  class="shrink-0 p-1 rounded-md text-gray-400 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
+                  class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-all"
                   :aria-label="t('feeds.highlight_remove')"
+                  :title="t('feeds.highlight_remove')"
                 >
                   <Trash2 class="w-3.5 h-3.5" />
                 </button>

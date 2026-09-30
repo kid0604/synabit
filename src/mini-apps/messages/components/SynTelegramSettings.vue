@@ -55,9 +55,7 @@ const plainButton =
   'px-3 py-2 rounded-lg text-sm font-medium cursor-pointer border border-gray-200 dark:border-gray-700/50 ' +
   'text-text dark:text-text-dark hover:bg-gray-50 dark:hover:bg-white/5 transition-colors ' +
   'disabled:opacity-40 disabled:cursor-not-allowed';
-const primaryButton =
-  'flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium cursor-pointer bg-violet-500 text-white ' +
-  'hover:bg-violet-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+const primaryButton = 'btn-primary';
 </script>
 
 <template>
@@ -88,7 +86,7 @@ const primaryButton =
           spellcheck="false"
           autocomplete="off"
           class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
-                 text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none
+                 text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
                  focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
                  transition-all"
           :placeholder="t('syn.telegram_token_placeholder')"
@@ -102,7 +100,7 @@ const primaryButton =
       <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.telegram_token_desc') }}</p>
       <!-- Said where the token is typed, once, and as information rather than
            a box to tick: typing the token is the choice. -->
-      <p class="text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">
+      <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
         {{ t('syn.telegram_privacy') }}
       </p>
     </div>
@@ -143,7 +141,7 @@ const primaryButton =
           />
           <span class="min-w-0">
             <span class="block text-sm text-text dark:text-text-dark">{{ t('syn.telegram_reminders') }}</span>
-            <span class="block text-[11px] text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+            <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
               {{ t('syn.telegram_reminders_hint') }}
             </span>
           </span>
@@ -155,14 +153,14 @@ const primaryButton =
         </button>
         <div v-else class="p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 space-y-2">
           <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.telegram_pair_hint') }}</p>
-          <p class="text-[11px] font-mono break-all text-gray-500 dark:text-gray-400 select-all">{{ pairing.link }}</p>
+          <p class="text-xs font-mono break-all text-gray-500 dark:text-gray-400 select-all">{{ pairing.link }}</p>
           <div class="flex gap-2">
             <button type="button" :class="primaryButton" @click="openLink">{{ t('syn.telegram_pair_open') }}</button>
             <button type="button" :class="plainButton" @click="copyLink">
               {{ copied ? t('syn.telegram_copied') : t('syn.telegram_copy') }}
             </button>
           </div>
-          <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ t('syn.telegram_pair_expires') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.telegram_pair_expires') }}</p>
         </div>
       </template>
 

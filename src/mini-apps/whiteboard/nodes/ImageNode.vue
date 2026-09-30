@@ -311,6 +311,7 @@ function resetRotation(event: MouseEvent) {
       class="wb-image-node__rotate nodrag nopan"
       type="button"
       :title="$t('whiteboard.rotate_image')"
+      :aria-label="$t('whiteboard.rotate_image')"
       @pointerdown="onRotateStart"
       @pointermove="onRotateMove"
       @pointerup="onRotateEnd"
@@ -367,7 +368,7 @@ function resetRotation(event: MouseEvent) {
   padding: 8px;
   border: 1px dashed rgba(127, 127, 127, 0.5);
   border-radius: 6px;
-  font-size: 10px;
+  font-size: 12px;
   text-align: center;
   color: rgb(113, 113, 122);
 }
@@ -415,7 +416,7 @@ function resetRotation(event: MouseEvent) {
   border-radius: 4px;
   background: var(--color-accent, #7c3aed);
   color: #fff;
-  font-size: 10px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   pointer-events: none;
   white-space: nowrap;

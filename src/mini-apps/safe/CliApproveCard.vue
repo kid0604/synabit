@@ -8,7 +8,7 @@
  */
 import { useI18n } from 'vue-i18n';
 import { SquareTerminal } from 'lucide-vue-next';
-import ModalDialog from '../calendar/components/ModalDialog.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { useApprovalQueue } from './useApprovalQueue';
 
 const { t } = useI18n();
@@ -26,13 +26,12 @@ const { queue, answer } = useApprovalQueue<Ask>('safe://cli-approve');
 </script>
 
 <template>
-  <ModalDialog
+  <AppDialog
     v-if="queue.length"
     :show="true"
-    labelled-by="cli-approve-title"
-    card-class="max-w-[520px] text-text dark:text-text-dark"
-    @close="answer(false)"
-  >
+    labelledby="cli-approve-title"
+    size="md" elevated unstyled panel-class="bg-surface dark:bg-surface-dark text-text dark:text-text-dark rounded-2xl shadow-2xl border border-border dark:border-border-dark flex flex-col overflow-hidden max-h-[90vh]"
+    @close="answer(false)">
     <div class="p-5 space-y-4">
       <div class="flex items-start gap-3">
         <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
@@ -64,8 +63,8 @@ const { queue, answer } = useApprovalQueue<Ask>('safe://cli-approve');
       <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.cli.approve_caveat') }}</p>
       <div class="flex justify-end gap-2">
         <button class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" autofocus @click="answer(false)">{{ t('safe.cli.deny') }}</button>
-        <button v-if="!queue[0].blocked" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium" @click="answer(true)">{{ t('safe.cli.allow') }}</button>
+        <button v-if="!queue[0].blocked" class="btn-primary" @click="answer(true)">{{ t('safe.cli.allow') }}</button>
       </div>
     </div>
-  </ModalDialog>
+  </AppDialog>
 </template>

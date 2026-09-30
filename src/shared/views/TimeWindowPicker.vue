@@ -66,7 +66,7 @@ const pressed = (preset: Preset) => props.modelValue === preset;
 const backwards = computed(() => !!from.value && !!to.value && from.value > to.value);
 
 const CHIP = 'h-7 rounded-full px-3 text-[12px] font-semibold transition-colors';
-const ON = 'bg-indigo-600 text-white dark:bg-indigo-500';
+const ON = 'bg-accent/10 text-accent dark:text-accent-dark';
 const OFF = 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-400 dark:hover:bg-[#2c2c2e] dark:hover:text-gray-100';
 </script>
 
@@ -120,7 +120,7 @@ const OFF = 'text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:text-gray-
 
     <!-- What the window leaves out, said rather than hidden, with the way
          to see it one press away. -->
-    <p v-if="hidden" data-window-hidden class="text-[11px] text-gray-400">
+    <p v-if="hidden" data-window-hidden class="text-xs text-gray-500 dark:text-gray-400">
       {{ $t('nexus.window_hidden', { n: hidden }, hidden) }}
       <button
         type="button"

@@ -7,7 +7,7 @@
         contenteditable="false"
         @click="toggleOpen"
       >
-        <button class="toggle-btn" :class="{ 'is-open': isOpen }" contenteditable="false" aria-label="Chevron Right Icon">
+        <button class="toggle-btn" :class="{ 'is-open': isOpen }" contenteditable="false" :aria-label="isOpen ? $t('note.editor.details.collapse') : $t('note.editor.details.expand')" :aria-expanded="isOpen">
           <ChevronRightIcon class="toggle-icon" />
         </button>
         <span
@@ -18,6 +18,7 @@
           @keydown.enter.prevent="onSummaryEnter"
           @click.stop
           ref="summaryInput"
+          :data-placeholder="$t('note.editor.details.placeholder')"
         >{{ node.attrs.summary }}</span>
       </div>
 
@@ -149,7 +150,7 @@ const onSummaryEnter = () => {
 }
 
 .summary-text:empty::before {
-  content: 'Toggle heading...';
+  content: attr(data-placeholder);
   color: #9ca3af;
 }
 

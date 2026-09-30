@@ -2,6 +2,8 @@ import { ref, computed, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../utils/logger';
+import { i18n } from '../i18n';
+import { syncErrorKey } from '../shared/syncErrorText';
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -56,7 +58,7 @@ export function useDevicePairing() {
         stopCountdown();
         isPairing.value = false;
         pairingCode.value = '';
-        error.value = 'Pairing code expired';
+        error.value = i18n.global.t('settings.pairing.expired');
       } else {
         countdown.value = remaining;
       }
@@ -96,8 +98,8 @@ export function useDevicePairing() {
       pairingCode.value = info.code;
       pairingExpiry.value = info.expires_at;
       startCountdown();
-    } catch (e: any) {
-      error.value = e?.toString() || 'Failed to initiate pairing';
+    } catch (e: unknown) {
+      error.value = i18n.global.t(syncErrorKey(e, 'settings.pairing.start_failed'));
       isPairing.value = false;
       logger.error('Pairing initiation failed:', e);
     }
@@ -106,7 +108,7 @@ export function useDevicePairing() {
   // --- Accept pairing (enter code from other device) ---
   async function acceptPairing(code: string) {
     if (!code.trim()) {
-      error.value = 'Please enter a pairing code';
+      error.value = i18n.global.t('settings.pairing.enter_code');
       return;
     }
     try {
@@ -119,8 +121,8 @@ export function useDevicePairing() {
       pairingCode.value = '';
       stopCountdown();
       await loadDevices();
-    } catch (e: any) {
-      error.value = e?.toString() || 'Failed to pair device';
+    } catch (e: unknown) {
+      error.value = i18n.global.t(syncErrorKey(e, 'settings.pairing.pair_failed'));
       isPairing.value = false;
       logger.error('Pairing acceptance failed:', e);
     }
@@ -145,8 +147,8 @@ export function useDevicePairing() {
     try {
       await invoke('p2p_remove_device', { nodeIdHex });
       await loadDevices();
-    } catch (e: any) {
-      error.value = e?.toString() || 'Failed to remove device';
+    } catch (e: unknown) {
+      error.value = i18n.global.t(syncErrorKey(e, 'settings.pairing.remove_failed'));
       logger.error('Remove device failed:', e);
     }
   }

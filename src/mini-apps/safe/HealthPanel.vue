@@ -68,7 +68,7 @@ const lastChecked = computed(() =>
     <div class="flex items-center gap-2 text-xs text-text-secondary dark:text-text-secondary-dark">
       <ShieldAlert class="w-3.5 h-3.5 flex-shrink-0" />
       <template v-if="breachCheck">
-        <button :disabled="checking" class="text-accent hover:underline disabled:opacity-40" @click="check">
+        <button :disabled="checking" class="min-h-6 text-accent hover:underline disabled:opacity-40" @click="check">
           {{ checking ? t('safe.health.checking') : t('safe.health.check') }}
         </button>
         <span v-if="lastChecked && !result">· {{ t('safe.health.last_checked', { at: lastChecked }) }}</span>

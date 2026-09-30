@@ -87,7 +87,7 @@ defineExpose({ onKeyDown });
         <component :is="getIcon(item.node_type)" class="w-4 h-4" />
       </div>
       <div class="slash-menu-text">
-        <span class="slash-menu-title">{{ item.title || 'Untitled' }}</span>
+        <span class="slash-menu-title">{{ item.title || $t('note.untitled_note') }}</span>
         <!--
           When an alias was typed, show what the link will actually read as.
           The row is otherwise labelled with the title, which is precisely the
@@ -100,7 +100,7 @@ defineExpose({ onKeyDown });
       </div>
     </button>
   </div>
-  <div class="slash-command-menu p-3 px-4 text-xs text-gray-500" v-else>
+  <div class="slash-command-menu p-3 px-4 text-xs text-gray-500 dark:text-gray-400" v-else>
     {{ $t('note.mention_no_match') }}
     <div class="mt-1 opacity-70">{{ $t('note.mention_alias_hint') }}</div>
   </div>

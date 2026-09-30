@@ -6,12 +6,15 @@
  * "what is my money already committed to", not "what happens on the 14th".
  */
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Repeat, Plus, Pause, Play, Trash2, Pencil } from 'lucide-vue-next';
 import type { Category, FinanceAccount } from '../types';
 import type { RecurringRule } from '../recurring';
 import { nextOccurrenceAfter, todayStr } from '../recurring';
 import { categoryName } from '../categories';
 import { formatCurrency } from '../currency';
+
+const { t } = useI18n();
 
 const props = defineProps<{
     rules: RecurringRule[];
@@ -44,7 +47,7 @@ const rows = computed(() =>
 const signedAmount = (rule: RecurringRule) =>
     (rule.template.type === 'income' ? '+' : '−') + formatCurrency(rule.template.amount);
 
-const accountName = (id: string) => props.accounts.find(a => a.id === id)?.name ?? 'Unknown';
+const accountName = (id: string) => props.accounts.find(a => a.id === id)?.name ?? t('finance.unknown');
 
 const formatDate = (iso: string | null) => {
     if (!iso) return '—';
@@ -71,13 +74,13 @@ const remove = (rule: RecurringRule) => {
               <h2 class="text-lg font-bold text-text dark:text-text-dark">{{ $t('finance.recurring') }}</h2>
               <p class="text-sm text-gray-500 dark:text-gray-400">{{ $t('finance.recurring_desc') }}</p>
           </div>
-          <button @click="emit('add-rule')" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium text-sm shrink-0">
+          <button @click="emit('add-rule')" class="btn-primary shrink-0">
               <Plus class="w-4 h-4" />
               <span>{{ $t('finance.add_recurring') }}</span>
           </button>
       </div>
 
-      <div v-if="rows.length === 0" class="flex flex-col items-center justify-center gap-3 py-16 text-center text-gray-400 dark:text-gray-500">
+      <div v-if="rows.length === 0" class="flex flex-col items-center justify-center gap-3 py-16 text-center text-gray-500 dark:text-gray-400">
           <Repeat class="w-10 h-10" />
           <p class="max-w-sm text-sm">{{ $t('finance.recurring_empty') }}</p>
       </div>
@@ -110,14 +113,14 @@ const remove = (rule: RecurringRule) => {
               </span>
 
               <div class="flex items-center gap-1 shrink-0">
-                  <button @click="emit('edit-rule', row.rule)" class="p-2 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.edit')">
+                  <button @click="emit('edit-rule', row.rule)" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-accent hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.edit')" :title="$t('finance.edit')">
                       <Pencil class="w-4 h-4" />
                   </button>
-                  <button @click="togglePause(row.rule)" class="p-2 rounded-lg text-gray-400 hover:text-blue-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="row.rule.paused ? $t('finance.resume') : $t('finance.pause')">
+                  <button @click="togglePause(row.rule)" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-accent hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="row.rule.paused ? $t('finance.resume') : $t('finance.pause')" :title="row.rule.paused ? $t('finance.resume') : $t('finance.pause')">
                       <Play v-if="row.rule.paused" class="w-4 h-4" />
                       <Pause v-else class="w-4 h-4" />
                   </button>
-                  <button @click="remove(row.rule)" class="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.delete')">
+                  <button @click="remove(row.rule)" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.delete')" :title="$t('finance.delete')">
                       <Trash2 class="w-4 h-4" />
                   </button>
               </div>

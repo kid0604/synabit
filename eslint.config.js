@@ -41,7 +41,43 @@ export default [
       'vue/no-parsing-error': 'off',
       'vue/valid-v-on': 'off',
       'vue/valid-v-for': 'off',
-      '@typescript-eslint/ban-ts-comment': 'off'
+      '@typescript-eslint/ban-ts-comment': 'off',
+
+      // The UI/UX review's floor, kept by the linter rather than by memory.
+      // Text under 12px and gray-400 text (2.5:1 on white) were the two things
+      // older readers could not see; they had crept into 150 files one class
+      // at a time.
+      'vue/no-restricted-class': ['error', '/^text-\\[(?:[0-9]|1[01])px\\]$/', 'text-gray-400'],
+      // `aria-label="Show Settings Modal = false"` was a click handler turned
+      // into words by a tool. A screen reader reads it out loud.
+      'vue/no-restricted-static-attribute': ['error', {
+        key: 'aria-label',
+        value: '/=|\\.value\\b|^Handle /',
+        message: 'This aria-label reads like code. Describe what the control does, through $t().',
+      }],
+      // One way to ask before something irreversible: ConfirmModal, or better,
+      // an undo (useUndoableAction). The browser's and the OS's dialogs look
+      // like neither the app nor each other.
+      'no-restricted-globals': ['error',
+        { name: 'confirm', message: 'Use ConfirmModal, or useUndoableAction for deletes.' },
+        { name: 'alert', message: 'Show the message in the app.' },
+      ],
+      'no-restricted-properties': ['error',
+        { object: 'window', property: 'confirm', message: 'Use ConfirmModal, or useUndoableAction for deletes.' },
+        { object: 'window', property: 'alert', message: 'Show the message in the app.' },
+      ],
+      'no-restricted-imports': ['error', {
+        paths: [{
+          name: '@tauri-apps/plugin-dialog',
+          importNames: ['ask', 'confirm'],
+          message: 'Use ConfirmModal, or useUndoableAction for deletes.',
+        }],
+      }],
     }
+  },
+  {
+    // Tests mock the dialog plugin wholesale to prove it is no longer called.
+    files: ['**/__tests__/**'],
+    rules: { 'no-restricted-imports': 'off' },
   }
 ]

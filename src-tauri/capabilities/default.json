@@ -15,6 +15,7 @@
     "core:window:allow-close",
     "core:window:allow-create",
     "core:window:allow-show",
+    "core:webview:allow-set-webview-zoom",
     "dialog:allow-confirm",
     "dialog:allow-message",
     {

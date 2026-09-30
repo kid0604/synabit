@@ -20,7 +20,7 @@ defineProps<{ hourHeight: number }>();
     <div class="relative select-none" :style="{ height: hourHeight * 24 + 'px' }" aria-hidden="true">
         <div v-for="hr in hours" :key="'lbl-' + hr"
              v-show="hr > 0"
-             class="absolute right-0 pr-2 -translate-y-1/2 text-[10px] font-medium text-gray-400 whitespace-nowrap"
+             class="absolute right-0 pr-2 -translate-y-1/2 text-xs font-medium text-gray-500 dark:text-gray-400 whitespace-nowrap"
              :style="{ top: hr * hourHeight + 'px' }">
             {{ formatHourAMPM(hr) }}
         </div>

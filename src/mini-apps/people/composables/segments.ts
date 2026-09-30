@@ -12,6 +12,7 @@
  */
 
 import { relationshipsOf } from './relationships';
+import { i18n } from '../../../i18n';
 import { contactStatus, type HealthStatus } from './useRelationshipHealth';
 import { daysUntilAnnual } from './anniversaries';
 
@@ -48,7 +49,7 @@ export function segmentFromNode(node: any): Segment {
 
     return {
         id: node.id,
-        name: node.title || 'Untitled',
+        name: node.title || i18n.global.t('things.untitled'),
         query: typeof p.query === 'string' ? p.query : '',
         relationships: list(p.relationships),
         tags: list(p.tags),

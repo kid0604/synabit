@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useSwipe } from '@vueuse/core';
+import { BUILT_IN_APPS } from '../shared/appRegistry';
+import { sidebarApps } from '../shared/appAccess';
+import { useSettings } from '../composables/useSettings';
 
 const props = defineProps<{
   activeTool: string;
@@ -10,25 +13,31 @@ const emit = defineEmits<{
   (e: 'update:activeTool', val: string): void;
 }>();
 
-const tools = ['nexus', 'quickcap', 'note', 'task', 'calendar', 'whiteboard', 'people'];
+// The swipe order is the bottom bar's order: the apps this platform ships,
+// less the ones simple mode hides and the ones the user hid. A fixed list here
+// used to swipe onto apps a phone does not have and ones somebody had taken
+// off their bar.
+const { hiddenSidebarApps, simpleMode } = useSettings();
+const tools = computed(() => sidebarApps(BUILT_IN_APPS.map(a => a.id), hiddenSidebarApps.value, simpleMode.value));
 
 const mainRef = ref<HTMLElement | null>(null);
 
 useSwipe(mainRef, {
   threshold: 50,
   onSwipeEnd: (_e, dir) => {
-    const currentIndex = tools.indexOf(props.activeTool);
+    const order = tools.value;
+    const currentIndex = order.indexOf(props.activeTool);
     if (currentIndex === -1) return;
 
     if (dir === 'left') {
       // Swipe left means go to the next tool (right)
-      if (currentIndex < tools.length - 1) {
-        emit('update:activeTool', tools[currentIndex + 1]);
+      if (currentIndex < order.length - 1) {
+        emit('update:activeTool', order[currentIndex + 1]);
       }
     } else if (dir === 'right') {
       // Swipe right means go to the prev tool (left)
       if (currentIndex > 0) {
-        emit('update:activeTool', tools[currentIndex - 1]);
+        emit('update:activeTool', order[currentIndex - 1]);
       }
     }
   }

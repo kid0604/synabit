@@ -98,7 +98,7 @@ async function mountFilesApp() {
         NavButtons: true,
         FilesSidebar: true,
         FilesTabs: true,
-        FilesInfoPanel: true,
+        FileDetailPanel: true,
       },
       provide: {
         pushNavigation: () => {},

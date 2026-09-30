@@ -77,7 +77,7 @@ const blockLabel = (b: { event: EventMetadata; startMinute: number; endMinute: n
                 type="button"
                 class="absolute text-left rounded-md px-1.5 py-0.5 overflow-hidden group border
                        hover:z-20 focus-visible:z-20 shadow-sm
-                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-500"
+                       focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 :class="[styleOf(b.event), isSubscribed(b.event) ? 'cursor-pointer' : 'cursor-grab']"
                 :style="{
                     top: b.topPct + '%',
@@ -94,10 +94,10 @@ const blockLabel = (b: { event: EventMetadata; startMinute: number; endMinute: n
                 @click="isSubscribed(b.event) ? emit('open', b.event, dateStr) : undefined"
                 @keydown.enter.prevent="emit('open', b.event, dateStr)"
                 @keydown.space.prevent="emit('open', b.event, dateStr)">
-            <span class="block text-[11px] font-semibold leading-tight truncate">
+            <span class="block text-xs font-semibold leading-tight truncate">
                 <span v-if="b.continuesBefore" aria-hidden="true">↑ </span>{{ b.event.title }}
             </span>
-            <span v-if="b.endMinute - b.startMinute >= 45" class="block text-[10px] opacity-75 leading-tight truncate">
+            <span v-if="b.endMinute - b.startMinute >= 45" class="block text-xs opacity-75 leading-tight truncate">
                 {{ blockLabel(b) }}<span v-if="b.continuesAfter" aria-hidden="true"> ↓</span>
             </span>
             <!--
@@ -107,17 +107,17 @@ const blockLabel = (b: { event: EventMetadata; startMinute: number; endMinute: n
               seven in the evening.
             -->
             <span v-if="isElsewhere(b.event.tzid) && b.endMinute - b.startMinute >= 60"
-                  class="block text-[10px] opacity-60 leading-tight truncate">
+                  class="block text-xs opacity-60 leading-tight truncate">
                 {{ $t('calendar.written_in', { zone: shortZoneName(b.event.tzid || '') }) }}
             </span>
             <span v-if="b.event.location && b.endMinute - b.startMinute >= 75"
-                  class="flex items-center gap-1 text-[10px] opacity-70 truncate">
+                  class="flex items-center gap-1 text-xs opacity-70 truncate">
                 <MapPin class="w-2.5 h-2.5 shrink-0" />{{ b.event.location }}
             </span>
 
             <!-- Resize grip. Wider than it looks so it can actually be hit. -->
             <span v-if="!b.continuesAfter && !isSubscribed(b.event)"
-                  class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100"
+                  class="absolute inset-x-0 bottom-0 h-2 cursor-ns-resize opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100"
                   @pointerdown.stop="emit('pointerdown-resize', $event, b.event, dateStr, b.startMinute)">
                 <span class="block mx-auto mt-1 h-0.5 w-6 rounded bg-blue-500/70"></span>
             </span>
@@ -125,13 +125,13 @@ const blockLabel = (b: { event: EventMetadata; startMinute: number; endMinute: n
 
         <!-- What the pointer is currently drawing. -->
         <div v-if="draftHere"
-             class="absolute left-0.5 right-0.5 rounded-md border-2 border-dashed border-purple-500
-                    bg-purple-200/50 dark:bg-purple-500/25 pointer-events-none z-30 px-1.5 py-0.5"
+             class="absolute left-0.5 right-0.5 rounded-md border-2 border-dashed border-accent
+                    bg-accent/20 dark:bg-accent/25 pointer-events-none z-30 px-1.5 py-0.5"
              :style="{ top: pct(draftHere.startMinute) + '%', height: pct(draftHere.endMinute - draftHere.startMinute) + '%' }">
-            <span class="block text-[11px] font-semibold leading-tight truncate text-purple-900 dark:text-purple-100">
+            <span class="block text-xs font-semibold leading-tight truncate text-text dark:text-accent-dark">
                 {{ draftHere.event?.title ?? draftHere.label ?? timeLabel(draftHere.startMinute, draftHere.endMinute) }}
             </span>
-            <span v-if="draftHere.event || draftHere.label" class="block text-[10px] leading-tight text-purple-900/80 dark:text-purple-100/80">
+            <span v-if="draftHere.event || draftHere.label" class="block text-xs leading-tight text-text/80 dark:text-accent-dark/80">
                 {{ timeLabel(draftHere.startMinute, draftHere.endMinute) }}
             </span>
         </div>

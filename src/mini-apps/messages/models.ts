@@ -150,3 +150,9 @@ export const shortlist = (
  */
 export const sizeLabel = (model: ModelInfo, format: (bytes: number) => string): string =>
   model.size > 0 ? format(model.size) : '';
+
+/**
+ * The model the first-run card offers to download when Ollama has none.
+ * Small enough for an ordinary laptop; the name Ollama's library knows it by.
+ */
+export const RECOMMENDED_LOCAL_MODEL = 'gemma3:4b';

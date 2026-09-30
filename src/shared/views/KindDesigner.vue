@@ -63,7 +63,7 @@ const submit = () => {
 
 <template>
   <div class="w-full max-w-2xl mx-auto">
-    <label class="block text-[11px] uppercase tracking-wider text-gray-400 mb-1.5">
+    <label class="block text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1.5">
       {{ t('things.kind_name') }}
     </label>
     <input
@@ -74,7 +74,7 @@ const submit = () => {
       :placeholder="t('things.kind_name_hint')"
       @keydown.enter.prevent="submit"
       class="w-full px-3 py-2 rounded-lg font-mono text-sm outline-none
-             bg-gray-50 dark:bg-white/5 border text-[#1c1c1e] dark:text-[#f4f4f5]
+             bg-gray-50 dark:bg-white/5 border text-text dark:text-text-dark
              placeholder-gray-300"
       :class="taken
         ? 'border-amber-400 dark:border-amber-500/50'
@@ -89,7 +89,7 @@ const submit = () => {
       {{ t('things.kind_name_taken', { name: cleanName }) }}
     </p>
 
-    <label class="block text-[11px] uppercase tracking-wider text-gray-400 mt-7 mb-1.5">
+    <label class="block text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 mt-7 mb-1.5">
       {{ t('things.kind_fields') }}
     </label>
     <div v-for="(row, index) in rows" :key="index" class="flex items-center gap-2 mb-1.5">
@@ -102,13 +102,13 @@ const submit = () => {
         @keydown.enter.prevent="addRow"
         class="flex-1 min-w-0 px-3 py-2 rounded-lg font-mono text-xs outline-none
                bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700
-               text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300"
+               text-text dark:text-text-dark placeholder-gray-300"
       />
       <FieldKindPicker v-model="row.kind" />
       <button
         type="button"
         @click="rows.splice(index, 1)"
-        class="p-1.5 rounded text-gray-300 hover:text-red-500 cursor-pointer flex-none"
+        class="p-1.5 rounded text-gray-500 dark:text-gray-400 hover:text-red-500 cursor-pointer flex-none"
         :aria-label="t('things.remove_field')"
       >
         <X class="w-3.5 h-3.5" />
@@ -118,7 +118,7 @@ const submit = () => {
     <button
       type="button"
       @click="addRow"
-      class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-400
+      class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-500
              hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
     >
       <Plus class="w-3 h-3" /> {{ t('things.add_field') }}
@@ -129,8 +129,7 @@ const submit = () => {
         type="button"
         :disabled="!cleanName || taken"
         @click="submit"
-        class="px-3.5 py-2 rounded-lg text-xs font-medium text-white bg-blue-600
-               hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+        class="btn-primary"
       >
         {{ t('things.new_kind_save') }}
       </button>
@@ -142,7 +141,7 @@ const submit = () => {
       >
         {{ t('things.cancel') }}
       </button>
-      <p class="ml-auto text-[11px] text-gray-400 max-w-xs text-right leading-relaxed">
+      <p class="ml-auto text-xs text-gray-500 dark:text-gray-400 max-w-xs text-right leading-relaxed">
         {{ t('things.new_kind_note') }}
       </p>
     </div>

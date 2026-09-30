@@ -80,22 +80,22 @@ onUnmounted(() => {
           <div class="w-6 h-6 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center shrink-0">
             <Check class="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <span class="text-[13px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
-            {{ totalMerged }} file{{ totalMerged !== 1 ? 's' : '' }} merged automatically
+          <span class="text-[13px] font-semibold text-text dark:text-text-dark">
+            {{ $t('shell.sync.merged', { count: totalMerged }, totalMerged) }}
           </span>
-          <button @click="dismiss" class="ml-auto p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-400 dark:text-gray-500" aria-label="Dismiss">
+          <button @click="dismiss" class="ml-auto p-0.5 rounded hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer text-gray-500 dark:text-gray-400" :aria-label="$t('shell.common.dismiss')">
             <X class="w-3.5 h-3.5" />
           </button>
         </div>
 
         <!-- File list -->
         <div class="pl-[34px] space-y-0.5">
-          <div v-for="(file, i) in displayFiles" :key="i" class="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">
+          <div v-for="(file, i) in displayFiles" :key="i" class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
             <GitMerge class="w-3 h-3 text-emerald-400 dark:text-emerald-600 shrink-0" />
             <span class="truncate font-mono" :title="file">{{ truncateName(file) }}</span>
           </div>
-          <p v-if="hasMore" class="text-[11px] text-gray-400 dark:text-gray-500 italic pl-[18px]">
-            and {{ remainingCount }} more…
+          <p v-if="hasMore" class="text-xs text-gray-500 dark:text-gray-400 italic pl-[18px]">
+            {{ $t('shell.sync.and_more', { count: remainingCount }) }}
           </p>
         </div>
 

@@ -182,7 +182,7 @@ const points = computed(() => (tm('safe.intro.points') as unknown[]).map((p) => 
           />
         </label>
         <p v-if="confirm && confirm !== password" class="text-sm text-danger">{{ t('safe.setup.mismatch') }}</p>
-        <button type="button" class="inline-flex items-center gap-1.5 text-sm text-accent hover:underline" @click="suggest">
+        <button type="button" class="inline-flex items-center gap-1.5 min-h-6 text-sm text-accent hover:underline" @click="suggest">
           <Dices class="w-4 h-4" /> {{ t('safe.setup.suggest') }}
         </button>
         <div class="flex gap-2.5 p-3 rounded-lg bg-warning/10 text-sm">

@@ -76,7 +76,7 @@ const {
   handleCreateProjectClick, handleProjectSave, deleteProject,
   showEmbedPicker, allNotesForPicker, isLinkingResource, showAddResourceMenu, showEmptyAddMenu,
   openLinkResourcePicker, createNewResourceNote, createNewResourceWhiteboard,
-  unlinkResource, handleEmbedResource,
+  unlinkResource, handleEmbedResource, projectUndo,
   showTxModal, incomeCategories, expenseCategories, accounts,
   loadFinanceConfig, saveFinanceTransaction,
 } = useProjectManager(
@@ -106,7 +106,8 @@ const {
   openEditById,
   toggleTaskStatus, deleteTask,
   pendingSubtreeDelete, answerSubtreeDelete,
-  pendingDelete, undoDelete, deleteMany,
+  pendingDeleteConfirm, answerDeleteConfirm,
+  pendingDelete, undoDelete, pauseDelete, resumeDelete, deleteMany,
 } = useTaskCrud(
   tasks, projects, vaultPathRef, ns, bus,
   activeCategory, activeProject, taskArchiveDays, taskDeleteConfirm,
@@ -254,7 +255,7 @@ const { focusedId } = useTaskKeyboard(
   computed(() => selectedTasks.value.length > 0),
   // A shortcut firing behind an open modal would act on a task the user cannot
   // see, so every one of them is suspended while something is up.
-  computed(() => !!editingTask.value || !!pendingSubtreeDelete.value || showProjectEditModal.value || showShortcuts.value),
+  computed(() => !!editingTask.value || !!pendingSubtreeDelete.value || !!pendingDeleteConfirm.value || showProjectEditModal.value || showShortcuts.value),
   {
     createTask: openCreateModal,
     openTask: openEditModal,
@@ -364,7 +365,7 @@ watch(() => props.vaultPath, () => {
 </script>
 
 <template>
-  <div class="h-full flex bg-[#fdfdfc] dark:bg-[#242424] w-full overflow-hidden">
+  <div class="h-full flex bg-base dark:bg-base-dark w-full overflow-hidden">
     <!-- Desktop Sidebar -->
     <TaskSidebar
       variant="desktop"
@@ -568,8 +569,9 @@ watch(() => props.vaultPath, () => {
     <!-- Mobile Floating Action Button (FAB) -->
     <button
       @click="openCreateModal"
-      class="md:hidden fixed bottom-20 right-6 z-[100] flex items-center justify-center w-14 h-14 bg-blue-500 text-white rounded-full shadow-[0_4px_20px_rgba(59,130,246,0.4)] hover:bg-blue-600 active:scale-95 transition-all"
-     aria-label="Open Create Modal">
+      class="md:hidden fixed bottom-20 right-6 z-[100] flex items-center justify-center w-14 h-14 bg-accent text-white rounded-full shadow-lg hover:opacity-90 active:scale-95 transition-all"
+      :aria-label="$t('task.new_task')"
+      :title="$t('task.new_task')">
       <Plus class="w-6 h-6" />
     </button>
 
@@ -629,6 +631,30 @@ watch(() => props.vaultPath, () => {
       @cancel="answerSubtreeDelete(null)"
     />
 
+    <!-- The "Ask with a dialog" delete setting -->
+    <ConfirmModal
+      :show="!!pendingDeleteConfirm"
+      :title="$t('task.delete_task_title')"
+      :message="$t('task.delete_task_body')"
+      :confirmText="$t('task.delete_confirm')"
+      :cancelText="$t('task.delete_cancel')"
+      isDestructive
+      @confirm="answerDeleteConfirm(true)"
+      @cancel="answerDeleteConfirm(false)"
+    />
+
+    <!-- A deleted project or an unlinked resource, still on screen's terms -->
+    <UndoToast
+      :show="projectUndo.show.value"
+      :restartKey="projectUndo.key.value"
+      :message="projectUndo.message.value"
+      :undoLabel="$t('common.undo')"
+      :seconds="projectUndo.seconds"
+      @undo="projectUndo.undo"
+      @pause="projectUndo.pause"
+      @resume="projectUndo.resume"
+    />
+
     <!-- The few seconds in which a delete can still be taken back -->
     <UndoToast
       :show="!!pendingDelete"
@@ -639,6 +665,8 @@ watch(() => props.vaultPath, () => {
       :undoLabel="$t('task.undo')"
       :seconds="7"
       @undo="undoDelete"
+      @pause="pauseDelete"
+      @resume="resumeDelete"
     />
 
     <TaskShortcutsHelp :show="showShortcuts" @close="showShortcuts = false" />

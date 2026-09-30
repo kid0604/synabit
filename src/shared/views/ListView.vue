@@ -137,13 +137,13 @@ const sections = computed(() => {
 
 <template>
   <div class="h-full flex flex-col min-h-0">
-    <div v-if="loading" class="flex-1 flex items-center justify-center text-gray-400">
+    <div v-if="loading" class="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400">
       <Loader2 class="w-5 h-5 animate-spin" />
     </div>
 
     <div
       v-else-if="rows.length === 0"
-      class="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-400 dark:text-gray-500"
+      class="flex-1 flex items-center justify-center px-6 text-center text-sm text-gray-500 dark:text-gray-400"
     >
       {{ t('things.nothing_here') }}
     </div>
@@ -154,7 +154,7 @@ const sections = computed(() => {
           v-if="section.value !== null"
           class="sticky top-0 z-10 px-4 py-1.5 bg-gray-50/95 dark:bg-[#141416]/95 backdrop-blur-sm
                  border-b border-gray-100 dark:border-[#232326]
-                 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500"
+                 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
         >
           {{ section.value || t('things.no_value') }}
           <span class="ml-1.5 font-normal tabular-nums">{{ section.items.length }}</span>
@@ -175,15 +175,15 @@ const sections = computed(() => {
         >
           <component
             :is="iconForNodeType(row.node_type)"
-            class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400 dark:text-gray-500"
+            class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500 dark:text-gray-400"
           />
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-sm text-[#1c1c1e] dark:text-[#f4f4f5]">
+            <span class="block truncate text-sm text-text dark:text-text-dark">
               {{ row.title || untitledLabel || row.id }}
             </span>
             <span
               v-if="cellsFor(row).length"
-              class="block truncate text-xs text-gray-400 dark:text-gray-500 mt-0.5"
+              class="block truncate text-xs text-gray-500 dark:text-gray-400 mt-0.5"
             >
               {{ cellsFor(row).join(' · ') }}
             </span>
@@ -197,7 +197,7 @@ const sections = computed(() => {
           data-put-away
           :aria-label="t('nexus.put_away_line')"
           :title="t('nexus.put_away_line')"
-          class="flex-none mt-2 p-1 rounded text-gray-400 opacity-0 transition-opacity cursor-pointer
+          class="flex-none mt-2 p-1 rounded text-gray-500 opacity-0 transition-opacity cursor-pointer
                  hover:bg-gray-200/70 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300
                  focus-visible:opacity-100 group-hover:opacity-100"
           @click.stop="emit('putAway', row)"
@@ -213,11 +213,12 @@ const sections = computed(() => {
         <button
           type="button"
           @click.stop="openMenu($event, row)"
-          class="flex-none mt-2 mr-2 p-1 rounded text-gray-400 transition-opacity cursor-pointer
+          class="flex-none mt-2 mr-2 p-1 rounded text-gray-500 transition-opacity cursor-pointer
                  hover:bg-gray-200/70 dark:hover:bg-white/10 hover:text-gray-600 dark:hover:text-gray-300
                  focus:opacity-100"
-          :class="menuFor === row.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'"
+          :class="menuFor === row.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100'"
           :aria-label="t('things.row_actions')"
+          :title="t('things.row_actions')"
         >
           <MoreHorizontal class="w-4 h-4" />
         </button>
@@ -232,7 +233,7 @@ const sections = computed(() => {
       -->
       <p
         v-if="hasMore"
-        class="px-4 py-3 text-xs text-gray-400 dark:text-gray-500"
+        class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400"
       >
         {{ t('things.showing_of', { shown: rows.length, total: result?.total ?? 0 }) }}
       </p>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Upload, Download, MoreHorizontal, Rss } from 'lucide-vue-next';
-import NavButtons from '../../../shared/components/NavButtons.vue';
+import { ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon, Upload, Download, MoreHorizontal, Rss, Moon, Check } from 'lucide-vue-next';
+import { showLunar } from '../lunarDisplay';
+import AppHeader from '../../../shared/components/AppHeader.vue';
 import type { ViewMode } from '../types';
 
 defineProps<{
@@ -20,7 +21,29 @@ const emit = defineEmits<{
     (e: 'add-event'): void;
 }>();
 
+const VIEWS: ViewMode[] = ['day', 'week', 'month', 'year', 'agenda'];
+const ACTIVE = 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-accent dark:bg-surface-hover-dark dark:text-accent-dark';
+const INACTIVE = 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white';
+
 const menuOpen = ref(false);
+/**
+ * Where the menu opens, measured from its button.
+ *
+ * On a phone the header's actions sit in a row that scrolls sideways, and a
+ * scrolling box clips whatever hangs out of it — an absolutely placed menu
+ * opened inside it and was cut off at the row's bottom edge. A fixed one is
+ * placed against the window instead, so it is measured here.
+ */
+const menuButton = ref<HTMLElement | null>(null);
+const menuPos = ref({ top: 0, right: 0 });
+const toggleMenu = () => {
+    if (!menuOpen.value && menuButton.value) {
+        const r = menuButton.value.getBoundingClientRect();
+        menuPos.value = { top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) };
+    }
+    menuOpen.value = !menuOpen.value;
+};
+const toggleLunar = () => { showLunar.value = !showLunar.value; };
 const choose = (what: 'export-ics' | 'import-ics' | 'subscriptions') => {
     menuOpen.value = false;
     // `emit` is an overload set, one signature per event, and TypeScript does
@@ -36,49 +59,40 @@ const choose = (what: 'export-ics' | 'import-ics' | 'subscriptions') => {
 </script>
 
 <template>
-    <header class="flex flex-col md:flex-row md:items-center justify-between mb-4 md:mb-6 flex-shrink-0 gap-3" data-tauri-drag-region>
-        <div class="flex items-center justify-between w-full md:w-auto">
-            <div class="flex items-center gap-3">
-                <NavButtons />
-                <CalendarIcon class="w-5 h-5 md:w-6 md:h-6 text-purple-500" />
-                <h1 class="text-xl md:text-2xl font-bold tracking-tight select-none">
-                    {{ headerDisplayString }}
-                </h1>
-            </div>
-        </div>
-        
-        <div class="flex flex-wrap items-center gap-2 md:gap-4 select-none w-full md:w-auto">
-            <!-- View Switcher -->
-            <div class="flex w-full md:w-auto bg-gray-100 dark:bg-[#1f1f1f] p-1 rounded-xl border border-gray-200 dark:border-[#333] shrink-0">
-               <button v-for="v in (['day','week','month','year','agenda'] as ViewMode[])" :key="v"
-                       @click="emit('update:viewMode', v)"
-                       :aria-pressed="viewMode === v"
-                       class="flex-1 md:flex-none px-3 py-1.5 md:px-4 md:py-1.5 text-[11px] md:text-xs font-semibold rounded-lg capitalize transition-all"
-                       :class="viewMode === v ? 'bg-white shadow-[0_1px_3px_rgba(0,0,0,0.1)] text-purple-600 dark:bg-[#333] dark:text-purple-400' : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'">
-                   {{ v === 'agenda' ? $t('calendar.agenda') : v }}
-               </button>
-            </div>
+    <div class="shrink-0">
+        <AppHeader
+            :title="headerDisplayString"
+            :icon="CalendarIcon"
+            :primaryLabel="$t('calendar.new_event')"
+            :primaryIcon="Plus"
+            @primary="emit('add-event')"
+        >
+            <template #actions>
+                <!-- View Switcher; on a phone it gets a row of its own below -->
+                <div class="hidden md:flex bg-gray-100 dark:bg-surface-dark p-1 rounded-xl border border-gray-200 dark:border-border-subtle-dark shrink-0 select-none" role="group" :aria-label="$t('calendar.view')">
+                   <button v-for="v in VIEWS" :key="v"
+                           @click="emit('update:viewMode', v)"
+                           :aria-pressed="viewMode === v"
+                           class="px-3 py-1.5 text-xs font-semibold rounded-lg transition-all"
+                           :class="viewMode === v ? ACTIVE : INACTIVE">
+                       {{ $t('calendar.view_' + v) }}
+                   </button>
+                </div>
 
-            <!-- Nav Controls -->
-            <div class="flex w-full md:w-auto items-center justify-between md:justify-start gap-2 shrink-0">
-                <button @click="emit('go-today')" class="px-2 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-gray-100 hover:bg-gray-200 dark:bg-[#2c2c2c] dark:hover:bg-[#3a3a3a] rounded-lg transition-colors border border-transparent dark:border-gray-700">
+                <!-- Nav Controls -->
+                <button @click="emit('go-today')" class="btn-secondary shrink-0">
                     {{ $t('calendar.today') }}
                 </button>
-                <div class="flex bg-gray-100 dark:bg-[#2c2c2c] rounded-lg p-0.5 border border-transparent dark:border-gray-700">
-                    <button @click="emit('navigate-prev')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors" :aria-label="$t('calendar.a11y_prev_period')"><ChevronLeft class="w-4 h-4" /></button>
-                    <button @click="emit('navigate-next')" class="p-1 rounded-md hover:bg-white dark:hover:bg-[#444] transition-colors" :aria-label="$t('calendar.a11y_next_period')"><ChevronRight class="w-4 h-4" /></button>
+                <div class="flex items-center shrink-0">
+                    <button @click="emit('navigate-prev')" class="btn-icon" :aria-label="$t('calendar.a11y_prev_period')" :title="$t('calendar.a11y_prev_period')"><ChevronLeft class="w-5 h-5" aria-hidden="true" /></button>
+                    <button @click="emit('navigate-next')" class="btn-icon" :aria-label="$t('calendar.a11y_next_period')" :title="$t('calendar.a11y_next_period')"><ChevronRight class="w-5 h-5" aria-hidden="true" /></button>
                 </div>
-                <button @click="emit('add-event')" class="flex items-center gap-1.5 px-3 py-1.5 md:px-3 md:py-1.5 text-[11px] md:text-xs font-semibold bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors shadow-sm ml-0.5 md:ml-1">
-                    <Plus class="w-3.5 h-3.5" />
-                    <span class="hidden md:inline">{{ $t('calendar.new_event') }}</span>
-                    <span class="md:hidden">{{ $t('calendar.new_btn') }}</span>
-                </button>
 
                 <div class="relative">
-                    <button @click="menuOpen = !menuOpen"
+                    <button ref="menuButton" @click="toggleMenu"
                             :aria-expanded="menuOpen" aria-haspopup="menu"
-                            :aria-label="$t('calendar.exchange')"
-                            class="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 dark:bg-[#2c2c2c] dark:hover:bg-[#3a3a3a] transition-colors border border-transparent dark:border-gray-700">
+                            :aria-label="$t('calendar.exchange')" :title="$t('calendar.exchange')"
+                            class="btn-icon">
                         <MoreHorizontal class="w-4 h-4" />
                     </button>
                     <template v-if="menuOpen">
@@ -86,25 +100,44 @@ const choose = (what: 'export-ics' | 'import-ics' | 'subscriptions') => {
                              a touch screen where there is no blur to rely on. -->
                         <div class="fixed inset-0 z-40" @click="menuOpen = false"></div>
                         <div role="menu"
-                             class="absolute right-0 mt-1 z-50 w-52 py-1 rounded-xl bg-white dark:bg-[#1e1e1e] border border-[#e6e6e6] dark:border-[#333] shadow-lg"
+                             :style="{ top: `${menuPos.top}px`, right: `${menuPos.right}px` }"
+                             class="fixed z-50 w-52 py-1 rounded-xl bg-white dark:bg-surface-dark border border-border dark:border-border-subtle-dark shadow-lg"
                              @keydown.esc="menuOpen = false">
                             <button role="menuitem" @click="choose('export-ics')"
-                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors">
+                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors">
                                 <Download class="w-3.5 h-3.5 shrink-0" />{{ $t('calendar.export_ics') }}
                             </button>
                             <button role="menuitem" @click="choose('import-ics')"
-                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors">
+                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors">
                                 <Upload class="w-3.5 h-3.5 shrink-0" />{{ $t('calendar.import_ics') }}
                             </button>
-                            <div class="my-1 border-t border-[#eee] dark:border-[#333]"></div>
+                            <div class="my-1 border-t border-border dark:border-border-dark"></div>
                             <button role="menuitem" @click="choose('subscriptions')"
-                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors">
+                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors">
                                 <Rss class="w-3.5 h-3.5 shrink-0" />{{ $t('calendar.subscriptions') }}
+                            </button>
+                            <div class="my-1 border-t border-border dark:border-border-dark"></div>
+                            <!-- A setting rather than an action, so the menu
+                                 stays open and the tick shows the change. -->
+                            <button role="menuitemcheckbox" :aria-checked="showLunar" @click="toggleLunar"
+                                    class="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] font-medium hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors">
+                                <Moon class="w-3.5 h-3.5 shrink-0" /><span class="flex-1">{{ $t('calendar.lunar_toggle') }}</span>
+                                <Check v-if="showLunar" class="w-3.5 h-3.5 shrink-0 text-accent dark:text-accent-dark" aria-hidden="true" />
                             </button>
                         </div>
                     </template>
                 </div>
-            </div>
+            </template>
+        </AppHeader>
+
+        <div class="md:hidden flex bg-gray-100 dark:bg-surface-dark p-1 mx-3 mt-2 rounded-xl border border-gray-200 dark:border-border-subtle-dark select-none" role="group" :aria-label="$t('calendar.view')">
+           <button v-for="v in VIEWS" :key="v"
+                   @click="emit('update:viewMode', v)"
+                   :aria-pressed="viewMode === v"
+                   class="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all"
+                   :class="viewMode === v ? ACTIVE : INACTIVE">
+               {{ $t('calendar.view_' + v) }}
+           </button>
         </div>
-    </header>
+    </div>
 </template>

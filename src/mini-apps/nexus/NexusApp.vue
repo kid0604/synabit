@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { useRouter } from 'vue-router';
 import { useEventBus } from '../../composables/useEventBus';
-import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles, SlidersHorizontal } from 'lucide-vue-next';
+import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles, SlidersHorizontal, Lightbulb } from 'lucide-vue-next';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
 import DatedView from '../../shared/views/DatedView.vue';
@@ -74,6 +75,15 @@ interface GraphData {
 }
 
 const graphData = ref<GraphData | null>(null);
+
+/**
+ * A vault with nothing in it yet. The canvas alone would be a blank screen
+ * that explains nothing, so it gets a few words and the three ways in.
+ */
+const vaultIsEmpty = computed(() => graphData.value !== null && graphData.value.nodes.length === 0);
+const router = useRouter();
+const startIn = (app: 'note' | 'task' | 'quickcap') =>
+    router.push({ name: app }).catch(e => logger.warn('Could not open the app', e));
 /**
  * Ids the current query matched, for the graph to narrow itself to. Null when
  * nothing is being searched, which is not the same as an empty array — that
@@ -320,6 +330,11 @@ const searchQuery = ref('');
 const isSearching = ref(false);
 const queryTimeMs = ref(0);
 const totalCount = ref(0);
+/**
+ * The search words, shown only when asked for. They used to open on every
+ * focus of the box, which on a phone covered the very results being searched
+ * for; now a button opens them and nothing else does.
+ */
 const showSyntaxHints = ref(false);
 const caseSensitive = ref(false);
 const currentView = ref('graph_search'); // 'graph_search' | 'tag_manager'
@@ -389,11 +404,6 @@ const nudgeEdge = (by: number) => {
 
 const appLockStore = useAppLockStore();
 
-const hideSyntaxHints = () => {
-    setTimeout(() => {
-        showSyntaxHints.value = false;
-    }, 200);
-};
 
 let searchTimeout: ReturnType<typeof setTimeout>;
 
@@ -642,7 +652,7 @@ const cleanSnippet = (snippet: string) => {
 </script>
 
 <template>
-  <div class="h-full w-full flex relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] font-sans">
+  <div class="h-full w-full flex relative overflow-hidden bg-base dark:bg-surface-alt-dark font-sans">
     
     <!-- Main UI -->
     <!-- `--answers` is the one place the column's width is written. The
@@ -671,7 +681,7 @@ const cleanSnippet = (snippet: string) => {
             <div
                 v-if="!searchQuery"
                 data-shown-as
-                class="absolute top-[100px] left-6 z-20 flex items-center gap-0.5 rounded-full border border-gray-200 bg-white/80 p-0.5 shadow-lg backdrop-blur-md dark:border-[#3a3a3c] dark:bg-[#242426]/80"
+                class="absolute top-[100px] left-6 z-20 flex items-center gap-0.5 rounded-full border border-gray-200 bg-white/80 p-0.5 shadow-lg backdrop-blur-md dark:border-border-subtle-dark dark:bg-base-dark/80"
             >
                 <button
                     v-for="option in (['graph', 'timeline'] as const)"
@@ -682,7 +692,7 @@ const cleanSnippet = (snippet: string) => {
                     class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold transition-colors"
                     :class="
                         shownAs === option
-                            ? 'bg-indigo-600 text-white'
+                            ? 'bg-accent text-white'
                             : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100'
                     "
                     @click="showAs(option)"
@@ -697,7 +707,7 @@ const cleanSnippet = (snippet: string) => {
             <div
                 v-if="paneShows === 'timeline'"
                 data-timeline-pane
-                class="absolute inset-0 overflow-y-auto bg-[#fdfdfc] pt-[150px] dark:bg-[#1a1a1c]"
+                class="absolute inset-0 overflow-y-auto bg-base pt-[150px] dark:bg-surface-alt-dark"
             >
                 <template v-if="wholeTimeline?.rows.length">
                     <!-- The picture first, then the rows it is a picture of;
@@ -729,7 +739,7 @@ const cleanSnippet = (snippet: string) => {
                         @open="openFromTimeline"
                     />
                 </template>
-                <p v-else data-timeline-empty class="px-8 text-[12px] text-gray-400">
+                <p v-else data-timeline-empty class="px-8 text-[12px] text-gray-500 dark:text-gray-400">
                     {{ $t('nexus.lens_nothing') }}
                 </p>
             </div>
@@ -739,7 +749,7 @@ const cleanSnippet = (snippet: string) => {
             <div
                 v-else-if="paneShows === 'events'"
                 data-events-pane
-                class="absolute inset-0 bg-[#fdfdfc] px-8 pb-24 pt-[120px] dark:bg-[#1a1a1c]"
+                class="absolute inset-0 bg-base px-8 pb-24 pt-[120px] dark:bg-surface-alt-dark"
             >
                 <!-- The window row sits above what it scopes: this chart,
                      and the list in the tab beside it. -->
@@ -759,7 +769,7 @@ const cleanSnippet = (snippet: string) => {
                         />
                     </div>
                 </div>
-                <p v-else class="text-[12px] text-gray-400">{{ eventsRefused ?? $t('nexus.lens_nothing') }}</p>
+                <p v-else class="text-[12px] text-gray-500 dark:text-gray-400">{{ eventsRefused ?? $t('nexus.lens_nothing') }}</p>
             </div>
 
             <GraphView
@@ -770,6 +780,33 @@ const cleanSnippet = (snippet: string) => {
             />
             <div v-else class="w-full h-full flex items-center justify-center">
                 <div class="w-8 h-8 rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-transparent animate-spin"></div>
+            </div>
+
+            <!-- Over the empty canvas rather than instead of it, so the graph
+                 is already there for the first thing written. -->
+            <div
+                v-if="vaultIsEmpty && paneShows === 'graph' && !searchQuery"
+                data-nexus-welcome
+                class="absolute inset-0 z-10 flex items-center justify-center p-6 pointer-events-none"
+            >
+                <div class="pointer-events-auto w-full max-w-md rounded-2xl border border-border bg-surface p-6 text-center shadow-lg dark:border-border-dark dark:bg-surface-dark">
+                    <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ $t('nexus.welcome_title') }}</h2>
+                    <p class="mt-2 text-sm text-muted dark:text-muted-dark">{{ $t('nexus.welcome_body') }}</p>
+                    <div class="mt-5 flex flex-wrap justify-center gap-2">
+                        <button type="button" class="btn-primary" @click="startIn('note')">
+                            <FileText class="h-4 w-4" aria-hidden="true" />
+                            {{ $t('nexus.welcome_write_note') }}
+                        </button>
+                        <button type="button" class="btn-secondary" @click="startIn('task')">
+                            <CheckSquare class="h-4 w-4" aria-hidden="true" />
+                            {{ $t('nexus.welcome_add_task') }}
+                        </button>
+                        <button type="button" class="btn-secondary" @click="startIn('quickcap')">
+                            <Zap class="h-4 w-4" aria-hidden="true" />
+                            {{ $t('nexus.welcome_quick_capture') }}
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <!-- The two doors into the timeline, in one place.
@@ -785,7 +822,7 @@ const cleanSnippet = (snippet: string) => {
                  child's square hover still sits right inside it. -->
             <div
                 data-timeline-doors
-                class="absolute bottom-6 left-6 z-20 flex items-stretch divide-x divide-gray-200 rounded-2xl border border-gray-200 bg-white/85 shadow-lg backdrop-blur-md dark:divide-[#3a3a3c] dark:border-[#3a3a3c] dark:bg-[#242426]/85"
+                class="absolute bottom-6 left-6 z-20 flex items-stretch divide-x divide-gray-200 rounded-2xl border border-gray-200 bg-white/85 shadow-lg backdrop-blur-md dark:divide-border-subtle-dark dark:border-border-subtle-dark dark:bg-base-dark/85"
             >
                 <EventCompose
                     :vault-path="vaultPath"
@@ -802,11 +839,11 @@ const cleanSnippet = (snippet: string) => {
                     :title="$t('nexus.review_title')"
                     @click="reviewing = true"
                 >
-                    <Sparkles class="h-4 w-4 text-indigo-500" />
+                    <Sparkles class="h-4 w-4 text-accent dark:text-accent-dark" />
                     {{ $t('nexus.review_title') }}
                     <span
                         v-if="proposals?.waiting"
-                        class="rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold tabular-nums text-white"
+                        class="rounded-full bg-accent px-1.5 text-xs font-bold tabular-nums text-white"
                     >{{ proposals.waiting }}</span>
                 </button>
                 <!-- And how the reading is done, which is a settings thing and
@@ -841,16 +878,14 @@ const cleanSnippet = (snippet: string) => {
                 <NavButtons />
                 <div class="flex-1 relative group">
                    <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                       <Search class="h-5 w-5 text-gray-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors" />
+                       <Search class="h-5 w-5 text-gray-500 dark:text-gray-400 group-focus-within:text-black dark:group-focus-within:text-white transition-colors" />
                    </div>
                    <input 
                         v-model="searchQuery"
                         type="text" 
-                        class="block w-full h-[52px] pl-12 pr-12 bg-white/80 dark:bg-[#242426]/80 border border-gray-200 dark:border-[#2c2c2e] rounded-2xl text-base text-black dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:focus:border-indigo-500 shadow-lg backdrop-blur-xl transition-all"
-                        placeholder="Universal Search... (e.g. is:task #urgent)"
-                        @focus="showSyntaxHints = true"
-                        @blur="hideSyntaxHints"
-                        @keydown.esc="searchQuery = ''"
+                        class="block w-full h-[52px] pl-12 pr-26 bg-white/80 dark:bg-base-dark/80 border border-gray-200 dark:border-border-dark rounded-2xl text-base text-black dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-accent/20 focus:border-accent shadow-lg backdrop-blur-xl transition-all"
+                        :placeholder="$t('nexus.search_placeholder')"
+                        @keydown.esc="showSyntaxHints ? (showSyntaxHints = false) : (searchQuery = '')"
                     />
                    <div class="absolute inset-y-0 right-0 flex items-center gap-0.5 pr-3 pointer-events-auto">
                        <button
@@ -858,26 +893,46 @@ const cleanSnippet = (snippet: string) => {
                            :class="[
                                'w-7 h-7 flex items-center justify-center rounded-md text-xs font-bold font-mono transition-all',
                                caseSensitive
-                                   ? 'bg-black text-white dark:bg-white dark:text-black shadow-sm'
-                                   : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'
+                                   ? 'bg-accent/10 text-accent dark:text-accent-dark'
+                                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'
                            ]"
-                           title="Case Sensitive"
+                           :title="$t('nexus.case_sensitive')"
+                           :aria-label="$t('nexus.case_sensitive')"
+                           :aria-pressed="caseSensitive"
                        >Aa</button>
-                       <button v-if="searchQuery" @click="searchQuery = ''" class="w-7 h-7 flex items-center justify-center cursor-pointer" aria-label="Search Query =">
-                           <X class="h-4 w-4 text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
+                       <button
+                           type="button"
+                           @click="showSyntaxHints = !showSyntaxHints"
+                           :class="[
+                               'w-7 h-7 flex items-center justify-center rounded-md transition-all cursor-pointer',
+                               showSyntaxHints
+                                   ? 'bg-accent/10 text-accent dark:text-accent-dark'
+                                   : 'text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'
+                           ]"
+                           :title="$t('nexus.search_tips')"
+                           :aria-label="$t('nexus.search_tips')"
+                           :aria-expanded="showSyntaxHints"
+                           aria-controls="nexus-search-tips"
+                       ><Lightbulb class="h-4 w-4" aria-hidden="true" /></button>
+                       <button v-if="searchQuery" @click="searchQuery = ''" class="w-7 h-7 flex items-center justify-center cursor-pointer" :aria-label="$t('nexus.clear_search')" :title="$t('nexus.clear_search')">
+                           <X class="h-4 w-4 text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors" />
                        </button>
                    </div>
 
                    <!-- Search Syntax Hints Dropdown -->
-                   <div v-if="showSyntaxHints && !searchQuery" class="absolute top-full left-0 right-0 mt-2 p-4 bg-white dark:bg-[#242426] border border-gray-200 dark:border-[#2c2c2e] rounded-xl shadow-xl z-50">
-                       <p class="text-xs font-bold text-gray-500 dark:text-gray-400 mb-3 tracking-wider uppercase">Search Syntax</p>
-                       <div class="grid grid-cols-2 gap-2 text-xs">
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">is:note</code><span class="text-gray-500">Filter by type</span></div>
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">#tag</code><span class="text-gray-500">Filter by tag</span></div>
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">"exact phrase"</code><span class="text-gray-500">Phrase match</span></div>
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">-word</code><span class="text-gray-500">Exclude term</span></div>
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">in:title</code><span class="text-gray-500">Title only</span></div>
-                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-[#1a1a1c] rounded font-mono text-indigo-600 dark:text-indigo-400">status:done</code><span class="text-gray-500">Task status</span></div>
+                   <div v-if="showSyntaxHints" id="nexus-search-tips" class="absolute top-full left-0 right-0 mt-2 p-4 bg-white dark:bg-base-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-xl z-50">
+                       <div class="flex items-center justify-between mb-1">
+                           <p class="text-xs font-bold text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_title') }}</p>
+                           <button type="button" class="btn-icon" :aria-label="$t('common.close')" :title="$t('common.close')" @click="showSyntaxHints = false"><X class="w-4 h-4" aria-hidden="true" /></button>
+                       </div>
+                       <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ $t('nexus.syntax_intro') }}</p>
+                       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">is:note</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_type') }}</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">#{{ $t('nexus.syntax_example_tag') }}</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_tag') }}</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">"{{ $t('nexus.syntax_example_phrase') }}"</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_phrase') }}</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">-{{ $t('nexus.syntax_example_word') }}</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_exclude') }}</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">in:title</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_title_only') }}</span></div>
+                           <div class="flex items-center gap-2"><code class="px-1.5 py-0.5 bg-gray-100 dark:bg-surface-alt-dark rounded font-mono text-accent dark:text-accent-dark">status:done</code><span class="text-gray-500 dark:text-gray-400">{{ $t('nexus.syntax_status') }}</span></div>
                        </div>
                    </div>
                 </div>
@@ -885,8 +940,9 @@ const cleanSnippet = (snippet: string) => {
                 <!-- Standalone Manage Tags Button -->
                 <button 
                     @click="currentView = 'tag_manager'"
-                    class="flex-shrink-0 w-12 h-[52px] flex items-center justify-center rounded-2xl bg-white/80 dark:bg-[#242426]/80 backdrop-blur-xl border border-gray-200 dark:border-[#2c2c2e] text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-[#444] shadow-lg transition-all active:scale-95 group"
-                    title="Manage Tags"
+                    class="flex-shrink-0 w-12 h-[52px] flex items-center justify-center rounded-2xl bg-white/80 dark:bg-base-dark/80 backdrop-blur-xl border border-gray-200 dark:border-border-dark text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark hover:border-accent/40 dark:hover:border-[#444] shadow-lg transition-all active:scale-95 group"
+                    :title="$t('nexus.manage_tags')"
+                    :aria-label="$t('nexus.manage_tags')"
                 >
                     <Tag class="w-5 h-5 group-hover:scale-110 transition-transform" />
                 </button>
@@ -897,7 +953,7 @@ const cleanSnippet = (snippet: string) => {
              Full width on a phone, where there is no room for both; a column
              beside the graph everywhere else, so one query is answered as a
              list and as a picture at the same time. -->
-        <div v-if="searchQuery" data-answers class="absolute inset-y-0 left-0 z-10 w-full sm:w-(--answers) sm:border-r border-gray-200 dark:border-[#2c2c2e] bg-[#fdfdfc]/95 dark:bg-[#1a1a1c]/95 backdrop-blur-xl flex flex-col animate-in fade-in slide-in-from-left-4 duration-200">
+        <div v-if="searchQuery" data-answers class="absolute inset-y-0 left-0 z-10 w-full sm:w-(--answers) sm:border-r border-gray-200 dark:border-border-dark bg-base/95 dark:bg-surface-alt-dark/95 backdrop-blur-xl flex flex-col animate-in fade-in slide-in-from-left-4 duration-200">
             <!-- The edge, draggable. A focusable `separator` is the ARIA
                  pattern for a window splitter, so the arrow keys move it for
                  anybody not using a pointer. Hidden below `sm`, where the
@@ -918,8 +974,8 @@ const cleanSnippet = (snippet: string) => {
                 @dblclick="answers.leftWidth.value = 480"
             >
                 <div
-                    class="mx-auto h-full w-0.5 transition-colors group-hover:bg-indigo-400/60 group-focus-visible:bg-indigo-500"
-                    :class="answers.isDraggingLeft.value ? 'bg-indigo-500' : ''"
+                    class="mx-auto h-full w-0.5 transition-colors group-hover:bg-accent/60 group-focus-visible:bg-accent"
+                    :class="answers.isDraggingLeft.value ? 'bg-accent' : ''"
                 ></div>
             </div>
             <!-- Room for the omnibar, and only where the omnibar is.
@@ -927,7 +983,7 @@ const cleanSnippet = (snippet: string) => {
                  scroll under it; from `sm` up it has stepped aside, so this
                  is a small gap rather than a band. The tab bar below carries
                  its own edge, so this one no longer draws a border. -->
-            <div class="h-[116px] sm:h-4 flex-shrink-0 w-full bg-[#fdfdfc]/90 backdrop-blur-3xl sm:backdrop-blur-none dark:bg-[#1a1a1c]/90"></div>
+            <div class="h-[116px] sm:h-4 flex-shrink-0 w-full bg-base/90 backdrop-blur-3xl sm:backdrop-blur-none dark:bg-surface-alt-dark/90"></div>
 
             <!-- One question, both tables.
                  The count sits on the tab because that is the thing being
@@ -938,7 +994,7 @@ const cleanSnippet = (snippet: string) => {
                  nothing when it was never asked. -->
             <div
                 data-search-tabs
-                class="flex flex-shrink-0 items-center gap-1 border-b border-gray-200 px-4 pt-3 sm:px-6 dark:border-[#2c2c2e]"
+                class="flex flex-shrink-0 items-center gap-1 border-b border-gray-200 px-4 pt-3 sm:px-6 dark:border-border-dark"
             >
                 <button
                     v-for="tab in (['nodes', 'events'] as const)"
@@ -950,8 +1006,8 @@ const cleanSnippet = (snippet: string) => {
                     class="-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2 text-[13px] font-semibold transition-colors"
                     :class="
                         searchTab === tab
-                            ? 'border-indigo-600 text-indigo-600 dark:border-indigo-400 dark:text-indigo-400'
-                            : 'border-transparent text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                            ? 'border-accent text-accent dark:border-accent-dark dark:text-accent-dark'
+                            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                     "
                     @click="showTab(tab)"
                 >
@@ -959,7 +1015,7 @@ const cleanSnippet = (snippet: string) => {
                     <span
                         v-if="tab === 'nodes' ? !searchRefused : !eventsRefused"
                         data-tab-count
-                        class="rounded-full bg-gray-100 px-1.5 text-[11px] font-bold tabular-nums text-gray-600 dark:bg-[#2c2c2e] dark:text-gray-300"
+                        class="rounded-full bg-gray-100 px-1.5 text-xs font-bold tabular-nums text-gray-600 dark:bg-[#2c2c2e] dark:text-gray-300"
                     >{{ tab === 'nodes' ? totalCount : (eventsAnswer?.total ?? 0) }}</span>
                 </button>
             </div>
@@ -991,23 +1047,23 @@ const cleanSnippet = (snippet: string) => {
 
                     <div v-else-if="searchResults.length === 0" class="text-center py-16">
                         <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
-                            <Search class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                            <Search class="w-8 h-8 text-gray-500 dark:text-gray-400" aria-hidden="true" />
                         </div>
-                        <p class="text-[#52525b] dark:text-[#a1a1aa] font-medium">No results found for "{{ searchQuery }}"</p>
+                        <p class="text-text-secondary dark:text-text-secondary-dark font-medium">{{ $t('nexus.no_results', { query: searchQuery }) }}</p>
                     </div>
 
                 <div v-else class="space-y-3">
                     <div class="flex items-center justify-between mb-4">
-                        <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">Search Results</h3>
+                        <h3 class="text-sm font-bold text-gray-500 dark:text-gray-400">{{ $t('nexus.search_results') }}</h3>
                         <div class="flex items-center gap-3">
                             <span class="text-xs font-mono text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-500/20">{{ queryTimeMs }}ms</span>
-                            <span class="text-xs font-semibold text-gray-400">{{ totalCount }} items</span>
+                            <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ $t('nexus.items_count', { count: totalCount }, totalCount) }}</span>
                         </div>
                     </div>
 
                     <div v-for="item in searchResults" :key="item.id"
                          @click="openPreview(item)"
-                         class="group flex gap-4 p-4 rounded-2xl bg-white dark:bg-[#242426] border border-gray-100 dark:border-[#2c2c2e] hover:border-indigo-300 dark:hover:border-indigo-500/50 shadow-sm hover:shadow-md cursor-pointer transition-all active:scale-[0.99]"
+                         class="group flex gap-4 p-4 rounded-2xl bg-white dark:bg-base-dark border border-gray-100 dark:border-border-dark hover:border-accent/40 dark:hover:border-accent-dark/50 shadow-sm hover:shadow-md cursor-pointer transition-all active:scale-[0.99]"
                     >
                         <!-- Icon Badge -->
                         <div class="flex-shrink-0 mt-1">
@@ -1026,26 +1082,26 @@ const cleanSnippet = (snippet: string) => {
                                  room for both, and the title keeps its
                                  words. -->
                             <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 mb-1">
-                                <h4 data-hit-title class="min-w-[8rem] flex-1 break-words line-clamp-2 font-bold text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{{ item.title }}</h4>
+                                <h4 data-hit-title class="min-w-[8rem] flex-1 break-words line-clamp-2 font-bold text-[15px] text-text dark:text-text-dark group-hover:text-accent dark:group-hover:text-accent-dark transition-colors">{{ item.title }}</h4>
                                 <!-- `date` is the node's `updated_at`, which
                                      on a daily note is a different day from
                                      its own title. Unlabelled, one card
                                      carried two dates and the louder of them
                                      was the one nobody meant. -->
-                                <span class="flex-shrink-0 text-[10px] font-bold text-gray-400 flex items-center gap-1 bg-gray-50 dark:bg-[#1a1a1c] px-2 py-0.5 rounded-md border border-gray-100 dark:border-[#2c2c2e]">
+                                <span class="flex-shrink-0 text-xs font-bold text-gray-500 dark:text-gray-400 flex items-center gap-1 bg-gray-50 dark:bg-surface-alt-dark px-2 py-0.5 rounded-md border border-gray-100 dark:border-border-dark">
                                     <span class="font-medium opacity-60">{{ $t('nexus.hit_edited') }}</span>{{ localDay(item.date) }}
                                 </span>
                             </div>
                             
-                            <p v-if="appLockStore.isEnabled && appLockStore.isNoteProtected(item.id)" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed flex items-center gap-1.5">
+                            <p v-if="appLockStore.isEnabled && appLockStore.isNoteProtected(item.id)" class="text-[13px] text-text-secondary dark:text-text-secondary-dark line-clamp-2 leading-relaxed flex items-center gap-1.5">
                               <Lock class="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                              <span class="italic text-gray-400 dark:text-gray-500">Content protected</span>
+                              <span class="italic text-gray-500 dark:text-gray-400">{{ $t('nexus.content_protected') }}</span>
                             </p>
-                            <p v-else-if="item.item_type !== 'file'" class="text-[13px] text-[#52525b] dark:text-[#a1a1aa] line-clamp-2 leading-relaxed preview-markdown break-words" v-html="cleanSnippet(item.snippet)"></p>
+                            <p v-else-if="item.item_type !== 'file'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark line-clamp-2 leading-relaxed preview-markdown break-words" v-html="cleanSnippet(item.snippet)"></p>
                             <p v-else class="text-[13px] text-purple-600/70 dark:text-purple-400/70 font-mono break-words" v-html="cleanSnippet(item.snippet)"></p>
                             
                             <div class="flex items-center gap-2 mt-3" v-if="item.tags.length > 0">
-                                <span v-for="tag in item.tags" :key="tag" class="text-[10px] font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-[#1a1a1c] border border-gray-200 dark:border-[#2c2c2e] text-gray-600 dark:text-gray-400 flex items-center gap-1">
+                                <span v-for="tag in item.tags" :key="tag" class="text-xs font-bold px-2 py-0.5 rounded bg-gray-100 dark:bg-surface-alt-dark border border-gray-200 dark:border-border-dark text-gray-600 dark:text-gray-400 flex items-center gap-1">
                                     <span class="opacity-50">#</span>{{ tag.split('/').pop() }}
                                 </span>
                             </div>
@@ -1071,9 +1127,9 @@ const cleanSnippet = (snippet: string) => {
 
                     <div v-else-if="!eventsAnswer?.rows.length" data-events-empty class="text-center py-16">
                         <div class="w-20 h-20 bg-gray-50 dark:bg-white/5 rounded-full flex flex-col items-center justify-center mx-auto mb-4 border border-dashed border-gray-200 dark:border-white/10">
-                            <CalendarDays class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                            <CalendarDays class="w-8 h-8 text-gray-500 dark:text-gray-400" aria-hidden="true" />
                         </div>
-                        <p class="text-[#52525b] dark:text-[#a1a1aa] font-medium">{{ $t('nexus.lens_nothing') }}</p>
+                        <p class="text-text-secondary dark:text-text-secondary-dark font-medium">{{ $t('nexus.lens_nothing') }}</p>
                     </div>
 
                     <div v-else data-events-results>
@@ -1086,7 +1142,7 @@ const cleanSnippet = (snippet: string) => {
                         <p
                             v-if="proposals && (proposals.waiting || proposals.unread)"
                             data-events-backlog
-                            class="mb-3 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400"
+                            class="mb-3 text-xs leading-relaxed text-gray-500 dark:text-gray-400"
                         >
                             {{ proposals.waiting
                                 ? $t('nexus.events_partial_proposals', { count: proposals.waiting }, proposals.waiting)
@@ -1097,7 +1153,7 @@ const cleanSnippet = (snippet: string) => {
                                 v-if="proposals.waiting"
                                 type="button"
                                 data-review-from-timeline
-                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                class="ml-1 font-semibold text-accent underline decoration-dotted underline-offset-2 dark:text-accent-dark"
                                 @click="reviewing = true"
                             >{{ $t('nexus.review_open') }}</button>
                         </p>
@@ -1107,7 +1163,7 @@ const cleanSnippet = (snippet: string) => {
                             {{ $t('nexus.events_narrowed', { from: timeRange.from, to: timeRange.to }) }}
                             <button
                                 type="button"
-                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                class="ml-1 font-semibold text-accent underline decoration-dotted underline-offset-2 dark:text-accent-dark"
                                 @click="timeRange = null"
                             >{{ $t('nexus.over_time_clear') }}</button>
                         </p>
@@ -1118,7 +1174,7 @@ const cleanSnippet = (snippet: string) => {
                             {{ $t('nexus.window_hidden', { n: windowHidden }, windowHidden) }}
                             <button
                                 type="button"
-                                class="ml-1 font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                class="ml-1 font-semibold text-accent underline decoration-dotted underline-offset-2 dark:text-accent-dark"
                                 @click="pickWindow('all')"
                             >{{ $t('nexus.window_show_all') }}</button>
                         </p>
@@ -1162,13 +1218,13 @@ const cleanSnippet = (snippet: string) => {
     <div
         v-if="reviewing"
         data-review-screen
-        class="absolute inset-0 z-40 flex flex-col bg-[#fdfdfc] dark:bg-[#1a1a1c] animate-in fade-in duration-150"
+        class="absolute inset-0 z-40 flex flex-col bg-base dark:bg-surface-alt-dark animate-in fade-in duration-150"
     >
-        <div class="h-16 flex-shrink-0 flex items-center justify-between border-b border-gray-200 bg-white/80 px-6 backdrop-blur-md dark:border-[#2c2c2e] dark:bg-[#242426]/80">
+        <div class="h-16 flex-shrink-0 flex items-center justify-between border-b border-gray-200 bg-white/80 px-6 backdrop-blur-md dark:border-border-dark dark:bg-base-dark/80">
             <div class="flex items-center gap-3">
                 <button
                     data-review-close
-                    class="group -ml-2 flex items-center gap-1 rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+                    class="group -ml-2 flex items-center gap-1 rounded-xl p-2 text-gray-500 dark:text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
                     @click="reviewing = false"
                 >
                     <ChevronRight class="h-5 w-5 rotate-180 transition-transform group-hover:-translate-x-0.5" />
@@ -1177,7 +1233,7 @@ const cleanSnippet = (snippet: string) => {
                 <div class="h-4 w-px bg-gray-300 dark:bg-[#444]"></div>
                 <h2 class="text-sm font-bold text-gray-800 dark:text-gray-200">{{ $t('nexus.review_title') }}</h2>
             </div>
-            <span v-if="proposals?.waiting" class="text-xs font-semibold tabular-nums text-gray-400">
+            <span v-if="proposals?.waiting" class="text-xs font-semibold tabular-nums text-gray-500 dark:text-gray-400">
                 {{ $t('nexus.review_waiting', { count: proposals.waiting }) }}
             </span>
         </div>

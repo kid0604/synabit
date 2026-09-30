@@ -53,7 +53,7 @@ watch(() => [props.vaultPath, props.nodeId], load, { immediate: true });
 
 <template>
     <div v-if="loaded" data-worldline class="rounded-xl border border-gray-200 px-4 py-3 dark:border-[#3a3a3c]">
-        <p class="mb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             {{ $t('people.worldline') }}
         </p>
         <div v-if="stretches.length" class="flex flex-wrap gap-2">

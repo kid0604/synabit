@@ -14,7 +14,7 @@ import { onMounted, onUnmounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { KeyRound } from 'lucide-vue-next';
-import ModalDialog from '../calendar/components/ModalDialog.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { safeCode, useSafeApi } from './api';
 import { useSafeError } from './useSafeError';
 
@@ -104,13 +104,12 @@ const input =
 </script>
 
 <template>
-  <ModalDialog
+  <AppDialog
     v-if="request"
     :show="true"
-    labelled-by="safe-request-title"
-    card-class="max-w-[460px] max-h-[calc(100vh-64px)] text-text dark:text-text-dark"
-    @close="close"
-  >
+    labelledby="safe-request-title"
+    size="md" elevated unstyled panel-class="bg-surface dark:bg-surface-dark text-text dark:text-text-dark rounded-2xl shadow-2xl border border-border dark:border-border-dark flex flex-col overflow-hidden max-h-[calc(100vh-64px)]"
+    @close="close">
     <div class="p-5 space-y-4 overflow-y-auto">
       <div class="flex items-start gap-3">
         <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
@@ -152,9 +151,9 @@ const input =
         <p v-if="error" class="text-sm text-danger" role="alert">{{ error }}</p>
         <div class="flex justify-end gap-2 pt-1">
           <button type="button" class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" @click="close">{{ t('safe.request.not_now') }}</button>
-          <button type="submit" :disabled="!value || !title.trim() || busy" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40">{{ t('safe.request.save') }}</button>
+          <button type="submit" :disabled="!value || !title.trim() || busy" class="btn-primary">{{ t('safe.request.save') }}</button>
         </div>
       </form>
     </div>
-  </ModalDialog>
+  </AppDialog>
 </template>

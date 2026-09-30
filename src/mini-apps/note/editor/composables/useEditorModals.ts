@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import { emojiData } from '../../emojiData';
 import { logger } from '../../../../utils/logger';
+import { i18n } from '../../../../i18n';
 
 export function useEditorModals(vaultPath: string, currentNoteId?: string) {
   const editorRef = ref<Editor | null>(null);
@@ -54,6 +55,18 @@ export function useEditorModals(vaultPath: string, currentNoteId?: string) {
 
     // Nothing to rewrite: leave the text alone rather than replacing it with an
     // identical copy, which would cost the user an undo step for no change.
+    // Nothing selected and no text typed — the toolbar's link button pressed
+    // at a bare caret. Marking an empty range would do nothing at all, so the
+    // address itself becomes the link's text.
+    if (text.trim() === '' && editorRef.value.state.selection.empty && !editorRef.value.isActive('link')) {
+      editorRef.value
+        .chain()
+        .focus()
+        .insertContent({ type: 'text', marks: [{ type: 'link', attrs: { href: url } }], text: url })
+        .run();
+      return;
+    }
+
     if (text.trim() === '' || text === originalText) {
       editorRef.value.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
       return;
@@ -101,7 +114,7 @@ export function useEditorModals(vaultPath: string, currentNoteId?: string) {
       const selectedPath = await open({
         multiple: false,
         filters: [{
-          name: 'Video',
+          name: i18n.global.t('note.editor.filter_videos'),
           extensions: ['mp4', 'webm', 'mov', 'mkv', 'ogg']
         }]
       });
@@ -154,7 +167,7 @@ export function useEditorModals(vaultPath: string, currentNoteId?: string) {
       const selectedPath = await open({
         multiple: false,
         filters: [{
-          name: 'Audio',
+          name: i18n.global.t('note.editor.filter_audio'),
           extensions: ['mp3', 'wav', 'ogg', 'm4a', 'aac']
         }]
       });
@@ -222,7 +235,7 @@ export function useEditorModals(vaultPath: string, currentNoteId?: string) {
     editorRef.value.commands.setWhiteboard({
       boardId: board.id || board.path,
       boardPath: board.path,
-      title: board.title || 'Untitled Board',
+      title: board.title || i18n.global.t('note.editor.whiteboard.untitled'),
     });
     whiteboardPickerModal.value = { show: false, boards: [], loading: false, search: '' };
   };

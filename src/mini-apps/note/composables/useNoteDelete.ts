@@ -1,4 +1,4 @@
-import { ref, onUnmounted } from 'vue';
+import { ref, onBeforeUnmount, onDeactivated, getCurrentInstance } from 'vue';
 import type { Ref } from 'vue';
 import type { NoteItem } from '../helpers';
 import { rememberRecentNotes } from '../helpers';
@@ -27,8 +27,9 @@ const UNDO_WINDOW_MS = 7000;
  * them be careless and still be fine. Only one of those two actually saves a
  * note.
  *
- * If the app quits inside the window, the deletion simply never happened —
- * the safe direction to fail in.
+ * If the app is killed inside the window, the deletion simply never happened —
+ * the safe direction to fail in. Leaving the app, or its window being hidden,
+ * commits first, so that is rare.
  *
  * A delete carries a *set* of notes, not one. Tidying up after a sync that
  * left thirteen copies of the same day means deleting thirteen things, and
@@ -43,7 +44,12 @@ export function useNoteDelete(params: {
   tabContents: Ref<Record<string, string>>;
   activeTabs: Ref<string[]>;
   tabAccessTime: Map<string, number>;
-  saveTimeouts: Map<string, ReturnType<typeof setTimeout>>;
+  /**
+   * Write a tab now if an autosave is still waiting (`useNoteSave`). It reads
+   * the tab synchronously, before its first `await`, so the words are taken
+   * before the tab is closed below.
+   */
+  flushSave: (id: string) => Promise<void>;
   ns: { trashNode: (p: { relPath: string }) => Promise<string> };
   scanVault: () => Promise<void>;
   /**
@@ -58,7 +64,7 @@ export function useNoteDelete(params: {
 }) {
   const {
     notes, currentNoteId, recentNoteIds, tabContents, activeTabs,
-    tabAccessTime, saveTimeouts, ns, scanVault, onFailed,
+    tabAccessTime, flushSave, ns, scanVault, onFailed,
   } = params;
 
   /** The notes waiting to go, with enough about each to put it back. */
@@ -67,27 +73,50 @@ export function useNoteDelete(params: {
     notes: { note: NoteItem; index: number }[];
     /** Whether the note being edited was among them. */
     wasCurrent: boolean;
+    /** Unsaved edits being written out; the trash must wait for them. */
+    flushed: Promise<unknown>;
   } | null>(null);
+  type Held = NonNullable<typeof pending.value>;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** When the running timer fires, so a pause can keep what was left. */
+  let deadline = 0;
+  let remaining = UNDO_WINDOW_MS;
 
   /**
    * Ids the list must pretend are gone.
    *
    * A pending note is still on disk, so any rescan — and the file watcher
    * fires plenty of them — would find it and put it straight back in the
-   * sidebar underneath the toast offering to undo its deletion.
+   * sidebar underneath the toast offering to undo its deletion. An id leaves
+   * only once its file is in the trash (or the move failed): any earlier and
+   * a rescan landing mid-commit flashes the note back.
    */
   const hiddenIds = new Set<string>();
 
   const isHidden = (id: string) => hiddenIds.has(id);
 
-  /** Move the files at last. Called by the timer, or early to make way. */
-  const commit = async () => {
-    const held = pending.value;
-    if (!held) return;
+  /**
+   * Take the waiting batch off the toast, synchronously — before any `await`,
+   * or a delete started while the previous one is being written can be
+   * overwritten and never happen (see `useUndoableAction`).
+   */
+  const take = (): Held | null => {
     clearTimeout(timer);
+    timer = undefined;
+    const held = pending.value;
     pending.value = null;
-    for (const { note } of held.notes) hiddenIds.delete(note.id);
+    return held;
+  };
+
+  const arm = (ms: number) => {
+    clearTimeout(timer);
+    deadline = Date.now() + ms;
+    timer = setTimeout(() => { void commit(); }, ms);
+  };
+
+  const perform = async (held: Held) => {
+    // A write still landing after the move would put the file back.
+    await held.flushed;
 
     // Each note is moved on its own so one that cannot be moved does not
     // strand the rest — a batch that gives up halfway would leave the list
@@ -100,12 +129,24 @@ export function useNoteDelete(params: {
         logger.error('Could not move the note to the trash', e);
         failed.push(note);
       }
+      hiddenIds.delete(note.id);
     }
 
     // One rescan for the whole batch. It is what puts any failure back in the
-    // list, so it has to happen before anyone is told about one.
-    await scanVault();
+    // list, so it has to happen before anyone is told about one. A rescan that
+    // fails is not a delete that failed: the moves above are what count.
+    try {
+      await scanVault();
+    } catch (e) {
+      logger.error('Rescan after deleting notes failed', e);
+    }
     for (const note of failed) onFailed(note);
+  };
+
+  /** Move the files at last. Called by the timer, or early to make way. */
+  const commit = async () => {
+    const held = take();
+    if (held) await perform(held);
   };
 
   /** Delete every note named, as one undoable step. */
@@ -120,22 +161,19 @@ export function useNoteDelete(params: {
       .map((e) => ({ note: notes.value[e.index], index: e.index }));
     if (held.length === 0) return;
 
-    // One batch at a time. A second delete finishes the first rather than
-    // queueing, so the toast never lies about what it is offering to bring
-    // back.
-    if (pending.value) await commit();
-
     const doomed = new Set(held.map((h) => h.note.id));
     const wasCurrent = currentNoteId.value !== null && doomed.has(currentNoteId.value);
 
+    const flushes: Promise<unknown>[] = [];
     for (const id of doomed) {
-      // Cancel the autosave before anything else: a 600ms timer firing after
-      // this would write the note back to the path it is being taken off.
-      const queued = saveTimeouts.get(id);
-      if (queued) {
-        clearTimeout(queued);
-        saveTimeouts.delete(id);
-      }
+      // Write out what is still waiting on the autosave before the tab is
+      // closed. Cancelling it instead lost the last few seconds of typing —
+      // an undo brought the note back without them, and the trash kept an
+      // older copy. Started now, while the note and its tab still exist;
+      // the move waits for it. Asked even with no autosave queued: the editor
+      // may still be holding words it has not handed over, and a no-op
+      // otherwise.
+      flushes.push(flushSave(id).catch((e) => logger.error('Could not save a note being deleted', e)));
 
       hiddenIds.add(id);
       delete tabContents.value[id];
@@ -150,17 +188,22 @@ export function useNoteDelete(params: {
       rememberRecentNotes(recentNoteIds.value);
     }
 
-    pending.value = { notes: held, wasCurrent };
-    timer = setTimeout(() => { void commit(); }, UNDO_WINDOW_MS);
+    // One batch at a time. A second delete finishes the first rather than
+    // queueing, so the toast never lies about what it is offering to bring
+    // back. The first is taken synchronously; its move is awaited only after
+    // the new one holds the toast.
+    const previous = take();
+    pending.value = { notes: held, wasCurrent, flushed: Promise.all(flushes) };
+    remaining = UNDO_WINDOW_MS;
+    arm(UNDO_WINDOW_MS);
+    if (previous) await perform(previous);
   };
 
   const deleteNote = (id: string) => deleteNotes([id]);
 
   const undoDelete = () => {
-    const held = pending.value;
+    const held = take();
     if (!held) return;
-    clearTimeout(timer);
-    pending.value = null;
     for (const { note } of held.notes) hiddenIds.delete(note.id);
 
     // Back where they were, rather than on top. The list has an order the
@@ -176,9 +219,33 @@ export function useNoteDelete(params: {
     if (held.wasCurrent) currentNoteId.value = held.notes[0].note.id;
   };
 
-  // Leaving the Notes app is not taking the delete back. The file has to go,
-  // and it has to go before this composable stops existing to send it.
-  onUnmounted(() => { void commit(); });
+  /** Hold the countdown while the pointer or focus is on the toast (WCAG 2.2.1). */
+  const pause = () => {
+    if (!pending.value || timer === undefined) return;
+    remaining = Math.max(0, deadline - Date.now());
+    clearTimeout(timer);
+    timer = undefined;
+  };
 
-  return { pending, deleteNote, deleteNotes, undoDelete, commit, isHidden };
+  const resume = () => {
+    if (pending.value && timer === undefined) arm(remaining);
+  };
+
+  // Leaving the Notes app is not taking the delete back. The file has to go,
+  // and it has to go while the undo can still be seen: the apps live in a
+  // `<keep-alive>`, so switching app deactivates rather than unmounts, and
+  // Android kills a hidden app without warning.
+  const onHidden = () => {
+    if (document.visibilityState === 'hidden') void commit();
+  };
+  if (getCurrentInstance()) {
+    document.addEventListener('visibilitychange', onHidden);
+    onDeactivated(() => { void commit(); });
+    onBeforeUnmount(() => {
+      document.removeEventListener('visibilitychange', onHidden);
+      void commit();
+    });
+  }
+
+  return { pending, deleteNote, deleteNotes, undoDelete, commit, pause, resume, isHidden };
 }

@@ -4,8 +4,10 @@ import type { NoteItem } from '../helpers';
 import { buildNotePayload } from '../helpers';
 import { resolveNoteId } from '../resolveNoteId';
 import type { NodeMetadata } from '../../../types/ipc';
+// eslint-disable-next-line no-restricted-imports -- a real yes/no question asked from a composable; move to ConfirmModal when this flow gets UI state
 import { ask } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 
 /**
  * The links out of a note, read the way the backend reads them.
@@ -58,13 +60,16 @@ export function useNoteBacklinks(
   });
 
   const unlinkProject = async (projectId: string, projectTitle?: string) => {
+    const { t } = i18n.global;
     const isConfirmed = await ask(
-        `This note will no longer be linked to "${projectTitle || 'this project'}".`, 
-        { 
-            title: 'Unlink project?', 
+        projectTitle
+            ? t('note.unlink_project_body', { title: projectTitle })
+            : t('note.unlink_project_body_untitled'),
+        {
+            title: t('note.unlink_project_title'),
             kind: 'warning',
-            okLabel: 'Unlink',
-            cancelLabel: 'Cancel'
+            okLabel: t('note.unlink_project_confirm'),
+            cancelLabel: t('note.cancel')
         }
     );
     if (!isConfirmed) return;

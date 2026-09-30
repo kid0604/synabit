@@ -36,9 +36,9 @@ const props = defineProps<{ footing: Footing }>();
 const look = computed(() => {
   switch (props.footing) {
     case 'grounded':
-      return { icon: Anchor, tone: 'text-gray-400 dark:text-gray-500' };
+      return { icon: Anchor, tone: 'text-gray-500 dark:text-gray-400' };
     case 'inferred':
-      return { icon: CircleDashed, tone: 'text-gray-400 dark:text-gray-500' };
+      return { icon: CircleDashed, tone: 'text-gray-500 dark:text-gray-400' };
     default:
       return { icon: CircleAlert, tone: 'text-amber-600 dark:text-amber-500' };
   }
@@ -49,7 +49,7 @@ const look = computed(() => {
   <!-- The longer sentence is a title rather than more text on screen: it is
        the explanation somebody wants once, not on every answer they read. -->
   <div
-    class="inline-flex items-center gap-1 text-[11px] leading-none"
+    class="inline-flex items-center gap-1 text-xs leading-none"
     :class="look.tone"
     :title="$t(`syn.footing_${footing}_why`)"
   >

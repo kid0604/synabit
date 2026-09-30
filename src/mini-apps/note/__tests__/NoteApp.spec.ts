@@ -3,7 +3,10 @@ import { mount } from '@vue/test-utils';
 import { createTestingPinia } from '@pinia/testing';
 import NoteApp from '../NoteApp.vue';
 import NoteHistoryModal from '../NoteHistoryModal.vue';
+import TiptapEditor from '../TiptapEditor.vue';
+import UndoToast from '../../../shared/components/UndoToast.vue';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
+import { useAppStore } from '../../../stores/useAppStore';
 import * as core from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 
@@ -89,7 +92,9 @@ describe('NoteApp.vue', () => {
     expect(exposed.currentNoteId).toBe('Notes/note1.md');
   });
 
-  it('asks before deleting, and does nothing at all if the answer is no', async () => {
+  // No dialog in front of a delete: the undo toast is the safety net, and
+  // pressing Undo puts the note back where it was with nothing written.
+  it('deletes without asking, and Undo puts the note back', async () => {
     const mockSummaries = [{
       id: 'Notes/note1.md', node_type: 'note', title: 'Test Note 1', preview: 'hello',
       properties: { tags: [], pinned: false, full_width: false },
@@ -101,7 +106,6 @@ describe('NoteApp.vue', () => {
       if (cmd === 'get_linked_nodes') return Promise.resolve([]);
       return Promise.resolve();
     });
-    vi.mocked(dialog.ask).mockResolvedValueOnce(false);
 
     const wrapper = mount(NoteApp, {
       props: { vaultPath: '/mock/vault' },
@@ -120,8 +124,15 @@ describe('NoteApp.vue', () => {
     await exposed.deleteNote('Notes/note1.md');
     await new Promise(resolve => setTimeout(resolve, 50));
 
-    expect(dialog.ask).toHaveBeenCalled();
-    // Declining leaves the note exactly where it was.
+    expect(dialog.ask).not.toHaveBeenCalled();
+    expect(exposed.notes.length).toBe(0);
+
+    // The shared toast is on screen, offering the way back.
+    const toast = wrapper.findComponent(UndoToast);
+    expect(toast.props('show')).toBe(true);
+    toast.vm.$emit('undo');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
     expect(exposed.notes.length).toBe(1);
     expect(core.invoke).not.toHaveBeenCalledWith('trash_node_file', expect.anything());
   });
@@ -206,7 +217,6 @@ describe('NoteApp.vue', () => {
       if (cmd === 'trash_node_file') return Promise.resolve('.trash/x');
       return Promise.resolve();
     });
-    vi.mocked(dialog.ask).mockResolvedValue(true);
 
     const wrapper = mount(NoteApp, {
       props: { vaultPath: '/mock/vault' },
@@ -333,5 +343,55 @@ describe('NoteApp.vue version history', () => {
 
     expect(core.invoke).toHaveBeenCalledWith('get_node', { id: ID });
     expect(exposed.tabContents[ID]).toBe('the first draft\n');
+  });
+});
+
+/**
+ * The formatting row is on by default and can be put away, from the note's own
+ * header or from Settings — the two are one remembered setting.
+ */
+describe('the formatting toolbar', () => {
+  const mountWith = async (visible: boolean) => {
+    vi.mocked(core.invoke).mockImplementation((cmd) => {
+      if (cmd === 'get_node_summaries') return Promise.resolve([{
+        id: 'Notes/a.md', node_type: 'note', title: 'A', preview: '',
+        properties: { tags: [], pinned: false, full_width: false },
+        created_at: '2026-05-01 00:00:00', updated_at: '2026-05-01 00:00:00', timestamp: 1,
+      }]);
+      if (cmd === 'get_linked_nodes') return Promise.resolve([]);
+      if (cmd === 'get_node') return Promise.resolve({
+        id: 'Notes/a.md', node_type: 'note', title: 'A', content: 'text\n', properties: {},
+      });
+      return Promise.resolve();
+    });
+    const wrapper = mount(NoteApp, {
+      props: { vaultPath: '/mock/vault' },
+      global: {
+        plugins: [createTestingPinia({ createSpy: vi.fn, initialState: { app: { noteToolbarVisible: visible } } })],
+        stubs: { TiptapEditor: true, NoteGraph: true, 'lucide-vue-next': true },
+        mocks: { $t: (key: string) => key },
+      },
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return wrapper;
+  };
+
+  const editorToolbarProp = (wrapper: ReturnType<typeof mount>) =>
+    wrapper.findComponent(TiptapEditor).props('toolbar');
+
+  it('follows the setting, and the header button flips it', async () => {
+    const wrapper = await mountWith(true);
+    expect(editorToolbarProp(wrapper)).toBe(true);
+
+    const button = wrapper.find('button[aria-label="note.formatting_toolbar"]');
+    expect(button.attributes('aria-pressed')).toBe('true');
+    await button.trigger('click');
+    expect(useAppStore().noteToolbarVisible).toBe(false);
+    expect(editorToolbarProp(wrapper)).toBe(false);
+  });
+
+  it('stays hidden when it was put away last time', async () => {
+    const wrapper = await mountWith(false);
+    expect(editorToolbarProp(wrapper)).toBe(false);
   });
 });

@@ -27,7 +27,7 @@ const harness = (overrides: Partial<Parameters<typeof useNoteDelete>[0]> = {}) =
     tabContents: ref<Record<string, string>>({ 'Notes/b.md': 'body' }),
     activeTabs: ref<string[]>(['Notes/b.md']),
     tabAccessTime: new Map<string, number>([['Notes/b.md', 1]]),
-    saveTimeouts: new Map<string, ReturnType<typeof setTimeout>>(),
+    flushSave: vi.fn((_id: string) => Promise.resolve()),
     ns: { trashNode },
     scanVault,
     onFailed,
@@ -159,19 +159,81 @@ describe('useNoteDelete', () => {
     expect(h.currentNoteId.value).toBeNull();
   });
 
-  it('cancels a queued autosave so it cannot write the note back', async () => {
-    const saveTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
-    const write = vi.fn();
-    // jsdom's `setTimeout` hands back a number; the app's Map is typed from
-    // Node's, which is an object. Same value either way at run time.
-    saveTimeouts.set('Notes/b.md', setTimeout(write, 600) as unknown as ReturnType<typeof setTimeout>);
+  it('writes out unsaved edits instead of dropping them', async () => {
+    // Cancelling the autosave lost the last few seconds of typing: an undo
+    // brought the note back without them, and the trash kept an older copy.
+    const h = harness();
+    await h.api.deleteNote('Notes/b.md');
+    expect(h.flushSave).toHaveBeenCalledWith('Notes/b.md');
+  });
 
-    const h = harness({ saveTimeouts });
+  it('waits for that write before moving the file', async () => {
+    // A write landing after the move would put the file straight back.
+    let finish!: () => void;
+    const flushSave = vi.fn(() => new Promise<void>((r) => { finish = r; }));
+    const h = harness({ flushSave });
     await h.api.deleteNote('Notes/b.md');
     await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.trashNode).not.toHaveBeenCalled();
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.trashNode).toHaveBeenCalledWith({ relPath: 'Notes/b.md' });
+  });
 
-    expect(write).not.toHaveBeenCalled();
-    expect(saveTimeouts.has('Notes/b.md')).toBe(false);
+  it('keeps a note hidden until its file is actually in the trash', async () => {
+    // Cleared before the move, a rescan landing mid-commit flashed it back.
+    let finish!: (v: string) => void;
+    const trashNode = vi.fn(() => new Promise<string>((r) => { finish = r; }));
+    const h = harness({ ns: { trashNode } });
+    await h.api.deleteNote('Notes/b.md');
+    await vi.advanceTimersByTimeAsync(7_100);
+    expect(trashNode).toHaveBeenCalled();
+    expect(h.api.isHidden('Notes/b.md')).toBe(true);
+    finish('.trash/Notes/b.md');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.api.isHidden('Notes/b.md')).toBe(false);
+  });
+
+  it('does not lose a delete started while the previous one is being moved', async () => {
+    // An await between reading the pending batch and clearing it let a third
+    // delete be overwritten by the second and never happen.
+    let finish!: (v: string) => void;
+    const trashNode = vi.fn()
+      .mockImplementationOnce(() => new Promise<string>((r) => { finish = r; }))
+      .mockResolvedValue('.trash/x');
+    const h = harness({ ns: { trashNode } });
+    await h.api.deleteNote('Notes/a.md');
+    const second = h.api.deleteNote('Notes/b.md');
+    await h.api.deleteNote('Notes/c.md');
+    finish('.trash/a');
+    await second;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(trashNode.mock.calls.map((c) => c[0].relPath).sort())
+      .toEqual(['Notes/a.md', 'Notes/b.md', 'Notes/c.md']);
+  });
+
+  it('holds the countdown while paused', async () => {
+    const h = harness();
+    await h.api.deleteNote('Notes/b.md');
+    await vi.advanceTimersByTimeAsync(3_000);
+    h.api.pause();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.trashNode).not.toHaveBeenCalled();
+    h.api.resume();
+    await vi.advanceTimersByTimeAsync(4_100);
+    expect(h.trashNode).toHaveBeenCalledWith({ relPath: 'Notes/b.md' });
+  });
+
+  it('completes a pending delete when the window is hidden', async () => {
+    // Android kills a backgrounded app without warning.
+    const h = harness();
+    await h.api.deleteNote('Notes/b.md');
+    const spy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    spy.mockRestore();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.trashNode).toHaveBeenCalledWith({ relPath: 'Notes/b.md' });
+    h.wrapper.unmount();
   });
 
   it('says so when the file could not be moved after all', async () => {

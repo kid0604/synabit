@@ -79,12 +79,12 @@ const position = computed(() => ({
         class="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left
                hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
       >
-        <component :is="iconForNodeType(entry.node_type)" class="w-3.5 h-3.5 text-gray-400 flex-none" />
-        <span class="flex-1 min-w-0 truncate text-[#1c1c1e] dark:text-[#f4f4f5]">
+        <component :is="iconForNodeType(entry.node_type)" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 flex-none" />
+        <span class="flex-1 min-w-0 truncate text-text dark:text-text-dark">
           {{ entry.node_type }}
         </span>
-        <span class="text-gray-400 tabular-nums">{{ entry.count }}</span>
-        <Check v-if="entry.node_type === current" class="w-3 h-3 text-blue-500 flex-none" />
+        <span class="text-gray-500 dark:text-gray-400 tabular-nums">{{ entry.count }}</span>
+        <Check v-if="entry.node_type === current" class="w-3 h-3 text-accent dark:text-accent-dark flex-none" />
       </button>
 
       <div class="my-1 border-t border-gray-100 dark:border-gray-700" />
@@ -104,7 +104,7 @@ const position = computed(() => ({
           @blur="submitName"
           class="w-full px-2 py-1 rounded text-xs bg-gray-50 dark:bg-white/5
                  border border-gray-200 dark:border-gray-700 outline-none
-                 text-[#1c1c1e] dark:text-[#f4f4f5]"
+                 text-text dark:text-text-dark"
         />
       </div>
       <button

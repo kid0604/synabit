@@ -44,36 +44,36 @@ watch(() => props.edgeId, () => {
 });
 
 const EDGE_TYPES = [
-  { value: 'straight', label: 'Straight' },
-  { value: 'default', label: 'Curve' },
-  { value: 'step', label: 'Step' },
+  { value: 'straight', labelKey: 'whiteboard.edge_type.straight' },
+  { value: 'default', labelKey: 'whiteboard.edge_type.curve' },
+  { value: 'step', labelKey: 'whiteboard.edge_type.step' },
 ];
 
 const ARROW_MODES = [
-  { value: 'none', label: 'None' },
-  { value: 'forward', label: 'Forward' },
-  { value: 'backward', label: 'Back' },
-  { value: 'both', label: 'Both' },
+  { value: 'none', labelKey: 'whiteboard.arrow_mode.none' },
+  { value: 'forward', labelKey: 'whiteboard.arrow_mode.forward' },
+  { value: 'backward', labelKey: 'whiteboard.arrow_mode.backward' },
+  { value: 'both', labelKey: 'whiteboard.arrow_mode.both' },
 ];
 
 const COLORS = [
-  { value: '', label: 'Default' },
-  { value: '#7c3aed', label: 'Purple' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' },
-  { value: '#ef4444', label: 'Red' },
-  { value: '#ec4899', label: 'Pink' },
-  { value: '#6b7280', label: 'Gray' },
-  { value: '#000000', label: 'Black' },
+  { value: '', labelKey: 'whiteboard.colors.default' },
+  { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
+  { value: '#3b82f6', labelKey: 'whiteboard.colors.blue' },
+  { value: '#10b981', labelKey: 'whiteboard.colors.green' },
+  { value: '#f59e0b', labelKey: 'whiteboard.colors.amber' },
+  { value: '#ef4444', labelKey: 'whiteboard.colors.red' },
+  { value: '#ec4899', labelKey: 'whiteboard.colors.pink' },
+  { value: '#6b7280', labelKey: 'whiteboard.colors.gray' },
+  { value: '#000000', labelKey: 'whiteboard.colors.black' },
 ];
 
 const WIDTHS = [1, 2, 3, 4, 5];
 
 const DASH_STYLES = [
-  { value: 'solid', label: 'Solid', dash: '0' },
-  { value: 'dashed', label: 'Dashed', dash: '8 4' },
-  { value: 'dotted', label: 'Dotted', dash: '2 4' },
+  { value: 'solid', labelKey: 'whiteboard.dash.solid', dash: '0' },
+  { value: 'dashed', labelKey: 'whiteboard.dash.dashed', dash: '8 4' },
+  { value: 'dotted', labelKey: 'whiteboard.dash.dotted', dash: '2 4' },
 ];
 
 function getCurrentArrowMode(): string {
@@ -126,12 +126,12 @@ function handleDelete() { emit('delete', props.edgeId); }
   <div class="ep-panel" @mousedown.stop @click.stop>
     <!-- Header -->
     <div class="ep-header">
-      <span class="ep-title">Edge</span>
+      <span class="ep-title">{{ $t('whiteboard.edge') }}</span>
       <div class="ep-header-actions">
-        <button @click="handleDelete" class="ep-icon-btn ep-delete-btn" title="Delete">
+        <button @click="handleDelete" class="ep-icon-btn ep-delete-btn" :title="$t('whiteboard.delete')" :aria-label="$t('whiteboard.delete')">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="ep-icon-btn" :title="$t('whiteboard.close')">
+        <button @click="$emit('close')" class="ep-icon-btn" :title="$t('whiteboard.close')" :aria-label="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -140,33 +140,33 @@ function handleDelete() { emit('delete', props.edgeId); }
     <div class="ep-body">
       <!-- Edge Type -->
       <div class="ep-section">
-        <span class="ep-label">Style</span>
+        <span class="ep-label">{{ $t('whiteboard.style') }}</span>
         <div class="ep-type-row">
           <button
             v-for="t in EDGE_TYPES" :key="t.value"
             @click="setType(t.value)"
             :class="['ep-type-btn', edgeType === t.value && 'active']"
-            :title="t.label"
+            :title="$t(t.labelKey)"
           >
             <svg viewBox="0 0 32 20" class="ep-type-svg">
               <line v-if="t.value === 'straight'" x1="2" y1="18" x2="30" y2="2" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
               <path v-if="t.value === 'default'" d="M2 18 C2 6, 30 14, 30 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
               <path v-if="t.value === 'step'" d="M2 18 L2 10 L30 10 L30 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
-            <span class="ep-type-name">{{ t.label }}</span>
+            <span class="ep-type-name">{{ $t(t.labelKey) }}</span>
           </button>
         </div>
       </div>
 
       <!-- Arrow Direction -->
       <div class="ep-section">
-        <span class="ep-label">Arrow</span>
+        <span class="ep-label">{{ $t('whiteboard.arrow') }}</span>
         <div class="ep-arrow-row">
           <button
             v-for="a in ARROW_MODES" :key="a.value"
             @click="setArrowMode(a.value)"
             :class="['ep-arrow-btn', getCurrentArrowMode() === a.value && 'active']"
-            :title="a.label"
+            :title="$t(a.labelKey)"
           >
             <svg viewBox="0 0 36 16" class="ep-arrow-svg">
               <template v-if="a.value === 'none'">
@@ -192,21 +192,21 @@ function handleDelete() { emit('delete', props.edgeId); }
 
       <!-- Color -->
       <div class="ep-section">
-        <span class="ep-label">Color</span>
+        <span class="ep-label">{{ $t('whiteboard.color') }}</span>
         <div class="ep-color-grid">
           <button
             v-for="c in COLORS" :key="c.value"
             @click="setColor(c.value)"
             :class="['ep-swatch', edgeColor === c.value && 'active', !c.value && 'ep-swatch-default']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Stroke Width -->
       <div class="ep-section">
-        <span class="ep-label">Width</span>
+        <span class="ep-label">{{ $t('whiteboard.width') }}</span>
         <div class="ep-width-row">
           <button
             v-for="w in WIDTHS" :key="w"
@@ -221,13 +221,13 @@ function handleDelete() { emit('delete', props.edgeId); }
 
       <!-- Dash Style -->
       <div class="ep-section">
-        <span class="ep-label">Stroke</span>
+        <span class="ep-label">{{ $t('whiteboard.stroke') }}</span>
         <div class="ep-dash-row">
           <button
             v-for="ds in DASH_STYLES" :key="ds.value"
             @click="setDashStyle(ds.value)"
             :class="['ep-dash-chip', dashStyle === ds.value && 'active']"
-            :title="ds.label"
+            :title="$t(ds.labelKey)"
           >
             <svg viewBox="0 0 28 6" class="ep-dash-icon">
               <line x1="1" y1="3" x2="27" y2="3" stroke="currentColor" stroke-width="2"
@@ -239,15 +239,15 @@ function handleDelete() { emit('delete', props.edgeId); }
 
       <!-- Animated Toggle -->
       <div class="ep-section ep-toggle-row">
-        <span class="ep-label">Animated</span>
-        <button @click="toggleAnimated" :class="['ep-toggle', animated && 'active']" aria-label="Toggle Animated">
+        <span class="ep-label">{{ $t('whiteboard.animated') }}</span>
+        <button @click="toggleAnimated" :class="['ep-toggle', animated && 'active']" :aria-label="$t('whiteboard.animated')" :aria-pressed="animated">
           <div class="ep-toggle-thumb" />
         </button>
       </div>
 
       <!-- Label -->
       <div class="ep-section">
-        <span class="ep-label">Label</span>
+        <span class="ep-label">{{ $t('whiteboard.label') }}</span>
         <input
           v-model="edgeLabel"
           @input="updateLabel"
@@ -300,7 +300,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   border-bottom-color: var(--color-border-dark, #333);
 }
 .ep-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -352,7 +352,7 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -388,17 +388,17 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-type-btn.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .ep-type-btn.active {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .ep-type-btn:hover:not(.active) { background: #ebebeb; }
 .dark .ep-type-btn:hover:not(.active) { background: #333; }
 .ep-type-svg { width: 28px; height: 18px; }
-.ep-type-name { font-size: 9px; font-weight: 600; }
+.ep-type-name { font-size: 12px; font-weight: 600; line-height: 1.2; text-align: center; }
 
 /* ─── Arrow Direction ──── */
 .ep-arrow-row {
@@ -424,12 +424,12 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-arrow-btn.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .ep-arrow-btn.active {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .ep-arrow-btn:hover:not(.active) { background: #ebebeb; }
 .dark .ep-arrow-btn:hover:not(.active) { background: #333; }
@@ -453,7 +453,7 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-swatch.active {
   border-color: var(--color-accent, #7c3aed);
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 20%, transparent);
 }
 .ep-swatch:hover:not(.active) { transform: scale(1.15); }
 .ep-swatch-default {
@@ -467,7 +467,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--color-text-secondary, #999);
 }
@@ -498,10 +498,10 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-chip.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
 }
 .dark .ep-chip.active {
-  background: rgba(124, 58, 237, 0.15);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
 }
 .ep-chip:hover:not(.active) { background: #ebebeb; }
 .dark .ep-chip:hover:not(.active) { background: #333; }
@@ -539,12 +539,12 @@ function handleDelete() { emit('delete', props.edgeId); }
 }
 .ep-dash-chip.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .ep-dash-chip.active {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .ep-dash-chip:hover:not(.active) { background: #ebebeb; }
 .dark .ep-dash-chip:hover:not(.active) { background: #333; }

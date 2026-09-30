@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Wallet, Check, Plus, Trash2 } from 'lucide-vue-next';
 import type { FinanceAccount, Category } from './types';
 import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES } from './types';
 import { toCategories } from './categories';
 import { COMMON_CURRENCIES, allCurrencies, formatAmountInput, formatMinorForInput, parseAmountInput } from './currency';
+
+const { t, locale } = useI18n();
 
 const emit = defineEmits<{
   (e: 'complete', config: { incomeCategories: Category[], expenseCategories: Category[], accounts: FinanceAccount[], currency: string }): void;
@@ -16,14 +19,15 @@ const emit = defineEmits<{
  * The currency decides how many digits every stored amount has, so a vault
  * that guesses wrong has to be rescaled later. It used to default to US
  * dollars in the interface and to đồng in the assistant, which meant the two
- * halves of the app disagreed about what the numbers meant.
+ * halves of the app disagreed about what the numbers meant. Someone using the
+ * app in Vietnamese most likely counts in đồng, so that is the starting pick.
  */
-const currency = ref('USD');
+const currency = ref(locale.value.startsWith('vi') ? 'VND' : 'USD');
 const otherCurrencies = allCurrencies().filter(c => !COMMON_CURRENCIES.includes(c));
 
 const accounts = ref<FinanceAccount[]>([
-    { id: `acc-${Date.now()}-1`, name: 'Cash', initialBalance: 0 },
-    { id: `acc-${Date.now()}-2`, name: 'Bank Account', initialBalance: 0 }
+    { id: `acc-${Date.now()}-1`, name: t('finance.account_type_cash'), initialBalance: 0 },
+    { id: `acc-${Date.now()}-2`, name: t('finance.default_bank_account'), initialBalance: 0 }
 ]);
 
 const newAccountName = ref('');
@@ -67,7 +71,14 @@ const updateBalance = (idx: number, e: Event) => {
     accounts.value[idx].initialBalance = parseAmountInput(formatted, currency.value);
 };
 
+/**
+ * An account typed into the box but never added with + is still one the
+ * person meant to have: it used to be dropped without a word.
+ */
+const canFinish = () => accounts.value.length > 0 || newAccountName.value.trim() !== '';
+
 const finish = () => {
+    if (newAccountName.value.trim()) addAccount();
     if (accounts.value.length === 0) return;
     
     emit('complete', {
@@ -80,7 +91,10 @@ const finish = () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-base dark:bg-base-dark">
+  <div class="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-base dark:bg-base-dark">
+    <!-- Scrolls as a whole: on a phone, or with the keyboard up, the form is
+         taller than the screen and the Start button was out of reach. -->
+    <div class="min-h-full flex items-center justify-center p-4">
       <div class="max-w-xl w-full flex flex-col gap-8 animate-in fade-in slide-in-from-bottom-8 duration-500">
           
           <div class="text-center">
@@ -92,29 +106,29 @@ const finish = () => {
           </div>
           
           <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-3xl p-6 shadow-xl">
-              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">Currency</label>
+              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">{{ $t('finance.currency') }}</label>
               <select v-model="currency" class="w-full bg-gray-50 dark:bg-gray-800/50 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm font-medium text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 mb-2">
-                  <optgroup label="Common">
+                  <optgroup :label="$t('finance.currency_common')">
                       <option v-for="c in COMMON_CURRENCIES" :key="c" :value="c">{{ c }}</option>
                   </optgroup>
-                  <optgroup label="All">
+                  <optgroup :label="$t('finance.all')">
                       <option v-for="c in otherCurrencies" :key="c" :value="c">{{ c }}</option>
                   </optgroup>
               </select>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mb-6">Every amount is stored in this currency. You can change it later, but existing amounts are not converted.</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-6">{{ $t('finance.currency_hint') }}</p>
 
               <h2 class="text-lg font-bold text-text dark:text-text-dark mb-4">{{ $t('finance.declare_assets') }}</h2>
               
               <div class="space-y-3 mb-6">
                   <div v-for="(acc, idx) in accounts" :key="acc.id" class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
                       <div class="flex-1">
-                          <input type="text" v-model="acc.name" class="w-full bg-transparent border-none font-medium text-text dark:text-text-dark focus:outline-none focus:ring-0 p-0 mb-1 text-sm" placeholder="Account Name" />
-                          <div class="relative">
+                          <input type="text" v-model="acc.name" class="w-full bg-transparent border-none font-medium text-text dark:text-text-dark focus:outline-none focus:ring-0 p-0 mb-2 text-sm" :placeholder="$t('finance.account_name')" />
+                          <label class="block">
+                              <span class="block text-xs uppercase text-gray-500 dark:text-gray-400 font-bold tracking-wider">{{ $t('finance.balance_label') }}</span>
                               <input type="text" inputmode="decimal" :value="formatMinorForInput(acc.initialBalance, currency)" @input="updateBalance(idx, $event)" class="w-full bg-transparent border-none text-xl font-bold text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-0 p-0" placeholder="0" />
-                              <span class="absolute left-0 bottom-full text-[10px] uppercase text-gray-400 font-bold tracking-wider">Balance</span>
-                          </div>
+                          </label>
                       </div>
-                      <button @click="removeAccount(idx)" class="p-3 text-gray-400 hover:text-red-500 transition-colors rounded-xl hover:bg-white dark:hover:bg-gray-700" aria-label="Remove Account">
+                      <button @click="removeAccount(idx)" class="p-3 text-gray-500 dark:text-gray-400 hover:text-red-500 transition-colors rounded-xl hover:bg-white dark:hover:bg-gray-700" :aria-label="$t('finance.remove_account')">
                           <Trash2 class="w-5 h-5" />
                       </button>
                   </div>
@@ -127,18 +141,19 @@ const finish = () => {
                       <div class="relative flex-1">
                           <input type="text" inputmode="decimal" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.current_balance_ph')" />
                       </div>
-                      <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50" aria-label="Add Account">
+                      <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50" :aria-label="$t('finance.add_account')">
                           <Plus class="w-4 h-4" />
                       </button>
                   </div>
               </div>
               
-              <button @click="finish" :disabled="accounts.length === 0" class="w-full py-4 rounded-xl bg-text dark:bg-text-dark text-base dark:text-base-dark font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50">
+              <button @click="finish" :disabled="!canFinish()" class="w-full py-4 rounded-xl bg-text dark:bg-text-dark text-base dark:text-base-dark font-bold flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-50">
                   <Check class="w-5 h-5" />
-                  Start Using
+                  {{ $t('finance.start_using') }}
               </button>
           </div>
           
       </div>
+    </div>
   </div>
 </template>

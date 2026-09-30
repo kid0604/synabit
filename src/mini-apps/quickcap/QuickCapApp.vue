@@ -7,7 +7,7 @@ import { useIntersectionObserver, useWindowSize } from '@vueuse/core';
 import { useEventBus } from '../../composables/useEventBus';
 import { usePlatform } from '../../composables/usePlatform';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask, message, open as openDialog } from '@tauri-apps/plugin-dialog';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { CheckSquare, Image as ImageIcon, Trash2, Palette, Tag, X, Search, FileText, LayoutGrid, List, Plus, Mic, Square, Pin } from 'lucide-vue-next';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
@@ -24,6 +24,10 @@ import { currentCurrency } from '../finance/currency';
 import type { Transaction } from '../finance/types';
 import type { PromoteTarget } from './PromoteModal.vue';
 import { logger } from '../../utils/logger';
+import { useUndoableAction } from '../../composables/useUndoableAction';
+import { showAppNotice } from '../../composables/useAppNotice';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { CAP_COLOURS, colourClass, deriveTitle, extractTags, removeTagFromContent, stripColorComment } from './parsing';
 import { makeThumbnail, thumbnailNameFor } from '../../shared/thumbnails';
 import { useQuickCapWriter } from './useQuickCapWriter';
@@ -32,7 +36,9 @@ import { useAudioCapture, formatDuration } from './useAudioCapture';
 const bus = useEventBus();
 const ns = useNodeService();
 const { t, locale } = useI18n();
-const { isMobileOS } = usePlatform();
+const { isMobileOS, isMac } = usePlatform();
+// The save shortcut as this OS spells it; the handler accepts both.
+const saveShortcut = computed(() => (isMac.value ? 'Cmd+Enter' : 'Ctrl+Enter'));
 const { writeCap, createCap } = useQuickCapWriter();
 const audio = useAudioCapture();
 
@@ -54,6 +60,15 @@ export interface NodeMetadata {
 }
 
 const quickCaps = ref<NodeMetadata[]>([]);
+
+/**
+ * Caps deleted but still inside their undo window (see `deleteCaps`). They
+ * are still on disk, so any reload in the window — and the file watcher fires
+ * plenty — would put them straight back in the list underneath the toast
+ * offering to undo their deletion.
+ */
+const pendingDeleteIds = new Set<string>();
+
 const newCapText = ref('');
 const isSubmitting = ref(false);
 const inputRef = ref<HTMLTextAreaElement | null>(null);
@@ -308,7 +323,7 @@ const loadCaps = async () => {
     try {
         const nodes: any[] = await ns.getNodes('quickcap');
 
-        quickCaps.value = nodes.map(mapNodeToQuickCap);
+        quickCaps.value = nodes.map(mapNodeToQuickCap).filter((cap) => !pendingDeleteIds.has(cap.id));
 
         // Drop cached previews for caps that are no longer here, so the map
         // tracks the vault rather than growing for the life of the session.
@@ -322,7 +337,10 @@ const loadCaps = async () => {
 };
 
 const saveSelectedCap = async () => {
-    if (!selectedCap.value) return;
+    // Held locally: a delete flushes this and closes the card in the same
+    // tick, so `selectedCap` is null by the time the write comes back.
+    const cap = selectedCap.value;
+    if (!cap) return;
 
     // What the user typed is what gets written. The previous version tore
     // every tag out of the body and re-appended the set at the bottom,
@@ -332,16 +350,16 @@ const saveSelectedCap = async () => {
     // Older caps carry their colour as an HTML comment in the body. Keep
     // whatever the file already had until the migration retires the format;
     // dropping it here would blank the card's colour on the next keystroke.
-    const colorMatch = selectedCap.value.content.match(/<!--color:(.*?)-->/);
+    const colorMatch = cap.content.match(/<!--color:(.*?)-->/);
     if (colorMatch) {
        finalPayload = `<!--color:${colorMatch[1]}-->\n${finalPayload}`;
     }
     
-    if (selectedCap.value.content === finalPayload) return;
+    if (cap.content === finalPayload) return;
     
     try {
-        await writeCap({ relPath: selectedCap.value.id, nodeType: selectedCap.value.node_type, properties: selectedCap.value.properties, content: finalPayload });
-        selectedCap.value.content = finalPayload;
+        await writeCap({ relPath: cap.id, nodeType: cap.node_type, properties: cap.properties, content: finalPayload });
+        cap.content = finalPayload;
     } catch(e) {
         logger.error("Failed to update note", e);
     }
@@ -457,6 +475,17 @@ const closeFullView = async () => {
     if (editor.value) {
        editor.value.commands.clearContent();
     }
+};
+
+/**
+ * Escape or a click on the scrim. The dialog catches Escape before the window
+ * handler sees it, so the one-layer-at-a-time rule is kept here too: an open
+ * colour picker or tag field goes first, the card after.
+ */
+const onFullViewDismiss = () => {
+    if (colorPickerCapId.value) { colorPickerCapId.value = null; return; }
+    if (taggingCapId.value) { taggingCapId.value = null; return; }
+    void closeFullView();
 };
 
 const openEditById = async (id: string) => {
@@ -618,7 +647,7 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
           
           const targetRef = inputRef.value;
           const oldPlaceholder = targetRef?.placeholder;
-          if (targetRef) targetRef.placeholder = "Uploading image...";
+          if (targetRef) targetRef.placeholder = t('quickcap.uploading_image');
           isSubmitting.value = true;
           try {
              const assetPath = await invoke<string>('save_asset', {
@@ -632,7 +661,7 @@ const handleGlobalPaste = async (e: ClipboardEvent) => {
              logger.error("Paste image save error:", err);
           } finally {
              isSubmitting.value = false;
-             if (targetRef) targetRef.placeholder = oldPlaceholder || "Take a quick note...";
+             if (targetRef) targetRef.placeholder = oldPlaceholder || t('quickcap.placeholder_mobile');
           }
       }
    }
@@ -642,7 +671,7 @@ const pickImageForNewCap = async () => {
     try {
         const selected = await openDialog({
             multiple: false,
-            filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+            filters: [{ name: t('quickcap.image_files'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
         });
         if (selected && typeof selected === 'string') {
             const relPath = await invoke<string>('copy_asset_to_vault', { 
@@ -662,7 +691,7 @@ const pickImageForExistingCap = async (cap: NodeMetadata) => {
     try {
         const selected = await openDialog({
             multiple: false,
-            filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
+            filters: [{ name: t('quickcap.image_files'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] }]
         });
         if (selected && typeof selected === 'string') {
             const relPath = await invoke<string>('copy_asset_to_vault', { 
@@ -791,7 +820,7 @@ const confirmTransaction = async (tx: Transaction) => {
         bus.emit('node:updated', { nodeType: 'finance_month', id: relPath, title: '' });
     } catch (e) {
         logger.error('Could not record the transaction', e);
-        await message(t('quickcap.transaction_failed'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.transaction_failed_retry'), 'error');
     }
 };
 
@@ -829,7 +858,7 @@ const appendToNote = async (caps: NodeMetadata[], relPath: string, title: string
         logger.info(`Cap appended to ${relPath}`);
     } catch (e) {
         logger.error('Could not append the cap to that note', e);
-        await message(t('quickcap.append_failed'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.append_failed_retry'), 'error');
     }
 };
 
@@ -891,7 +920,7 @@ const promoteToEvent = async (caps: NodeMetadata[]) => {
         bus.emit('navigate:to-item', { app: 'calendar', itemId: relPath });
     } catch (e) {
         logger.error('Could not turn the cap into an event', e);
-        await message(t('quickcap.convert_task_error'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.convert_event_failed'), 'error');
     }
 };
 
@@ -922,7 +951,7 @@ const appendToPerson = async (caps: NodeMetadata[], relPath: string, title: stri
         bus.emit('node:updated', { nodeType: 'person', id: relPath, title });
     } catch (e) {
         logger.error('Could not append the cap to that person', e);
-        await message(t('quickcap.append_person_failed'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.append_person_failed_retry'), 'error');
     }
 };
 
@@ -1027,13 +1056,13 @@ const confirmTurnIntoNote = async (payload: any) => {
             tagsArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
         }
         
-        const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const safeName = (payload.title || t('note.untitled_note')).replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const relPath = `Notes/${safeName}_${Date.now()}.md`;
 
         await ns.writeNode({
             relPath: relPath,
             nodeType: 'note',
-            title: payload.title || 'Untitled',
+            title: payload.title || t('note.untitled_note'),
             properties: {
                 tags: tagsArray,
                 // The task path has always recorded where it came from; the
@@ -1054,7 +1083,7 @@ const confirmTurnIntoNote = async (payload: any) => {
         closeNoteModal();
     } catch(e) {
         logger.error("Failed to convert to note", e);
-        await message(t('quickcap.convert_note_error'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.convert_note_failed_retry'), 'error');
     }
 };
 
@@ -1064,13 +1093,13 @@ const confirmTurnIntoTask = async (payload: any) => {
     try {
         const tagArray = payload.tags.split(',').map((t: string) => t.trim()).filter((t: string) => t !== '');
         
-        const safeName = (payload.title || 'Untitled').replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const safeName = (payload.title || t('task.untitled_task')).replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const relPath = `Tasks/${safeName}_${Date.now()}.md`;
         
         await ns.writeNode({
             relPath: relPath,
             nodeType: 'task',
-            title: payload.title || 'Untitled',
+            title: payload.title || t('task.untitled_task'),
             properties: {
                 status: payload.status,
                 is_transferred: payload.is_transferred,
@@ -1093,7 +1122,7 @@ const confirmTurnIntoTask = async (payload: any) => {
         closeTaskModal();
     } catch(e) {
         logger.error("Failed to create task", e);
-        await message(t('quickcap.convert_task_error'), { title: 'Synabit', kind: 'error' });
+        showAppNotice(t('quickcap.convert_task_failed_retry'), 'error');
     }
 };
 
@@ -1256,7 +1285,7 @@ const renderPreview = (content: string) => {
         taskOrdinal += 1;
         const done = match[2] !== ' ';
         const box = done
-            ? '<span class="inline-flex items-center justify-center w-[15px] h-[15px] rounded border border-transparent bg-black dark:bg-white text-white dark:text-black text-[10px] leading-none">✓</span>'
+            ? '<span class="inline-flex items-center justify-center w-[15px] h-[15px] rounded border border-transparent bg-black dark:bg-white text-white dark:text-black text-xs leading-none">✓</span>'
             : '<span class="inline-block w-[15px] h-[15px] rounded border border-gray-400 dark:border-gray-500"></span>';
         return `<span data-task="${taskOrdinal}" class="flex items-start gap-2 my-0.5 cursor-pointer group/task"><span class="mt-[3px] shrink-0">${box}</span><span class="${done ? 'line-through opacity-50' : ''}">${match[3]}</span></span>`;
     }).join('\n');
@@ -1290,7 +1319,7 @@ const renderPreview = (content: string) => {
             absPath = `${cleanVaultPath}${sep}${displayPathForAsset(path)}`;
         }
         const src = convertFileSrc(absPath);
-        return `<img src="${src}" alt="${alt}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
+        return `<img src="${src}" alt="${alt}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-border-dark" loading="lazy" />`;
     });
     
     // Process HTML images exported by raw Markdown serializers
@@ -1310,7 +1339,7 @@ const renderPreview = (content: string) => {
             absPath = `${cleanVaultPath}${sep}${displayPathForAsset(path)}`;
         }
         const src = convertFileSrc(absPath);
-        return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-[#2c2c2c]" loading="lazy" />`;
+        return `<img src="${src}" class="max-w-full max-h-64 object-contain rounded-lg my-2 border border-gray-200 dark:border-border-dark" loading="lazy" />`;
     });
     
     return DOMPurify.sanitize(html, {
@@ -1653,12 +1682,6 @@ const handleTriageKey = (e: KeyboardEvent) => {
 };
 
 /**
- * Delete several caps behind one confirmation.
- *
- * One dialog for the batch, not one per cap: asking forty times is not forty
- * times the safety, it is a prompt people learn to dismiss without reading.
- */
-/**
  * Tick or untick one item of a cap's checklist.
  *
  * Written straight back into the Markdown, because that is where the list
@@ -1726,63 +1749,91 @@ const insertChecklistItem = async () => {
     field?.setSelectionRange(at + prefix.length, at + prefix.length);
 };
 
+// ─── Deleting, held back long enough to take it back ───────────────
+//
+// No confirmation dialog. The cap leaves the list at once and the file is
+// only moved to the trash once the undo window closes — nothing on disk
+// changes inside it, so Undo is a cancelled timer rather than a race against
+// sync's tombstone. One batch at a time: a second delete commits the first.
+const undoDelete = useUndoableAction();
+
 const deleteCaps = async (caps: NodeMetadata[]) => {
-    if (caps.length === 0) return;
-    if (caps.length === 1) {
-        await deleteCap(caps[0].id);
-        return;
+    // Indexes are taken before anything is removed and kept ascending, which is
+    // the order they have to be reinserted in to land back on their own rows.
+    const held = caps
+        .map((cap) => ({ cap, index: quickCaps.value.findIndex((c) => c.id === cap.id) }))
+        .filter((e) => e.index !== -1)
+        .sort((a, b) => a.index - b.index);
+    if (held.length === 0) return;
+
+    const doomed = new Set(held.map((e) => e.cap.id));
+    for (const id of doomed) pendingDeleteIds.add(id);
+
+    // A cap open in the full view may have an edit still waiting on the
+    // debounce. Write it now rather than drop it — an undo would otherwise
+    // bring the cap back without it. The write reads the card before its
+    // first `await`, so the view can close straight away; the move waits.
+    let flushed: Promise<void> = Promise.resolve();
+    if (selectedCap.value && doomed.has(selectedCap.value.id)) {
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = null;
+        flushed = saveSelectedCap();
+        selectedCap.value = null;
+        editor.value?.commands.clearContent();
     }
 
-    const confirmed = await ask(t('quickcap.delete_selected_body'), {
-        title: t('quickcap.delete_selected_title', { count: caps.length }),
-        kind: 'warning',
-        okLabel: t('quickcap.delete_confirm'),
-        cancelLabel: t('quickcap.cancel'),
-    });
-    if (!confirmed) return;
+    quickCaps.value = quickCaps.value.filter((c) => !doomed.has(c.id));
+    const next = new Set(selectedIds.value);
+    for (const id of doomed) next.delete(id);
+    selectedIds.value = next;
 
-    for (const cap of caps) {
-        try {
-            await invoke('trash_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
-            const index = quickCaps.value.findIndex((c) => c.id === cap.id);
-            if (index !== -1) quickCaps.value.splice(index, 1);
-            selectedIds.value.delete(cap.id);
-            bus.emit('node:deleted', { nodeType: 'quickcap', id: cap.id });
-        } catch (e) {
-            logger.error(`Could not move ${cap.id} to the trash`, e);
-        }
-    }
-    clearSelection();
+    const label = held.length === 1
+        ? t('common.deleted_item', { name: deriveTitle(held[0].cap.content) })
+        : t('common.deleted_count', { count: held.length }, held.length);
+
+    await undoDelete.run(
+        label,
+        async () => {
+            await flushed;
+            // Each cap on its own, so one that cannot be moved does not strand
+            // the rest; a failure reloads the list, which is what puts it back.
+            // An id stays hidden until its file is in the trash: dropped any
+            // earlier, a watcher reload mid-loop flashed the cap back.
+            let failed = false;
+            for (const { cap } of held) {
+                try {
+                    await invoke('trash_node_file', { vaultPath: props.vaultPath, relPath: cap.id });
+                    pendingDeleteIds.delete(cap.id);
+                    bus.emit('node:deleted', { nodeType: 'quickcap', id: cap.id });
+                } catch (e) {
+                    pendingDeleteIds.delete(cap.id);
+                    logger.error(`Could not move ${cap.id} to the trash`, e);
+                    failed = true;
+                }
+            }
+            if (failed) {
+                try {
+                    await loadCaps();
+                } catch (e) {
+                    logger.error('Reload after a failed delete failed', e);
+                }
+                showAppNotice(t('quickcap.delete_failed_restored'), 'error');
+            }
+        },
+        () => {
+            const restored = [...quickCaps.value];
+            for (const { cap, index } of held) {
+                pendingDeleteIds.delete(cap.id);
+                restored.splice(Math.min(index, restored.length), 0, cap);
+            }
+            quickCaps.value = restored;
+        },
+    );
 };
 
-const deleteCap = async (id: string) => {
-    if (!quickCaps.value.some((cap) => cap.id === id)) return;
-
-    // The dialog names the action and says what actually happens. Every other
-    // delete in the app warns that it "cannot be undone" — here that would be
-    // untrue, and a warning the user can discover is false is worse than no
-    // warning at all.
-    const confirmed = await ask(t('quickcap.delete_body'), {
-        title: t('quickcap.delete_title'),
-        kind: 'warning',
-        okLabel: t('quickcap.delete_confirm'),
-        cancelLabel: t('quickcap.cancel'),
-    });
-    if (!confirmed) return;
-
-    try {
-        await invoke('trash_node_file', { vaultPath: props.vaultPath, relPath: id });
-
-        const index = quickCaps.value.findIndex((cap) => cap.id === id);
-        if (index !== -1) quickCaps.value.splice(index, 1);
-        if (selectedCap.value?.id === id) {
-            selectedCap.value = null;
-        }
-        bus.emit('node:deleted', { nodeType: 'quickcap', id });
-    } catch (e) {
-        logger.error('Failed to move quick cap to trash', e);
-        await message(t('quickcap.delete_failed'), { title: 'Synabit', kind: 'error' });
-    }
+const deleteCap = (id: string) => {
+    const cap = quickCaps.value.find((c) => c.id === id);
+    return cap ? deleteCaps([cap]) : Promise.resolve();
 };
 </script>
 
@@ -1792,7 +1843,7 @@ const deleteCap = async (id: string) => {
     share `max-w-4xl px-4`, so they line up on the same two edges instead of
     each centring on its own width.
   -->
-  <div class="relative flex flex-col h-full bg-[#fdfdfc] dark:bg-[#242424] overflow-y-auto w-full pt-12 pb-16 px-4">
+  <div class="relative flex flex-col h-full bg-base dark:bg-base-dark overflow-y-auto w-full pt-12 pb-16 px-4">
     <!-- App navigation stays in the corner, apart from the list controls -->
     <div class="absolute top-3 left-4">
         <NavButtons />
@@ -1800,24 +1851,24 @@ const deleteCap = async (id: string) => {
 
     <!-- Input Bar (Desktop Only) -->
     <div class="hidden md:block shrink-0 w-full max-w-4xl px-4 mx-auto mb-10">
-    <div class="flex flex-col w-full bg-white dark:bg-[#1e1e1e] rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all">
+    <div class="flex flex-col w-full bg-white dark:bg-surface-dark rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_8px_rgba(0,0,0,0.2)] border border-border dark:border-border-dark overflow-hidden focus-within:ring-1 focus-within:ring-black dark:focus-within:ring-white transition-all">
         <textarea
            ref="inputRef"
            v-model="newCapText"
            @input="handleInput"
            @keydown.enter.ctrl="submitCap"
            @keydown.enter.meta="submitCap"
-           :placeholder="$t('quickcap.placeholder')"
-           class="w-full bg-transparent p-5 min-h-[60px] max-h-[400px] resize-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] overflow-y-auto"
+           :placeholder="$t('quickcap.placeholder', { shortcut: saveShortcut })"
+           class="w-full bg-transparent p-5 min-h-[60px] max-h-[400px] resize-none outline-none text-text dark:text-text-dark overflow-y-auto"
         ></textarea>
 
         <!-- What is attached, shown rather than described -->
         <div v-if="draftAttachments.length" class="flex flex-wrap gap-2 px-5 pb-2">
             <div v-for="path in draftAttachments" :key="path" class="relative">
-                <div v-if="isAudioPath(path)" class="w-16 h-16 rounded-lg border border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-center bg-gray-50 dark:bg-[#2a2a2a]" :title="$t('quickcap.audio_note')">
-                    <Mic class="w-6 h-6 text-gray-500" />
+                <div v-if="isAudioPath(path)" class="w-16 h-16 rounded-lg border border-border dark:border-border-dark flex items-center justify-center bg-gray-50 dark:bg-surface-hover-dark" :title="$t('quickcap.audio_note')">
+                    <Mic class="w-6 h-6 text-gray-500 dark:text-gray-400" />
                 </div>
-                <img v-else :src="draftImageSrc(path)" alt="" class="w-16 h-16 object-cover rounded-lg border border-[#e6e6e6] dark:border-[#2c2c2c]" />
+                <img v-else :src="draftImageSrc(path)" alt="" class="w-16 h-16 object-cover rounded-lg border border-border dark:border-border-dark" />
                 <button
                     @click="removeDraftImage(path)"
                     :aria-label="$t('quickcap.remove_image')"
@@ -1831,10 +1882,10 @@ const deleteCap = async (id: string) => {
         <!-- Actions bottom bar -->
         <div class="flex items-center justify-between p-2 px-3">
            <div class="flex items-center gap-1 opacity-70">
-              <button @click="insertChecklistItem" :title="$t('quickcap.checklist')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="insertChecklistItem" :title="$t('quickcap.checklist')" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer">
                   <CheckSquare class="w-4 h-4"/>
               </button>
-              <button @click="pickImageForNewCap" :title="$t('quickcap.pick_image')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="pickImageForNewCap" :title="$t('quickcap.pick_image')" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer">
                   <ImageIcon class="w-4 h-4"/>
               </button>
               <button
@@ -1842,17 +1893,17 @@ const deleteCap = async (id: string) => {
                   @click="toggleRecording"
                   :title="audio.state.value === 'recording' ? $t('quickcap.stop_recording') : $t('quickcap.record_audio')"
                   class="p-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
-                  :class="audio.state.value === 'recording' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                  :class="audio.state.value === 'recording' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark'"
               >
                   <Square v-if="audio.state.value === 'recording'" class="w-4 h-4 fill-current"/>
                   <Mic v-else class="w-4 h-4"/>
-                  <span v-if="audio.state.value === 'recording'" class="text-[11px] font-mono tabular-nums">{{ formatDuration(audio.durationMs.value) }}</span>
+                  <span v-if="audio.state.value === 'recording'" class="text-xs font-mono tabular-nums">{{ formatDuration(audio.durationMs.value) }}</span>
               </button>
-              <button @click="appendTagToInput" :title="$t('quickcap.add_tag')" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer">
+              <button @click="appendTagToInput" :title="$t('quickcap.add_tag')" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer">
                   <Tag class="w-4 h-4"/>
               </button>
            </div>
-           <button @click="submitCap" :disabled="isSubmitting || !hasDraft" class="px-5 py-1.5 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all disabled:opacity-50 cursor-pointer shadow-sm">
+           <button @click="submitCap" :disabled="isSubmitting || !hasDraft" class="btn-primary">
                {{ $t('quickcap.save') }}
            </button>
         </div>
@@ -1873,7 +1924,7 @@ const deleteCap = async (id: string) => {
                 :key="option"
                 @click="ageFilter = option"
                 class="px-2.5 py-1 rounded-md text-[13px] transition-colors cursor-pointer whitespace-nowrap"
-                :class="ageFilter === option ? 'bg-black/5 dark:bg-white/10 text-[#1c1c1e] dark:text-[#f4f4f5] font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
+                :class="ageFilter === option ? 'bg-accent/10 text-accent dark:text-accent-dark font-medium' : 'text-gray-500 hover:text-gray-800 dark:hover:text-gray-200'"
             >
                 {{ $t(`quickcap.filter_${option}`) }}<span v-if="option === 'cold'" class="ml-1 opacity-60">{{ coldCount }}</span>
             </button>
@@ -1882,33 +1933,37 @@ const deleteCap = async (id: string) => {
         <div class="flex items-center justify-end gap-3 flex-1 min-w-0">
         <div class="relative w-full sm:max-w-xs group">
             <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                <Search class="h-4 w-4 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
+                <Search class="h-4 w-4 text-gray-500 dark:text-gray-400 group-focus-within:text-accent transition-colors" />
             </div>
             <input 
                 v-model="searchQuery" 
                 type="text" 
-                class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-[#2c2c2c] rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
+                class="block w-full pl-10 pr-3 py-2 border border-gray-200 dark:border-border-dark rounded-full leading-5 bg-white dark:bg-surface-dark text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]" 
                 :placeholder="$t('quickcap.search_placeholder')" 
             />
             <button v-if="searchQuery" @click="searchQuery = ''" class="absolute inset-y-0 right-0 pr-3 flex items-center cursor-pointer" :aria-label="$t('quickcap.clear_search')">
-                <X class="h-4 w-4 text-gray-400 hover:text-gray-600 transition-colors" />
+                <X class="h-4 w-4 text-gray-500 dark:text-gray-400 hover:text-gray-600 transition-colors" />
             </button>
         </div>
 
-        <div class="ml-1 flex shrink-0 bg-white dark:bg-[#1e1e1e] rounded-lg border border-gray-200 dark:border-[#2c2c2c] p-1 shadow-sm md:hidden">
+        <div class="ml-1 flex shrink-0 bg-white dark:bg-surface-dark rounded-lg border border-gray-200 dark:border-border-dark p-1 shadow-sm md:hidden">
             <button 
                 @click="mobileViewMode = 'list'" 
                 class="p-1.5 rounded-md transition-colors" 
-                :class="mobileViewMode === 'list' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                :class="mobileViewMode === 'list' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-surface-hover-dark'"
                 :title="$t('quickcap.list_view')"
+                :aria-label="$t('quickcap.list_view')"
+                :aria-pressed="mobileViewMode === 'list'"
             >
                 <List class="w-4 h-4" />
             </button>
             <button 
                 @click="mobileViewMode = 'grid'" 
                 class="p-1.5 rounded-md transition-colors" 
-                :class="mobileViewMode === 'grid' ? 'bg-black dark:bg-white text-white dark:text-black shadow-sm' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                :class="mobileViewMode === 'grid' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-surface-hover-dark'"
                 :title="$t('quickcap.grid_view')"
+                :aria-label="$t('quickcap.grid_view')"
+                :aria-pressed="mobileViewMode === 'grid'"
             >
                 <LayoutGrid class="w-4 h-4" />
             </button>
@@ -1926,17 +1981,39 @@ const deleteCap = async (id: string) => {
             class="relative group w-full cursor-pointer rounded-2xl transition-shadow"
             :class="[
                 cursor === index ? 'ring-2 ring-black dark:ring-white ring-offset-2 ring-offset-[#fdfdfc] dark:ring-offset-[#242424]' : '',
-                selectedIds.has(cap.id) ? 'ring-2 ring-blue-500 ring-offset-2 ring-offset-[#fdfdfc] dark:ring-offset-[#242424]' : '',
+                selectedIds.has(cap.id) ? 'ring-2 ring-accent ring-offset-2 ring-offset-[#fdfdfc] dark:ring-offset-[#242424]' : '',
             ]"
-            @click="openFullView(cap)"
+            @click="selectedIds.size > 0 ? toggleSelected(cap.id) : openFullView(cap)"
         >
+            <!--
+              The way into a selection that is not the Space key. Shown on
+              hover and keyboard focus, always on a touch screen (which has
+              neither), and on every card once anything is selected — at that
+              point a click on a card ticks it rather than opening it.
+            -->
+            <!-- The box stays 16px; the label around it is what a pointer has
+                 to hit — 24px, and 44px under a finger. -->
+            <label
+                class="absolute top-0.5 left-0.5 z-20 w-6 h-6 pointer-coarse:top-0 pointer-coarse:left-0 pointer-coarse:w-11 pointer-coarse:h-11 flex items-center justify-center cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100"
+                :class="{ '!opacity-100': selectedIds.size > 0 }"
+                :title="$t('quickcap.select_cap')"
+                @click.stop
+            >
+                <input
+                    type="checkbox"
+                    class="w-4 h-4 accent-accent cursor-pointer"
+                    :checked="selectedIds.has(cap.id)"
+                    :aria-label="$t('quickcap.select_cap')"
+                    @click.stop="toggleSelected(cap.id)"
+                />
+            </label>
             <div
                 class="rounded-2xl shadow-sm hover:shadow-md border transition-all relative flex flex-col"
                 :class="[
-                    colourClass(cap.color) || 'bg-white dark:bg-[#1e1e1e]',
+                    colourClass(cap.color) || 'bg-white dark:bg-surface-dark',
                     isCold(cap)
-                        ? 'border-dashed border-gray-300 dark:border-[#3a3a3a]'
-                        : 'border-[#e6e6e6] dark:border-[#2c2c2c]',
+                        ? 'border-dashed border-gray-300 dark:border-border-subtle-dark'
+                        : 'border-border dark:border-border-dark',
                 ]"
                 :title="isCold(cap) ? $t('quickcap.cold_hint', { days: 14 }) : undefined"
                 style="max-height: 320px;"
@@ -1945,15 +2022,15 @@ const deleteCap = async (id: string) => {
 
                <!-- Text Content Wrapper -->
                <div class="p-5 pb-0 flex-1 overflow-hidden relative" :style="(cap.content.length > 250 || cap.content.split('\n').length > 6) ? '-webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%); mask-image: linear-gradient(to bottom, black 60%, transparent 100%);' : ''">
-                   <div class="whitespace-pre-wrap text-[15px] font-medium leading-normal text-[#1c1c1e] dark:text-[#f4f4f5] break-words" v-html="html" @click="onPreviewClick($event, cap)"></div>
+                   <div class="whitespace-pre-wrap text-[15px] font-medium leading-normal text-text dark:text-text-dark break-words" v-html="html" @click="onPreviewClick($event, cap)"></div>
                </div>
                
                <!-- Tags Wrapper (Always visible) -->
                <div class="px-5 pt-3 pb-11 relative z-10 w-full shrink-0">
                    <div v-if="tags.length > 0" class="flex flex-wrap gap-1.5 w-full">
-                       <span v-for="tag in tags" :key="tag" class="group/tag inline-flex items-center text-[11px] font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2 py-0.5 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
+                       <span v-for="tag in tags" :key="tag" class="group/tag inline-flex items-center text-xs font-medium text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-surface-hover-dark px-2 py-0.5 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                            {{ tag }}
-                           <button @click.stop="removeTag(cap, tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="$t('quickcap.remove_tag')">
+                           <button @click.stop="removeTag(cap, tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-focus-within/tag:opacity-100 pointer-coarse:opacity-100 group-hover/tag:w-auto group-focus-within/tag:w-auto pointer-coarse:w-auto transition-all text-gray-500 dark:text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="$t('quickcap.remove_tag')" :title="$t('quickcap.remove_tag')">
                                <X class="w-2.5 h-2.5" />
                            </button>
                        </span>
@@ -1963,52 +2040,53 @@ const deleteCap = async (id: string) => {
                <!-- Bottom Actions Bar (Fixed at bottom of card) -->
                <div class="absolute bottom-0 left-0 w-full px-4 py-2 border-t border-transparent group-hover:border-black/5 dark:group-hover:border-white/5 flex items-center justify-between z-10 transition-colors">
                    <!-- Date (visible by default, hidden on hover) -->
-                  <span class="text-[11px] text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none" :class="mobileViewMode === 'grid' ? 'opacity-100' : 'opacity-0 md:opacity-100'">{{ formatDate(cap.created_at) }}</span>
+                  <span class="text-xs text-gray-500 dark:text-gray-400 font-mono tracking-tight group-hover:opacity-0 transition-opacity absolute px-1 pointer-events-none" :class="mobileViewMode === 'grid' ? 'opacity-100' : 'opacity-0 md:opacity-100'">{{ formatDate(cap.created_at) }}</span>
                   
                   <!-- Actions (hidden by default, visible on hover) -->
-                  <div class="flex items-center transition-opacity w-full justify-between" :class="mobileViewMode === 'grid' ? 'opacity-0 group-hover:opacity-100' : 'opacity-100 md:opacity-0 group-hover:opacity-100'" @click.stop>
+                  <div class="flex items-center transition-opacity w-full justify-between" :class="mobileViewMode === 'grid' ? 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100' : 'opacity-100 md:opacity-0 group-hover:opacity-100'" @click.stop>
                       <div v-if="taggingCapId === cap.id" class="flex items-center w-full bg-gray-50 dark:bg-[#1a1a1a] rounded px-2 py-0.5 mr-2">
-                          <span class="text-gray-400 text-xs mr-1">#</span>
+                          <span class="text-gray-500 dark:text-gray-400 text-xs mr-1">#</span>
                           <input 
                               v-model="tagInputText" 
                               @keydown.enter.prevent="saveInlineTag(cap)"
                               @keydown.esc.stop="taggingCapId = null"
-                              class="bg-transparent border-none outline-none text-xs w-full text-[#1c1c1e] dark:text-[#f4f4f5]"
-                              placeholder="tag..."
+                              class="bg-transparent border-none outline-none text-xs w-full text-text dark:text-text-dark"
+                              :placeholder="$t('quickcap.tag_placeholder')"
                               autofocus
                           />
-                          <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">{{ $t('quickcap.save') }}</button>
+                          <button @click="saveInlineTag(cap)" class="ml-1 text-black dark:text-white font-medium text-xs hover:underline">{{ $t('quickcap.save') }}</button>
                       </div>
                       <template v-else>
-                          <button @click.stop="deleteCap(cap.id)" :title="$t('quickcap.delete_note')" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
+                          <button @click.stop="deleteCap(cap.id)" :title="$t('quickcap.delete_cap')" :aria-label="$t('quickcap.delete_cap')" class="text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-full transition-colors cursor-pointer">
                               <Trash2 class="w-3.5 h-3.5"/>
                           </button>
                           <div class="flex items-center gap-0.5 relative">
                               <div class="relative">
-                                  <button @click.stop="toggleColorPicker(cap.id)" :title="$t('quickcap.change_color')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                                  <button @click.stop="toggleColorPicker(cap.id)" :title="$t('quickcap.change_color')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                       <Palette class="w-3.5 h-3.5"/>
                                   </button>
                                   
                                   <!-- Color Picker Popup -->
-                                  <div v-if="colorPickerCapId === cap.id" class="absolute bottom-[calc(100%+8px)] right-0 p-2 bg-white dark:bg-[#2a2a2a] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-50 w-[140px]" @click.stop>
+                                  <div v-if="colorPickerCapId === cap.id" class="absolute bottom-[calc(100%+8px)] right-0 p-2 bg-white dark:bg-surface-hover-dark rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-50 w-[140px]" @click.stop>
                                       <button v-for="color in PALETTE" :key="color.name" 
                                           @click="changeCapColor(cap, color.value)"
                                           class="w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110 cursor-pointer"
-                                          :class="colourClass(color.value) || 'bg-[#fdfdfc] dark:bg-[#1e1e1e]'"
-                                          :title="color.name"
+                                          :class="colourClass(color.value) || 'bg-base dark:bg-surface-dark'"
+                                          :title="$t(`quickcap.colours.${color.name}`)"
+                                          :aria-label="$t(`quickcap.colours.${color.name}`)"
                                       ></button>
                                   </div>
                               </div>
-                              <button @click.stop="setCapFlag([cap], 'pinned', !isPinned(cap))" :title="$t(isPinned(cap) ? 'quickcap.unpin' : 'quickcap.pin')" class="p-1.5 rounded-full transition-colors cursor-pointer" :class="isPinned(cap) ? 'text-amber-500' : 'text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10'">
+                              <button @click.stop="setCapFlag([cap], 'pinned', !isPinned(cap))" :title="$t(isPinned(cap) ? 'quickcap.unpin' : 'quickcap.pin')" class="p-1.5 rounded-full transition-colors cursor-pointer" :class="isPinned(cap) ? 'text-amber-500' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10'">
                                   <Pin class="w-3.5 h-3.5" :class="isPinned(cap) ? 'fill-current' : ''" />
                               </button>
-                              <button @click.stop="openPromote([cap])" :title="$t('quickcap.promote')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click.stop="openPromote([cap])" :title="$t('quickcap.promote')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <FileText class="w-3.5 h-3.5" />
                               </button>
-                              <button @click.stop="pickImageForExistingCap(cap)" :title="$t('quickcap.add_image')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click.stop="pickImageForExistingCap(cap)" :title="$t('quickcap.add_image')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <ImageIcon class="w-3.5 h-3.5"/>
                               </button>
-                              <button @click="openTagInput(cap)" :title="$t('quickcap.add_tag')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
+                              <button @click="openTagInput(cap)" :title="$t('quickcap.add_tag')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-1.5 rounded-full transition-colors cursor-pointer">
                                   <Tag class="w-3.5 h-3.5"/>
                               </button>
                           </div>
@@ -2039,6 +2117,17 @@ const deleteCap = async (id: string) => {
         </button>
     </div>
 
+    <UndoToast
+        :show="undoDelete.show.value"
+        :restart-key="undoDelete.key.value"
+        :message="undoDelete.message.value"
+        :undo-label="$t('common.undo')"
+        :seconds="undoDelete.seconds"
+        @undo="undoDelete.undo"
+        @pause="undoDelete.pause"
+        @resume="undoDelete.resume"
+    />
+
     <!-- Scroll anchor: builds the next batch of cards before it comes into view -->
     <div v-if="hasMoreToRender" ref="loadMoreAnchor" class="h-px w-full" aria-hidden="true"></div>
 
@@ -2047,13 +2136,13 @@ const deleteCap = async (id: string) => {
         <CheckSquare class="w-16 h-16 mb-4"/>
         <p class="text-lg">{{ $t('quickcap.empty_state') }}</p>
     </div>
-    <div v-else-if="filteredCaps.length === 0 && !searchQuery.trim()" class="flex flex-col items-center justify-center mt-12 w-full text-gray-400 dark:text-gray-500">
+    <div v-else-if="filteredCaps.length === 0 && !searchQuery.trim()" class="flex flex-col items-center justify-center mt-12 w-full text-gray-500 dark:text-gray-400">
         <p class="text-base">{{ $t('quickcap.no_recent', { days: COLD_AFTER_DAYS }) }}</p>
     </div>
-    <div v-else-if="filteredCaps.length === 0" class="flex flex-col items-center justify-center mt-12 w-full text-gray-400 dark:text-gray-500">
+    <div v-else-if="filteredCaps.length === 0" class="flex flex-col items-center justify-center mt-12 w-full text-gray-500 dark:text-gray-400">
         <Search class="w-12 h-12 mb-4 opacity-40"/>
         <p class="text-base">{{ $t('quickcap.no_results') }}</p>
-        <button @click="searchQuery = ''" class="mt-3 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline cursor-pointer">
+        <button @click="searchQuery = ''" class="mt-3 text-sm font-medium text-accent dark:text-accent-dark hover:underline cursor-pointer">
             {{ $t('quickcap.clear_search') }}
         </button>
     </div>
@@ -2063,23 +2152,23 @@ const deleteCap = async (id: string) => {
       `mt-auto` sets it at the foot of the page, apart from the cards, instead
       of trailing directly under whichever column happens to be longest.
     -->
-    <p v-if="!isMobileOS && quickCaps.length > 0" class="hidden md:block shrink-0 w-full max-w-4xl px-4 mx-auto mt-auto pt-10 text-[11px] text-gray-400 dark:text-gray-500 select-none">
+    <p v-if="!isMobileOS && quickCaps.length > 0" class="hidden md:block shrink-0 w-full max-w-4xl px-4 mx-auto mt-auto pt-10 text-xs text-gray-500 dark:text-gray-400 select-none">
         {{ $t('quickcap.triage_hint') }} · {{ $t('quickcap.triage_hint_select') }} · {{ $t('quickcap.triage_hint_flags') }}
     </p>
 
     <!-- Mobile FAB -->
-    <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-[0_8px_16px_rgba(37,99,235,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);" :aria-label="$t('quickcap.new_quickcap')">
+    <button @click="isMobileModalOpen = true" class="md:hidden fixed right-5 w-14 h-14 bg-accent hover:bg-accent/90 text-white rounded-full shadow-[0_8px_16px_rgba(0,0,0,0.24)] flex items-center justify-center active:scale-95 transition-transform z-50" style="bottom: calc(env(safe-area-inset-bottom, 20px) + 5rem);" :aria-label="$t('quickcap.new_quickcap')" :title="$t('quickcap.new_quickcap')">
         <Plus class="w-6 h-6" />
     </button>
 
     <!-- Mobile QuickCap Compose Modal -->
-    <div v-if="isMobileModalOpen" class="md:hidden fixed inset-0 z-[110] bg-white dark:bg-[#1e1e1e] flex flex-col" style="padding-top: max(env(safe-area-inset-top), 36px);">
+    <div v-if="isMobileModalOpen" class="md:hidden fixed inset-0 z-[110] bg-white dark:bg-surface-dark flex flex-col" style="padding-top: max(env(safe-area-inset-top), 36px);">
         <!-- Header -->
-        <div class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-[#2c2c2c] shrink-0">
-            <button @click="isMobileModalOpen = false" class="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200">
+        <div class="flex justify-between items-center px-4 py-3 border-b border-gray-100 dark:border-border-dark shrink-0">
+            <button @click="isMobileModalOpen = false" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200">
                 {{ $t('quickcap.cancel') }}
             </button>
-            <button @click="submitCapMobile" :disabled="isSubmitting || !hasDraft" class="font-semibold text-blue-500 disabled:opacity-50">
+            <button @click="submitCapMobile" :disabled="isSubmitting || !hasDraft" class="font-semibold text-accent dark:text-accent-dark disabled:opacity-50">
                 {{ $t('quickcap.save') }}
             </button>
         </div>
@@ -2089,16 +2178,16 @@ const deleteCap = async (id: string) => {
            ref="mobileInputRef"
            v-model="newCapText"
            :placeholder="$t('quickcap.placeholder_mobile')"
-           class="flex-1 w-full bg-transparent p-5 resize-none outline-none text-[1.1rem] text-[#1c1c1e] dark:text-[#f4f4f5]"
+           class="flex-1 w-full bg-transparent p-5 resize-none outline-none text-[1.1rem] text-text dark:text-text-dark"
         ></textarea>
         
         <!-- What is attached, shown rather than described -->
         <div v-if="draftAttachments.length" class="flex flex-wrap gap-2 px-5 pb-3 shrink-0">
             <div v-for="path in draftAttachments" :key="path" class="relative">
-                <div v-if="isAudioPath(path)" class="w-16 h-16 rounded-lg border border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-center bg-gray-50 dark:bg-[#2a2a2a]" :title="$t('quickcap.audio_note')">
-                    <Mic class="w-6 h-6 text-gray-500" />
+                <div v-if="isAudioPath(path)" class="w-16 h-16 rounded-lg border border-border dark:border-border-dark flex items-center justify-center bg-gray-50 dark:bg-surface-hover-dark" :title="$t('quickcap.audio_note')">
+                    <Mic class="w-6 h-6 text-gray-500 dark:text-gray-400" />
                 </div>
-                <img v-else :src="draftImageSrc(path)" alt="" class="w-16 h-16 object-cover rounded-lg border border-[#e6e6e6] dark:border-[#2c2c2c]" />
+                <img v-else :src="draftImageSrc(path)" alt="" class="w-16 h-16 object-cover rounded-lg border border-border dark:border-border-dark" />
                 <button
                     @click="removeDraftImage(path)"
                     :aria-label="$t('quickcap.remove_image')"
@@ -2110,11 +2199,11 @@ const deleteCap = async (id: string) => {
         </div>
 
         <!-- Bottom Actions (above keyboard) -->
-        <div class="p-3 border-t border-gray-100 dark:border-[#2c2c2c] flex items-center gap-2 bg-gray-50 dark:bg-[#191919]" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
-            <button @click="insertChecklistItem" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" :aria-label="$t('quickcap.checklist')">
+        <div class="p-3 border-t border-gray-100 dark:border-border-dark flex items-center gap-2 bg-gray-50 dark:bg-surface-alt-dark" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
+            <button @click="insertChecklistItem" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer" :aria-label="$t('quickcap.checklist')">
                 <CheckSquare class="w-5 h-5"/>
             </button>
-            <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" :aria-label="$t('quickcap.pick_image')">
+            <button @click="pickImageForNewCap" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer" :aria-label="$t('quickcap.pick_image')">
                 <ImageIcon class="w-5 h-5"/>
             </button>
             <button
@@ -2122,74 +2211,75 @@ const deleteCap = async (id: string) => {
                 @click="toggleRecording"
                 :aria-label="audio.state.value === 'recording' ? $t('quickcap.stop_recording') : $t('quickcap.record_audio')"
                 class="p-2 rounded-lg transition-colors cursor-pointer flex items-center gap-1.5"
-                :class="audio.state.value === 'recording' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a]'"
+                :class="audio.state.value === 'recording' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark'"
             >
                 <Square v-if="audio.state.value === 'recording'" class="w-5 h-5 fill-current"/>
                 <Mic v-else class="w-5 h-5"/>
                 <span v-if="audio.state.value === 'recording'" class="text-[12px] font-mono tabular-nums">{{ formatDuration(audio.durationMs.value) }}</span>
             </button>
-            <button @click="appendTagToInput" class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer" :aria-label="$t('quickcap.add_tag')">
+            <button @click="appendTagToInput" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer" :aria-label="$t('quickcap.add_tag')">
                 <Tag class="w-5 h-5"/>
             </button>
         </div>
     </div>
 
     <!-- Full View Modal -->
-    <div v-if="selectedCap" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 dark:bg-black/60 backdrop-blur-sm" @click="closeFullView">
-        <div class="w-full max-w-2xl max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden" :class="colourClass(selectedCap.color) || 'bg-white dark:bg-[#1e1e1e]'" @click.stop>
+    <AppDialog :show="selectedCap !== null" :aria-label="$t('quickcap.full_view')" :initial-focus="() => editor?.view.dom" size="lg" unstyled @close="onFullViewDismiss">
+        <div v-if="selectedCap" class="w-full max-h-[85vh] rounded-2xl shadow-xl flex flex-col border border-border dark:border-border-dark overflow-hidden" :class="colourClass(selectedCap.color) || 'bg-white dark:bg-surface-dark'" @click.stop>
             <div class="p-8 overflow-y-auto flex-1 flex flex-col min-h-0 bg-transparent">
                 <EditorContent :editor="editor" class="w-full" />
                 
                 <!-- Render tags as chips in modal -->
-                <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0 pt-4 border-t border-gray-100 dark:border-[#2c2c2c]">
-                   <span v-for="tag in activeTags" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-[#2a2a2a] px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
+                <div v-if="activeTags.length > 0" class="flex flex-wrap gap-2 mt-6 relative z-10 w-full shrink-0 pt-4 border-t border-gray-100 dark:border-border-dark">
+                   <span v-for="tag in activeTags" :key="tag" class="group/tag inline-flex items-center text-[12px] font-semibold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-surface-hover-dark px-2.5 py-1 rounded-md transition-colors border border-transparent hover:border-gray-300 dark:hover:border-gray-500 cursor-default">
                        {{ tag }}
-                       <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-hover/tag:w-auto transition-all text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="$t('quickcap.remove_tag')">
+                       <button @click.stop="removeActiveTag(tag)" class="ml-1 opacity-0 w-0 overflow-hidden group-hover/tag:opacity-100 group-focus-within/tag:opacity-100 pointer-coarse:opacity-100 group-hover/tag:w-auto group-focus-within/tag:w-auto pointer-coarse:w-auto transition-all text-gray-500 dark:text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="$t('quickcap.remove_tag')" :title="$t('quickcap.remove_tag')">
                            <X class="w-3 h-3" />
                        </button>
                    </span>
                 </div>
             </div>
-            <div class="py-3 px-4 sm:px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex flex-wrap items-center justify-between mt-auto shrink-0 gap-3">
+            <div class="py-3 px-4 sm:px-6 bg-gray-50 dark:bg-surface-alt-dark border-t border-border dark:border-border-dark flex flex-wrap items-center justify-between mt-auto shrink-0 gap-3">
                 <div class="flex items-center w-full sm:w-auto justify-between sm:justify-start order-2 sm:order-1" @click.stop>
-                    <div v-if="taggingCapId === selectedCap.id" class="flex items-center w-full sm:w-auto bg-gray-100 dark:bg-[#2a2a2a] rounded px-2 py-0.5 mr-2 border border-gray-200 dark:border-gray-700">
-                        <span class="text-gray-400 text-xs mr-1">#</span>
+                    <div v-if="taggingCapId === selectedCap.id" class="flex items-center w-full sm:w-auto bg-gray-100 dark:bg-surface-hover-dark rounded px-2 py-0.5 mr-2 border border-gray-200 dark:border-gray-700">
+                        <span class="text-gray-500 dark:text-gray-400 text-xs mr-1">#</span>
                         <input 
                             v-model="tagInputText" 
                             @keydown.enter.prevent="saveInlineTag(selectedCap)"
                             @keydown.esc.stop="taggingCapId = null"
-                            class="bg-transparent border-none outline-none text-xs w-full text-[#1c1c1e] dark:text-[#f4f4f5]"
-                            placeholder="tag..."
+                            class="bg-transparent border-none outline-none text-xs w-full text-text dark:text-text-dark"
+                            :placeholder="$t('quickcap.tag_placeholder')"
                             autofocus
                         />
-                        <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-[11px] hover:underline">{{ $t('quickcap.save') }}</button>
+                        <button @click="saveInlineTag(selectedCap)" class="ml-1 text-black dark:text-white font-medium text-xs hover:underline">{{ $t('quickcap.save') }}</button>
                     </div>
                     <template v-else>
-                        <button @click.stop="deleteCap(selectedCap.id)" :title="$t('quickcap.delete_note')" class="text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
+                        <button @click.stop="deleteCap(selectedCap.id)" :title="$t('quickcap.delete_cap')" :aria-label="$t('quickcap.delete_cap')" class="text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded-full transition-colors cursor-pointer">
                             <Trash2 class="w-4 h-4"/>
                         </button>
                         <div class="flex items-center gap-1 sm:gap-2 relative ml-auto sm:ml-4">
                             <div class="relative">
-                                <button @click.stop="toggleColorPicker(selectedCap.id)" :title="$t('quickcap.change_color')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                                <button @click.stop="toggleColorPicker(selectedCap.id)" :title="$t('quickcap.change_color')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                     <Palette class="w-4 h-4"/>
                                 </button>
                                 <!-- Color Picker Popup -->
-                                <div v-if="colorPickerCapId === selectedCap.id" class="absolute bottom-[calc(100%+12px)] left-0 sm:left-auto sm:right-0 p-2 bg-white dark:bg-[#2a2a2a] rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-[70] w-[140px]" @click.stop>
+                                <div v-if="colorPickerCapId === selectedCap.id" class="absolute bottom-[calc(100%+12px)] left-0 sm:left-auto sm:right-0 p-2 bg-white dark:bg-surface-hover-dark rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 flex flex-wrap gap-2 z-[70] w-[140px]" @click.stop>
                                     <button v-for="color in PALETTE" :key="color.name" 
                                         @click="changeCapColor(selectedCap, color.value)"
                                         class="w-6 h-6 rounded-full border border-gray-200 dark:border-gray-600 transition-transform hover:scale-110 cursor-pointer"
-                                        :class="colourClass(color.value) || 'bg-[#fdfdfc] dark:bg-[#1e1e1e]'"
-                                        :title="color.name"
+                                        :class="colourClass(color.value) || 'bg-base dark:bg-surface-dark'"
+                                        :title="$t(`quickcap.colours.${color.name}`)"
+                                        :aria-label="$t(`quickcap.colours.${color.name}`)"
                                     ></button>
                                 </div>
                             </div>
-                            <button @click.stop="openPromote([selectedCap])" :title="$t('quickcap.promote')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click.stop="openPromote([selectedCap])" :title="$t('quickcap.promote')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <FileText class="w-4 h-4" />
                             </button>
-                            <button @click.stop="pickImageForExistingCap(selectedCap)" :title="$t('quickcap.add_image')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click.stop="pickImageForExistingCap(selectedCap)" :title="$t('quickcap.add_image')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <ImageIcon class="w-4 h-4"/>
                             </button>
-                            <button @click="openTagInput(selectedCap)" :title="$t('quickcap.add_tag')" class="text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
+                            <button @click="openTagInput(selectedCap)" :title="$t('quickcap.add_tag')" class="text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 p-2 rounded-full transition-colors cursor-pointer">
                                 <Tag class="w-4 h-4"/>
                             </button>
                         </div>
@@ -2197,14 +2287,14 @@ const deleteCap = async (id: string) => {
                 </div>
                 
                 <div class="flex items-center justify-between w-full sm:w-auto order-1 sm:order-2">
-                    <span class="text-xs text-gray-500 font-mono tracking-tight sm:hidden">{{ formatDate(selectedCap.created_at) }}</span>
-                    <button @click="closeFullView" class="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-lg text-sm font-semibold hover:scale-95 transition-all shadow-sm cursor-pointer ml-auto">
+                    <span class="text-xs text-gray-500 dark:text-gray-400 font-mono tracking-tight sm:hidden">{{ formatDate(selectedCap.created_at) }}</span>
+                    <button @click="closeFullView" class="btn-primary ml-auto">
                         {{ $t('quickcap.close') }}
                     </button>
                 </div>
             </div>
         </div>
-    </div>
+    </AppDialog>
 
     <!-- Where a cap goes when it stops being fleeting -->
     <PromoteModal

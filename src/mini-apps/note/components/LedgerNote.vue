@@ -70,20 +70,20 @@ const summary = computed(() => {
 <template>
   <div
     v-if="history"
-    class="flex items-center gap-2 px-5 py-2 text-xs border-b border-[#e6e6e6] dark:border-[#3a3a3a]"
+    class="flex items-center gap-2 px-5 py-2 text-xs border-b border-border dark:border-border-subtle-dark"
     :class="history.trusted ? 'text-gray-500 dark:text-gray-400' : 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20'"
   >
     <component :is="history.trusted ? ShieldCheck : ShieldAlert" class="w-3.5 h-3.5 shrink-0" />
     <span class="truncate">{{ summary }}</span>
     <code
       v-if="history.first_hash"
-      class="ml-auto shrink-0 font-mono text-[10px] text-gray-400"
+      class="ml-auto shrink-0 font-mono text-xs text-gray-500 dark:text-gray-400"
       :title="$t('note.ledger_fingerprint')"
     >{{ history.first_hash.replace('blake3:', '').slice(0, 10) }}</code>
     <button
       v-if="history.recorded && history.times_changed > 0"
       type="button"
-      class="shrink-0 font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+      class="shrink-0 font-medium text-accent dark:text-accent-dark hover:underline"
       :class="history.first_hash ? '' : 'ml-auto'"
       @click="emit('show-original')"
     >

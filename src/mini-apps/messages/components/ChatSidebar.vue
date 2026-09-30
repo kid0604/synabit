@@ -203,12 +203,12 @@ const when = (iso?: string) => {
     <div class="px-3 py-3 border-b border-border dark:border-border-dark flex-shrink-0">
       <div class="relative">
         <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-          <Search class="w-4 h-4 text-gray-400" />
+          <Search class="w-4 h-4 text-gray-500 dark:text-gray-400" />
         </div>
         <input
           v-model="searchQuery"
           type="text"
-          class="w-full bg-gray-100 dark:bg-[#1a1a1e] text-sm text-text dark:text-text-dark rounded-xl pl-9 pr-4 py-2 outline-none focus:ring-2 focus:ring-violet-500/50 transition-shadow placeholder-gray-400"
+          class="w-full bg-gray-100 dark:bg-[#1a1a1e] text-sm text-text dark:text-text-dark rounded-xl pl-9 pr-4 py-2 outline-none focus:ring-2 focus:ring-violet-500/50 transition-shadow placeholder-gray-500 dark:placeholder-gray-400"
           :placeholder="t('syn.search_placeholder')"
         />
       </div>
@@ -217,17 +217,17 @@ const when = (iso?: string) => {
     <div class="flex-1 overflow-y-auto px-2 py-2">
       <!-- ─── The work that is open ───────────────────────── -->
       <div v-for="group in openWork" :key="group.state">
-        <p class="px-2.5 pt-3 pb-1 text-[11px] uppercase tracking-wide text-gray-400">
+        <p class="px-2.5 pt-3 pb-1 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ t(`syn.thread_state_${group.state}`) }} · {{ group.threads.length }}
         </p>
         <div
           v-for="thread in group.threads"
           :key="thread.id"
           class="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer group"
-          :class="isOn('thread', thread.id) ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+          :class="isOn('thread', thread.id) ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
           @click="emit('select', { kind: 'thread', id: thread.id })"
         >
-          <GitBranch class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" />
+          <GitBranch class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
           <span class="flex-1 min-w-0">
             <input
               v-if="isRenaming('thread', thread.id)"
@@ -251,21 +251,21 @@ const when = (iso?: string) => {
             the button that is there.
           -->
           <button
-            class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             :title="t('syn.rename_thread')"
             @click.stop="beginRename('thread', thread.id, thread.title)"
           >
             <Pencil class="w-3.5 h-3.5" />
           </button>
           <button
-            class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             :title="t('syn.delete_thread')"
             @click.stop="emit('deleteThread', thread.id)"
           >
             <Trash2 class="w-3.5 h-3.5" />
           </button>
           <button
-            class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-emerald-600 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-emerald-600 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             :title="t('syn.close_thread')"
             @click.stop="emit('closeThread', thread.id)"
           >
@@ -278,11 +278,11 @@ const when = (iso?: string) => {
         <input
           v-model="newThreadTitle"
           :placeholder="t('threads.new_placeholder')"
-          class="flex-1 min-w-0 bg-transparent text-[12px] outline-none placeholder-gray-400"
+          class="flex-1 min-w-0 bg-transparent text-[12px] outline-none placeholder-gray-500 dark:placeholder-gray-400"
           @keydown.enter.prevent="start"
         />
         <button
-          class="shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 cursor-pointer"
+          class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 disabled:opacity-30 cursor-pointer"
           :disabled="!newThreadTitle.trim()"
           :title="t('threads.start')"
           @click="start"
@@ -294,7 +294,7 @@ const when = (iso?: string) => {
       <!-- ─── Finished work ──────────────────────────────── -->
       <div v-if="finished.length">
         <button
-          class="w-full flex items-center gap-1 px-2.5 py-1.5 text-[11px] uppercase tracking-wide text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+          class="w-full flex items-center gap-1 px-2.5 py-1.5 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
           @click="showClosed = !showClosed"
         >
           <ChevronRight class="w-3 h-3 transition-transform" :class="showClosed ? 'rotate-90' : ''" />
@@ -304,19 +304,19 @@ const when = (iso?: string) => {
           v-for="thread in showClosed ? finished : []"
           :key="thread.id"
           class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl text-left transition-colors cursor-pointer group"
-          :class="isOn('thread', thread.id) ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+          :class="isOn('thread', thread.id) ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
           @click="emit('select', { kind: 'thread', id: thread.id })"
         >
           <span class="flex-1 min-w-0 text-[13px] truncate text-gray-500 dark:text-gray-400">{{ thread.title }}</span>
           <button
-            class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             :title="t('syn.reopen_thread')"
             @click.stop="emit('reopenThread', thread.id)"
           >
             <GitBranch class="w-3.5 h-3.5" />
           </button>
           <button
-            class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+            class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
             :title="t('syn.delete_thread')"
             @click.stop="emit('deleteThread', thread.id)"
           >
@@ -329,8 +329,8 @@ const when = (iso?: string) => {
            about, because a number nobody is shown is a number nobody acts on. -->
       <p
         v-if="stats && stats.runs_in_a_thread"
-        class="px-2.5 pb-2 text-[11px]"
-        :class="stats.runs_that_wrote_back ? 'text-gray-400' : 'text-amber-600 dark:text-amber-500'"
+        class="px-2.5 pb-2 text-xs"
+        :class="stats.runs_that_wrote_back ? 'text-gray-500' : 'text-amber-600 dark:text-amber-500'"
       >
         {{ t('threads.stats', {
           inThread: stats.runs_in_a_thread,
@@ -343,8 +343,8 @@ const when = (iso?: string) => {
            exists to answer, on a screen rather than in a field on disk. -->
       <p
         v-if="guessRate !== null && footing"
-        class="px-2.5 pb-2 text-[11px]"
-        :class="guessRate >= 0.2 ? 'text-amber-600 dark:text-amber-500' : 'text-gray-400'"
+        class="px-2.5 pb-2 text-xs"
+        :class="guessRate >= 0.2 ? 'text-amber-600 dark:text-amber-500' : 'text-gray-500'"
         :title="footing.unmeasured
           ? t('syn.footing_tally_unmeasured', { n: footing.unmeasured })
           : undefined"
@@ -359,19 +359,20 @@ const when = (iso?: string) => {
 
       <!-- ─── Conversations ──────────────────────────────── -->
       <div class="flex items-center gap-1.5 px-2.5 pt-3 pb-1">
-        <p class="text-[11px] uppercase tracking-wide text-gray-400">
+        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
           {{ t('syn.conversations') }} · {{ conversations.length }}
         </p>
         <button
-          class="ml-auto shrink-0 p-1 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+          class="ml-auto shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
           :title="t('syn.new_conversation')"
+          :aria-label="t('syn.new_conversation')"
           @click="emit('newConversation')"
         >
           <Plus class="w-3.5 h-3.5" />
         </button>
       </div>
 
-      <p v-if="!chats.length" class="px-2.5 py-2 text-[12px] text-gray-400">
+      <p v-if="!chats.length" class="px-2.5 py-2 text-[12px] text-gray-500 dark:text-gray-400">
         {{ t('syn.no_conversations') }}
       </p>
 
@@ -379,10 +380,10 @@ const when = (iso?: string) => {
         v-for="chat in chats"
         :key="chat.id"
         class="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer group"
-        :class="isOn('conversation', chat.id) ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :class="isOn('conversation', chat.id) ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         @click="emit('select', { kind: 'conversation', id: chat.id })"
       >
-        <MessageSquare class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" />
+        <MessageSquare class="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
         <span class="flex-1 min-w-0">
           <input
             v-if="isRenaming('conversation', chat.id)"
@@ -394,19 +395,19 @@ const when = (iso?: string) => {
             @blur="commitRename"
           />
           <span v-else class="block text-[13px] truncate text-gray-900 dark:text-gray-100">{{ chat.title }}</span>
-          <span class="block text-[11px] text-gray-400">
+          <span class="block text-xs text-gray-500 dark:text-gray-400">
             {{ when(chat.updated_at) }} · {{ t('syn.message_count', { n: chat.message_count }) }}
           </span>
         </span>
         <button
-          class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+          class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
           :title="t('syn.rename_conversation')"
           @click.stop="beginRename('conversation', chat.id, chat.title)"
         >
           <Pencil class="w-3.5 h-3.5" />
         </button>
         <button
-          class="shrink-0 p-1 rounded-md text-gray-300 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
+          class="shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-red-500 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
           :title="t('syn.delete_conversation')"
           @click.stop="emit('deleteConversation', chat.id)"
         >
@@ -421,15 +422,15 @@ const when = (iso?: string) => {
            number, because it asks nothing. -->
       <button
         class="mt-3 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('activity') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :class="isOn('activity') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         :aria-label="waiting ? `${t('syn.activity')} — ${t('syn.activity_waiting_badge', { n: waiting })}` : undefined"
         @click="emit('select', { kind: 'activity' })"
       >
-        <Activity class="w-4 h-4 flex-shrink-0" :class="working ? 'text-violet-500 animate-pulse' : 'text-gray-400'" aria-hidden="true" />
+        <Activity class="w-4 h-4 flex-shrink-0" :class="working ? 'text-violet-500 animate-pulse' : 'text-gray-500 dark:text-gray-400'" aria-hidden="true" />
         <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.activity') }}</span>
         <span
           v-if="waiting"
-          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-amber-500 text-white text-[11px] font-bold flex items-center justify-center px-1.5"
+          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center px-1.5"
           aria-hidden="true"
         >
           {{ waiting > 99 ? '99+' : waiting }}
@@ -440,10 +441,10 @@ const when = (iso?: string) => {
            Beside Syn's work, because that is where their runs are listed. -->
       <button
         class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('routines') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :class="isOn('routines') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         @click="emit('select', { kind: 'routines' })"
       >
-        <CalendarClock class="w-4 h-4 flex-shrink-0 text-gray-400" aria-hidden="true" />
+        <CalendarClock class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
         <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.routines') }}</span>
       </button>
 
@@ -452,14 +453,14 @@ const when = (iso?: string) => {
            overdue is not something anybody said. -->
       <button
         class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('notifications') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :class="isOn('notifications') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         @click="emit('select', { kind: 'notifications' })"
       >
-        <Bell class="w-4 h-4 flex-shrink-0 text-gray-400" />
+        <Bell class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
         <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.notifications') }}</span>
         <span
           v-if="unread"
-          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center px-1.5"
+          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center px-1.5"
         >
           {{ unread > 99 ? '99+' : unread }}
         </span>
@@ -472,10 +473,10 @@ const when = (iso?: string) => {
            the file was created to end. -->
       <button
         class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('instructions') ? 'bg-violet-50 dark:bg-violet-500/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        :class="isOn('instructions') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         @click="emit('select', { kind: 'instructions' })"
       >
-        <ScrollText class="w-4 h-4 flex-shrink-0 text-gray-400" />
+        <ScrollText class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
         <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.settings_instructions') }}</span>
       </button>
     </div>

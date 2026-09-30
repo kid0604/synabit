@@ -1,6 +1,7 @@
 import { ref, type Ref } from 'vue';
 import { isSortMode, isGroupMode, type SortMode, type GroupMode } from '../sorting';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 
 /**
  * Searches worth keeping.
@@ -46,7 +47,7 @@ function toFilter(node: any): SavedFilter {
   const props = node.properties ?? {};
   return {
     id: node.id,
-    name: node.title || 'Untitled',
+    name: node.title || i18n.global.t('task.untitled_task'),
     query: typeof props.query === 'string' ? props.query : '',
     viewMode: isViewMode(props.view_mode) ? props.view_mode : 'list',
     sort: isSortMode(String(props.sort ?? '')) ? (props.sort as SortMode) : 'updated',

@@ -22,7 +22,7 @@ const emit = defineEmits(['updated', 'open-linked-node']);
 
 const router = useRouter();
 const ns = useNodeService();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const personRef = toRef(props, 'person');
 const { health } = useRelationshipHealth(personRef);
@@ -31,19 +31,19 @@ const { health } = useRelationshipHealth(personRef);
 const activeFilter = ref<string>('all');
 
 const interactionTypes = [
-    { value: 'meeting', label: 'Meeting', icon: Users },
-    { value: 'call', label: 'Call', icon: PhoneCall },
-    { value: 'message', label: 'Message', icon: MessageSquare },
-    { value: 'coffee', label: 'Coffee', icon: Coffee },
-    { value: 'gift', label: 'Gift', icon: Gift },
-    { value: 'other', label: 'Other', icon: Clock },
+    { value: 'meeting', label: 'people.interaction_meeting', icon: Users },
+    { value: 'call', label: 'people.interaction_call', icon: PhoneCall },
+    { value: 'message', label: 'people.interaction_message', icon: MessageSquare },
+    { value: 'coffee', label: 'people.interaction_coffee', icon: Coffee },
+    { value: 'gift', label: 'people.interaction_gift', icon: Gift },
+    { value: 'other', label: 'people.interaction_other', icon: Clock },
 ];
 
 const moodOptions = [
-    { value: 'great', label: 'Great', icon: ThumbsUp },
-    { value: 'good', label: 'Good', icon: Smile },
-    { value: 'neutral', label: 'Neutral', icon: Meh },
-    { value: 'difficult', label: 'Difficult', icon: Frown },
+    { value: 'great', label: 'people.mood_great', icon: ThumbsUp },
+    { value: 'good', label: 'people.mood_good', icon: Smile },
+    { value: 'neutral', label: 'people.mood_neutral', icon: Meh },
+    { value: 'difficult', label: 'people.mood_difficult', icon: Frown },
 ];
 
 // --- Finance Data ---
@@ -187,9 +187,9 @@ const filteredTimeline = computed(() => {
 });
 
 const filterOptions = computed(() => [
-    { value: 'all', label: 'All', count: unifiedTimeline.value.length },
-    { value: 'interactions', label: 'Interactions', count: unifiedTimeline.value.filter(i => i.source === 'interaction').length },
-    { value: 'linked', label: 'Linked', count: unifiedTimeline.value.filter(i => i.source !== 'interaction').length },
+    { value: 'all', label: t('people.type_all'), count: unifiedTimeline.value.length },
+    { value: 'interactions', label: t('people.interactions'), count: unifiedTimeline.value.filter(i => i.source === 'interaction').length },
+    { value: 'linked', label: t('people.filter_linked'), count: unifiedTimeline.value.filter(i => i.source !== 'interaction').length },
 ]);
 
 // Quick-add form
@@ -234,9 +234,9 @@ const getTypeIcon = (type: string) => {
 
 const getTypeLabel = (type: string) => {
     const found = interactionTypes.find(t => t.value === type);
-    if (found) return found.label;
+    if (found) return t(found.label);
     const labels: Record<string, string> = {
-        task: 'Task', note: 'Note', quickcap: 'Quick Capture', transaction: 'Transaction', debt: 'Debt',
+        task: t('people.item_task'), note: t('people.item_note'), quickcap: t('people.item_quickcap'), transaction: t('people.item_transaction'), debt: t('people.item_debt'),
         experience: t('people.timeline_work'), connection: t('people.timeline_relationship'),
         important_date: t('people.timeline_important_date'), death: t('people.timeline_passed_away'),
     };
@@ -252,10 +252,10 @@ const formatDate = (dateStr: string) => {
     const dDay = new Date(d.getFullYear(), d.getMonth(), d.getDate());
     const nDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const diffDays = Math.round((nDay.getTime() - dDay.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return 'Yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (diffDays === 0) return t('people.today');
+    if (diffDays === 1) return t('people.yesterday');
+    if (diffDays < 7) return t('people.days_ago', { days: diffDays });
+    return d.toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
 const formatCurrency = (amount: number) => {
@@ -412,15 +412,15 @@ const handleLinkedClick = (item: any) => {
             <!-- Progress Ring -->
             <div class="relative w-10 h-10 flex-shrink-0">
                 <svg class="w-10 h-10 -rotate-90" viewBox="0 0 36 36">
-                    <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2.5" class="text-gray-200 dark:text-gray-700" />
+                    <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2.5" class="text-gray-200 dark:text-gray-400" />
                     <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
                         :class="health.color"
                         :stroke-dasharray="`${health.percent * 0.975} 100`" />
                 </svg>
-                <span class="absolute inset-0 flex items-center justify-center text-[10px] font-bold" :class="health.color">{{ health.percent }}</span>
+                <span class="absolute inset-0 flex items-center justify-center text-xs font-bold" :class="health.color">{{ health.percent }}</span>
             </div>
             <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold" :class="health.color">{{ health.label }}</p>
+                <p class="text-sm font-semibold" :class="health.color">{{ $t(health.label) }}</p>
                 <p class="text-xs text-gray-500 dark:text-gray-400">
                     <template v-if="health.daysSinceContact !== null">{{ $t('people.last_contact_days', { days: health.daysSinceContact }) }}</template>
                     <template v-if="health.nextContactDue !== null && health.nextContactDue > 0"> · {{ $t('people.due_in_days', { days: health.nextContactDue }) }}</template>
@@ -429,7 +429,7 @@ const handleLinkedClick = (item: any) => {
             </div>
             <div class="text-right flex-shrink-0">
                 <p class="text-lg font-bold" :class="health.color">{{ health.interactionCount }}</p>
-                <p class="text-[10px] text-gray-400 uppercase">{{ $t('people.interactions_lower') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 uppercase">{{ $t('people.interactions_lower') }}</p>
             </div>
         </div>
 
@@ -448,7 +448,7 @@ const handleLinkedClick = (item: any) => {
                         newInteraction.type === t.value
                             ? getTypeColor(t.value) + ' ring-2 ring-offset-1 ring-blue-500/50'
                             : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700']">
-                    <component :is="t.icon" class="w-3.5 h-3.5" /> {{ t.label }}
+                    <component :is="t.icon" class="w-3.5 h-3.5" /> {{ $t(t.label) }}
                 </button>
             </div>
             <input v-model="newInteraction.date" type="date" class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
@@ -458,19 +458,19 @@ const handleLinkedClick = (item: any) => {
             <div class="flex items-center gap-2">
                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.mood') }}</span>
                 <button v-for="m in moodOptions" :key="m.value" @click="newInteraction.mood = newInteraction.mood === m.value ? '' : m.value"
-                    :class="['p-1.5 rounded-lg transition-all', newInteraction.mood === m.value ? 'bg-blue-100 dark:bg-blue-900/30 ring-1 ring-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800']" :title="m.label">
-                    <component :is="m.icon" class="w-4 h-4" :class="newInteraction.mood === m.value ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'" />
+                    :class="['p-1.5 rounded-lg transition-all', newInteraction.mood === m.value ? 'bg-blue-100 dark:bg-blue-900/30 ring-1 ring-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800']" :title="$t(m.label)" :aria-label="$t(m.label)" :aria-pressed="newInteraction.mood === m.value">
+                    <component :is="m.icon" class="w-4 h-4" :class="newInteraction.mood === m.value ? 'text-blue-600 dark:text-blue-400' : 'text-gray-500'" />
                 </button>
             </div>
             <div class="flex justify-end gap-2">
-                <button @click="resetForm" class="px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
-                <button @click="saveInteraction" :disabled="!newInteraction.note.trim()" class="px-4 py-1.5 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 font-medium">{{ $t('people.save') }}</button>
+                <button @click="resetForm" class="px-3 py-1.5 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
+                <button @click="saveInteraction" :disabled="!newInteraction.note.trim()" class="btn-primary disabled:opacity-50">{{ $t('people.save') }}</button>
             </div>
         </div>
 
         <!-- Filter Bar -->
         <div v-if="unifiedTimeline.length > 0" class="flex items-center gap-2">
-            <Filter class="w-3.5 h-3.5 text-gray-400" />
+            <Filter class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
             <button v-for="f in filterOptions" :key="f.value" @click="activeFilter = f.value"
                 :class="['px-2.5 py-1 text-xs rounded-md font-medium transition-all',
                     activeFilter === f.value
@@ -482,9 +482,9 @@ const handleLinkedClick = (item: any) => {
 
         <!-- Empty State -->
         <div v-if="filteredTimeline.length === 0 && !showAddForm" class="text-center py-10 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
-            <Clock class="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+            <Clock class="w-10 h-10 mx-auto mb-3 text-gray-500 dark:text-gray-400" aria-hidden="true" />
             <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_activity') }}</p>
-            <p class="text-xs text-gray-400 mt-1">{{ $t('people.log_interaction_desc') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{ person.title }}]]</code> {{ $t('people.in_a_note') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t('people.log_interaction_desc') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{ person.title }}]]</code> {{ $t('people.in_a_note') }}</p>
         </div>
 
         <!-- Unified Timeline -->
@@ -508,12 +508,12 @@ const handleLinkedClick = (item: any) => {
                                     {{ getTypeLabel(item.type) }}
                                 </span>
 
-                                <component v-if="item.mood && getMoodIcon(item.mood)" :is="getMoodIcon(item.mood)" class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                                <component v-if="item.mood && getMoodIcon(item.mood)" :is="getMoodIcon(item.mood)" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
-                                <span class="text-xs text-gray-400">{{ formatDate(item.date) }}</span>
+                                <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatDate(item.date) }}</span>
                                 <button v-if="item.source === 'interaction'" @click.stop="deleteInteraction(item.id)"
-                                    class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-400 hover:text-red-500 transition-all" :aria-label="$t('people.delete_interaction')">
+                                    class="p-1 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 dark:text-gray-400 hover:text-red-500 transition-all" :aria-label="$t('people.delete_interaction')">
                                     <X class="w-3 h-3" />
                                 </button>
                             </div>
@@ -523,12 +523,12 @@ const handleLinkedClick = (item: any) => {
                         <!-- From the timeline -->
                         <template v-else-if="item.source === 'timeline'">
                             <p class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ item.title }}</p>
-                            <p v-if="item.span" class="text-xs text-gray-500 mt-1 tabular-nums">{{ item.span }}</p>
+                            <p v-if="item.span" class="text-xs text-gray-500 dark:text-gray-400 mt-1 tabular-nums">{{ item.span }}</p>
                         </template>
                         <!-- Linked node -->
                         <template v-else-if="item.source !== 'finance'">
                             <p class="text-sm font-medium text-blue-600 dark:text-blue-400 truncate">{{ item.title }}</p>
-                            <p v-if="item.preview" class="text-xs text-gray-500 mt-1 line-clamp-2">{{ item.preview }}</p>
+                            <p v-if="item.preview" class="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">{{ item.preview }}</p>
                             <div v-if="item.status" class="mt-1">
                                 <span :class="['text-xs px-1.5 py-0.5 rounded', item.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400']">
                                     {{ item.status }}
@@ -545,7 +545,7 @@ const handleLinkedClick = (item: any) => {
                             </div>
                             <div v-else-if="item.type === 'debt'">
                                 <p class="text-sm font-medium" :class="item.debt.type === 'lend' ? 'text-green-600' : 'text-red-600'">
-                                    {{ item.debt.type === 'lend' ? 'Lent' : 'Borrowed' }}: {{ formatCurrency(item.debt.totalAmount) }}
+                                    {{ $t(item.debt.type === 'lend' ? 'people.debt_lent' : 'people.debt_borrowed', { amount: formatCurrency(item.debt.totalAmount) }) }}
                                 </p>
                                 <p v-if="item.debt.note" class="text-xs text-gray-600 dark:text-gray-400 mt-1">{{ item.debt.note }}</p>
                                 <div class="mt-2 text-xs">

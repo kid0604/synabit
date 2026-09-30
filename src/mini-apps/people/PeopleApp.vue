@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask } from '@tauri-apps/plugin-dialog';
-import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download, EyeOff } from 'lucide-vue-next';
+import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
 import GiftModal from './GiftModal.vue';
 import OverviewTab from './OverviewTab.vue';
 import NotesTab from './NotesTab.vue';
 import TimelineTab from './TimelineTab.vue';
 import GraphTab from './GraphTab.vue';
-import NavButtons from '../../shared/components/NavButtons.vue';
+import AppHeader from '../../shared/components/AppHeader.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
+import { showAppNotice } from '../../composables/useAppNotice';
 import RemindersWidget from './RemindersWidget.vue';
 import LinkPersonModal from './LinkPersonModal.vue';
 import PeopleManager from './PeopleManager.vue';
@@ -28,6 +31,7 @@ import { useListKeyboard } from './composables/useListKeyboard';
 import SegmentModal from './SegmentModal.vue';
 import { useContactExchange } from './composables/useContactExchange';
 import { logger } from '../../utils/logger';
+import { detailLabel } from './detailLabels';
 
 const bus = useEventBus();
 const ns = useNodeService();
@@ -53,6 +57,7 @@ const emit = defineEmits(['open-node']);
 
 const route = useRoute();
 const router = useRouter();
+const { t } = useI18n();
 
 const people = ref<any[]>([]);
 const searchQuery = ref('');
@@ -110,7 +115,10 @@ const fetchPeople = async () => {
             // list of people to fail to load.
             invoke<Record<string, string>>('last_contact_dates').catch(() => ({})),
         ]);
-        people.value = summaries.map((person: any) => withDerivedContact(person, lastSeen));
+        people.value = summaries
+            .map((person: any) => withDerivedContact(person, lastSeen))
+            // Deleted on screen, still on disk until the undo window closes.
+            .filter((person: any) => !heldPersonIds.has(person.id));
         if (selectedPerson.value) {
             // Re-read the open person in full: the summary in the list has no
             // body, and the Notes tab shows it.
@@ -486,7 +494,7 @@ const cycleSortMode = () => {
 };
 
 const sortLabel = computed(() => {
-    const labels: Record<string, string> = { alpha: 'A-Z', recent: 'Recent', attention: 'Needs Attention' };
+    const labels: Record<string, string> = { alpha: t('people.sort_alpha'), recent: t('people.sort_recent'), attention: t('people.sort_attention') };
     return labels[sortMode.value];
 });
 
@@ -531,10 +539,10 @@ const getHealthScore = contactPercent;
 const getContactHealthDot = contactDotClass;
 
 const tabs = [
-    { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-    { id: 'timeline', label: 'Timeline', icon: Clock },
-    { id: 'notes', label: 'Notes & Links', icon: FileText },
-    { id: 'graph', label: 'Graph', icon: Share2 },
+    { id: 'overview', label: 'people.tab_overview', icon: LayoutDashboard },
+    { id: 'timeline', label: 'people.tab_timeline', icon: Clock },
+    { id: 'notes', label: 'people.tab_notes', icon: FileText },
+    { id: 'graph', label: 'people.tab_graph', icon: Share2 },
 ];
 
 const handleTimelineUpdated = () => {
@@ -618,7 +626,7 @@ const syncBirthdaysToCalendar = async () => {
                     source_person_id: person.id,
                     source_person: person.title,
                 },
-                content: `Birthday of [${person.title}](synabit://person/${person.id}).`,
+                content: t('people.birthday_event_body', { person: `[${person.title}](synabit://person/${person.id})` }),
                 eventType: 'created',
                 silent: true,
             });
@@ -778,85 +786,124 @@ const unlinkPerson = async (targetPersonId: string) => {
  * other end pointing at a file that no longer exists — an orphan the graph
  * still drew, using the name it had cached, for somebody who had been
  * deleted. Nothing ever cleared those.
+ *
+ * No question first. The person leaves the list at once and nothing is
+ * written until the undo window closes (`useUndoableAction`), so the delete
+ * that used to be "permanent, cannot be undone" now can be, for a while.
  */
+// No `onError`: a failure puts the person back and the shared "Couldn't
+// delete" notice says so. Logging alone told nobody.
+const personUndo = useUndoableAction();
+/** Hidden from the list while their delete waits; see `fetchPeople`. */
+const heldPersonIds = new Set<string>();
+
 const deletePerson = async (person: any) => {
     if (!person || person.properties?.is_owner) return;
 
-    const yes = await ask(
-        `This will permanently delete "${person.title}" and all associated data. This action cannot be undone.`,
-        { title: 'Delete contact?', kind: 'warning', okLabel: 'Delete', cancelLabel: 'Cancel' }
+    const index = people.value.findIndex(p => p.id === person.id);
+    const wasOpen = selectedPerson.value?.id === person.id ? selectedPerson.value : null;
+    heldPersonIds.add(person.id);
+    people.value = people.value.filter(p => p.id !== person.id);
+    if (wasOpen) selectedPerson.value = null;
+
+    await personUndo.run(
+        t('common.deleted_item', { name: getDisplayName(person) }),
+        async () => {
+            // The person first, into the trash. It is the step most likely
+            // to fail and the one the rest depends on: tidying up their links
+            // and birthday first, then failing here, brought them back with
+            // neither. A failure throws, and the undo puts them back whole.
+            try {
+                await ns.trashNode({ relPath: person.id });
+            } finally {
+                heldPersonIds.delete(person.id);
+            }
+
+            // Everyone who names them. Worked out now rather than at the
+            // click, from the list as it stands. The person is already gone,
+            // so a failure from here on is reported, not undone.
+            let cleanupFailed = false;
+            for (const patch of linkRemovalPatches(people.value, person)) {
+                try {
+                    await ns.writeNode({
+                        relPath: patch.id,
+                        title: patch.title,
+                        nodeType: 'person',
+                        properties: patch.properties,
+                    });
+                } catch (e) {
+                    logger.error('Deleted a person but could not unlink them from', patch.id, e);
+                    cleanupFailed = true;
+                }
+            }
+
+            // The birthday entry on the calendar is derived from this person and
+            // has nobody left to be about. Nothing used to clear it, so deleting
+            // somebody left their birthday coming round every year forever.
+            try {
+                await ns.deleteNode({ relPath: `Events/birthday-${slugForPerson(person)}.md`, silent: true });
+            } catch {
+                // There may not be one; that is the ordinary case.
+            }
+
+            if (cleanupFailed) showAppNotice(t('people.delete_cleanup_failed'), 'error');
+            try {
+                await fetchPeople();
+            } catch (e) {
+                logger.error('Deleted a person but could not reload the list', e);
+            }
+        },
+        () => {
+            heldPersonIds.delete(person.id);
+            if (!people.value.some(p => p.id === person.id)) {
+                people.value.splice(Math.max(0, Math.min(index, people.value.length)), 0, person);
+            }
+            if (wasOpen && !selectedPerson.value) selectedPerson.value = wasOpen;
+        },
     );
-    if (!yes) return;
-
-    try {
-        // Everyone who names them, before the node goes.
-        for (const patch of linkRemovalPatches(people.value, person)) {
-            await ns.writeNode({
-                relPath: patch.id,
-                title: patch.title,
-                nodeType: 'person',
-                properties: patch.properties,
-            });
-        }
-
-        // The birthday entry on the calendar is derived from this person and
-        // has nobody left to be about. Nothing used to clear it, so deleting
-        // somebody left their birthday coming round every year forever.
-        try {
-            await ns.deleteNode({ relPath: `Events/birthday-${slugForPerson(person)}.md`, silent: true });
-        } catch {
-            // There may not be one; that is the ordinary case.
-        }
-
-        await ns.deleteNode({ relPath: person.id });
-        if (selectedPerson.value?.id === person.id) selectedPerson.value = null;
-        await fetchPeople();
-    } catch (e) {
-        logger.error('Failed to delete person', e);
-    }
 };
 
 defineExpose({ openPersonById });
 </script>
 
 <template>
-    <div class="h-full flex bg-base dark:bg-base-dark text-text dark:text-text-dark overflow-hidden relative">
+    <div class="h-full flex flex-col bg-base dark:bg-base-dark text-text dark:text-text-dark overflow-hidden">
+        <AppHeader
+            :title="$t('people.people')"
+            :icon="Users"
+            :sidebarLabel="$t('people.show_sidebar')"
+            :primaryLabel="$t('people.add_person')"
+            :primaryIcon="Plus"
+            @primary="openNewModal"
+            @open-sidebar="isSidebarOpen = true"
+        >
+            <template #actions>
+                <button @click="showImportModal = true" class="btn-icon" :title="$t('people.import_contacts')" :aria-label="$t('people.import_contacts')">
+                    <Upload class="w-4 h-4" aria-hidden="true" />
+                </button>
+                <button @click="exportAll" :disabled="exchange.busy.value" class="btn-icon disabled:opacity-40" :title="$t('people.export_contacts')" :aria-label="$t('people.export_contacts')">
+                    <Download class="w-4 h-4" aria-hidden="true" />
+                </button>
+                <button @click="syncBirthdaysToCalendar" class="btn-icon" :title="$t('people.sync_birthdays')" :aria-label="$t('people.sync_birthdays')">
+                    <CalendarPlus class="w-4 h-4" aria-hidden="true" />
+                </button>
+            </template>
+        </AppHeader>
+
+    <div class="flex-1 min-h-0 flex relative overflow-hidden">
 
         <div v-if="isMobile && isSidebarOpen" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-[48]" @click="isSidebarOpen = false" />
 
         <!-- LEFT PANEL: People List -->
         <div v-show="!isMobile || isSidebarOpen" class="w-80 flex-shrink-0 border-r border-border dark:border-border-dark flex flex-col bg-surface dark:bg-surface-dark absolute md:relative z-[49] h-full shadow-lg md:shadow-none">
-            <!-- Header -->
-            <div class="h-14 border-b border-border dark:border-border-dark flex items-center justify-between px-4 flex-shrink-0" data-tauri-drag-region>
-                <div class="flex items-center gap-2 font-semibold">
-                    <NavButtons />
-                    <Users class="w-4 h-4 text-text-secondary dark:text-text-secondary-dark" />
-                    <span>{{ $t('people.people') }}</span>
-                </div>
-                <div class="flex items-center gap-1">
-                    <button @click="openNewModal" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-blue-500" :title="$t('people.add_contact')">
-                        <Plus class="w-5 h-5" />
-                    </button>
-                    <button @click="showImportModal = true" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-blue-500" :title="$t('people.import_contacts')">
-                        <Upload class="w-4 h-4" />
-                    </button>
-                    <button @click="exportAll" :disabled="exchange.busy.value" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-gray-500 hover:text-blue-500 disabled:opacity-40" :title="$t('people.export_contacts')">
-                        <Download class="w-4 h-4" />
-                    </button>
-                    <button @click="syncBirthdaysToCalendar" class="p-1.5 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors text-pink-500" :title="$t('people.sync_birthdays')">
-                        <CalendarPlus class="w-4 h-4" />
-                    </button>
-                </div>
-            </div>
-
             <!-- Search + Sort -->
             <div class="p-3 border-b border-border dark:border-border-dark space-y-2">
                 <div class="relative">
-                    <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                    <input v-model="searchQuery" type="text" :placeholder="$t('people.search_btn')" class="w-full pl-9 pr-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
+                    <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
+                    <input v-model="searchQuery" type="text" :placeholder="$t('people.search_btn')" class="w-full pl-9 pr-3 py-1.5 bg-gray-100 dark:bg-gray-800 border-none rounded-lg text-sm focus:ring-2 focus:ring-accent outline-none transition-all" />
                 </div>
                 <div class="flex items-center justify-between">
-                    <button @click="cycleSortMode" class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 transition-colors px-1.5 py-1 rounded">
+                    <button @click="cycleSortMode" :aria-label="$t('people.sort_by', { mode: sortLabel })" class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-blue-500 transition-colors px-1.5 py-1 rounded">
                         <ArrowUpDown class="w-3 h-3" /> {{ sortLabel }}
                     </button>
                     <div class="flex items-center gap-2">
@@ -864,7 +911,7 @@ defineExpose({ openPersonById });
                             <AlertCircle class="w-3 h-3 text-orange-500" />
                             <span class="text-orange-500 font-medium">{{ needsAttentionCount }}</span>
                         </div>
-                        <button @click="selectedPerson = null" class="text-[10px] text-blue-500 hover:text-blue-600 font-medium px-1.5 py-1">{{ $t('people.show_all') }}</button>
+                        <button @click="selectedPerson = null" class="text-xs text-accent dark:text-accent-dark hover:opacity-80 font-medium px-1.5 py-1">{{ $t('people.show_all') }}</button>
                     </div>
                 </div>
             </div>
@@ -872,23 +919,23 @@ defineExpose({ openPersonById });
             <!-- Saved segments -->
             <div v-if="segments.length > 0 || people.length > 3" class="px-3 pb-2 flex items-center gap-1.5 flex-wrap">
                 <button @click="activeSegmentId = null"
-                    :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-colors',
-                        activeSegmentId === null ? 'bg-blue-500 text-white border-blue-500'
-                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-border dark:border-border-dark hover:border-blue-300']">
+                    :class="['px-2 py-0.5 text-xs font-medium rounded-md border transition-colors',
+                        activeSegmentId === null ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                        : 'bg-white dark:bg-surface-dark text-gray-500 border-border dark:border-border-dark hover:border-blue-300']">
                     {{ $t('people.everyone') }}
                 </button>
                 <button v-for="segment in segments" :key="segment.id"
                     @click="activeSegmentId = segment.id"
                     @dblclick="editingSegment = segment; showSegmentModal = true"
-                    :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-colors truncate max-w-[9rem]',
-                        activeSegmentId === segment.id ? 'bg-blue-500 text-white border-blue-500'
-                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-border dark:border-border-dark hover:border-blue-300']"
+                    :class="['px-2 py-0.5 text-xs font-medium rounded-md border transition-colors truncate max-w-[9rem]',
+                        activeSegmentId === segment.id ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                        : 'bg-white dark:bg-surface-dark text-gray-500 border-border dark:border-border-dark hover:border-blue-300']"
                     :title="segment.name">
                     {{ segment.name }}
                 </button>
                 <button @click="editingSegment = null; showSegmentModal = true"
-                    class="px-1.5 py-0.5 text-[11px] rounded-md text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
-                    :title="$t('people.new_segment')">
+                    class="px-1.5 py-0.5 text-xs rounded-md text-gray-500 dark:text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                    :title="$t('people.new_segment')" :aria-label="$t('people.new_segment')">
                     <Plus class="w-3 h-3" />
                 </button>
             </div>
@@ -902,17 +949,17 @@ defineExpose({ openPersonById });
                     <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                 </div>
                 <div v-else-if="people.length === 0" class="text-center px-4 py-8">
-                    <Users class="w-8 h-8 mx-auto text-gray-300 dark:text-gray-600" />
+                    <Users class="w-8 h-8 mx-auto text-gray-500 dark:text-gray-400" aria-hidden="true" />
                     <p class="mt-3 text-sm font-medium">{{ $t('people.no_people_yet') }}</p>
                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $t('people.no_people_yet_desc') }}</p>
-                    <button @click="showImportModal = true" class="mt-4 w-full px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
+                    <button @click="showImportModal = true" class="mt-4 w-full btn-primary">
                         {{ $t('people.import_contacts') }}
                     </button>
                     <button @click="openNewModal" class="mt-2 w-full px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
                         {{ $t('people.add_one_by_hand') }}
                     </button>
                 </div>
-                <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500">{{ $t('people.no_contacts') }}</div>
+                <div v-else-if="sidebarPeople.length === 0" class="text-center p-4 text-sm text-gray-500 dark:text-gray-400">{{ $t('people.no_contacts') }}</div>
                 <!--
                     One tab stop, and the arrows move within it. With two
                     thousand contacts, Tab through every row is not a way
@@ -928,9 +975,9 @@ defineExpose({ openPersonById });
                         :tabindex="listKeys.tabIndexFor(index)"
                         @focus="listKeys.onRowFocus(index)"
                         @click="selectPerson(person)"
-                        :class="['w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+                        :class="['w-full text-left px-3 py-2 rounded-lg flex items-center gap-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent',
                             selectedPerson?.id === person.id
-                                ? 'bg-blue-50 dark:bg-blue-900/30 ring-1 ring-blue-500/50'
+                                ? 'bg-accent/10 ring-1 ring-accent/50'
                                 : 'hover:bg-gray-100 dark:hover:bg-gray-800/50'
                         ]"
                     >
@@ -948,7 +995,7 @@ defineExpose({ openPersonById });
                                 <Building class="w-3 h-3 flex-shrink-0" />
                                 <span class="truncate">{{ getPersonDetail(person, 'company') }}</span>
                             </p>
-                            <p v-else-if="relationshipLabel(person)" class="text-xs text-gray-400 truncate mt-0.5 capitalize">{{ relationshipLabel(person) }}</p>
+                            <p v-else-if="relationshipLabel(person)" class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5 capitalize">{{ relationshipLabel(person) }}</p>
                             <p v-else-if="person.properties?.tags?.length" class="text-xs text-gray-500 dark:text-gray-400 truncate flex items-center gap-1 mt-0.5">
                                 <Hash class="w-3 h-3 flex-shrink-0" />
                                 <span class="truncate">{{ person.properties.tags.join(', ') }}</span>
@@ -956,7 +1003,7 @@ defineExpose({ openPersonById });
                         </div>
                     </button>
                     
-                    <button v-if="filteredPeople.length > 20" @click="selectedPerson = null" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                    <button v-if="filteredPeople.length > 20" @click="selectedPerson = null" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-accent dark:text-accent-dark hover:opacity-80 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
                         {{ $t('people.show_more', { count: filteredPeople.length - 20 }) }}
                     </button>
                 </div>
@@ -978,12 +1025,12 @@ defineExpose({ openPersonById });
                 <!-- Profile Header -->
                 <div class="flex-shrink-0 px-4 md:px-8 pt-4 md:pt-8 pb-4">
                     <div class="md:hidden mb-4">
-                        <button @click="isSidebarOpen = true" class="flex items-center gap-1.5 text-blue-500 hover:text-blue-600 font-medium">
-                            <PanelLeft class="w-5 h-5" /> {{ $t('people.all_people') || 'All People' }}
+                        <button @click="isSidebarOpen = true" class="flex items-center gap-1.5 text-accent dark:text-accent-dark hover:opacity-80 font-medium">
+                            <PanelLeft class="w-5 h-5" /> {{ $t('people.all_people') }}
                         </button>
                     </div>
                     <div class="flex items-start gap-3 md:gap-5 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 md:p-5 shadow-sm relative group">
-                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 transition-all" :aria-label="$t('people.edit')">
+                        <button @click="editPerson(selectedPerson)" class="absolute top-4 right-4 p-2 text-gray-500 dark:text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg md:opacity-0 opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" :aria-label="$t('people.edit')" :title="$t('people.edit')">
                             <Edit2 class="w-4 h-4" />
                         </button>
 
@@ -1006,7 +1053,7 @@ defineExpose({ openPersonById });
                             <p v-if="getPersonDetail(selectedPerson, 'company') || getPersonDetail(selectedPerson, 'role')" class="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-1.5 mb-3">
                                 <Briefcase v-if="getPersonDetail(selectedPerson, 'role')" class="w-3.5 h-3.5 opacity-60" />
                                 <span v-if="getPersonDetail(selectedPerson, 'role')">{{ getPersonDetail(selectedPerson, 'role') }}</span>
-                                <span v-if="getPersonDetail(selectedPerson, 'role') && getPersonDetail(selectedPerson, 'company')" class="text-gray-400">@</span>
+                                <span v-if="getPersonDetail(selectedPerson, 'role') && getPersonDetail(selectedPerson, 'company')" class="text-gray-500 dark:text-gray-400">@</span>
                                 <span v-if="getPersonDetail(selectedPerson, 'company')" class="text-blue-600 dark:text-blue-400 font-medium">{{ getPersonDetail(selectedPerson, 'company') }}</span>
                             </p>
 
@@ -1014,17 +1061,17 @@ defineExpose({ openPersonById });
                             <div class="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-gray-500 dark:text-gray-400">
                                 <template v-for="d in (selectedPerson.properties?.details || [])" :key="d.label + d.value">
                                     <a v-if="d.type === 'email'" :href="'mailto:' + d.value" class="flex items-center gap-1.5 hover:text-blue-500 transition-colors">
-                                        <Mail class="w-3.5 h-3.5" /> <span class="opacity-50">{{ d.label }}:</span> {{ d.value }}
+                                        <Mail class="w-3.5 h-3.5" /> <span>{{ detailLabel(d.label, t) }}:</span> {{ d.value }}
                                     </a>
                                     <a v-else-if="d.type === 'phone'" :href="'tel:' + d.value" class="flex items-center gap-1.5 hover:text-blue-500 transition-colors">
-                                        <Phone class="w-3.5 h-3.5" /> <span class="opacity-50">{{ d.label }}:</span> {{ d.value }}
+                                        <Phone class="w-3.5 h-3.5" /> <span>{{ detailLabel(d.label, t) }}:</span> {{ d.value }}
                                     </a>
                                     <span v-else-if="d.type === 'url'" class="flex items-center gap-1.5">
-                                        <span class="opacity-50">{{ d.label }}:</span>
+                                        <span>{{ detailLabel(d.label, t) }}:</span>
                                         <a :href="d.value" target="_blank" class="hover:text-blue-500 transition-colors truncate max-w-[180px]">{{ d.value.replace(/^https?:\/\//, '') }}</a>
                                     </span>
                                     <span v-else class="flex items-center gap-1.5">
-                                        <span class="opacity-50">{{ d.label }}:</span> {{ d.value }}
+                                        <span>{{ detailLabel(d.label, t) }}:</span> {{ d.value }}
                                     </span>
                                 </template>
                                 <!-- Legacy fallbacks -->
@@ -1059,12 +1106,12 @@ defineExpose({ openPersonById });
                             :class="[
                                 'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-all -mb-px',
                                 activeTab === tab.id
-                                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                                    ? 'border-accent text-accent dark:text-accent-dark'
                                     : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600'
                             ]"
                         >
                             <component :is="tab.icon" class="w-4 h-4" />
-                            {{ tab.label }}
+                            {{ $t(tab.label) }}
                         </button>
                         <div class="w-full md:w-auto md:ml-auto md:-mb-px flex items-center gap-1 mt-1 md:mt-0 justify-end">
                             <button @click="showLinkModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors">
@@ -1133,5 +1180,17 @@ defineExpose({ openPersonById });
             @close="closeLinkModal"
             @link="linkPerson"
         />
+
+        <UndoToast
+            :show="personUndo.show.value"
+            :restart-key="personUndo.key.value"
+            :message="personUndo.message.value"
+            :undo-label="$t('common.undo')"
+            :seconds="personUndo.seconds"
+            @undo="personUndo.undo"
+            @pause="personUndo.pause"
+            @resume="personUndo.resume"
+        />
+    </div>
     </div>
 </template>

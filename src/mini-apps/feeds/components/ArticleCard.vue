@@ -62,13 +62,13 @@ const displaySummary = computed(() => {
       'flex gap-3 px-4 py-3.5 cursor-pointer transition-all duration-200',
       deferred ? 'row-deferred row-magazine' : '',
       isSelected
-        ? 'bg-orange-50/80 dark:bg-orange-900/15'
+        ? 'bg-accent/10'
         : 'hover:bg-gray-50 dark:hover:bg-gray-800/40'
     ]"
   >
     <!-- Unread indicator -->
     <div class="w-2 pt-2 shrink-0">
-      <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-orange-500"></div>
+      <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-accent"></div>
     </div>
 
     <!-- Content -->
@@ -79,8 +79,8 @@ const displaySummary = computed(() => {
       ]">
         {{ article.title }}
       </h3>
-      <p v-if="displaySummary" class="text-xs text-gray-400 dark:text-gray-500 line-clamp-2 mb-1.5">{{ displaySummary }}</p>
-      <div class="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500">
+      <p v-if="displaySummary" class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5">{{ displaySummary }}</p>
+      <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span class="truncate max-w-[120px]">{{ sourceName }}</span>
         <span>·</span>
         <span>{{ timeAgo(article.publishedAt) }}</span>
@@ -115,7 +115,7 @@ const displaySummary = computed(() => {
       'flex flex-col rounded-xl overflow-hidden cursor-pointer transition-all duration-200 border',
       deferred ? 'row-deferred row-cards' : '',
       isSelected
-        ? 'border-orange-400 bg-orange-50/80 dark:bg-orange-900/15 dark:border-orange-500/50 shadow-md'
+        ? 'border-accent/60 bg-accent/10 shadow-md'
         : 'border-border dark:border-border-dark hover:border-gray-300 dark:hover:border-gray-600 hover:shadow-sm bg-surface dark:bg-surface-dark'
     ]"
   >
@@ -125,12 +125,12 @@ const displaySummary = computed(() => {
       :src="article.thumbnailUrl"
       class="w-full h-28 object-cover"
     />
-    <div v-else class="w-full h-16 bg-gradient-to-br from-orange-100 to-orange-50 dark:from-orange-900/20 dark:to-orange-900/5"></div>
+    <div v-else class="w-full h-16 bg-gradient-to-br from-accent/15 to-accent/5"></div>
 
     <!-- Content -->
     <div class="p-3 flex-1 flex flex-col min-w-0">
       <div class="flex items-start gap-1.5 mb-1">
-        <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-orange-500 mt-1 shrink-0"></div>
+        <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-accent mt-1 shrink-0"></div>
         <h3 :class="[
           'text-sm leading-snug line-clamp-2 flex-1',
           article.isRead ? 'text-gray-500 dark:text-gray-400 font-normal' : 'text-text dark:text-text-dark font-semibold'
@@ -139,7 +139,7 @@ const displaySummary = computed(() => {
         </h3>
         <Star v-if="article.isStarred" class="w-3 h-3 text-yellow-500 fill-yellow-500 shrink-0 mt-0.5" />
       </div>
-      <div class="flex items-center gap-2 text-[11px] text-gray-400 dark:text-gray-500 mt-auto">
+      <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-auto">
         <span class="truncate max-w-[100px]">{{ sourceName }}</span>
         <span>·</span>
         <span>{{ timeAgo(article.publishedAt) }}</span>
@@ -159,12 +159,12 @@ const displaySummary = computed(() => {
       'flex items-center gap-2 px-4 py-2 cursor-pointer transition-all duration-200',
       deferred ? 'row-deferred row-titles' : '',
       isSelected
-        ? 'bg-orange-50/80 dark:bg-orange-900/15'
+        ? 'bg-accent/10'
         : 'hover:bg-gray-50 dark:hover:bg-gray-800/40'
     ]"
   >
     <div class="w-2 shrink-0">
-      <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-orange-500"></div>
+      <div v-if="!article.isRead" class="w-2 h-2 rounded-full bg-accent"></div>
     </div>
     <h3 :class="[
       'text-sm truncate flex-1 min-w-0',
@@ -173,8 +173,8 @@ const displaySummary = computed(() => {
       {{ article.title }}
     </h3>
     <Star v-if="article.isStarred" class="w-3 h-3 text-yellow-500 fill-yellow-500 shrink-0" />
-    <span class="text-[11px] text-gray-400 dark:text-gray-500 shrink-0 truncate max-w-[80px]">{{ sourceName }}</span>
-    <span class="text-[11px] text-gray-400 dark:text-gray-500 shrink-0">{{ timeAgo(article.publishedAt) }}</span>
+    <span class="text-xs text-gray-500 dark:text-gray-400 shrink-0 truncate max-w-[80px]">{{ sourceName }}</span>
+    <span class="text-xs text-gray-500 dark:text-gray-400 shrink-0">{{ timeAgo(article.publishedAt) }}</span>
   </div>
 </template>
 

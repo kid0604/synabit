@@ -99,7 +99,7 @@ const position = computed(() => {
       class="w-full text-left px-3 py-2 text-xs whitespace-nowrap flex items-center gap-2
              hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
     >
-      <ExternalLink class="w-3.5 h-3.5 text-gray-400" />
+      <ExternalLink class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
       {{ t('things.open_in', { app: owner }) }}
     </button>
 
@@ -113,7 +113,7 @@ const position = computed(() => {
       class="w-full text-left px-3 py-2 text-xs whitespace-nowrap flex items-center gap-2
              hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
     >
-      <component :is="pinned ? PinOff : Pin" class="w-3.5 h-3.5 text-gray-400" />
+      <component :is="pinned ? PinOff : Pin" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
       {{ pinned ? t('things.unpin') : t('things.pin') }}
     </button>
 
@@ -122,7 +122,7 @@ const position = computed(() => {
       class="w-full text-left px-3 py-2 text-xs whitespace-nowrap flex items-center gap-2
              hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
     >
-      <Edit2 class="w-3.5 h-3.5 text-gray-400" />
+      <Edit2 class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
       {{ t('things.rename') }}
     </button>
 
@@ -131,7 +131,7 @@ const position = computed(() => {
       class="w-full text-left px-3 py-2 text-xs whitespace-nowrap flex items-center gap-2
              hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
     >
-      <Copy class="w-3.5 h-3.5 text-gray-400" />
+      <Copy class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
       {{ t('things.duplicate') }}
     </button>
 
@@ -140,7 +140,7 @@ const position = computed(() => {
       class="w-full text-left px-3 py-2 text-xs whitespace-nowrap flex items-center gap-2
              hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
     >
-      <Link2 class="w-3.5 h-3.5 text-gray-400" />
+      <Link2 class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
       {{ t('things.copy_path') }}
     </button>
 

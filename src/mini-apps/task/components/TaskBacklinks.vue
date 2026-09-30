@@ -41,13 +41,13 @@ const grouped = computed(() => {
 
 <template>
   <div class="mx-5 mb-3">
-    <p class="flex items-center gap-1.5 text-[11px] font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-2">
+    <p class="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
       <Link2 class="w-3.5 h-3.5 shrink-0" />
       {{ $t('task.backlinks') }}
-      <span v-if="backlinks.length" class="normal-case tracking-normal font-medium text-gray-300 dark:text-gray-600">{{ backlinks.length }}</span>
+      <span v-if="backlinks.length" class="normal-case tracking-normal font-medium text-gray-500 dark:text-gray-400">{{ backlinks.length }}</span>
     </p>
 
-    <div v-if="loading" class="flex items-center py-2 text-gray-400">
+    <div v-if="loading" class="flex items-center py-2 text-gray-500 dark:text-gray-400">
       <Loader2 class="w-3.5 h-3.5 animate-spin" />
     </div>
 
@@ -57,21 +57,21 @@ const grouped = computed(() => {
           v-for="link in group.items"
           :key="link.id"
           @click="emit('open', link.id, link.node_type)"
-          class="w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-gray-50 dark:hover:bg-[#2a2a2a] transition-colors cursor-pointer group"
+          class="w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-left hover:bg-gray-50 dark:hover:bg-surface-hover-dark transition-colors cursor-pointer group"
           :aria-label="$t('task.a11y_open_backlink', { title: link.title })"
         >
-          <component :is="iconFor(link.node_type)" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-400 group-hover:text-blue-500 transition-colors" />
+          <component :is="iconFor(link.node_type)" class="w-3.5 h-3.5 mt-0.5 shrink-0 text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors" />
           <span class="min-w-0 flex-1">
-            <span class="block text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ link.title }}</span>
-            <span v-if="link.preview" class="block text-[11px] text-gray-400 dark:text-gray-500 truncate">{{ link.preview }}</span>
+            <span class="block text-[13px] text-text dark:text-text-dark truncate">{{ link.title }}</span>
+            <span v-if="link.preview" class="block text-xs text-gray-500 dark:text-gray-400 truncate">{{ link.preview }}</span>
           </span>
         </button>
       </div>
     </template>
 
-    <p v-else class="text-[11px] text-gray-400 dark:text-gray-500 leading-relaxed">
+    <p v-else class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
       {{ $t('task.backlinks_none') }}
-      <span class="block mt-0.5 text-gray-300 dark:text-gray-600">{{ $t('task.backlinks_hint') }}</span>
+      <span class="block mt-0.5 text-gray-500 dark:text-gray-400">{{ $t('task.backlinks_hint') }}</span>
     </p>
   </div>
 </template>

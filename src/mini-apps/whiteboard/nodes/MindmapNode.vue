@@ -111,7 +111,7 @@ function addChild(direction: 'right' | 'left') {
       :placeholder="$t('whiteboard.type_here2')"
     />
     <span v-else class="wb-mindmap-label" :style="{ fontSize: data.level === 0 ? '15px' : '13px' }">
-      {{ data.label || 'Idea' }}
+      {{ data.label || $t('whiteboard.idea') }}
     </span>
 
     <!-- Left + button: root or left-direction nodes -->
@@ -121,6 +121,7 @@ function addChild(direction: 'right' | 'left') {
       @click.stop="addChild('left')"
       :style="{ backgroundColor: data.color }"
       :title="$t('whiteboard.add_child_left')"
+      :aria-label="$t('whiteboard.add_child_left')"
     >+</button>
 
     <!-- Right + button: root or right-direction nodes -->
@@ -130,6 +131,7 @@ function addChild(direction: 'right' | 'left') {
       @click.stop="addChild('right')"
       :style="{ backgroundColor: data.color }"
       :title="$t('whiteboard.add_child_right')"
+      :aria-label="$t('whiteboard.add_child_right')"
     >+</button>
 
     <!-- Handles with IDs for directional edges -->

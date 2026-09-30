@@ -201,3 +201,74 @@ describe('when the move fails', () => {
     expect(h.onFailed).toHaveBeenCalledWith(1);
   });
 });
+
+describe('overlapping deletes', () => {
+  /** An await between reading the pending delete and clearing it let the third overwrite the second. */
+  it('does not lose a delete started while the previous one is being written', async () => {
+    const h = harness([task('a'), task('b'), task('c')]);
+    let finish!: (v: string) => void;
+    h.trashNode.mockImplementationOnce(() => new Promise<string>((r) => { finish = r; }));
+    await h.api.deleteTaskTree(h.tasks.value[0], 'keep');
+    const second = h.api.deleteTaskTree(h.tasks.value.find((t) => t.id === 'b')!, 'keep');
+    await h.api.deleteTaskTree(h.tasks.value.find((t) => t.id === 'c')!, 'keep');
+    finish('.trash/a');
+    await second;
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS + 100);
+    expect(h.trashNode.mock.calls.map((c: any) => c[0].relPath).sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  /** Cleared before the move, a reload landing mid-commit flashed the task back. */
+  it('keeps a task hidden until its file is in the trash', async () => {
+    const h = harness([task('a')]);
+    let finish!: (v: string) => void;
+    h.trashNode.mockImplementationOnce(() => new Promise<string>((r) => { finish = r; }));
+    await h.api.deleteTaskTree(h.tasks.value[0], 'keep');
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS + 100);
+    expect(h.trashNode).toHaveBeenCalled();
+    expect(h.api.isHidden('a')).toBe(true);
+    finish('.trash/a');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.api.isHidden('a')).toBe(false);
+  });
+});
+
+describe('pausing', () => {
+  it('holds the countdown while the toast is hovered or focused', async () => {
+    const h = harness([task('a')]);
+    await h.api.deleteTaskTree(h.tasks.value[0], 'keep');
+    await vi.advanceTimersByTimeAsync(3000);
+    h.api.pause();
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS * 3);
+    expect(h.trashNode).not.toHaveBeenCalled();
+    h.api.resume();
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS - 3000 + 100);
+    expect(h.trashNode).toHaveBeenCalledWith({ relPath: 'a' });
+  });
+});
+
+describe('a subtree move that stops part way', () => {
+  /** Only what is still on disk may come back; the rest really is in the trash. */
+  it('restores only the tasks that were not moved', async () => {
+    const all = [task('a'), task('b', 'a'), task('c', 'b')];
+    const h = harness(all);
+    h.trashNode
+      .mockResolvedValueOnce('.trash/c')
+      .mockRejectedValueOnce(new Error('locked'));
+    await h.api.deleteTaskTree(all[0], 'all');
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS + 100);
+    expect(ids(h.tasks.value)).toEqual(['a', 'b']);
+    expect(h.onFailed).toHaveBeenCalledWith(2);
+  });
+
+  /** Otherwise the list shows the child under its parent and the file says otherwise. */
+  it('points a kept child back at a parent that could not be moved', async () => {
+    const all = [task('parent'), task('child', 'parent')];
+    const h = harness(all);
+    h.trashNode.mockRejectedValueOnce(new Error('locked'));
+    await h.api.deleteTaskTree(all[0], 'keep');
+    await vi.advanceTimersByTimeAsync(UNDO_WINDOW_MS + 100);
+    expect(all[1].parent_id).toBe('parent');
+    expect(h.writeNode).toHaveBeenCalledTimes(2);
+    expect(h.writeNode.mock.calls[1][0]).toMatchObject({ relPath: 'child', properties: expect.objectContaining({ parent_id: 'parent' }) });
+  });
+});

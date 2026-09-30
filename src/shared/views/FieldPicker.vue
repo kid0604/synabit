@@ -78,15 +78,15 @@ const position = computed(() => ({
         class="w-full flex items-center gap-2 px-3 py-1.5 text-left
                hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer"
       >
-        <span class="flex-1 min-w-0 truncate font-mono text-xs text-[#1c1c1e] dark:text-[#f4f4f5]">
+        <span class="flex-1 min-w-0 truncate font-mono text-xs text-text dark:text-text-dark">
           {{ field.key }}
         </span>
-        <span class="text-[11px] text-gray-400 tabular-nums">{{ field.count }}</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ field.count }}</span>
       </button>
 
       <p
         v-if="!offered.length"
-        class="px-3 py-2 text-xs text-gray-400 dark:text-gray-500"
+        class="px-3 py-2 text-xs text-gray-500 dark:text-gray-400"
       >
         {{ t('things.no_known_fields') }}
       </p>
@@ -104,7 +104,7 @@ const position = computed(() => ({
           @blur="submitName"
           class="w-full px-2 py-1 rounded text-xs font-mono bg-gray-50 dark:bg-white/5
                  border border-gray-200 dark:border-gray-700 outline-none
-                 text-[#1c1c1e] dark:text-[#f4f4f5]"
+                 text-text dark:text-text-dark"
         />
       </div>
       <button

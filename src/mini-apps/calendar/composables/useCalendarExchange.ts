@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { formatDateString } from '../helpers';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 
 /**
  * Taking the calendar out, and bringing one in.
@@ -99,7 +100,7 @@ export function useCalendarExchange(ns: any) {
                 try {
                     await ns.writeNode({
                         relPath,
-                        title: event.title || 'Untitled event',
+                        title: event.title || i18n.global.t('calendar.untitled_event'),
                         nodeType: 'event',
                         properties: {
                             is_all_day: event.is_all_day,

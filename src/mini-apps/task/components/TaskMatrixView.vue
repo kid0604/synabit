@@ -80,8 +80,8 @@ const colorClasses: Record<string, {
     cardText: 'text-red-900 dark:text-red-200',
     checkbox: 'border-red-400/60 dark:border-red-500/40 hover:bg-red-200 dark:hover:bg-red-800/50',
     priority: 'bg-red-200/60 dark:bg-red-800/40 text-red-700 dark:text-red-300',
-    date: 'text-red-500/70 dark:text-red-400/60',
-    delete: 'text-red-300/50 dark:text-red-600/30',
+    date: 'text-red-700 dark:text-red-300',
+    delete: 'text-red-500 dark:text-red-400',
     emptyBg: 'bg-red-100/50 dark:bg-red-900/10',
     emptyIcon: 'text-red-300 dark:text-red-700',
     emptyText: 'text-red-300 dark:text-red-700',
@@ -95,8 +95,8 @@ const colorClasses: Record<string, {
     cardText: 'text-blue-900 dark:text-blue-200',
     checkbox: 'border-blue-400/60 dark:border-blue-500/40 hover:bg-blue-200 dark:hover:bg-blue-800/50',
     priority: 'bg-blue-200/60 dark:bg-blue-800/40 text-blue-700 dark:text-blue-300',
-    date: 'text-blue-500/70 dark:text-blue-400/60',
-    delete: 'text-blue-300/50 dark:text-blue-600/30',
+    date: 'text-blue-700 dark:text-blue-300',
+    delete: 'text-blue-500 dark:text-blue-400',
     emptyBg: 'bg-blue-100/50 dark:bg-blue-900/10',
     emptyIcon: 'text-blue-300 dark:text-blue-700',
     emptyText: 'text-blue-300 dark:text-blue-700',
@@ -110,8 +110,8 @@ const colorClasses: Record<string, {
     cardText: 'text-amber-900 dark:text-amber-200',
     checkbox: 'border-amber-400/60 dark:border-amber-500/40 hover:bg-amber-200 dark:hover:bg-amber-800/50',
     priority: 'bg-amber-200/60 dark:bg-amber-800/40 text-amber-700 dark:text-amber-300',
-    date: 'text-amber-500/70 dark:text-amber-400/60',
-    delete: 'text-amber-300/50 dark:text-amber-600/30',
+    date: 'text-amber-700 dark:text-amber-300',
+    delete: 'text-amber-500 dark:text-amber-400',
     emptyBg: 'bg-amber-100/50 dark:bg-amber-900/10',
     emptyIcon: 'text-amber-300 dark:text-amber-700',
     emptyText: 'text-amber-300 dark:text-amber-700',
@@ -125,11 +125,11 @@ const colorClasses: Record<string, {
     cardText: 'text-gray-600 dark:text-gray-400',
     checkbox: 'border-gray-400/50 dark:border-gray-500/30 hover:bg-gray-200 dark:hover:bg-gray-700',
     priority: 'bg-gray-200/60 dark:bg-gray-700/40 text-gray-600 dark:text-gray-400',
-    date: 'text-gray-400/70 dark:text-gray-500/60',
-    delete: 'text-gray-300/50 dark:text-gray-600/30',
+    date: 'text-gray-600 dark:text-gray-400',
+    delete: 'text-gray-500 dark:text-gray-400',
     emptyBg: 'bg-gray-100/50 dark:bg-gray-800/30',
-    emptyIcon: 'text-gray-300 dark:text-gray-700',
-    emptyText: 'text-gray-300 dark:text-gray-700',
+    emptyIcon: 'text-gray-500 dark:text-gray-400',
+    emptyText: 'text-gray-500 dark:text-gray-400',
   },
 };
 
@@ -148,13 +148,13 @@ const emptyIcons: Record<string, string> = {
       <div class="flex items-center gap-3 mb-4">
           <div class="flex items-center gap-1.5">
               <div class="w-5 h-5 rounded-md bg-red-500/10 dark:bg-red-500/20 flex items-center justify-center">
-                  <span class="text-[8px] font-black text-red-500">!</span>
+                  <span class="text-xs font-black text-red-500">!</span>
               </div>
-              <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_urgent') }}</span>
+              <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_urgent') }}</span>
           </div>
           <div class="flex-1 h-px bg-gradient-to-r from-red-200 via-gray-200 to-blue-200 dark:from-red-900/30 dark:via-gray-700 dark:to-blue-900/30"></div>
           <div class="flex items-center gap-1.5">
-              <span class="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_not_urgent') }}</span>
+              <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.matrix_not_urgent') }}</span>
               <div class="w-5 h-5 rounded-md bg-blue-500/10 dark:bg-blue-500/20 flex items-center justify-center">
                   <Calendar class="w-3 h-3 text-blue-500"/>
               </div>
@@ -170,11 +170,11 @@ const emptyIcons: Record<string, string> = {
               <div class="flex items-center justify-between mb-2 shrink-0">
                   <div class="flex items-center gap-2">
                       <div class="w-5 h-5 rounded-md flex items-center justify-center" :class="colorClasses[quadrant.color].badge">
-                          <span class="text-[9px] font-black text-white">{{ quadrant.number }}</span>
+                          <span class="text-xs font-black text-white">{{ quadrant.number }}</span>
                       </div>
-                      <h3 class="text-[11px] font-bold uppercase tracking-wider" :class="colorClasses[quadrant.color].headerText">{{ $t(quadrant.label) }}</h3>
+                      <h3 class="text-xs font-bold uppercase tracking-wider" :class="colorClasses[quadrant.color].headerText">{{ $t(quadrant.label) }}</h3>
                   </div>
-                  <span class="text-[10px] min-w-[20px] text-center py-0.5 rounded-md font-bold" :class="colorClasses[quadrant.color].count">{{ tasksByQuadrant[quadrant.id].length }}</span>
+                  <span class="text-xs min-w-[20px] text-center py-0.5 rounded-md font-bold" :class="colorClasses[quadrant.color].count">{{ tasksByQuadrant[quadrant.id].length }}</span>
               </div>
               <div class="flex-1 overflow-y-auto custom-scrollbar">
                   <div class="flex flex-wrap gap-2 content-start">
@@ -191,22 +191,22 @@ const emptyIcons: Record<string, string> = {
                               :checked="isSelected(task.id)"
                               @click.stop="emit('select-one', task.id)"
                               class="absolute top-1.5 left-1.5 w-3.5 h-3.5 z-10 rounded border-gray-300 dark:border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer transition-opacity"
-                              :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'"
+                              :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 pointer-coarse:opacity-100'"
                               :aria-label="$t('task.a11y_select_task')"
                           />
                           <p class="text-[12px] font-semibold leading-[1.35] line-clamp-3 pr-4" :class="[colorClasses[quadrant.color].cardText, isSelecting ? 'pl-5' : '']">{{ task.title }}</p>
                           <div class="flex items-center gap-1 mt-auto pt-1">
-                              <span v-if="progressOf(task).total" class="text-[8px] font-bold px-1 py-[0.5px] rounded bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">{{ progressOf(task).done }}/{{ progressOf(task).total }}</span>
-                              <span v-if="task.priority" class="text-[8px] font-bold px-1 py-[0.5px] rounded" :class="colorClasses[quadrant.color].priority">{{ task.priority }}</span>
-                              <span v-if="task.due_date" class="text-[8px] flex items-center gap-0.5" :class="colorClasses[quadrant.color].date">
+                              <span v-if="progressOf(task).total" class="text-xs font-bold px-1 py-[0.5px] rounded bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300">{{ progressOf(task).done }}/{{ progressOf(task).total }}</span>
+                              <span v-if="task.priority" class="text-xs font-bold px-1 py-[0.5px] rounded" :class="colorClasses[quadrant.color].priority">{{ task.priority }}</span>
+                              <span v-if="task.due_date" class="text-xs flex items-center gap-0.5" :class="colorClasses[quadrant.color].date">
                                   <CalendarDays class="w-2 h-2"/>{{ task.due_date.substring(5) }}
                               </span>
                               <!-- Delegate quadrant: show transferred user -->
-                              <span v-if="quadrant.id === 'delegate' && task.is_transferred && task.transferred_to" class="text-[8px] text-purple-500 dark:text-purple-400 flex items-center gap-0.5 font-semibold">
+                              <span v-if="quadrant.id === 'delegate' && task.is_transferred && task.transferred_to" class="text-xs text-purple-500 dark:text-purple-400 flex items-center gap-0.5 font-semibold">
                                   <User class="w-2 h-2"/>{{ getTransferredName(task.transferred_to).substring(0, 6) }}
                               </span>
                           </div>
-                          <DeleteButton :mode="deleteConfirm" compact class="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-all" @confirm="emit('delete-task', task)" />
+                          <DeleteButton :mode="deleteConfirm" compact class="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" @confirm="emit('delete-task', task)" />
                       </div>
                   </div>
                   <div v-if="tasksByQuadrant[quadrant.id].length === 0" class="flex flex-col items-center justify-center h-full py-8">
@@ -216,7 +216,7 @@ const emptyIcons: Record<string, string> = {
                           <Send v-else-if="emptyIcons[quadrant.id] === 'send'" class="w-5 h-5" :class="colorClasses[quadrant.color].emptyIcon"/>
                           <Trash2 v-else class="w-5 h-5" :class="colorClasses[quadrant.color].emptyIcon"/>
                       </div>
-                      <p class="text-[11px] font-medium" :class="colorClasses[quadrant.color].emptyText">{{ $t(quadrant.emptyLabel) }}</p>
+                      <p class="text-xs font-medium" :class="colorClasses[quadrant.color].emptyText">{{ $t(quadrant.emptyLabel) }}</p>
                   </div>
               </div>
           </div>
@@ -224,12 +224,12 @@ const emptyIcons: Record<string, string> = {
       
       <!-- Bottom Axis Label -->
       <div class="flex items-center justify-center mt-3 gap-4">
-          <div class="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500">
+          <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
               <div class="w-3 h-3 rounded bg-gradient-to-br from-red-400 to-blue-400 opacity-40"></div>
               ↑ {{ $t('task.matrix_important') }}
           </div>
-          <span class="text-gray-300 dark:text-gray-700">·</span>
-          <div class="flex items-center gap-1.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500">
+          <span class="text-gray-500 dark:text-gray-400" aria-hidden="true">·</span>
+          <div class="flex items-center gap-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400">
               <div class="w-3 h-3 rounded bg-gradient-to-br from-amber-400 to-gray-400 opacity-40"></div>
               ↓ {{ $t('task.matrix_not_important') }}
           </div>

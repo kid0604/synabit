@@ -40,7 +40,7 @@ const emit = defineEmits<{
   <!-- Subtask progress -->
   <span v-if="progress && progress.total > 0"
     class="rounded-full bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300 font-bold tracking-wider shrink-0"
-    :class="compact ? 'text-[10px] px-1.5 py-[0.5px]' : 'text-[10px] px-2 py-0.5'">
+    :class="compact ? 'text-xs px-1.5 py-[0.5px]' : 'text-xs px-2 py-0.5'">
     {{ progress.done }}/{{ progress.total }}
   </span>
 
@@ -50,7 +50,7 @@ const emit = defineEmits<{
   </span>
 
   <!-- Priority Badge -->
-  <span v-if="task.priority" class="text-[10px] px-1.5 py-0.5 rounded font-bold tracking-wider shrink-0"
+  <span v-if="task.priority" class="text-xs px-1.5 py-0.5 rounded font-bold tracking-wider shrink-0"
     :class="[getPriorityClass(task.priority), compact ? 'px-1 py-[0.5px]' : 'px-2']">{{ task.priority }}</span>
 
   <!-- Transferred User -->
@@ -59,17 +59,17 @@ const emit = defineEmits<{
     class="flex items-center shrink-0 px-1.5 py-0.5 rounded-md text-purple-600 dark:text-purple-400 transition-colors" 
     :class="isLinkedPerson(task.transferred_to) ? 'hover:bg-purple-50 dark:hover:bg-purple-900/20 cursor-pointer' : 'cursor-default'">
     <User v-if="isLinkedPerson(task.transferred_to)" class="w-3 h-3 mr-1" />
-    <span class="text-[10px] font-semibold truncate" :class="compact ? 'max-w-[100px]' : 'max-w-[120px]'">{{ getTransferredName(task.transferred_to) }}</span>
+    <span class="text-xs font-semibold truncate" :class="compact ? 'max-w-[100px]' : 'max-w-[120px]'">{{ getTransferredName(task.transferred_to) }}</span>
     <Eye v-if="task.track_progress" class="w-3 h-3 ml-1 text-blue-500" />
   </div>
 
   <!-- Dates -->
   <template v-if="compact">
-    <span v-if="task.start_date || task.due_date" class="text-[10px] px-1.5 py-0.5 rounded flex items-center"
-      :class="isOverdue(task) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'text-gray-500 bg-gray-100 dark:bg-[#2a2a2a]'">
+    <span v-if="task.start_date || task.due_date" class="text-xs px-1.5 py-0.5 rounded flex items-center"
+      :class="isOverdue(task) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'text-gray-500 bg-gray-100 dark:bg-surface-hover-dark'">
       <CalendarDays class="w-3 h-3 mr-1" /> {{ task.start_date ? task.start_date.substring(5) : '--' }} - {{ task.due_date ? task.due_date.substring(5) : '--' }}<template v-if="task.due_time">&nbsp;{{ task.due_time }}</template>
     </span>
-    <span v-if="task.reminders?.length" class="text-[10px] text-purple-500 flex items-center" :title="task.reminders.join(', ')">
+    <span v-if="task.reminders?.length" class="text-xs text-purple-500 flex items-center" :title="task.reminders.join(', ')">
       <Bell class="w-3 h-3" />
     </span>
   </template>
@@ -89,11 +89,11 @@ const emit = defineEmits<{
   <!-- Tags -->
   <template v-if="compact">
     <div v-if="task.tags.length" class="flex flex-wrap gap-1">
-      <span v-for="tag in task.tags" :key="tag" class="text-[10px] text-gray-500 bg-gray-100 dark:bg-[#2a2a2a] px-1.5 py-0.5 rounded">{{ tag }}</span>
+      <span v-for="tag in task.tags" :key="tag" class="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-surface-hover-dark px-1.5 py-0.5 rounded">{{ tag }}</span>
     </div>
   </template>
   <template v-else>
-    <span v-if="task.tags.length > 0" class="text-xs flex items-center text-gray-500 max-w-[150px] truncate">
+    <span v-if="task.tags.length > 0" class="text-xs flex items-center text-gray-500 dark:text-gray-400 max-w-[150px] truncate">
       <Tag class="w-3 h-3 mr-1 shrink-0" /> {{ task.tags.join(', ') }}
     </span>
   </template>

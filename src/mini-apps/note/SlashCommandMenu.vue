@@ -2,8 +2,10 @@
 import { ref, watch } from 'vue';
 
 export interface SlashCommandItem {
+  /** English name, also matched by the search. */
   title: string;
-  description: string;
+  titleKey: string;
+  descriptionKey: string;
   icon: any;
   command: (props: { editor: any; range: any }) => void;
 }
@@ -74,14 +76,17 @@ defineExpose({ onKeyDown });
         <component :is="item.icon" class="w-4 h-4" />
       </div>
       <div class="slash-menu-text">
-        <span class="slash-menu-title">{{ item.title }}</span>
-        <span class="slash-menu-desc">{{ item.description }}</span>
+        <span class="slash-menu-title">{{ $t(item.titleKey) }}</span>
+        <span class="slash-menu-desc">{{ $t(item.descriptionKey) }}</span>
       </div>
     </button>
   </div>
 </template>
 
 <style>
+/* Dark follows the app's own theme (the `.dark` class on <html>), not the
+   operating system's — the two differ whenever someone picks a theme in
+   Settings. The menu is mounted on <body>, so the style is global. */
 .slash-command-menu {
   background: #fff;
   border: 1px solid #e5e7eb;
@@ -93,12 +98,10 @@ defineExpose({ onKeyDown });
   min-width: 240px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .slash-command-menu {
-    background: #1e1e1e;
-    border-color: #333;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-  }
+.dark .slash-command-menu {
+  background: #1e1e1e;
+  border-color: #333;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
 }
 
 .slash-menu-item {
@@ -120,11 +123,9 @@ defineExpose({ onKeyDown });
   background: #f3f4f6;
 }
 
-@media (prefers-color-scheme: dark) {
-  .slash-menu-item:hover,
-  .slash-menu-item.is-selected {
-    background: #2a2a2a;
-  }
+.dark .slash-menu-item:hover,
+.dark .slash-menu-item.is-selected {
+  background: #2a2a2a;
 }
 
 .slash-menu-icon {
@@ -140,12 +141,10 @@ defineExpose({ onKeyDown });
   color: #6b7280;
 }
 
-@media (prefers-color-scheme: dark) {
-  .slash-menu-icon {
-    background: #252525;
-    border-color: #3a3a3a;
-    color: #a1a1aa;
-  }
+.dark .slash-menu-icon {
+  background: #252525;
+  border-color: #3a3a3a;
+  color: #a1a1aa;
 }
 
 .slash-menu-text {
@@ -161,21 +160,17 @@ defineExpose({ onKeyDown });
   line-height: 1.3;
 }
 
-@media (prefers-color-scheme: dark) {
-  .slash-menu-title {
-    color: #f4f4f5;
-  }
+.dark .slash-menu-title {
+  color: #f4f4f5;
 }
 
 .slash-menu-desc {
-  font-size: 11px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #6b7280;
   line-height: 1.3;
 }
 
-@media (prefers-color-scheme: dark) {
-  .slash-menu-desc {
-    color: #71717a;
-  }
+.dark .slash-menu-desc {
+  color: #a1a1aa;
 }
 </style>

@@ -23,6 +23,7 @@ import InstructionsPanel from './components/InstructionsPanel.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import RoutinesPanel from './components/RoutinesPanel.vue';
 import ModelTier from './components/ModelTier.vue';
+import SynSetupCard from './components/SynSetupCard.vue';
 import { useSynActivity } from './composables/useSynActivity';
 
 import { useSynChat } from './composables/useSynChat';
@@ -32,6 +33,8 @@ import { useSynModels } from './composables/useSynModels';
 import { useThreads, type ThreadState } from '../../shared/syn/useThreads';
 import { useSynEnabled, SETTINGS_SAVED } from '../../shared/syn/useSynEnabled';
 import { useSettings } from '../../composables/useSettings';
+import { usePlatform } from '../../composables/usePlatform';
+import type { SynProviderId } from './composables/useSynSettings';
 import { tidyComposerText } from '../../shared/syn/composerText';
 import { useNodeService } from '../../composables/useNodeService';
 import type { ConsentAnswer, SynConversation, SynConversationFull, SynMessage } from './types';
@@ -314,6 +317,45 @@ const notifications = ref<any[]>([]);
  */
 const { openSettings } = useSettings();
 const openSynSettings = () => openSettings('syn');
+
+/**
+ * Which provider Syn is using, so "cannot reach it" can name it.
+ *
+ * The header said "Offline" and the banner said "Ollama disconnected" whoever
+ * the provider was — someone on Gemini was told to go and start Ollama. Read
+ * from the same settings file `useSynEnabled` reads.
+ */
+const synProvider = ref<SynProviderId>('ollama');
+const loadProvider = async () => {
+  try {
+    const saved = await invoke<{ provider?: SynProviderId } | null>('syn_get_settings', { vaultPath: props.vaultPath });
+    synProvider.value = saved?.provider ?? 'ollama';
+  } catch (e) {
+    logger.warn('[Syn] Could not read which provider is in use', e);
+  }
+};
+const providerName = computed(() => ({
+  ollama: 'Ollama',
+  open_ai_compat: t('syn.provider_openai'),
+  gemini: t('syn.provider_gemini'),
+  anthropic: t('syn.provider_anthropic'),
+}[synProvider.value] ?? 'Ollama'));
+/**
+ * Whether the provider has answered at least once. Until it has, the header
+ * says it is looking rather than that it is offline, and no banner or setup
+ * card claims a failure nobody has seen yet.
+ */
+const statusKnown = ref(false);
+/** Ollama cannot run on a phone; the setup card says so there. */
+const { isMobileOS } = usePlatform();
+const retryConnection = async () => {
+  await checkStatus(props.vaultPath);
+  if (status.value.connected) {
+    stopPolling();
+    await fetchModels(props.vaultPath);
+    startHealthCheck(props.vaultPath);
+  }
+};
 /**
  * The panel that shows what Syn actually did, and what it was actually told.
  *
@@ -675,7 +717,9 @@ const { enabled: synEnabled, refresh: refreshEnabled } = useSynEnabled(() => pro
 
 const handleSettingsSaved = async () => {
   await refreshEnabled();
+  await loadProvider();
   await checkStatus(props.vaultPath);
+  statusKnown.value = true;
   if (status.value.connected) {
     await fetchModels(props.vaultPath);
     startHealthCheck(props.vaultPath);
@@ -982,7 +1026,9 @@ onMounted(async () => {
   // reading your own conversations.
   void (async () => {
     try {
+      await loadProvider();
       await checkStatus(props.vaultPath);
+      statusKnown.value = true;
       // Gone while the provider was answering: a poll started now would have
       // nobody left to stop it.
       if (unmounted) return;
@@ -994,6 +1040,8 @@ onMounted(async () => {
       }
     } catch (e) {
       logger.error('[Syn] Could not reach the provider', e);
+    } finally {
+      statusKnown.value = true;
     }
   })();
 });
@@ -1095,7 +1143,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
         <div class="h-14 border-b border-border dark:border-border-dark flex items-center justify-between px-4 flex-shrink-0 bg-surface dark:bg-surface-dark shadow-sm">
             <!-- Left: Back button (mobile) + Contact info -->
             <div class="flex items-center gap-3">
-                <button v-if="isMobile" @click="selection = null" class="p-1.5 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 cursor-pointer" :aria-label="t('syn.back_to_list')">
+                <button v-if="isMobile" @click="selection = null" class="p-1.5 -ml-2 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 cursor-pointer" :aria-label="t('syn.back_to_list')">
                     <ChevronLeft class="w-5 h-5" />
                 </button>
 
@@ -1119,46 +1167,47 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     </div>
                     <div class="flex flex-col justify-center min-w-0">
                         <span class="text-sm font-semibold tracking-tight text-gray-900 dark:text-white leading-tight truncate">{{ activeConversationTitle }}</span>
-                        <div class="flex items-center gap-1.5 text-[11px] text-gray-500">
-                           <span v-if="status.connected" class="text-green-500 font-medium">Online</span>
-                           <span v-else class="text-gray-400">Offline</span>
+                        <div class="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                           <span v-if="status.connected" class="text-green-700 dark:text-green-400 font-medium">{{ t('syn.status_connected') }}</span>
+                           <span v-else-if="!statusKnown" class="text-gray-500 dark:text-gray-400">{{ t('syn.status_checking') }}</span>
+                           <span v-else class="text-amber-600 dark:text-amber-400">{{ t('syn.status_unreachable', { provider: providerName }) }}</span>
                            
                            <template v-if="status.connected">
-                              <span class="text-gray-300 dark:text-gray-600">·</span>
+                              <span class="text-gray-500 dark:text-gray-400" aria-hidden="true">·</span>
                               <span class="truncate">{{ activeModelName }}</span>
                            </template>
                         </div>
                     </div>
                 </template>
                 <template v-else-if="activeThread">
-                    <GitBranch class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <GitBranch class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <div class="flex flex-col justify-center min-w-0">
                         <span class="text-sm font-semibold tracking-tight text-gray-900 dark:text-white leading-tight truncate">
                             {{ activeThread.title }}
                         </span>
-                        <span class="text-[11px] text-gray-500">
+                        <span class="text-xs text-gray-500 dark:text-gray-400">
                             {{ t(`syn.thread_state_${activeThread.state}`) }}
                         </span>
                     </div>
                 </template>
                 <template v-else-if="selection?.kind === 'instructions'">
-                    <ScrollText class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <ScrollText class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.settings_instructions') }}</span>
                 </template>
                 <template v-else-if="selection?.kind === 'routines'">
-                    <CalendarClock class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <CalendarClock class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.routines') }}</span>
                 </template>
                 <template v-else-if="selection?.kind === 'activity'">
-                    <Activity class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <Activity class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.activity') }}</span>
                 </template>
                 <template v-else-if="selection?.kind === 'notifications'">
-                    <Bell class="w-5 h-5 text-gray-400 flex-shrink-0" />
+                    <Bell class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.notifications') }}</span>
                 </template>
                 <template v-else-if="!selection">
-                    <span class="font-medium text-gray-400">{{ t('syn.nothing_selected') }}</span>
+                    <span class="font-medium text-gray-500 dark:text-gray-400">{{ t('syn.nothing_selected') }}</span>
                 </template>
             </div>
 
@@ -1199,7 +1248,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @click="togglePane"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
                   :class="paneOpen
-                    ? 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10'
+                    ? 'text-accent dark:text-accent-dark bg-accent/10'
                     : 'text-gray-500 dark:text-gray-400'"
                   :title="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
                   :aria-label="paneOpen ? t('syn.pane_close') : t('syn.pane_open')"
@@ -1245,15 +1294,15 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
               class="flex-1 flex flex-col items-center justify-center text-center px-8"
             >
                 <div class="w-16 h-16 rounded-3xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
-                    <PowerOff class="w-8 h-8 text-gray-400 dark:text-gray-500" />
+                    <PowerOff class="w-8 h-8 text-gray-500 dark:text-gray-400" />
                 </div>
                 <p class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('syn.syn_off_title') }}</p>
-                <p class="mt-2 text-[12px] max-w-sm text-gray-400 dark:text-gray-500 leading-relaxed">
+                <p class="mt-2 text-[12px] max-w-sm text-gray-500 dark:text-gray-400 leading-relaxed">
                     {{ t('syn.syn_off_body') }}
                 </p>
                 <button
                   @click="openSynSettings"
-                  class="mt-4 px-3 py-1.5 text-[12px] font-medium rounded-lg border border-gray-200 dark:border-gray-700/50 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                  class="mt-4 btn-primary"
                 >
                     {{ t('syn.syn_off_turn_on') }}
                 </button>
@@ -1269,7 +1318,12 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :plan="plan"
                   :progress="progress"
                   :vault-path="vaultPath"
-                  :connection-lost="!status.connected"
+                  :connection-lost="statusKnown && !status.connected"
+                  :provider-name="providerName"
+                  :local-provider="synProvider === 'ollama'"
+                  :on-phone="isMobileOS"
+                  @open-settings="openSynSettings"
+                  @retry="retryConnection"
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
                   :choice-ask="choiceHere?.choice ?? null"
@@ -1317,7 +1371,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             <!-- Notifications, gathered. Reading a month of them no longer means
                  scrolling a month of conversation. -->
             <div v-else-if="selection?.kind === 'notifications'" class="flex-1 overflow-y-auto p-4 space-y-3">
-                <p v-if="!notifications.length" class="text-center text-[13px] text-gray-400 py-10">
+                <p v-if="!notifications.length" class="text-center text-[13px] text-gray-500 dark:text-gray-400 py-10">
                     {{ t('syn.no_notifications') }}
                 </p>
                 <NotificationCard
@@ -1328,9 +1382,21 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 />
             </div>
             <template v-else>
-                <div class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 px-8 text-center">
+                <!-- A first run with nothing to answer with: the way to fix
+                     that comes before the invitation to pick a conversation. -->
+                <div v-if="statusKnown && !status.connected" class="flex-1 flex items-center justify-center overflow-y-auto px-4 py-8">
+                    <SynSetupCard
+                        :local="synProvider === 'ollama'"
+                        :provider-name="providerName"
+                        :on-phone="isMobileOS"
+                        :vault-path="vaultPath"
+                        @open-settings="openSynSettings"
+                        @retry="retryConnection"
+                    />
+                </div>
+                <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 px-8 text-center">
                     <div class="w-16 h-16 rounded-3xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center mb-4">
-                        <Zap class="w-8 h-8 text-gray-300 dark:text-gray-600" />
+                        <Zap class="w-8 h-8 text-gray-500 dark:text-gray-400" aria-hidden="true" />
                     </div>
                     <p class="text-sm">{{ t('syn.pick_something') }}</p>
                     <p v-if="!threads.length" class="mt-3 text-[12px] max-w-sm">{{ t('threads.empty_body') }}</p>

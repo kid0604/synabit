@@ -69,7 +69,13 @@ const drawChart = () => {
     .attr('fill', d => color(d.data.label))
     .attr('stroke', 'none')
     .style('opacity', 0)
-    .style('cursor', 'pointer');
+    .style('cursor', 'pointer')
+    // Focusable and named, so a keyboard (or a tap) gets the same readout
+    // in the centre that hovering gives.
+    .attr('tabindex', 0)
+    .attr('role', 'img')
+    .attr('aria-label', d => `${d.data.label}: ${formatCurrency(d.data.value)}`)
+    .style('outline', 'none');
     
   // Animation
   slices.transition()
@@ -81,33 +87,37 @@ const drawChart = () => {
     });
     
   // Interactions
+  function highlight(this: SVGPathElement, _event: unknown, d: d3.PieArcDatum<{label: string, value: number}>) {
+    d3.select(this)
+      .transition()
+      .duration(200)
+      .attr('d', arcHover as any)
+      .style('opacity', 0.8);
+      
+    // Add tooltip or update center text
+    svg.select('.center-text-value')
+      .text(formatCurrency(d.data.value));
+    svg.select('.center-text-label')
+      .text(d.data.label);
+  }
+  function unhighlight(this: SVGPathElement) {
+    d3.select(this)
+      .transition()
+      .duration(200)
+      .attr('d', arcGenerator as any)
+      .style('opacity', 1);
+      
+    // Reset center text
+    svg.select('.center-text-value')
+      .text(props.total ? formatCurrency(props.total) : '');
+    svg.select('.center-text-label')
+      .text(props.title || '');
+  }
   slices
-    .on('mouseover', function(_event, d) {
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('d', arcHover as any)
-          .style('opacity', 0.8);
-          
-        // Add tooltip or update center text
-        svg.select('.center-text-value')
-          .text(formatCurrency(d.data.value));
-        svg.select('.center-text-label')
-          .text(d.data.label);
-    })
-    .on('mouseout', function(_event, _d) {
-        d3.select(this)
-          .transition()
-          .duration(200)
-          .attr('d', arcGenerator as any)
-          .style('opacity', 1);
-          
-        // Reset center text
-        svg.select('.center-text-value')
-          .text(props.total ? formatCurrency(props.total) : '');
-        svg.select('.center-text-label')
-          .text(props.title || '');
-    });
+    .on('mouseover', highlight)
+    .on('focus', highlight)
+    .on('mouseout', unhighlight)
+    .on('blur', unhighlight);
     
   // Center Text (Default)
   svg.append('text')
@@ -144,8 +154,8 @@ onMounted(() => {
 
 <template>
   <div class="w-full h-full min-h-[250px] relative flex flex-col items-center">
-      <div v-if="!data.length" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400">
-          <p class="text-sm">No transaction data yet</p>
+      <div v-if="!data.length" class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
+          <p class="text-sm">{{ $t('finance.no_tx_data') }}</p>
       </div>
       <div ref="chartContainer" class="w-full h-full flex-1"></div>
       

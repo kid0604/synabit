@@ -1,45 +1,42 @@
 <template>
-  <Teleport to="body">
-    <div v-if="show" class="fixed inset-0 z-[9999] flex items-center justify-center" @click.self="$emit('close')">
-      <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="$emit('close')"></div>
-      <div class="relative w-full max-w-lg mx-4 bg-white dark:bg-[#1e1e1e] rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700/50 overflow-hidden animate-in">
+  <AppDialog :show="show" labelledby="resource-link-title" :initialFocus="() => searchInput" @close="$emit('close')">
+      <div class="overflow-hidden">
         
         <!-- Header -->
         <div class="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 dark:border-gray-800">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-800 dark:text-gray-200">
             <LinkIcon class="w-4 h-4 text-emerald-500" />
-            <span>Link Resource</span>
+            <span id="resource-link-title">{{ $t('task.link_resource') }}</span>
           </div>
-          <button @click="$emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors" aria-label="$emit">
-            <X class="w-4 h-4 text-gray-400" />
+          <button @click="$emit('close')" class="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-md transition-colors" :aria-label="$t('task.a11y_close')" :title="$t('task.a11y_close')">
+            <X class="w-4 h-4 text-gray-500 dark:text-gray-400" />
           </button>
         </div>
 
         <!-- Search & Filter -->
         <div class="px-4 pt-4 pb-3 border-b border-gray-100 dark:border-gray-800 flex flex-col gap-3">
           <div class="relative w-full">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
             <input
               ref="searchInput"
               v-model="searchQuery"
-              placeholder="Search resources..."
-              class="w-full pl-9 pr-3 py-2.5 text-sm bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-200 placeholder:text-gray-400 transition-all"
-              @keydown.escape="$emit('close')"
+              :placeholder="$t('task.search_resources')"
+              class="w-full pl-9 pr-3 py-2.5 text-sm bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 text-gray-800 dark:text-gray-200 placeholder:text-gray-500 dark:placeholder:text-gray-400 transition-all"
             />
           </div>
           <!-- Type Filter -->
           <div class="flex items-center gap-2 overflow-x-auto hide-scrollbar">
-             <button @click="activeTab = 'all'" :class="activeTab === 'all' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">All</button>
-             <button @click="activeTab = 'note'" :class="activeTab === 'note' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Notes</button>
-             <button @click="activeTab = 'whiteboard'" :class="activeTab === 'whiteboard' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Whiteboards</button>
-             <button @click="activeTab = 'file'" :class="activeTab === 'file' ? 'bg-gray-800 text-white dark:bg-gray-200 dark:text-gray-900' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">Files</button>
+             <button @click="activeTab = 'all'" :class="activeTab === 'all' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">{{ $t('task.resource_all') }}</button>
+             <button @click="activeTab = 'note'" :class="activeTab === 'note' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">{{ $t('task.resource_notes') }}</button>
+             <button @click="activeTab = 'whiteboard'" :class="activeTab === 'whiteboard' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">{{ $t('task.resource_whiteboards') }}</button>
+             <button @click="activeTab = 'file'" :class="activeTab === 'file' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'" class="px-3.5 py-1.5 text-xs font-medium rounded-full transition-all shrink-0">{{ $t('task.resource_files') }}</button>
           </div>
         </div>
 
         <!-- Content -->
         <div class="max-h-80 overflow-y-auto">
-          <div v-if="filteredNodes.length === 0" class="px-5 py-8 text-center text-sm text-gray-400">
-            No resources found
+          <div v-if="filteredNodes.length === 0" class="px-5 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+            {{ $t('task.no_resources_found') }}
           </div>
           <button
             v-for="node in filteredNodes"
@@ -59,23 +56,23 @@
             </div>
             <div class="min-w-0 flex-1">
               <div class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">{{ node.title || (node.node_type === 'whiteboard' ? $t('task.untitled_whiteboard') : node.node_type === 'file' ? $t('task.unnamed_file') : $t('task.untitled_note')) }}</div>
-              <div class="text-xs text-gray-400 truncate mt-0.5" v-if="node.node_type === 'file'">
+              <div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5" v-if="node.node_type === 'file'">
                   {{ node.id }}
               </div>
-              <div class="text-xs text-gray-400 truncate mt-0.5" v-else>
-                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 60) : 'Empty ' + (node.node_type === 'whiteboard' ? 'whiteboard' : 'note') }}
+              <div class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5" v-else>
+                  {{ node.content ? node.content.replace(/<[^>]+>/g, '').substring(0, 60) : (node.node_type === 'whiteboard' ? $t('task.empty_whiteboard') : $t('task.empty_note')) }}
               </div>
             </div>
           </button>
         </div>
       </div>
-    </div>
-  </Teleport>
+  </AppDialog>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue';
+import { ref, computed, watch } from 'vue';
 import { Link as LinkIcon, Search, X, FileText, File, Palette } from 'lucide-vue-next';
+import AppDialog from '../../shared/components/AppDialog.vue';
 
 interface NodeItem {
   id: string;
@@ -118,9 +115,6 @@ watch(() => props.show, (newVal) => {
   if (newVal) {
     searchQuery.value = '';
     activeTab.value = 'all';
-    nextTick(() => {
-      searchInput.value?.focus();
-    });
   }
 });
 </script>
@@ -132,12 +126,5 @@ watch(() => props.show, (newVal) => {
 .hide-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
-}
-.animate-in {
-  animation: fadeIn 0.2s ease-out;
-}
-@keyframes fadeIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
 }
 </style>

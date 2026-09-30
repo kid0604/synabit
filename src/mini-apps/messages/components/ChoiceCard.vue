@@ -33,7 +33,7 @@ const verb = () =>
     class="rounded-xl border border-violet-200 dark:border-violet-900/60
            bg-violet-50/50 dark:bg-violet-950/20 p-4"
   >
-    <div class="flex items-center gap-2 text-[11px] font-medium text-violet-700 dark:text-violet-400">
+    <div class="flex items-center gap-2 text-xs font-medium text-violet-700 dark:text-violet-400">
       <HelpCircle class="w-3.5 h-3.5" />
       {{ t('syn.choice_title') }}
     </div>
@@ -56,7 +56,7 @@ const verb = () =>
           <span class="flex-1 min-w-0 truncate text-text dark:text-text-dark">
             {{ candidate.title || candidate.id }}
           </span>
-          <span v-if="candidate.node_type" class="shrink-0 text-[10px] text-gray-400">
+          <span v-if="candidate.node_type" class="shrink-0 text-xs text-gray-500 dark:text-gray-400">
             {{ candidate.node_type }}
           </span>
           <!-- What Syn was about to do, named rather than silently applied. -->
@@ -69,6 +69,6 @@ const verb = () =>
       </li>
     </ul>
 
-    <p class="mt-2.5 text-[11px] text-gray-500">{{ t('syn.choice_explainer') }}</p>
+    <p class="mt-2.5 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.choice_explainer') }}</p>
   </div>
 </template>

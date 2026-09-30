@@ -13,12 +13,17 @@ import { formatDateString } from '../helpers';
 export function useCalendarHelpers(
     tasksByDate: Ref<Map<string, TaskMetadata[]>>,
     eventsByDate: Ref<Map<string, EventMetadata[]>>,
+    /** Deleted on screen and waiting out the undo window; see `useEventForm`. */
+    heldEventIds?: Ref<Set<string>>,
 ) {
     const getTasksForDate = (dateStr: string): TaskMetadata[] =>
         tasksByDate.value.get(dateStr) ?? [];
 
-    const getEventsForDate = (dateStr: string): EventMetadata[] =>
-        eventsByDate.value.get(dateStr) ?? [];
+    const getEventsForDate = (dateStr: string): EventMetadata[] => {
+        const events = eventsByDate.value.get(dateStr) ?? [];
+        const held = heldEventIds?.value;
+        return held?.size ? events.filter(e => !held.has(e.id)) : events;
+    };
 
     const getMonthViewItems = (dateStr: string) => {
         const events = getEventsForDate(dateStr).map(e => {

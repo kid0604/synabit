@@ -17,6 +17,7 @@ import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { CalendarClock, Play, Pencil, Trash2, ArrowUpRight, Plus, Smartphone, ShieldCheck } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
+import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 import { blankRoutine, daysInWords, toggleDay, whenInWords, type Routine, type RoutineView } from '../routines';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -93,8 +94,17 @@ const setEnabled = async (routine: RoutineView, enabled: boolean) => {
   }
 };
 
-const remove = async (routine: RoutineView) => {
-  if (!window.confirm(`${t('syn.routine_delete')}: ${routine.name}?`)) return;
+/** The routine waiting on the delete question, asked in the app's own dialog. */
+const pendingRemove = ref<RoutineView | null>(null);
+
+const remove = (routine: RoutineView) => {
+  pendingRemove.value = routine;
+};
+
+const confirmRemove = async () => {
+  const routine = pendingRemove.value;
+  pendingRemove.value = null;
+  if (!routine) return;
   try {
     await invoke('syn_delete_routine', { vaultPath: props.vaultPath, routineId: routine.id });
     await load();
@@ -170,7 +180,7 @@ const runNow = async (routine: RoutineView) => {
                 :aria-pressed="editing.schedule.weekdays.includes(day)"
                 class="w-9 h-8 rounded-lg text-xs font-medium focus-visible:outline-2 focus-visible:outline-violet-500"
                 :class="editing.schedule.weekdays.includes(day)
-                  ? 'bg-violet-600 text-white'
+                  ? 'bg-accent text-white'
                   : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300'"
                 @click="editing.schedule.weekdays = toggleDay(editing.schedule.weekdays, day)"
               >
@@ -198,7 +208,7 @@ const runNow = async (routine: RoutineView) => {
         <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white" @click="startNew()">
           <Plus class="w-4 h-4" aria-hidden="true" />{{ t('syn.routine_new') }}
         </button>
-        <span class="text-xs text-gray-500">{{ t('syn.routine_templates') }}:</span>
+        <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.routine_templates') }}:</span>
         <button type="button" class="px-2.5 py-1 rounded-lg text-xs border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-white/5" @click="startNew('morning')">
           {{ t('syn.routine_tpl_morning') }}
         </button>
@@ -207,7 +217,7 @@ const runNow = async (routine: RoutineView) => {
         </button>
       </div>
 
-      <p v-if="!routines.length && !editing" class="text-sm text-gray-400">{{ t('syn.routines_none') }}</p>
+      <p v-if="!routines.length && !editing" class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.routines_none') }}</p>
 
       <ul class="space-y-2">
         <li
@@ -249,7 +259,7 @@ const runNow = async (routine: RoutineView) => {
                 {{ t('syn.routine_started') }}
               </p>
             </div>
-            <label class="shrink-0 inline-flex items-center gap-1.5 text-xs text-gray-500">
+            <label class="shrink-0 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
               <input type="checkbox" :checked="routine.enabled" @change="setEnabled(routine, ($event.target as HTMLInputElement).checked)" />
               {{ t('syn.routine_enabled') }}
             </label>
@@ -276,5 +286,16 @@ const runNow = async (routine: RoutineView) => {
         </li>
       </ul>
     </div>
+
+    <ConfirmModal
+      :show="!!pendingRemove"
+      :title="t('syn.routine_delete_title', { name: pendingRemove?.name ?? '' })"
+      :message="t('syn.routine_delete_body')"
+      :confirm-text="t('syn.delete')"
+      :cancel-text="t('syn.cancel')"
+      is-destructive
+      @confirm="confirmRemove"
+      @cancel="pendingRemove = null"
+    />
   </div>
 </template>

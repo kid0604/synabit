@@ -257,13 +257,13 @@ const pieChartTotal = computed(() => {
         <!-- Filter Control Panel -->
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm p-4 flex flex-wrap gap-4 items-center shrink-0">
             <div class="flex items-center gap-2 text-text dark:text-text-dark font-medium mr-2">
-                <Filter class="w-5 h-5 text-blue-500" />
-                Filters
+                <Filter class="w-5 h-5 text-accent dark:text-accent-dark" />
+                {{ $t('finance.filters') }}
             </div>
             
             <!-- Time Range -->
-            <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-blue-500 group pl-3 relative">
-                <Calendar class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors shrink-0" />
+            <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-accent group pl-3 relative">
+                <Calendar class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-accent transition-colors shrink-0" />
                 <select v-model="timeRange" class="bg-transparent border-none py-1.5 pl-2 pr-8 text-sm font-medium focus:ring-0 cursor-pointer outline-none text-text dark:text-text-dark">
                     <option value="this_month">{{ $t('finance.this_month') }}</option>
                     <option value="last_3">{{ $t('finance.last_3_months') }}</option>
@@ -274,15 +274,15 @@ const pieChartTotal = computed(() => {
                 </select>
             </div>
             
-            <div v-if="timeRange === 'custom'" class="flex items-center gap-2 bg-gray-100/80 dark:bg-gray-800/80 border border-transparent dark:border-gray-700 rounded-xl px-3 py-1.5 focus-within:ring-2 focus-within:ring-blue-500">
+            <div v-if="timeRange === 'custom'" class="flex items-center gap-2 bg-gray-100/80 dark:bg-gray-800/80 border border-transparent dark:border-gray-700 rounded-xl px-3 py-1.5 focus-within:ring-2 focus-within:ring-accent">
                 <input v-model="customStartDate" type="date" class="bg-transparent border-none text-sm font-medium p-0 focus:ring-0 text-text dark:text-text-dark" />
-                <span class="text-gray-400">-</span>
+                <span class="text-gray-500 dark:text-gray-400">-</span>
                 <input v-model="customEndDate" type="date" class="bg-transparent border-none text-sm font-medium p-0 focus:ring-0 text-text dark:text-text-dark" />
             </div>
 
             <!-- Account Filter -->
-            <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-blue-500 group pl-3 relative">
-                <Wallet class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors shrink-0" />
+            <div class="flex items-center bg-gray-100/80 dark:bg-gray-800/80 hover:bg-gray-200 dark:hover:bg-gray-700 border border-transparent dark:border-gray-700 rounded-xl transition-colors focus-within:ring-2 focus-within:ring-accent group pl-3 relative">
+                <Wallet class="w-4 h-4 text-gray-500 dark:text-gray-400 group-hover:text-accent transition-colors shrink-0" />
                 <select v-model="selectedAccount" class="bg-transparent border-none py-1.5 pl-2 pr-8 text-sm font-medium focus:ring-0 cursor-pointer outline-none text-text dark:text-text-dark max-w-[200px] truncate">
                     <option value="all">{{ $t('finance.all_accounts') }}</option>
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
@@ -291,7 +291,7 @@ const pieChartTotal = computed(() => {
             
             <!-- Exclude Debts Toggle -->
             <label class="flex items-center gap-2 cursor-pointer group ml-2">
-                <input type="checkbox" v-model="excludeDebts" class="w-4 h-4 text-blue-500 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 dark:focus:ring-blue-600 dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600 cursor-pointer" />
+                <input type="checkbox" v-model="excludeDebts" class="w-4 h-4 accent-accent bg-gray-100 border-gray-300 rounded focus:ring-accent dark:ring-offset-gray-800 focus:ring-2 dark:bg-gray-700 dark:border-gray-600 cursor-pointer" />
                 <span class="text-sm font-medium text-gray-600 dark:text-gray-300 group-hover:text-text dark:group-hover:text-text-dark transition-colors">{{ $t('finance.exclude_debts') }}</span>
             </label>
         </div>
@@ -301,24 +301,24 @@ const pieChartTotal = computed(() => {
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center">
                 <div>
                     <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.cash_flow') }}</h3>
-                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.cash_flow_desc') }}</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ $t('finance.cash_flow_desc') }}</p>
                 </div>
                 <!-- Legend -->
                 <div class="flex gap-4">
                     <div class="flex items-center gap-2">
                         <div class="w-3 h-3 rounded-full bg-gradient-to-t from-green-500 to-green-400"></div>
-                        <span class="text-xs font-medium text-gray-600 dark:text-gray-300">Total Income</span>
+                        <span class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $t('finance.total_income') }}</span>
                     </div>
                     <div class="flex items-center gap-2">
                         <div class="w-3 h-3 rounded-full bg-gradient-to-t from-red-500 to-red-400"></div>
-                        <span class="text-xs font-medium text-gray-600 dark:text-gray-300">Total Expense</span>
+                        <span class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $t('finance.total_expense') }}</span>
                     </div>
                 </div>
             </div>
             
             <div class="p-6">
-                <div v-if="cashFlowData.length === 0" class="h-[250px] flex items-center justify-center text-gray-400">
-                    No data available
+                <div v-if="cashFlowData.length === 0" class="h-[250px] flex items-center justify-center text-gray-500 dark:text-gray-400">
+                    {{ $t('finance.no_data') }}
                 </div>
                 
                 <div v-else class="h-[300px] w-full flex flex-col mt-4">
@@ -333,12 +333,18 @@ const pieChartTotal = computed(() => {
                         </div>
                         
                         <!-- Bars -->
-                        <div v-for="(data, idx) in cashFlowData" :key="idx" class="flex items-end justify-center w-full max-w-[80px] h-full relative z-10 group">
+                        <div
+                            v-for="(data, idx) in cashFlowData" :key="idx"
+                            tabindex="0"
+                            role="img"
+                            :aria-label="`${data.fullLabel}: ${$t('finance.income')} ${formatCurrency(data.income)}, ${$t('finance.expense')} ${formatCurrency(data.expense)}`"
+                            class="flex items-end justify-center w-full max-w-[80px] h-full relative z-10 group rounded-md outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                        >
                             <!-- Tooltip -->
-                            <div class="absolute -top-16 opacity-0 group-hover:opacity-100 transition-opacity duration-200 bg-gray-900/90 dark:bg-white text-white dark:text-gray-900 text-xs py-2 px-3 rounded-xl shadow-xl whitespace-nowrap z-20 pointer-events-none transform -translate-y-2 group-hover:translate-y-0 backdrop-blur-sm">
+                            <div class="absolute -top-16 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-200 bg-gray-900/90 dark:bg-white text-white dark:text-gray-900 text-xs py-2 px-3 rounded-xl shadow-xl whitespace-nowrap z-20 pointer-events-none transform -translate-y-2 group-hover:translate-y-0 group-focus-within:translate-y-0 backdrop-blur-sm">
                                 <p class="font-bold mb-1">{{ data.fullLabel }}</p>
-                                <p class="text-green-400 dark:text-green-600">Income: {{ formatCurrency(data.income) }}</p>
-                                <p class="text-red-400 dark:text-red-600">Expense: {{ formatCurrency(data.expense) }}</p>
+                                <p class="text-green-400 dark:text-green-600">{{ $t('finance.income') }}: {{ formatCurrency(data.income) }}</p>
+                                <p class="text-red-400 dark:text-red-600">{{ $t('finance.expense') }}: {{ formatCurrency(data.expense) }}</p>
                             </div>
                             
                             <div class="flex items-end justify-center gap-1 sm:gap-2 w-full h-full">
@@ -352,7 +358,7 @@ const pieChartTotal = computed(() => {
                     <div class="h-[60px] w-full flex items-start justify-around gap-2 sm:gap-6 mt-2 z-10">
                         <div v-for="(data, idx) in cashFlowData" :key="`label-${idx}`" class="w-full max-w-[80px] flex flex-col items-center">
                             <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 mt-2">{{ data.label }}</p>
-                            <span :class="['mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full', data.net >= 0 ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-red-600 bg-red-50 dark:bg-red-900/20']">
+                            <span :class="['mt-1 text-xs font-bold px-1.5 py-0.5 rounded-full', data.net >= 0 ? 'text-green-600 bg-green-50 dark:bg-green-900/20' : 'text-red-600 bg-red-50 dark:bg-red-900/20']">
                                 {{ data.net > 0 ? '+' : ''}}{{ formatShort(data.net) }}
                             </span>
                         </div>
@@ -366,17 +372,17 @@ const pieChartTotal = computed(() => {
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center bg-gradient-to-r from-blue-50/50 to-transparent dark:from-blue-900/10">
                 <div>
                     <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.balance_trend') }}</h3>
-                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.balance_trend_desc') }}</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ $t('finance.balance_trend_desc') }}</p>
                 </div>
                 <div class="text-right">
                     <p class="text-2xl font-bold text-blue-600 dark:text-blue-400">{{ formatCurrency(accountsTotal) }}</p>
-                    <p class="text-xs font-medium text-gray-500 uppercase tracking-wider mt-0.5">{{ $t('finance.in_accounts') }}</p>
+                    <p class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mt-0.5">{{ $t('finance.in_accounts') }}</p>
                 </div>
             </div>
             
             <div class="p-6">
-                <div v-if="netWorthTrendData.length === 0" class="h-[250px] flex items-center justify-center text-gray-400">
-                    No data available
+                <div v-if="netWorthTrendData.length === 0" class="h-[250px] flex items-center justify-center text-gray-500 dark:text-gray-400">
+                    {{ $t('finance.no_data') }}
                 </div>
                 
                 <div v-else class="h-[300px] w-full flex flex-col mt-4">
@@ -413,15 +419,20 @@ const pieChartTotal = computed(() => {
                                     transform: 'translateX(-50%)'
                                 }">
                                 
-                                <div class="absolute inset-y-0 w-8 md:w-16 flex justify-center group pointer-events-auto cursor-pointer">
+                                <div
+                                    tabindex="0"
+                                    role="img"
+                                    :aria-label="`${data.label}: ${formatCurrency(data.value)}`"
+                                    class="absolute inset-y-0 w-8 md:w-16 flex justify-center group pointer-events-auto cursor-pointer outline-none"
+                                >
                                     
-                                    <div class="absolute -top-6 opacity-0 group-hover:opacity-100 transition-all duration-200 bg-blue-600 dark:bg-blue-500 text-white text-xs py-1.5 px-3 rounded-lg shadow-lg whitespace-nowrap z-30 transform -translate-y-2 group-hover:translate-y-0 font-medium">
+                                    <div class="absolute -top-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-all duration-200 bg-blue-600 dark:bg-blue-500 text-white text-xs py-1.5 px-3 rounded-lg shadow-lg whitespace-nowrap z-30 transform -translate-y-2 group-hover:translate-y-0 group-focus-within:translate-y-0 font-medium">
                                         {{ formatCurrency(data.value) }}
                                     </div>
                                     
-                                    <div class="h-full w-px bg-blue-500/20 opacity-0 group-hover:opacity-100 transition-opacity hidden md:block"></div>
+                                    <div class="h-full w-px bg-blue-500/20 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity hidden md:block"></div>
                                     
-                                    <div class="absolute w-3.5 h-3.5 rounded-full bg-white dark:bg-gray-900 border-2 border-blue-500 shadow-md group-hover:scale-125 group-hover:border-4 transition-all"
+                                    <div class="absolute w-3.5 h-3.5 rounded-full bg-white dark:bg-gray-900 border-2 border-blue-500 shadow-md group-hover:scale-125 group-hover:border-4 group-focus-within:scale-125 group-focus-within:border-4 transition-all"
                                          :style="{ bottom: netWorthTrendData.length === 1 ? '50%' : `${((data.value - minNetWorth) / Math.max(maxNetWorth - minNetWorth, 1)) * 100}%`, transform: 'translateY(50%)' }">
                                     </div>
                                 </div>
@@ -449,8 +460,8 @@ const pieChartTotal = computed(() => {
         <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-sm flex flex-col overflow-hidden relative shrink-0">
             <div class="p-6 border-b border-border dark:border-border-dark flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50">
                 <div>
-                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ pieChartType === 'expense' ? 'Expense' : 'Income' }} Breakdown</h3>
-                    <p class="text-sm text-gray-500 mt-1">{{ $t('finance.cat_dist_desc') }}</p>
+                    <h3 class="font-bold text-lg text-text dark:text-text-dark">{{ pieChartType === 'expense' ? $t('finance.expense_breakdown') : $t('finance.income_breakdown') }}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ $t('finance.cat_dist_desc') }}</p>
                 </div>
                 
                 <!-- Pie Chart Toggle -->
@@ -463,7 +474,7 @@ const pieChartTotal = computed(() => {
                 <div v-if="pieChartTotal > 0" class="w-full h-[300px]">
                     <FinanceChart :data="pieChartData" :total="pieChartTotal" :title="pieChartType === 'expense' ? $t('finance.total_expense') : $t('finance.total_income')" />
                 </div>
-                <div v-else class="h-[300px] flex items-center justify-center text-gray-400">No data in this period</div>
+                <div v-else class="h-[300px] flex items-center justify-center text-gray-500 dark:text-gray-400">{{ $t('finance.no_data_period') }}</div>
             </div>
         </div>
 

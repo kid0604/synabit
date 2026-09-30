@@ -15,10 +15,10 @@
   --color-surface-hover: #f5f5f5;
   --color-border: #e6e6e6;
   --color-border-subtle: #e0e0e0;
-  --color-muted: #8b8b8b;
+  --color-muted: #6b6b6b;
   --color-text: #1c1c1e;
   --color-text-secondary: #52525b;
-  --color-text-tertiary: #a1a1aa;
+  --color-text-tertiary: #71717a;
   --color-primary: #000000;
   --color-accent: #7c3aed;
 
@@ -29,10 +29,10 @@
   --color-surface-hover-dark: #2a2a2a;
   --color-border-dark: #2c2c2c;
   --color-border-subtle-dark: #3a3a3a;
-  --color-muted-dark: #71717a;
+  --color-muted-dark: #a1a1aa;
   --color-text-dark: #f4f4f5;
   --color-text-secondary-dark: #a1a1aa;
-  --color-text-tertiary-dark: #71717a;
+  --color-text-tertiary-dark: #909098;
   --color-accent-dark: #a78bfa;
 
   /* Sidebar */
@@ -166,7 +166,192 @@ body.zen-mode nav[data-tauri-drag-region] {
    decision per toolbar rather than something a stylesheet can take.
    ───────────────────────────────────────────────── */
 @media (pointer: coarse) {
-  button {
+  /* Not switches: stretching a 20px track to 44px made an egg of it. */
+  button:not([role="switch"]) {
     min-height: 44px;
   }
+
+  /*
+    A switch keeps its drawn size and gets its 44px from an invisible margin
+    around it instead. Every switch in the app is already `relative`, which is
+    what the pseudo-element is measured against. 12px above and below a 20px
+    track is 44; the sides get a little too, short of the row's label.
+  */
+  [role="switch"]::after {
+    content: "";
+    position: absolute;
+    inset: -12px -6px;
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   Reduced motion, once for the whole app
+
+   Some components already honour it one by one (the dialogs, the toasts);
+   this is the floor for everything else. Transitions and animations still
+   *happen* — so `transitionend` handlers and `v-if` leave transitions finish,
+   and a state change is not skipped — they just take no visible time.
+
+   A spinner keeps spinning: it is the only sign something is happening, and
+   a small rotation in place is not the movement this setting is about.
+
+   Transforms that only exist to move — pressing a card makes it shrink,
+   hovering one grows it, the PIN pad shakes on a wrong code — are switched
+   off outright. Tailwind 4 writes the first two with the individual `scale`
+   property, not `transform`, so that is what is reset. Hover `translate` is
+   left alone: the same property also centres things (`-translate-x-1/2`),
+   and resetting it would move them.
+   ───────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+
+  [class*="active:scale"]:active,
+  [class*="hover:scale"]:hover {
+    scale: none !important;
+  }
+
+  .shake {
+    animation: none !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   Buttons every app shares
+
+   One primary action per screen, in the accent colour, with its words on it.
+   Before these, "add" was blue in Tasks, purple in Calendar, orange in Feeds,
+   grey in Notes and an unlabelled icon in People — five answers to one
+   question. White on the accent is 5.7:1, so the dark theme keeps the same
+   fill rather than the paler dark accent, which white text cannot sit on.
+   ───────────────────────────────────────────────── */
+@utility btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 2.25rem;
+  padding-inline: 0.875rem;
+  border-radius: var(--radius-lg);
+  background-color: var(--color-accent);
+  color: white;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms;
+  &:hover {
+    background-color: color-mix(in oklab, var(--color-accent) 88%, black);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  /* The accent is 2.7:1 on the dark ground; its paler dark twin clears 3:1. */
+  &:is(.dark *):focus-visible {
+    outline-color: var(--color-accent-dark);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+/* The quieter partner of `btn-primary`: same size, outlined. */
+@utility btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: 2.25rem;
+  padding-inline: 0.875rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 150ms;
+  &:hover {
+    background-color: var(--color-surface-hover);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  /* The accent is 2.7:1 on the dark ground; its paler dark twin clears 3:1. */
+  &:is(.dark *):focus-visible {
+    outline-color: var(--color-accent-dark);
+  }
+  &:is(.dark *) {
+    border-color: var(--color-border-dark);
+    background-color: var(--color-surface-dark);
+    color: var(--color-text-dark);
+  }
+  &:is(.dark *):hover {
+    background-color: var(--color-surface-hover-dark);
+  }
+}
+
+/* A square icon button. Always give it an aria-label. */
+@utility btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-lg);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+  &:hover {
+    background-color: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  /* The accent is 2.7:1 on the dark ground; its paler dark twin clears 3:1. */
+  &:is(.dark *):focus-visible {
+    outline-color: var(--color-accent-dark);
+  }
+  &:is(.dark *) {
+    color: var(--color-text-secondary-dark);
+  }
+  &:is(.dark *):hover {
+    background-color: var(--color-surface-hover-dark);
+    color: var(--color-text-dark);
+  }
+}
+
+/* ─────────────────────────────────────────────────
+   The toast stack (#app-toasts, made in main.ts)
+
+   Bottom centre, newest nearest the edge, above page content but below
+   dialogs (z 1000) so a toast never covers a question being asked. On a
+   phone `--bottom-bar` (set by App.vue) lifts it clear of the tab bar, and
+   the safe-area inset clears the home indicator.
+   ───────────────────────────────────────────────── */
+.app-toasts {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(1.25rem + var(--bottom-bar, 0px) + env(safe-area-inset-bottom, 0px));
+  z-index: 300;
+  width: min(420px, calc(100vw - 2rem));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  pointer-events: none;
 }

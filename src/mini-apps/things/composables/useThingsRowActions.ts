@@ -3,6 +3,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../../composables/useNodeService';
 import { folderForType } from '../../../shared/nodeRoutes';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
+import { showAppNotice } from '../../../composables/useAppNotice';
 
 /**
  * What a row's menu actually does.
@@ -37,10 +39,34 @@ export function useThingsRowActions(vaultPath: () => string) {
    */
   /** Ends the offer, whether it was taken, replaced, or simply ran out. */
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** When the running timer fires, so a pause keeps what was left. */
+  let deadline = 0;
+  let remaining = 0;
 
   const dismissUndo = () => {
     clearTimeout(timer);
+    timer = undefined;
     trashed.value = null;
+  };
+
+  const arm = (ms: number) => {
+    clearTimeout(timer);
+    deadline = Date.now() + ms;
+    timer = setTimeout(dismissUndo, ms);
+  };
+
+  /**
+   * Hold the offer while the pointer or focus is on the toast (WCAG 2.2.1),
+   * as `useUndoableAction` does for everyone else's.
+   */
+  const pauseUndo = () => {
+    if (!trashed.value || timer === undefined) return;
+    remaining = Math.max(0, deadline - Date.now());
+    clearTimeout(timer);
+    timer = undefined;
+  };
+  const resumeUndo = () => {
+    if (trashed.value && timer === undefined) arm(remaining);
   };
 
   const remove = async (id: string, title: string) => {
@@ -50,10 +76,10 @@ export function useThingsRowActions(vaultPath: () => string) {
       // The offer has to end by itself. Without this the toast stayed on
       // screen long after its countdown bar had emptied, which said the undo
       // was still there when the bar said it was gone.
-      clearTimeout(timer);
-      timer = setTimeout(dismissUndo, UNDO_WINDOW_SECONDS * 1000);
+      arm(UNDO_WINDOW_SECONDS * 1000);
     } catch (e) {
       logger.error('[Things] Could not delete', e);
+      showAppNotice(i18n.global.t('common.delete_failed'), 'error');
     }
   };
 
@@ -68,6 +94,7 @@ export function useThingsRowActions(vaultPath: () => string) {
       });
     } catch (e) {
       logger.error('[Things] Could not restore', e);
+      showAppNotice(i18n.global.t('things.restore_failed'), 'error');
     }
   };
 
@@ -148,5 +175,5 @@ export function useThingsRowActions(vaultPath: () => string) {
     }
   };
 
-  return { trashed, remove, undoRemove, dismissUndo, copyPath, duplicate, setPinned };
+  return { trashed, remove, undoRemove, dismissUndo, pauseUndo, resumeUndo, copyPath, duplicate, setPinned };
 }

@@ -44,7 +44,7 @@ const formatTime = (isoString?: string) => {
   <div class="flex flex-col gap-1 min-w-0 flex-1 my-2" style="animation: messageIn 0.25s ease-out forwards;">
       <div class="flex items-baseline gap-2 ml-1">
           <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ notification.sender?.name || $t('chat.system_name') || 'Synabit System' }}</span>
-          <span class="text-xs text-gray-400">{{ formatTime(notification.timestamp) }}</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatTime(notification.timestamp) }}</span>
       </div>
       
       <div class="bg-white dark:bg-surface-dark border border-gray-100 dark:border-border-dark shadow-sm rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group w-full max-w-[80%] hover:border-violet-200 dark:hover:border-violet-500/30 transition-colors">

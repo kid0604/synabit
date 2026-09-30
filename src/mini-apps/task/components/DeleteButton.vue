@@ -62,11 +62,12 @@ onUnmounted(disarm);
       compact ? 'p-0.5' : 'p-1.5',
       armed
         ? 'bg-red-500 text-white px-2 hover:bg-red-600'
-        : 'text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]',
+        : 'text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]',
     ]"
     :aria-label="armed ? $t('task.delete_confirm') : $t('task.a11y_delete_task')"
+    :title="armed ? $t('task.delete_confirm') : $t('task.a11y_delete_task')"
   >
     <Trash2 :class="compact ? 'w-3.5 h-3.5' : 'w-4 h-4'" />
-    <span v-if="armed" class="text-[11px] font-semibold whitespace-nowrap">{{ $t('task.delete_confirm') }}</span>
+    <span v-if="armed" class="text-xs font-semibold whitespace-nowrap">{{ $t('task.delete_confirm') }}</span>
   </button>
 </template>

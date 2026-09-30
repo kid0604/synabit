@@ -4,7 +4,9 @@ import { emit as tauriEmit, listen, type UnlistenFn } from '@tauri-apps/api/even
 import type { SyncResult } from '../types/ipc';
 import { useAppStore } from '../stores/useAppStore';
 import { logger } from '../utils/logger';
+import { i18n } from '../i18n';
 import { usePlatform } from './usePlatform';
+import { syncErrorKey } from '../shared/syncErrorText';
 
 export type SyncAdapterId = 'none' | 'local' | 'server';
 export type SyncTriggerReason = 'manual' | 'server_push' | 'periodic_timer' | 'app_foreground' | 'initial_connect' | 'watcher_create_delete' | 'watcher_modified' | 'queued_retry';
@@ -209,7 +211,7 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
     // Timeout logic: reject if takes longer than 60 seconds
     const timeoutPromise = new Promise<never>((_, reject) => {
       setTimeout(() => {
-        reject(new Error('Sync operation timed out'));
+        reject(new Error(i18n.global.t('shell.sync.timed_out')));
       }, 60000);
     });
 
@@ -224,7 +226,7 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
     const result = await Promise.race([syncPromise, timeoutPromise]);
     
     if (abortSignal.aborted) {
-       throw new Error("Cancelled by user");
+       throw new Error(i18n.global.t('shell.sync.cancelled'));
     }
     
     logger.info(`[${vType}] Sync done in ${Date.now() - tStart}ms: pulled=${result.pulled} pushed=${result.pushed} deleted=${result.deleted} tx=${result.tx_bytes}B rx=${result.rx_bytes}B`);
@@ -232,7 +234,7 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
     let isPartial = false;
 
     if (result.errors.length > 0) {
-      syncError.value = `${result.errors.length} error(s)`;
+      syncError.value = i18n.global.t('shell.sync.errors', { count: result.errors.length }, result.errors.length);
       logger.warn('Sync errors:', result.errors);
       isPartial = true;
     }
@@ -268,12 +270,13 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       });
     }
   } catch (e: any) {
-    if (e?.toString().includes('offline') || e?.toString().includes('network')) {
-       syncStatus.value = 'offline';
-    } else {
-       syncStatus.value = 'error';
-    }
-    syncError.value = e?.toString() || 'Sync failed';
+    // The raw rejection goes to the log; the screen gets a sentence. Our own
+    // two (timed out, cancelled) are already sentences.
+    const t = i18n.global.t;
+    const ours = e instanceof Error && [t('shell.sync.timed_out'), t('shell.sync.cancelled')].includes(e.message);
+    const key = syncErrorKey(e, 'shell.sync.failed');
+    syncStatus.value = key === 'shell.sync_errors.offline' ? 'offline' : 'error';
+    syncError.value = ours ? e.message : t(key);
     logger.error(`[${vType}] Sync failed:`, e);
   } finally {
     currentSyncAbortController = null;
@@ -296,7 +299,7 @@ function cancelSync() {
        currentSyncAbortController.abort();
     }
     syncStatus.value = 'error';
-    syncError.value = 'Sync cancelled by user';
+    syncError.value = i18n.global.t('shell.sync.cancelled');
 }
 
 export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {

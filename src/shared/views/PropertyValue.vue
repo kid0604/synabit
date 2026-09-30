@@ -107,7 +107,7 @@ const removeItem = (index: number) => {
   >
     <span
       class="w-8 h-[18px] rounded-full flex items-center transition-colors px-0.5"
-      :class="on ? 'bg-blue-500' : 'bg-gray-200 dark:bg-gray-700'"
+      :class="on ? 'bg-accent' : 'bg-gray-200 dark:bg-gray-700'"
     >
       <span
         class="w-3.5 h-3.5 rounded-full bg-white shadow-sm transition-transform"
@@ -132,7 +132,7 @@ const removeItem = (index: number) => {
         v-if="!readonly"
         type="button"
         @click="removeItem(index)"
-        class="p-0.5 rounded-full text-gray-400 hover:text-red-500 cursor-pointer"
+        class="p-0.5 rounded-full text-gray-500 dark:text-gray-400 hover:text-red-500 cursor-pointer"
         :aria-label="t('things.remove_field')"
       >
         <X class="w-2.5 h-2.5" />
@@ -149,13 +149,13 @@ const removeItem = (index: number) => {
       @blur="addItem"
       class="px-2 py-0.5 min-w-[80px] w-[110px] rounded-full text-xs bg-gray-50 dark:bg-white/5
              border border-gray-200 dark:border-gray-700 outline-none
-             text-[#1c1c1e] dark:text-[#f4f4f5]"
+             text-text dark:text-text-dark"
     />
     <button
       v-else-if="!readonly"
       type="button"
       @click="adding = true"
-      class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs text-gray-400
+      class="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs text-gray-500
              hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
     >
       <Plus class="w-3 h-3" />
@@ -180,7 +180,7 @@ const removeItem = (index: number) => {
     class="flex-1 min-w-0 px-2 py-1 rounded bg-transparent hover:bg-gray-50 dark:hover:bg-white/5
            focus:bg-gray-50 dark:focus:bg-white/5 border border-transparent focus:border-gray-200
            dark:focus:border-gray-700 outline-none text-sm read-only:text-gray-500
-           text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 transition-colors"
+           text-text dark:text-text-dark placeholder-gray-300 transition-colors"
     :class="kind === 'json' ? 'font-mono text-xs' : ''"
   />
 </template>

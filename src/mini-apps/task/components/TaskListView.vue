@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { CheckCircle2, Circle } from 'lucide-vue-next';
+import { useI18n } from 'vue-i18n';
+import { formatDueDate } from '../dueLabel';
+import { CheckCircle2, Circle, CalendarDays } from 'lucide-vue-next';
 import DeleteButton from './DeleteButton.vue';
-import { type TaskMetadata, isOverdue } from '../types';
+import { type TaskMetadata, isOverdue, getPriorityClass } from '../types';
 import { buildTaskTree, flattenTaskTree, allSubtaskProgress, MAX_SUBTASK_DEPTH } from '../subtasks';
 import TaskCardMeta from './TaskCardMeta.vue';
 
@@ -33,6 +35,7 @@ const props = defineProps<{
   groups?: { key: string; label: string; literal: boolean; tasks: TaskMetadata[] }[];
 }>();
 
+const { locale } = useI18n();
 const isSelecting = computed(() => (props.selectedIds?.size ?? 0) > 0);
 const isSelected = (id: string) => props.selectedIds?.has(id) ?? false;
 
@@ -124,10 +127,10 @@ const onRowClick = (event: MouseEvent, task: TaskMetadata) => {
     <template v-for="section in sections" :key="section.key">
       <h3
         v-if="section.label"
-        class="text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider px-3 pt-4 pb-1 flex items-center gap-2"
+        class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider px-3 pt-4 pb-1 flex items-center gap-2"
       >
         {{ section.literal ? section.label : $t(section.label) }}
-        <span class="text-gray-300 dark:text-gray-600 font-medium normal-case tracking-normal">{{ section.rows.length }}</span>
+        <span class="text-gray-500 dark:text-gray-400 font-medium normal-case tracking-normal">{{ section.rows.length }}</span>
       </h3>
 
       <div v-for="(row, index) in section.rows" :key="row.task.id"
@@ -151,7 +154,7 @@ const onRowClick = (event: MouseEvent, task: TaskMetadata) => {
           -->
           <label
               class="shrink-0 mr-3 hidden md:flex items-center cursor-pointer transition-opacity"
-              :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'"
+              :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100'"
               @click.stop
           >
               <input
@@ -166,23 +169,39 @@ const onRowClick = (event: MouseEvent, task: TaskMetadata) => {
           <!-- Checkbox -->
           <button @click.stop="emit('toggle-status', row.task)" class="shrink-0 mr-4 transition-colors cursor-pointer" :aria-label="$t('task.a11y_toggle_status')">
               <CheckCircle2 v-if="row.task.status === 'done'" class="w-6 h-6 text-green-500 fill-green-50 dark:fill-green-900/30" />
-              <Circle v-else class="w-6 h-6 text-gray-300 dark:text-gray-600 hover:text-black dark:hover:text-white" />
+              <Circle v-else aria-hidden="true" class="w-6 h-6 text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white" />
           </button>
 
           <!-- Title & Meta -->
           <div class="flex-1 min-w-0 flex items-center justify-between">
-              <p class="text-[15px] font-medium truncate transition-all duration-300" :class="row.task.status === 'done' ? 'text-gray-400 line-through' : 'text-[#1c1c1e] dark:text-[#f4f4f5]'">
-                  {{ row.task.title }}
-              </p>
+              <div class="min-w-0">
+                  <p class="text-[15px] font-medium truncate transition-all duration-300" :class="row.task.status === 'done' ? 'text-gray-500 line-through' : 'text-text dark:text-text-dark'">
+                      {{ row.task.title }}
+                  </p>
+                  <!--
+                    The full meta row below is desktop-only — it does not fit
+                    beside the title on a phone. The two things a phone user
+                    most needs to see without opening the task go here instead.
+                  -->
+                  <div v-if="row.task.due_date || row.task.priority" class="md:hidden flex items-center gap-2 mt-0.5">
+                      <span v-if="row.task.priority" class="text-xs px-1.5 rounded font-bold tracking-wider" :class="getPriorityClass(row.task.priority)">{{ row.task.priority }}</span>
+                      <span v-if="row.task.due_date" class="text-xs flex items-center"
+                          :class="isOverdue(row.task) ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-gray-500'">
+                          <CalendarDays class="w-3 h-3 mr-1" aria-hidden="true" />
+                          <span v-if="isOverdue(row.task)" class="sr-only">{{ $t('task.overdue') }}:&nbsp;</span>
+                          <time :datetime="row.task.due_date">{{ formatDueDate(row.task.due_date, locale) }}</time><template v-if="row.task.due_time">&nbsp;{{ row.task.due_time }}</template>
+                      </span>
+                  </div>
+              </div>
               <div class="hidden md:flex items-center gap-3 overflow-hidden ml-4 shrink-0">
-                  <span v-if="row.task.status === 'in_progress'" class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold tracking-wider">DOING</span>
+                  <span v-if="row.task.status === 'in_progress'" class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 font-bold tracking-wider">{{ $t('task.doing_upper') }}</span>
 
                   <TaskCardMeta :task="row.task" :progress="progressOf(row.task)" @open-person="emit('open-person', $event)" />
               </div>
           </div>
 
           <!-- Actions -->
-          <div class="hidden md:flex shrink-0 md:opacity-0 opacity-100 group-hover:opacity-100 transition-opacity items-center gap-1 ml-4 w-[60px] justify-end">
+          <div class="hidden md:flex shrink-0 md:opacity-0 opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity items-center gap-1 ml-4 w-[60px] justify-end">
               <DeleteButton :mode="deleteConfirm" @confirm="emit('delete-task', row.task)" />
           </div>
       </div>

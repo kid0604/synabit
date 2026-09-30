@@ -32,6 +32,16 @@ const filter = ref<Filter>({ by: 'all' });
 const query = ref('');
 const items = ref<ItemSummary[]>([]);
 const selected = ref<ItemView | null>(null);
+/**
+ * The one row Tab lands on (roving tabindex): the open item, or the first row
+ * when the open item is not in the list — filtered out by a search or a kind.
+ * Without that fallback no row was reachable and the list was a dead end for
+ * the keyboard.
+ */
+const focusRowId = computed(() => {
+  const id = selected.value?.id;
+  return id && items.value.some((s) => s.id === id) ? id : items.value[0]?.id;
+});
 const error = ref('');
 
 /** Every failure goes through here: a locked Safe leaves the screen. */
@@ -161,6 +171,28 @@ async function lock() {
   emit('locked');
 }
 
+/**
+ * Up and down through the list, the way a listbox is expected to move and the
+ * way Files moves: the arrow picks the next item, so the detail follows the
+ * focus. Home and End go to the ends. One row is in the tab order at a time —
+ * the picked one — so Tab leaves the list rather than walking every row.
+ */
+const listEl = ref<HTMLElement | null>(null);
+function onListKeydown(e: KeyboardEvent) {
+  const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
+  if (!keys.includes(e.key) || !items.value.length) return;
+  e.preventDefault();
+  const at = items.value.findIndex((i) => i.id === (document.activeElement as HTMLElement | null)?.dataset.id);
+  const last = items.value.length - 1;
+  const next =
+    e.key === 'Home' ? 0
+    : e.key === 'End' ? last
+    : e.key === 'ArrowDown' ? Math.min(at + 1, last)
+    : Math.max(at - 1, 0);
+  listEl.value?.querySelectorAll<HTMLElement>('[role="option"]')[next]?.focus();
+  void select(items.value[next].id);
+}
+
 const navButton = 'w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm text-left';
 const navActive = 'bg-accent/10 text-accent font-medium';
 const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
@@ -235,10 +267,10 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
           <input v-model="query" type="search" :placeholder="t('safe.list.search')" :aria-label="t('safe.list.search')" spellcheck="false" class="w-full pl-8 pr-2 py-1.5 rounded-lg bg-surface dark:bg-surface-dark text-sm focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
         <div ref="newMenu" class="relative">
-          <button class="p-1.5 rounded-lg bg-accent text-white hover:opacity-90" :aria-label="t('safe.list.new')" :title="t('safe.list.new')" :aria-expanded="showNewMenu" @click="showNewMenu = !showNewMenu">
-            <Plus class="w-4 h-4" />
+          <button type="button" class="btn-primary px-3" aria-haspopup="menu" :aria-expanded="showNewMenu" @click="showNewMenu = !showNewMenu">
+            <Plus class="w-4 h-4" aria-hidden="true" />{{ t('safe.list.new') }}
           </button>
-          <div v-if="showNewMenu" class="absolute right-0 top-9 z-20 w-48 p-1 rounded-xl border border-border dark:border-border-dark bg-base dark:bg-base-dark shadow-xl" role="menu">
+          <div v-if="showNewMenu" class="absolute right-0 top-10 z-20 w-48 p-1 rounded-xl border border-border dark:border-border-dark bg-base dark:bg-base-dark shadow-xl" role="menu">
             <button v-for="k in KINDS" :key="k.kind" role="menuitem" class="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" @click="startNew(k.kind)">
               <component :is="k.icon" class="w-4 h-4 text-text-secondary dark:text-text-secondary-dark" />{{ t(`safe.kind.${k.kind}`) }}
             </button>
@@ -272,17 +304,19 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
         <span>{{ t('safe.sidebar.unreadable', { n: overview.unreadable.length }) }}</span>
       </div>
 
-      <ul class="flex-1 overflow-y-auto p-2 space-y-0.5" role="listbox" :aria-label="t('safe.name')">
+      <ul ref="listEl" class="flex-1 overflow-y-auto p-2 space-y-0.5" role="listbox" :aria-label="t('safe.name')" @keydown="onListKeydown">
         <li
           v-for="s in items"
           :key="s.id"
           role="option"
           :aria-selected="selected?.id === s.id"
-          tabindex="0"
+          :tabindex="s.id === focusRowId ? 0 : -1"
+          :data-id="s.id"
           class="safe-row flex items-center gap-3 px-2.5 py-2 rounded-lg cursor-pointer"
           :class="selected?.id === s.id ? 'bg-accent/10' : 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark'"
           @click="select(s.id)"
           @keydown.enter="select(s.id)"
+          @keydown.space.prevent="select(s.id)"
         >
           <div class="w-8 h-8 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark flex items-center justify-center flex-shrink-0">
             <component :is="kindInfo(s.kind).icon" class="w-4 h-4 text-text-secondary dark:text-text-secondary-dark" />
@@ -294,7 +328,19 @@ const navIdle = 'hover:bg-surface-hover dark:hover:bg-surface-hover-dark';
           <ShieldAlert v-if="s.health.length" class="w-3.5 h-3.5 text-warning flex-shrink-0" :aria-label="s.health.map((f) => t(`safe.health.flag.${f}`)).join(', ')" />
           <Star v-if="s.favorite" class="w-3.5 h-3.5 fill-warning text-warning flex-shrink-0" />
         </li>
-        <li v-if="!items.length" class="px-3 py-10 text-center text-sm text-text-tertiary dark:text-text-tertiary-dark">
+        <!-- An empty Safe says what to do next, and where the way in from
+             another password manager is, rather than only that it is empty. -->
+        <li v-if="!items.length && !query && filter.by === 'all'" class="px-3 py-10 text-center text-sm space-y-3">
+          <p class="text-text-secondary dark:text-text-secondary-dark">{{ t('safe.list.empty_all') }}</p>
+          <button type="button" class="btn-primary" @click="startNew('login')">
+            {{ t('safe.list.empty_add') }}
+          </button>
+          <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">
+            {{ t('safe.list.empty_import') }}
+            <button class="underline hover:text-accent" @click="showSettings = true">{{ t('safe.list.empty_open_settings') }}</button>
+          </p>
+        </li>
+        <li v-else-if="!items.length" class="px-3 py-10 text-center text-sm text-text-tertiary dark:text-text-tertiary-dark">
           {{ query ? t('safe.list.no_match', { q: query }) : t('safe.list.empty') }}
         </li>
       </ul>

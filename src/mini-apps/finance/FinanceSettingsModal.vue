@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { X, Plus, Trash2, Edit2, Check, Lock, Download, Upload } from 'lucide-vue-next';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { type FinanceAccount, type Category, type AccountType, ACCOUNT_TYPES, SYSTEM_INCOME_CATEGORIES, SYSTEM_EXPENSE_CATEGORIES } from './types';
 import { nameIsTaken, newCategoryId, toCategories } from './categories';
 import { COMMON_CURRENCIES, allCurrencies, allowRateLookup, currencyScale, formatAmountInput, formatCurrency, parseAmountInput } from './currency';
@@ -34,6 +36,8 @@ const expenseCategories = ref<Category[]>([]);
 const renamingId = ref<string | null>(null);
 const renameDraft = ref('');
 const accounts = ref<FinanceAccount[]>([]);
+const { t } = useI18n();
+
 const selectedCurrency = ref('USD');
 
 const newIncomeCategory = ref('');
@@ -104,7 +108,7 @@ const addIncomeCategory = () => {
     const name = newIncomeCategory.value.trim();
     if (!name) return;
     if (nameIsTaken(incomeCategories.value, name)) {
-        say(`There is already an income category called "${name}".`);
+        say(t('finance.blocked.income_exists', { name }));
         return;
     }
     incomeCategories.value.push({ id: newCategoryId(), name });
@@ -114,7 +118,7 @@ const addIncomeCategory = () => {
 const removeIncomeCategory = (idx: number) => {
     const category = incomeCategories.value[idx];
     if (SYSTEM_INCOME_CATEGORIES.includes(category.id)) {
-        say(`"${category.name}" is used by the debts ledger, so it cannot be removed.`);
+        say(t('finance.blocked.used_by_debts', { name: category.name }));
         return;
     }
     if (!canRemoveCategory(category)) return;
@@ -125,7 +129,7 @@ const addExpenseCategory = () => {
     const name = newExpenseCategory.value.trim();
     if (!name) return;
     if (nameIsTaken(expenseCategories.value, name)) {
-        say(`There is already an expense category called "${name}".`);
+        say(t('finance.blocked.expense_exists', { name }));
         return;
     }
     expenseCategories.value.push({ id: newCategoryId(), name });
@@ -160,7 +164,7 @@ const commitRename = (list: Category[]) => {
     if (!category || category.name === name) return;
 
     if (nameIsTaken(list, name, id)) {
-        say(`There is already a category called "${name}".`);
+        say(t('finance.blocked.category_exists', { name }));
         return;
     }
     category.name = name;
@@ -169,7 +173,7 @@ const commitRename = (list: Category[]) => {
 const removeExpenseCategory = (idx: number) => {
     const category = expenseCategories.value[idx];
     if (SYSTEM_EXPENSE_CATEGORIES.includes(category.id)) {
-        say(`"${category.name}" is used by the debts ledger, so it cannot be removed.`);
+        say(t('finance.blocked.used_by_debts', { name: category.name }));
         return;
     }
     if (!canRemoveCategory(category)) return;
@@ -186,11 +190,11 @@ const removeExpenseCategory = (idx: number) => {
 const canRemoveCategory = (category: Category): boolean => {
     const used = transactionsIn(category.id);
     if (used > 0) {
-        say(`"${category.name}" is on ${used} transaction${used === 1 ? '' : 's'}. Rename it instead, or refile those first.`);
+        say(t('finance.blocked.category_in_use', { name: category.name, count: used }, used));
         return false;
     }
     if (props.budgetedCategories?.includes(category.id)) {
-        say(`"${category.name}" has a budget allocated to it. Remove it from the budget first.`);
+        say(t('finance.blocked.category_budgeted', { name: category.name }));
         return false;
     }
     return true;
@@ -219,11 +223,11 @@ const removeAccount = (idx: number) => {
     const used = transactionsOn(account.id);
 
     if (used > 0) {
-        say(`"${account.name}" still has ${used} transaction${used === 1 ? '' : 's'}. Move or delete them first, and the account can go.`);
+        say(t('finance.blocked.account_in_use', { name: account.name, count: used }, used));
         return;
     }
     if (accounts.value.length === 1) {
-        say('A transaction has to belong to an account, so there has to be at least one.');
+        say(t('finance.blocked.last_account'));
         return;
     }
 
@@ -244,13 +248,12 @@ const save = () => {
 </script>
 
 <template>
-  <div v-if="show" class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm" @click.self="emit('close')">
-    <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[85vh]">
+  <AppDialog :show="show" labelledby="finance-settings-title" panel-class="!overflow-hidden flex flex-col" @close="emit('close')">
       
       <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark shrink-0">
-        <h3 class="font-bold text-lg text-text dark:text-text-dark">Finance Settings</h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
+        <h3 id="finance-settings-title" class="font-bold text-lg text-text dark:text-text-dark">{{ $t('finance.settings') }}</h3>
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.close')" :title="$t('finance.close')">
             <X class="w-5 h-5" />
         </button>
       </div>
@@ -260,7 +263,7 @@ const save = () => {
           
         <!-- General Settings -->
         <div>
-            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">General Settings</h4>
+            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">{{ $t('finance.general_settings') }}</h4>
             <div
                 v-if="blockedMessage"
                 class="flex items-start gap-2 p-3 rounded-xl border border-amber-300 bg-amber-50 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/40 dark:text-amber-200"
@@ -272,8 +275,8 @@ const save = () => {
 
             <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
                 <div class="flex flex-col pr-4">
-                    <span class="font-medium text-sm text-text dark:text-text-dark">Currency</span>
-                    <span class="text-xs text-gray-500">Base currency for your transactions. Existing amounts are not converted.</span>
+                    <span class="font-medium text-sm text-text dark:text-text-dark">{{ $t('finance.currency') }}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('finance.base_currency_hint') }}</span>
                     <!-- Amounts are stored in the currency's smallest unit, so
                          moving between a currency with subunits and one without
                          reinterprets every stored figure by a factor of a
@@ -282,14 +285,14 @@ const save = () => {
                         v-if="currencyScale(selectedCurrency) !== currencyScale(initialCurrency || 'USD')"
                         class="text-xs text-amber-600 dark:text-amber-400 mt-1 max-w-xs"
                     >
-                        {{ selectedCurrency }} and {{ initialCurrency || 'USD' }} hold a different number of decimal places, so every existing amount will read differently after this change.
+                        {{ $t('finance.currency_scale_warning', { from: initialCurrency || 'USD', to: selectedCurrency }) }}
                     </span>
                 </div>
-                <select v-model="selectedCurrency" class="bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-text dark:text-text-dark cursor-pointer">
-                    <optgroup label="Common">
+                <select v-model="selectedCurrency" class="bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-accent text-text dark:text-text-dark cursor-pointer">
+                    <optgroup :label="$t('finance.currency_common')">
                         <option v-for="c in COMMON_CURRENCIES" :key="c" :value="c">{{ c }}</option>
                     </optgroup>
-                    <optgroup label="All">
+                    <optgroup :label="$t('finance.all')">
                         <option v-for="c in otherCurrencies" :key="c" :value="c">{{ c }}</option>
                     </optgroup>
                 </select>
@@ -300,12 +303,12 @@ const save = () => {
                  assumed. -->
             <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
                 <div class="flex flex-col pr-4">
-                    <span class="font-medium text-sm text-text dark:text-text-dark">Look up exchange rates online</span>
-                    <span class="text-xs text-gray-500">Off by default. When off, type the rate yourself; rates you have looked up before are still remembered.</span>
+                    <span class="font-medium text-sm text-text dark:text-text-dark">{{ $t('finance.rate_lookup') }}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('finance.rate_lookup_hint') }}</span>
                 </div>
                 <label class="relative inline-flex items-center cursor-pointer shrink-0">
                     <input type="checkbox" v-model="allowRateLookup" class="sr-only peer" />
-                    <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-500"></div>
+                    <div class="w-11 h-6 bg-gray-300 dark:bg-gray-600 peer-focus:ring-2 peer-focus:ring-accent rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-accent"></div>
                 </label>
             </div>
         </div>
@@ -314,10 +317,10 @@ const save = () => {
 
         <!-- Income Categories -->
         <div>
-            <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">Income Categories</h4>
+            <h4 class="text-sm font-semibold text-green-600 dark:text-green-400 mb-3">{{ $t('finance.income_categories') }}</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_income_cat')" />
-                <button @click="addIncomeCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors" aria-label="Add Income Category">
+                <input type="text" v-model="newIncomeCategory" @keyup.enter="addIncomeCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.new_income_cat')" />
+                <button @click="addIncomeCategory" class="btn-primary w-9 px-0 shrink-0" :aria-label="$t('finance.add_income_category')" :title="$t('finance.add_income_category')">
                     <Plus class="w-5 h-5" />
                 </button>
             </div>
@@ -327,23 +330,23 @@ const save = () => {
                         v-if="renamingId === cat.id"
                         v-model="renameDraft"
                         @keyup.enter="commitRename(incomeCategories)"
-                        @keyup.escape="renamingId = null"
+                        @keydown.escape.stop="renamingId = null"
                         @blur="commitRename(incomeCategories)"
                         class="bg-transparent border-b border-green-400 focus:outline-none w-24 text-green-700 dark:text-green-400"
                         autofocus
                     />
-                    <span v-else @dblclick="startRename(cat)" class="cursor-text" :title="'Double-click to rename'">{{ cat.name }}</span>
-                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat.id) && renamingId !== cat.id" @click="startRename(cat)" class="text-green-500/50 hover:text-green-700 transition-colors" aria-label="Rename category">
+                    <span v-else @dblclick="startRename(cat)" class="cursor-text" :title="$t('finance.dblclick_rename')">{{ cat.name }}</span>
+                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat.id) && renamingId !== cat.id" @click="startRename(cat)" class="text-green-500/50 hover:text-green-700 transition-colors" :aria-label="$t('finance.rename_category')" :title="$t('finance.rename_category')">
                         <Edit2 class="w-3 h-3" />
                     </button>
-                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat.id)" @click="removeIncomeCategory(idx)" class="text-green-500/50 hover:text-red-500 transition-colors" aria-label="Remove Income Category">
+                    <button v-if="!SYSTEM_INCOME_CATEGORIES.includes(cat.id)" @click="removeIncomeCategory(idx)" class="text-green-500/50 hover:text-red-500 transition-colors" :aria-label="$t('finance.remove_category')" :title="$t('finance.remove_category')">
                         <X class="w-3.5 h-3.5" />
                     </button>
                     <div v-else class="text-green-500/30 ml-1">
                         <Lock class="w-3 h-3" />
                     </div>
                 </div>
-                <div v-if="!incomeCategories.length" class="text-sm text-gray-400 italic">No categories yet.</div>
+                <div v-if="!incomeCategories.length" class="text-sm text-gray-500 dark:text-gray-400 italic">{{ $t('finance.no_categories') }}</div>
             </div>
         </div>
 
@@ -351,10 +354,10 @@ const save = () => {
 
         <!-- Expense Categories -->
         <div>
-            <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">Expense Categories</h4>
+            <h4 class="text-sm font-semibold text-red-600 dark:text-red-400 mb-3">{{ $t('finance.expense_categories') }}</h4>
             <div class="flex gap-2 mb-3">
-                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_expense_cat')" />
-                <button @click="addExpenseCategory" class="p-2 bg-blue-500 text-white rounded-xl hover:bg-blue-600 transition-colors" aria-label="More Options">
+                <input type="text" v-model="newExpenseCategory" @keyup.enter="addExpenseCategory" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.new_expense_cat')" />
+                <button @click="addExpenseCategory" class="btn-primary w-9 px-0 shrink-0" :aria-label="$t('finance.add_expense_category')" :title="$t('finance.add_expense_category')">
                     <Plus class="w-5 h-5" />
                 </button>
             </div>
@@ -364,23 +367,23 @@ const save = () => {
                         v-if="renamingId === cat.id"
                         v-model="renameDraft"
                         @keyup.enter="commitRename(expenseCategories)"
-                        @keyup.escape="renamingId = null"
+                        @keydown.escape.stop="renamingId = null"
                         @blur="commitRename(expenseCategories)"
                         class="bg-transparent border-b border-red-400 focus:outline-none w-24 text-red-700 dark:text-red-400"
                         autofocus
                     />
-                    <span v-else @dblclick="startRename(cat)" class="cursor-text" :title="'Double-click to rename'">{{ cat.name }}</span>
-                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat.id) && renamingId !== cat.id" @click="startRename(cat)" class="text-red-500/50 hover:text-red-700 transition-colors" aria-label="Rename category">
+                    <span v-else @dblclick="startRename(cat)" class="cursor-text" :title="$t('finance.dblclick_rename')">{{ cat.name }}</span>
+                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat.id) && renamingId !== cat.id" @click="startRename(cat)" class="text-red-500/50 hover:text-red-700 transition-colors" :aria-label="$t('finance.rename_category')" :title="$t('finance.rename_category')">
                         <Edit2 class="w-3 h-3" />
                     </button>
-                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat.id)" @click="removeExpenseCategory(idx)" class="text-red-500/50 hover:text-red-500 transition-colors" aria-label="More Options">
+                    <button v-if="!SYSTEM_EXPENSE_CATEGORIES.includes(cat.id)" @click="removeExpenseCategory(idx)" class="text-red-500/50 hover:text-red-500 transition-colors" :aria-label="$t('finance.remove_category')" :title="$t('finance.remove_category')">
                         <X class="w-3.5 h-3.5" />
                     </button>
                     <div v-else class="text-red-500/30 ml-1">
                         <Lock class="w-3 h-3" />
                     </div>
                 </div>
-                <div v-if="!expenseCategories.length" class="text-sm text-gray-400 italic">No categories yet.</div>
+                <div v-if="!expenseCategories.length" class="text-sm text-gray-500 dark:text-gray-400 italic">{{ $t('finance.no_categories') }}</div>
             </div>
         </div>
 
@@ -408,25 +411,25 @@ const save = () => {
         <hr class="border-border dark:border-border-dark" />
 
         <div>
-            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">Accounts & Balances</h4>
+            <h4 class="text-sm font-semibold text-text dark:text-text-dark mb-3">{{ $t('finance.accounts_balances') }}</h4>
             
             <div class="flex flex-col gap-2 mb-4 p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-border dark:border-border-dark">
-                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.new_acc_name')" />
+                <input type="text" v-model="newAccountName" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.new_acc_name')" />
                 <div class="flex gap-2">
                     <div class="relative flex-1">
-                        <input type="text" inputmode="decimal" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 pr-4" :placeholder="$t('finance.initial_balance')" />
+                        <input type="text" inputmode="decimal" :value="newAccountBalance" @input="handleBalanceInput" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent pr-4" :placeholder="$t('finance.initial_balance')" />
                     </div>
                     <!-- A credit card is not a wallet, and the app used to ship
                          an account called "Credit Card" with no way to say so. -->
-                    <select v-model="newAccountType" class="bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-text dark:text-text-dark">
+                    <select v-model="newAccountType" class="bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-accent text-text dark:text-text-dark">
                         <option v-for="t in ACCOUNT_TYPES" :key="t" :value="t">{{ $t(`finance.account_type_${t}`) }}</option>
                     </select>
-                    <button @click="addAccount" :disabled="!newAccountName" class="px-4 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors font-medium text-sm whitespace-nowrap disabled:opacity-50">
-                        Add
+                    <button @click="addAccount" :disabled="!newAccountName" class="btn-primary">
+                        {{ $t('finance.add') }}
                     </button>
                 </div>
                 <p v-if="newAccountType === 'credit'" class="text-xs text-gray-500 dark:text-gray-400">
-                    A card you owe money on starts below zero — enter its balance with a minus sign.
+                    {{ $t('finance.credit_hint') }}
                 </p>
             </div>
 
@@ -436,37 +439,37 @@ const save = () => {
                     <div v-if="editingAccountId !== acc.id" class="flex items-center justify-between text-text dark:text-text-dark">
                         <div class="flex flex-col">
                             <span class="font-medium">{{ acc.name }}</span>
-                            <span class="text-xs text-gray-500">
-                                <span v-if="acc.type">{{ $t(`finance.account_type_${acc.type}`) }} · </span>Current Balance:
+                            <span class="text-xs text-gray-500 dark:text-gray-400">
+                                <span v-if="acc.type">{{ $t(`finance.account_type_${acc.type}`) }} · </span>{{ $t('finance.current_balance') }}:
                                 <span class="font-semibold text-gray-700 dark:text-gray-300">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span>
                             </span>
                         </div>
                         <div class="flex items-center gap-1 shrink-0">
-                            <button @click="editingAccountId = acc.id" class="text-gray-400 hover:text-blue-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" aria-label="More Options">
+                            <button @click="editingAccountId = acc.id" class="text-gray-500 dark:text-gray-400 hover:text-accent transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" :aria-label="$t('finance.edit_account')" :title="$t('finance.edit_account')">
                                 <Edit2 class="w-4 h-4" />
                             </button>
-                            <button @click="removeAccount(idx)" class="text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" aria-label="Remove Account">
+                            <button @click="removeAccount(idx)" class="text-gray-500 dark:text-gray-400 hover:text-red-500 transition-colors p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700" :aria-label="$t('finance.remove_account')" :title="$t('finance.remove_account')">
                                 <Trash2 class="w-4 h-4" />
                             </button>
                         </div>
                     </div>
                     
                     <div v-else class="flex flex-col gap-2">
-                        <input type="text" v-model="acc.name" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Account Name" />
-                        <select v-model="acc.type" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-text dark:text-text-dark">
+                        <input type="text" v-model="acc.name" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.account_name')" />
+                        <select v-model="acc.type" class="w-full bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-accent text-text dark:text-text-dark">
                             <option :value="undefined">{{ $t('finance.account_type_unset') }}</option>
                             <option v-for="t in ACCOUNT_TYPES" :key="t" :value="t">{{ $t(`finance.account_type_${t}`) }}</option>
                         </select>
-                        <div class="flex items-center justify-between text-xs text-gray-500">
-                            <span>Current Balance: <span class="font-semibold">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
-                            <button @click="editingAccountId = null" class="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center" aria-label="More Options">
+                        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                            <span>{{ $t('finance.current_balance') }}: <span class="font-semibold">{{ formatCurrency(getCurrentBalance(acc.id, acc.initialBalance)) }}</span></span>
+                            <button @click="editingAccountId = null" class="px-3 py-1 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center" :aria-label="$t('finance.done_editing')" :title="$t('finance.done_editing')">
                                 <Check class="w-4 h-4" />
                             </button>
                         </div>
                     </div>
                     
                 </div>
-                <div v-if="!accounts.length" class="text-sm text-gray-400 italic">No accounts yet.</div>
+                <div v-if="!accounts.length" class="text-sm text-gray-500 dark:text-gray-400 italic">{{ $t('finance.no_accounts') }}</div>
             </div>
         </div>
 
@@ -475,13 +478,12 @@ const save = () => {
       <!-- Footer -->
       <div class="p-4 border-t border-border dark:border-border-dark flex justify-end gap-3 shrink-0 bg-gray-50/50 dark:bg-gray-800/50">
         <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-            Cancel
+            {{ $t('finance.cancel') }}
         </button>
-        <button @click="save" class="px-5 py-2 rounded-xl text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors">
-            Save Changes
+        <button @click="save" class="btn-primary">
+            {{ $t('finance.save_changes') }}
         </button>
       </div>
 
-    </div>
-  </div>
+  </AppDialog>
 </template>

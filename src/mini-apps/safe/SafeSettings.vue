@@ -12,7 +12,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { open as openFile, save } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
-import ModalDialog from '../calendar/components/ModalDialog.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { safeCode, type CliStatus, type SafeApi, type Settings, type SshStatus } from './api';
 import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
@@ -224,7 +224,7 @@ const exportPasswordAgain = ref('');
 async function exportSealed() {
   error.value = '';
   notice.value = '';
-  const path = await save({ defaultPath: 'Synabit Safe.safe-export', filters: [{ name: 'Safe export', extensions: ['safe-export'] }] });
+  const path = await save({ defaultPath: 'Synabit Safe.safe-export', filters: [{ name: t('safe.exchange.exports'), extensions: ['safe-export'] }] });
   if (!path) return;
   try {
     const n = await props.api.exportSealed(path, exportPassword.value);
@@ -259,10 +259,10 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
 </script>
 
 <template>
-  <ModalDialog :show="true" labelled-by="safe-settings-title" card-class="max-w-[480px] max-h-[calc(100vh-64px)] text-text dark:text-text-dark" @close="close">
+  <AppDialog :show="true" labelledby="safe-settings-title" size="md" unstyled panel-class="bg-surface dark:bg-surface-dark text-text dark:text-text-dark rounded-2xl shadow-2xl border border-border dark:border-border-dark flex flex-col overflow-hidden max-h-[calc(100vh-64px)]" @close="close">
     <header class="px-5 pt-5 pb-3 flex items-center">
       <h2 id="safe-settings-title" class="text-lg font-semibold flex-1">{{ t('safe.settings.title') }}</h2>
-      <button class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark" :aria-label="t('safe.settings.close')" @click="close">
+      <button type="button" class="btn-icon -mr-2" :aria-label="t('safe.settings.close')" :title="t('safe.settings.close')" @click="close">
         <X class="w-4 h-4" />
       </button>
     </header>
@@ -291,64 +291,71 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
         </span>
       </label>
 
-      <section v-if="settings && ssh?.supported" class="space-y-2.5">
-        <h3 class="text-sm font-semibold">{{ t('safe.ssh.title') }}</h3>
-        <label class="flex items-start gap-3 text-sm">
-          <input v-model="settings.ssh_agent" type="checkbox" class="mt-1" @change="update" />
-          <span>
-            <span class="block">{{ t('safe.ssh.enable') }}</span>
-            <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.enable_body') }}</span>
-          </span>
-        </label>
-        <template v-if="settings.ssh_agent">
-          <label class="flex items-center gap-3 text-sm">
-            <input v-model="settings.ssh_confirm" type="checkbox" @change="update" />
-            {{ t('safe.ssh.confirm') }}
-          </label>
-          <div v-if="exportLine" class="space-y-1">
-            <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.use') }}</p>
-            <div class="flex gap-2 items-center">
-              <code class="flex-1 min-w-0 px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ exportLine }}</code>
-              <button class="px-2 py-1 rounded border border-border dark:border-border-dark text-xs" @click="copyExport">{{ t('safe.detail.copy') }}</button>
-            </div>
-          </div>
-          <ul class="space-y-1.5">
-            <li v-for="k in ssh.keys" :key="k.title + (k.fingerprint ?? '')" class="text-xs">
-              <span class="font-medium">{{ k.title }}</span>
-              <span v-if="k.fingerprint" class="block font-mono text-text-tertiary dark:text-text-tertiary-dark break-all">{{ k.fingerprint }}</span>
-              <span v-else class="block text-warning">{{ k.problem }}</span>
-            </li>
-            <li v-if="!ssh.keys.length" class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.ssh.no_keys') }}</li>
-          </ul>
-        </template>
-      </section>
-
-      <section v-if="settings && cli?.supported" class="space-y-2.5">
-        <h3 class="text-sm font-semibold">{{ t('safe.cli.title') }}</h3>
-        <label class="flex items-start gap-3 text-sm">
-          <input v-model="settings.cli" type="checkbox" class="mt-1" @change="update" />
-          <span>
-            <span class="block">{{ t('safe.cli.enable') }}</span>
-            <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.enable_body') }}</span>
-          </span>
-        </label>
-        <div v-if="settings.cli" class="space-y-1">
-          <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.use') }}</p>
-          <code class="block px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ cliExample }}</code>
-          <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.cli.reference') }}</p>
-        </div>
-      </section>
-
       <form class="space-y-2.5" @submit.prevent="changePassword">
         <h3 class="text-sm font-semibold">{{ t('safe.settings.change_password') }}</h3>
         <input v-model="current" type="password" :placeholder="t('safe.settings.current')" :aria-label="t('safe.settings.current')" autocomplete="off" :class="input" />
         <input v-model="next" type="password" :placeholder="t('safe.settings.new')" :aria-label="t('safe.settings.new')" autocomplete="off" :class="input" />
         <PasswordStrength :api="api" :password="next" @score="nextScore = $event" />
         <input v-model="nextAgain" type="password" :placeholder="t('safe.settings.confirm_new')" :aria-label="t('safe.settings.confirm_new')" autocomplete="off" :class="input" />
-        <button type="submit" :disabled="!current || next.length < 10 || nextScore < 3 || next !== nextAgain" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:opacity-90 disabled:opacity-40">
+        <button type="submit" :disabled="!current || next.length < 10 || nextScore < 3 || next !== nextAgain" class="btn-primary">
           {{ t('safe.settings.change_password') }}
         </button>
       </form>
+
+      <!-- For people who live in a terminal. Folded away, so the settings
+           most people come here for are not below two pages of socket paths. -->
+      <details v-if="settings && (ssh?.supported || cli?.supported)">
+        <summary class="text-sm font-semibold cursor-pointer">{{ t('safe.settings.advanced') }}</summary>
+        <div class="pt-3 space-y-6">
+          <section v-if="settings && ssh?.supported" class="space-y-2.5">
+            <h3 class="text-sm font-semibold">{{ t('safe.ssh.title') }}</h3>
+            <label class="flex items-start gap-3 text-sm">
+              <input v-model="settings.ssh_agent" type="checkbox" class="mt-1" @change="update" />
+              <span>
+                <span class="block">{{ t('safe.ssh.enable') }}</span>
+                <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.enable_body') }}</span>
+              </span>
+            </label>
+            <template v-if="settings.ssh_agent">
+              <label class="flex items-center gap-3 text-sm">
+                <input v-model="settings.ssh_confirm" type="checkbox" @change="update" />
+                {{ t('safe.ssh.confirm') }}
+              </label>
+              <div v-if="exportLine" class="space-y-1">
+                <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.ssh.use') }}</p>
+                <div class="flex gap-2 items-center">
+                  <code class="flex-1 min-w-0 px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ exportLine }}</code>
+                  <button class="min-h-6 px-2 py-1 rounded border border-border dark:border-border-dark text-xs" @click="copyExport">{{ t('safe.detail.copy') }}</button>
+                </div>
+              </div>
+              <ul class="space-y-1.5">
+                <li v-for="k in ssh.keys" :key="k.title + (k.fingerprint ?? '')" class="text-xs">
+                  <span class="font-medium">{{ k.title }}</span>
+                  <span v-if="k.fingerprint" class="block font-mono text-text-tertiary dark:text-text-tertiary-dark break-all">{{ k.fingerprint }}</span>
+                  <span v-else class="block text-warning">{{ k.problem }}</span>
+                </li>
+                <li v-if="!ssh.keys.length" class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.ssh.no_keys') }}</li>
+              </ul>
+            </template>
+          </section>
+
+          <section v-if="settings && cli?.supported" class="space-y-2.5">
+            <h3 class="text-sm font-semibold">{{ t('safe.cli.title') }}</h3>
+            <label class="flex items-start gap-3 text-sm">
+              <input v-model="settings.cli" type="checkbox" class="mt-1" @change="update" />
+              <span>
+                <span class="block">{{ t('safe.cli.enable') }}</span>
+                <span class="block text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.enable_body') }}</span>
+              </span>
+            </label>
+            <div v-if="settings.cli" class="space-y-1">
+              <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.cli.use') }}</p>
+              <code class="block px-2 py-1.5 rounded bg-surface dark:bg-surface-dark text-xs break-all">{{ cliExample }}</code>
+              <p class="text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ t('safe.cli.reference') }}</p>
+            </div>
+          </section>
+        </div>
+      </details>
 
       <section class="space-y-2.5">
         <h3 class="text-sm font-semibold">{{ t('safe.settings.secret_key') }}</h3>
@@ -398,7 +405,7 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
         <p class="text-xs text-text-secondary dark:text-text-secondary-dark">{{ t('safe.exchange.import_body') }}</p>
         <form v-if="needsExportPassword" class="flex gap-2" @submit.prevent="runImport">
           <input v-model="importPassword" type="password" :placeholder="importPasswordLabel" :aria-label="importPasswordLabel" autocomplete="off" :class="input" />
-          <button type="submit" :disabled="!importPassword || importing" class="px-4 py-2 rounded-lg bg-accent text-white text-sm disabled:opacity-40">{{ t('safe.exchange.import_go') }}</button>
+          <button type="submit" :disabled="!importPassword || importing" class="btn-primary">{{ t('safe.exchange.import_go') }}</button>
         </form>
         <button v-else :disabled="importing" class="px-4 py-2 rounded-lg border border-border dark:border-border-dark text-sm disabled:opacity-40" @click="chooseImport">
           {{ importing ? t('safe.exchange.importing') : t('safe.exchange.choose') }}
@@ -439,5 +446,5 @@ const input = 'w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark borde
       <p v-if="notice" class="text-sm text-success" role="status">{{ notice }}</p>
       <p v-if="error" class="text-sm text-danger" role="alert">{{ error }}</p>
     </div>
-  </ModalDialog>
+  </AppDialog>
 </template>

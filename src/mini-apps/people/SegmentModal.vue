@@ -6,7 +6,8 @@
  * is the only rule, and saying it once here is cheaper than a screen full of
  * and/or controls nobody reads.
  */
-import { ref, onMounted, onUnmounted } from 'vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
+import { ref, onMounted } from 'vue';
 import { X, Filter } from 'lucide-vue-next';
 import { emptySegment, isEmptySegment, type Segment } from './composables/segments';
 import type { HealthStatus } from './composables/useRelationshipHealth';
@@ -38,9 +39,6 @@ onMounted(() => {
         const { id: _ignored, ...rest } = props.segment;
         draft.value = { ...rest };
     }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') emit('close'); };
-    window.addEventListener('keydown', onKey);
-    onUnmounted(() => window.removeEventListener('keydown', onKey));
 });
 
 const toggle = (list: string[], value: string) => {
@@ -57,20 +55,21 @@ const toggleStatus = (value: HealthStatus) => {
 
 const chip = (on: boolean) =>
     on
-        ? 'bg-blue-500 text-white border-blue-500'
-        : 'bg-white dark:bg-[#1e1e1e] text-gray-600 dark:text-gray-400 border-border dark:border-border-dark hover:border-blue-300';
+        ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+        : 'bg-white dark:bg-surface-dark text-gray-600 dark:text-gray-400 border-border dark:border-border-dark hover:border-blue-300';
 </script>
 
 <template>
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click="emit('close')">
-        <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden" @click.stop>
+    <AppDialog :show="true" labelledby="segment-modal-title" size="md" unstyled
+               panel-class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
+               @close="emit('close')">
 
             <div class="px-6 py-4 border-b border-border dark:border-border-dark flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
-                <h2 class="text-lg font-semibold flex items-center gap-2">
+                <h2 id="segment-modal-title" class="text-lg font-semibold flex items-center gap-2">
                     <Filter class="w-5 h-5 text-blue-500" />
                     {{ segment ? $t('people.edit_segment') : $t('people.new_segment') }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" :aria-label="$t('people.close')">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors" :aria-label="$t('people.close')">
                     <X class="w-5 h-5" />
                 </button>
             </div>
@@ -138,10 +137,9 @@ const chip = (on: boolean) =>
                 <div v-else></div>
                 <button @click="emit('save', draft, segment?.id)"
                     :disabled="!draft.name.trim() || isEmptySegment(draft)"
-                    class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium text-sm transition-colors disabled:opacity-50">
+                    class="btn-primary disabled:opacity-50">
                     {{ $t('people.save') }}
                 </button>
             </div>
-        </div>
-    </div>
+    </AppDialog>
 </template>

@@ -84,7 +84,7 @@ function onResizeEnd(event: any) {
       v-else
       class="wb-text-content"
     >
-      {{ data.label || 'Type here...' }}
+      {{ data.label || $t('whiteboard.type_here2') }}
     </div>
   </div>
 </template>
@@ -102,11 +102,11 @@ function onResizeEnd(event: any) {
 }
 .wb-text-node--editing {
   border-color: var(--color-accent, #7c3aed);
-  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 15%, transparent);
 }
 .dark .wb-text-node--editing {
-  border-color: #a78bfa;
-  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.2);
+  border-color: var(--color-accent-dark);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent-dark) 20%, transparent);
 }
 .wb-text-content {
   white-space: pre-wrap;

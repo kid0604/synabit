@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3';
 import { LayoutGrid, Columns, PanelTop, Images, Trash2, Plus, X, Maximize2, ChevronLeft, ChevronRight } from 'lucide-vue-next';
 import { GalleryImage } from '../extensions/ImageGallery';
@@ -8,6 +9,7 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 
 const props = defineProps(nodeViewProps);
+const { t } = useI18n();
 
 
 
@@ -156,7 +158,7 @@ const addImage = async () => {
     const selectedPaths = await open({
       multiple: true,
       filters: [{
-        name: 'Image',
+        name: t('note.editor.filter_images'),
         extensions: ['png', 'jpeg', 'jpg', 'gif', 'webp']
       }]
     });
@@ -198,14 +200,14 @@ const addImage = async () => {
   <NodeViewWrapper class="gallery-node-wrapper my-6 relative group/wrapper">
     <!-- Toolbar -->
     <div v-if="selected" class="gallery-toolbar absolute -top-12 left-1/2 -translate-x-1/2 z-50 flex max-w-[90vw] overflow-x-auto scrollbar-none items-center gap-1 p-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg shadow-lg">
-      <button @mousedown.stop.prevent="templateStyle = 'classic'" @touchstart.stop.prevent="templateStyle = 'classic'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'classic' }" title="Classic Grid"><LayoutGrid class="w-4 h-4"/></button>
-      <button @mousedown.stop.prevent="templateStyle = 'masonry'" @touchstart.stop.prevent="templateStyle = 'masonry'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'masonry' }" title="Masonry Waterfall"><Columns class="w-4 h-4"/></button>
-      <button @mousedown.stop.prevent="templateStyle = 'hero'" @touchstart.stop.prevent="templateStyle = 'hero'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'hero' }" title="Hero Top"><PanelTop class="w-4 h-4"/></button>
-      <button @mousedown.stop.prevent="templateStyle = 'carousel'" @touchstart.stop.prevent="templateStyle = 'carousel'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'carousel' }" title="Carousel"><Images class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="templateStyle = 'classic'" @touchstart.stop.prevent="templateStyle = 'classic'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'classic' }" :title="$t('note.editor.gallery.classic')"><LayoutGrid class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="templateStyle = 'masonry'" @touchstart.stop.prevent="templateStyle = 'masonry'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'masonry' }" :title="$t('note.editor.gallery.masonry')"><Columns class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="templateStyle = 'hero'" @touchstart.stop.prevent="templateStyle = 'hero'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'hero' }" :title="$t('note.editor.gallery.hero')"><PanelTop class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="templateStyle = 'carousel'" @touchstart.stop.prevent="templateStyle = 'carousel'" class="p-1.5 shrink-0 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': templateStyle === 'carousel' }" :title="$t('note.editor.gallery.carousel')"><Images class="w-4 h-4"/></button>
       <div class="w-[1px] h-4 bg-border dark:bg-border-dark mx-1"></div>
-      <button @mousedown.stop.prevent="addImage" @touchstart.stop.prevent="addImage" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" title="Add Images"><Plus class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="addImage" @touchstart.stop.prevent="addImage" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :title="$t('note.editor.gallery.add_images')"><Plus class="w-4 h-4"/></button>
       <div class="w-[1px] h-4 bg-border dark:bg-border-dark mx-1"></div>
-      <button @mousedown.stop.prevent="deleteGallery" @touchstart.stop.prevent="deleteGallery" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark transition-colors text-danger hover:bg-danger/10" title="Delete Collection"><Trash2 class="w-4 h-4"/></button>
+      <button @mousedown.stop.prevent="deleteGallery" @touchstart.stop.prevent="deleteGallery" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark transition-colors text-danger hover:bg-danger/10" :title="$t('note.editor.gallery.delete')"><Trash2 class="w-4 h-4"/></button>
     </div>
 
     <!-- Gallery Container -->
@@ -241,7 +243,7 @@ const addImage = async () => {
             @mousedown.stop.prevent="openLightbox(index)"
             @touchstart.stop.prevent="openLightbox(index)"
             class="absolute top-2 left-2 p-1.5 bg-black/50 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors pointer-events-auto"
-            title="Expand Image"
+            :title="$t('note.editor.image.expand')"
           >
             <Maximize2 class="w-3.5 h-3.5" />
           </button>
@@ -256,7 +258,7 @@ const addImage = async () => {
               @touchstart.stop.prevent="moveImage(index, -1)"
               class="p-0.5 hover:bg-white/20 text-white rounded-full transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
               :disabled="index === 0"
-              title="Move Left/Up"
+              :title="$t('note.editor.gallery.move_back')"
             >
               <ChevronLeft class="w-3.5 h-3.5" />
             </button>
@@ -265,7 +267,7 @@ const addImage = async () => {
               @touchstart.stop.prevent="moveImage(index, 1)"
               class="p-0.5 hover:bg-white/20 text-white rounded-full transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
               :disabled="index === localImages.length - 1"
-              title="Move Right/Down"
+              :title="$t('note.editor.gallery.move_forward')"
             >
               <ChevronRight class="w-3.5 h-3.5" />
             </button>
@@ -277,7 +279,7 @@ const addImage = async () => {
             @mousedown.stop.prevent="removeImage(index)"
             @touchstart.stop.prevent="removeImage(index)"
             class="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-danger/80 text-white rounded-full backdrop-blur-sm transition-colors pointer-events-auto"
-            title="Remove Image"
+            :title="$t('note.editor.gallery.remove_image')"
           >
             <X class="w-3.5 h-3.5" />
           </button>
@@ -291,7 +293,7 @@ const addImage = async () => {
               @blur="focusedImageIndex = null; syncImagesToTiptap()"
               @keydown.enter.prevent="syncImagesToTiptap"
               type="text"
-              placeholder="Image caption..."
+              :placeholder="$t('note.editor.gallery.image_caption')"
               class="caption-input w-full bg-black/40 text-white placeholder-white/50 text-xs px-2 py-1.5 rounded border border-white/10 backdrop-blur-md outline-none focus:bg-black/60 transition-colors select-text cursor-text"
               draggable="false"
               @keydown.stop
@@ -310,7 +312,7 @@ const addImage = async () => {
       v-show="selected || globalCaption"
       v-model="globalCaption"
       type="text"
-      placeholder="Collection caption..."
+      :placeholder="$t('note.editor.gallery.caption')"
       class="caption-input select-text cursor-text mt-3 text-sm text-center bg-transparent border-none outline-none text-text-secondary dark:text-text-secondary-dark placeholder-muted dark:placeholder-muted-dark w-full max-w-sm mx-auto block transition-opacity"
       :class="{ 'opacity-50': !selected && !globalCaption }"
       @keydown.stop
@@ -328,7 +330,7 @@ const addImage = async () => {
         <button 
           @click.stop="closeLightbox" 
           class="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
-         aria-label="Close Lightbox">
+         :aria-label="$t('note.editor.image.close_viewer')">
           <X class="w-6 h-6" />
         </button>
 
@@ -336,6 +338,7 @@ const addImage = async () => {
         <button 
           v-if="localImages.length > 1"
           @click.stop="prevImage" 
+          :aria-label="$t('note.editor.image.previous')"
           class="absolute left-4 top-1/2 -translate-y-1/2 p-3 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
         >
           <ChevronLeft class="w-8 h-8" />
@@ -345,6 +348,7 @@ const addImage = async () => {
         <button 
           v-if="localImages.length > 1"
           @click.stop="nextImage" 
+          :aria-label="$t('note.editor.image.next')"
           class="absolute right-4 top-1/2 -translate-y-1/2 p-3 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
         >
           <ChevronRight class="w-8 h-8" />

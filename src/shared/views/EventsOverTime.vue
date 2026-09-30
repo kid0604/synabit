@@ -436,13 +436,13 @@ const tooltip = computed(() => {
     </div>
 
     <!-- What the picture could not include, said rather than left out. -->
-    <p v-if="partial || placed.undated" data-over-time-note class="px-1 text-[11px] text-gray-400">
+    <p v-if="partial || placed.undated" data-over-time-note class="px-1 text-xs text-gray-500 dark:text-gray-400">
       <template v-if="partial">{{ $t('nexus.over_time_partial', { shown, total: result?.total ?? 0 }) }}</template>
       <template v-if="partial && placed.undated"> · </template>
       <template v-if="placed.undated">{{ $t('nexus.over_time_undated', { n: placed.undated }, placed.undated) }}</template>
     </p>
 
-    <p v-if="!dated.length" data-over-time-empty class="px-1 py-6 text-[12px] text-gray-400">
+    <p v-if="!dated.length" data-over-time-empty class="px-1 py-6 text-[12px] text-gray-500 dark:text-gray-400">
       {{ $t('nexus.over_time_none') }}
     </p>
 
@@ -471,7 +471,7 @@ const tooltip = computed(() => {
               />
               <text
                 :x="LEFT - 8" :y="y(tick)" dy="0.32em" text-anchor="end"
-                class="fill-gray-400 text-[10px] tabular-nums"
+                class="fill-gray-400 text-xs tabular-nums"
               >{{ tick }}</text>
             </template>
           </g>
@@ -546,7 +546,7 @@ const tooltip = computed(() => {
               />
               <text
                 :x="lane.left + 4" :y="lane.y + SPAN_ROW - 1"
-                class="fill-gray-500 text-[9px] dark:fill-gray-400"
+                class="fill-gray-500 text-xs dark:fill-gray-400"
               >{{ lane.item.row.title }}<tspan v-if="lane.runsOn"> →</tspan></text>
             </g>
           </g>
@@ -580,7 +580,7 @@ const tooltip = computed(() => {
               :key="`x${tick.key}`"
               data-over-time-tick
               :x="tick.at" :y="axisY" text-anchor="middle"
-              class="fill-gray-400 text-[10px] tabular-nums"
+              class="fill-gray-400 text-xs tabular-nums"
             >{{ tick.label }}</text>
           </g>
         </svg>
@@ -594,7 +594,7 @@ const tooltip = computed(() => {
           :style="{ left: `${tooltip.left}px`, top: `${tooltip.top}px` }"
         >
           <p class="max-w-[240px] truncate text-[12px] font-semibold text-gray-900 dark:text-gray-100">{{ tooltip.value }}</p>
-          <p class="text-[11px] text-gray-500 dark:text-gray-400">{{ tooltip.label }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ tooltip.label }}</p>
         </div>
       </div>
     </template>

@@ -707,63 +707,67 @@ onUnmounted(() => {
 </script>
 
 <template>
-    <div ref="containerRef" class="w-full h-full relative overflow-hidden bg-[#fdfdfc] dark:bg-[#1a1a1c] select-none" @click="isPanelOpen = false">
+    <div ref="containerRef" class="w-full h-full relative overflow-hidden bg-base dark:bg-surface-alt-dark select-none" @click="isPanelOpen = false">
         <canvas ref="canvasRef" class="w-full h-full cursor-grab active:cursor-grabbing"></canvas>
         
         <!-- Toggle Button -->
         <button 
             @click.stop="isPanelOpen = !isPanelOpen" 
-            class="absolute top-[100px] right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
+            class="absolute top-[100px] right-6 z-20 w-10 h-10 bg-white/80 dark:bg-base-dark/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-border-subtle-dark hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
             :class="{ 'rotate-90': isPanelOpen }"
-         aria-label="Is Panel Open = !is Panel Open">
-            <Settings2 class="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            :title="$t('nexus.graph_settings')"
+            :aria-label="$t('nexus.graph_settings')"
+            :aria-expanded="isPanelOpen"
+        >
+            <Settings2 class="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
         </button>
 
         <!-- Match count, while the search is narrowing the graph -->
         <div
             v-if="matchIds"
-            class="absolute bottom-24 left-6 z-20 px-3 py-1.5 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg border border-gray-200 dark:border-[#3a3a3c] text-xs font-semibold text-gray-600 dark:text-gray-300"
+            class="absolute bottom-24 left-6 z-20 px-3 py-1.5 bg-white/80 dark:bg-base-dark/80 backdrop-blur-md rounded-full shadow-lg border border-gray-200 dark:border-border-subtle-dark text-xs font-semibold text-gray-600 dark:text-gray-300"
         >
-            {{ drawnCount }} {{ drawnCount === 1 ? 'node' : 'nodes' }}
+            {{ $t('nexus.graph_nodes', { count: drawnCount }, drawnCount) }}
         </div>
 
         <!-- Fit View Button -->
         <button 
             @click.stop="fitView" 
-            class="absolute bottom-24 right-6 z-20 w-10 h-10 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-[#3a3a3c] hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
-            title="Fit to Screen"
+            class="absolute bottom-24 right-6 z-20 w-10 h-10 bg-white/80 dark:bg-base-dark/80 backdrop-blur-md rounded-full shadow-lg flex items-center justify-center border border-gray-200 dark:border-border-subtle-dark hover:bg-gray-50 dark:hover:bg-[#3a3a3c] transition-all"
+            :title="$t('nexus.graph_fit')"
+            :aria-label="$t('nexus.graph_fit')"
         >
-            <Focus class="w-5 h-5 text-gray-700 dark:text-gray-300" />
+            <Focus class="w-5 h-5 text-gray-700 dark:text-gray-300" aria-hidden="true" />
         </button>
         
         <!-- Obsidian-Style Floating Settings Panel -->
         <div 
             v-show="isPanelOpen"
             @click.stop
-            class="absolute top-[150px] right-6 z-20 w-80 max-h-[calc(100vh-180px)] flex flex-col bg-white/95 dark:bg-[#1e1e20]/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gray-200/50 dark:border-[#3a3a3c]/50 overflow-hidden animate-in slide-in-from-right-8 duration-300"
+            class="absolute top-[150px] right-6 z-20 w-80 max-h-[calc(100vh-180px)] flex flex-col bg-white/95 dark:bg-surface-dark/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gray-200/50 dark:border-border-subtle-dark/50 overflow-hidden animate-in slide-in-from-right-8 duration-300"
         >
             <!-- Tabs Header -->
-            <div class="flex border-b border-gray-200 dark:border-[#3a3a3c]">
+            <div class="flex border-b border-gray-200 dark:border-border-subtle-dark">
                 <button 
                     @click="activeTab = 'filters'" 
                     class="flex-1 py-3 px-2 flex items-center justify-center gap-2 text-xs font-bold tracking-wider uppercase transition-colors"
-                    :class="activeTab === 'filters' ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/20' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
+                    :class="activeTab === 'filters' ? 'text-accent dark:text-accent-dark border-b-2 border-accent dark:border-accent-dark bg-accent/10' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
                 >
-                    <ListFilter class="w-4 h-4" /> Filters
+                    <ListFilter class="w-4 h-4" /> {{ $t('nexus.graph_tab_filters') }}
                 </button>
                 <button 
                     @click="activeTab = 'display'" 
                     class="flex-1 py-3 px-2 flex items-center justify-center gap-2 text-xs font-bold tracking-wider uppercase transition-colors"
-                    :class="activeTab === 'display' ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/20' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
+                    :class="activeTab === 'display' ? 'text-accent dark:text-accent-dark border-b-2 border-accent dark:border-accent-dark bg-accent/10' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
                 >
-                    <Eye class="w-4 h-4" /> Display
+                    <Eye class="w-4 h-4" /> {{ $t('nexus.graph_tab_display') }}
                 </button>
                 <button 
                     @click="activeTab = 'forces'" 
                     class="flex-1 py-3 px-2 flex items-center justify-center gap-2 text-xs font-bold tracking-wider uppercase transition-colors"
-                    :class="activeTab === 'forces' ? 'text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50/50 dark:bg-indigo-900/20' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
+                    :class="activeTab === 'forces' ? 'text-accent dark:text-accent-dark border-b-2 border-accent dark:border-accent-dark bg-accent/10' : 'text-gray-500 hover:bg-gray-50 dark:hover:bg-white/5'"
                 >
-                    <GitMerge class="w-4 h-4" /> Forces
+                    <GitMerge class="w-4 h-4" /> {{ $t('nexus.graph_tab_forces') }}
                 </button>
             </div>
 
@@ -771,46 +775,46 @@ onUnmounted(() => {
             <div class="p-6 overflow-y-auto">
                 <!-- Filters Tab -->
                 <div v-show="activeTab === 'filters'" class="space-y-4">
-                    <h3 class="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wider">Node Types</h3>
+                    <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-3 uppercase tracking-wider">{{ $t('nexus.graph_node_types') }}</h3>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showNotes ? colorMap['note'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Notes</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_notes') }}</span>
                         </div>
                         <input type="checkbox" v-model="showNotes" class="toggle-checkbox" />
                     </label>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showTasks ? colorMap['task'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Tasks</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_tasks') }}</span>
                         </div>
                         <input type="checkbox" v-model="showTasks" class="toggle-checkbox" />
                     </label>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showEvents ? colorMap['event'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Events</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_events') }}</span>
                         </div>
                         <input type="checkbox" v-model="showEvents" class="toggle-checkbox" />
                     </label>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showTags ? colorMap['tag'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Tags</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_tags') }}</span>
                         </div>
                         <input type="checkbox" v-model="showTags" class="toggle-checkbox" />
                     </label>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showFiles ? colorMap['file'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Files</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_files') }}</span>
                         </div>
                         <input type="checkbox" v-model="showFiles" class="toggle-checkbox" />
                     </label>
                     <label class="flex items-center justify-between cursor-pointer group">
                         <div class="flex items-center gap-3">
                             <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: showPeople ? colorMap['person'] : '#e5e7eb' }"></div>
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">People</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_people') }}</span>
                         </div>
                         <input type="checkbox" v-model="showPeople" class="toggle-checkbox" />
                     </label>
@@ -818,42 +822,42 @@ onUnmounted(() => {
                     <div class="h-px bg-gray-200 dark:bg-[#3a3a3c] my-4"></div>
                     
                     <label class="flex items-center justify-between cursor-pointer group">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Show Orphans</span>
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_orphans') }}</span>
                         <input type="checkbox" v-model="showOrphans" class="toggle-checkbox" />
                     </label>
-                    <p class="text-[11px] text-gray-400 mt-1">Show nodes without any links</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t('nexus.graph_orphans_hint') }}</p>
                 </div>
 
                 <!-- Display Tab -->
                 <div v-show="activeTab === 'display'" class="space-y-6">
                     <label class="flex items-center justify-between cursor-pointer group">
-                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">Show Labels</span>
+                        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_labels') }}</span>
                         <input type="checkbox" v-model="showLabels" class="toggle-checkbox" />
                     </label>
 
                     <div class="space-y-2">
                         <div class="flex justify-between items-center">
-                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Node Size</label>
-                            <span class="text-xs text-gray-500 font-mono">{{ nodeSize.toFixed(1) }}x</span>
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_node_size') }}</label>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ nodeSize.toFixed(1) }}x</span>
                         </div>
-                        <input type="range" v-model.number="nodeSize" min="0.5" max="3" step="0.1" class="w-full range-slider" aria-label="Node size" />
+                        <input type="range" v-model.number="nodeSize" min="0.5" max="3" step="0.1" class="w-full range-slider" :aria-label="$t('nexus.graph_node_size')" />
                     </div>
 
                     <div class="space-y-2">
                         <div class="flex justify-between items-center">
-                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Link Thickness</label>
-                            <span class="text-xs text-gray-500 font-mono">{{ linkThickness.toFixed(1) }}x</span>
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_link_thickness') }}</label>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ linkThickness.toFixed(1) }}x</span>
                         </div>
-                        <input type="range" v-model.number="linkThickness" min="0.5" max="3" step="0.1" class="w-full range-slider" aria-label="Link thickness" />
+                        <input type="range" v-model.number="linkThickness" min="0.5" max="3" step="0.1" class="w-full range-slider" :aria-label="$t('nexus.graph_link_thickness')" />
                     </div>
 
                     <div class="space-y-2">
                         <div class="flex justify-between items-center">
-                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Text Fade Threshold</label>
-                            <span class="text-xs text-gray-500 font-mono">{{ textFade.toFixed(1) }}x</span>
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_text_fade') }}</label>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ textFade.toFixed(1) }}x</span>
                         </div>
-                        <input type="range" v-model.number="textFade" min="0.1" max="2" step="0.1" class="w-full range-slider" aria-label="Text fade threshold" />
-                        <p class="text-[11px] text-gray-400">Hide labels when zoomed out past this level</p>
+                        <input type="range" v-model.number="textFade" min="0.1" max="2" step="0.1" class="w-full range-slider" :aria-label="$t('nexus.graph_text_fade')" />
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.graph_text_fade_hint') }}</p>
                     </div>
                 </div>
 
@@ -861,20 +865,20 @@ onUnmounted(() => {
                 <div v-show="activeTab === 'forces'" class="space-y-6">
                     <div class="space-y-2">
                         <div class="flex justify-between items-center">
-                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Repel Force</label>
-                            <span class="text-xs text-gray-500 font-mono">{{ repelForce }}</span>
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_repel') }}</label>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ repelForce }}</span>
                         </div>
-                        <input type="range" v-model.number="repelForce" min="50" max="400" step="10" class="w-full range-slider" aria-label="Repel force" />
-                        <p class="text-[11px] text-gray-400">Push nodes further apart</p>
+                        <input type="range" v-model.number="repelForce" min="50" max="400" step="10" class="w-full range-slider" :aria-label="$t('nexus.graph_repel')" />
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.graph_repel_hint') }}</p>
                     </div>
 
                     <div class="space-y-2">
                         <div class="flex justify-between items-center">
-                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">Link Distance</label>
-                            <span class="text-xs text-gray-500 font-mono">{{ linkDist }}</span>
+                            <label class="text-sm font-medium text-gray-700 dark:text-gray-200">{{ $t('nexus.graph_link_distance') }}</label>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ linkDist }}</span>
                         </div>
-                        <input type="range" v-model.number="linkDist" min="20" max="150" step="5" class="w-full range-slider" aria-label="Link distance" />
-                        <p class="text-[11px] text-gray-400">Length of links between nodes</p>
+                        <input type="range" v-model.number="linkDist" min="20" max="150" step="5" class="w-full range-slider" :aria-label="$t('nexus.graph_link_distance')" />
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.graph_link_distance_hint') }}</p>
                     </div>
                 </div>
             </div>

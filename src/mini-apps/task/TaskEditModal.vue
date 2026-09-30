@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, onMounted, onUnmounted, watch } from 'vue';
 import { useNodeService } from '../../composables/useNodeService';
-import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus, Bell, Repeat, CornerDownRight, TriangleAlert, PlusCircle } from 'lucide-vue-next';
+import { CheckCircle2, Calendar, Tag, Flag, X, Send, Eye, EyeOff, Trash2, Plus, Bell, Repeat, CornerDownRight, TriangleAlert, PlusCircle, CircleDot, Grid2x2 } from 'lucide-vue-next';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import TiptapEditor from '../note/TiptapEditor.vue';
-import { getTodayStr, REMINDER_PRESETS, isValidReminder } from './types';
+import { getTodayStr, REMINDER_PRESETS, isValidReminder, BOARD_COLUMNS } from './types';
 import { RECURRENCE_OPTIONS } from './recurrence';
 import type { FieldIssue } from './validation';
 import type { Backlink } from './composables/useTaskBacklinks';
@@ -69,8 +70,26 @@ const editingTaskParams = ref({
     comment: props.task?.comment || '',
     tags: props.task?.tags || '',
     status: props.task?.status || 'todo',
-    project_id: props.task?.project_id || ''
+    project_id: props.task?.project_id || '',
+    /** Empty for "wherever the Matrix works it out to be"; see `getTaskQuadrant`. */
+    eisenhower_quadrant: props.task?.eisenhower_quadrant || '',
 });
+
+const STATUS_LABEL_KEY: Record<string, string> = {
+    backlog: 'task.status_backlog',
+    todo: 'task.status_todo',
+    in_progress: 'task.status_in_progress',
+    done: 'task.status_done',
+};
+const STATUS_ICON_CLASS: Record<string, string> = {
+    in_progress: 'text-blue-500',
+    done: 'text-green-500',
+};
+const statusLabel = computed(() => {
+    const key = STATUS_LABEL_KEY[editingTaskParams.value.status];
+    return key ? t(key) : editingTaskParams.value.status;
+});
+const QUADRANTS = ['do_first', 'schedule', 'delegate', 'eliminate'] as const;
 
 // Imported rather than redefined: the local copy used `toISOString`, so in
 // UTC+7 this form labelled tomorrow's date "Today" for the whole evening.
@@ -322,13 +341,23 @@ const handleBackgroundClick = () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[110] flex items-center justify-center md:p-4 bg-black/10 dark:bg-black/40 backdrop-blur-[2px]" @mousedown.self="handleBackgroundClick">
-      <div class="w-full h-full md:h-auto md:max-w-lg bg-white dark:bg-[#1e1e1e] md:rounded-2xl shadow-none md:shadow-[0_20px_40px_rgba(0,0,0,0.1)] md:dark:shadow-[0_20px_40px_rgba(0,0,0,0.4)] border-none md:border md:border-gray-100 md:dark:border-[#2c2c2c] overflow-hidden flex flex-col" @mousedown.stop>
+  <!--
+    Escape and the scrim do what clicking outside always did here: save an
+    edit, or drop a conversion that has its own Create button.
+  -->
+  <AppDialog
+      :show="true"
+      :ariaLabel="props.showActions ? t('task.new_task') : t('task.edit_task')"
+      :initialFocus="() => titleInputRef"
+      unstyled
+      @close="handleBackgroundClick"
+  >
+      <div class="w-full max-h-[90vh] bg-white dark:bg-surface-dark rounded-2xl shadow-[0_20px_40px_rgba(0,0,0,0.1)] dark:shadow-[0_20px_40px_rgba(0,0,0,0.4)] border border-gray-100 dark:border-border-dark overflow-hidden flex flex-col">
           
           <!-- Mobile Header -->
-          <div class="flex justify-between items-center px-5 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-[#2c2c2c]" style="padding-top: max(env(safe-area-inset-top), 36px);">
-              <h3 class="font-semibold text-lg text-[#1c1c1e] dark:text-[#f4f4f5]">{{ props.showActions ? 'New Task' : 'Edit Task' }}</h3>
-              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]" aria-label="Handle Background Click">
+          <div class="flex justify-between items-center px-5 pt-4 pb-4 md:hidden shrink-0 border-b border-gray-100 dark:border-border-dark">
+              <h3 class="font-semibold text-lg text-text dark:text-text-dark">{{ props.showActions ? t('task.new_task') : t('task.edit_task') }}</h3>
+              <button @click="handleBackgroundClick" class="p-2 -mr-2 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 rounded-full bg-gray-100 dark:bg-[#2c2c2c]" :aria-label="t('task.a11y_save_close')" :title="t('task.a11y_save_close')">
                   <X class="w-4 h-4" />
               </button>
           </div>
@@ -346,8 +375,8 @@ const handleBackgroundClick = () => {
                    <textarea 
                        ref="titleInputRef"
                        v-model="editingTaskParams.title" 
-                       class="flex-1 bg-transparent border-none outline-none text-[1.1rem] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 focus:ring-0 p-0 resize-none overflow-hidden leading-snug"
-                       placeholder="New Task"
+                       class="flex-1 bg-transparent border-none outline-none text-[1.1rem] font-medium text-text dark:text-text-dark placeholder-gray-300 focus:ring-0 p-0 resize-none overflow-hidden leading-snug"
+                       :placeholder="t('task.new_task')"
                        rows="1"
                        @input="adjustTitleHeight"
                        @keydown.enter.prevent="handleTitleEnter"
@@ -375,7 +404,7 @@ const handleBackgroundClick = () => {
             <p class="flex items-center gap-1.5 text-[12px] font-semibold text-amber-800 dark:text-amber-300 mb-1">
               <TriangleAlert class="w-3.5 h-3.5 shrink-0" /> {{ t('task.field_issues_title') }}
             </p>
-            <p v-for="issue in issues" :key="issue.field" class="text-[11px] text-amber-700 dark:text-amber-400/90 leading-relaxed">
+            <p v-for="issue in issues" :key="issue.field" class="text-xs text-amber-700 dark:text-amber-400/90 leading-relaxed">
               {{ t('task.field_issue_detail', { field: issue.field, value: issue.value }) }}
             </p>
           </div>
@@ -393,7 +422,7 @@ const handleBackgroundClick = () => {
             these mean, and a control that implied it did would be lying.
           -->
           <div v-if="customFields && customFields.length > 0 || showAddedField" class="px-5 pb-3">
-            <div class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-2">
+            <div class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
               {{ t('task.other_fields') }}
             </div>
             <div class="space-y-1.5">
@@ -408,19 +437,20 @@ const handleBackgroundClick = () => {
                   v-model="field.v"
                   :placeholder="t('task.field_value')"
                   spellcheck="false"
-                  class="flex-1 min-w-0 text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300"
+                  class="flex-1 min-w-0 text-xs bg-gray-50 dark:bg-[#2c2c2c] border border-transparent focus:border-gray-200 dark:focus:border-gray-700 rounded p-1.5 outline-none text-text dark:text-text-dark placeholder-gray-300"
                 />
                 <button
                   type="button"
                   @click="removeCustomField(index)"
-                  class="p-1 text-gray-300 hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 cursor-pointer"
+                  class="p-1 text-gray-500 dark:text-gray-400 hover:text-red-500 rounded transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 pointer-coarse:opacity-100 cursor-pointer"
                   :aria-label="t('task.remove_field')"
+                  :title="t('task.remove_field')"
                 >
                   <X class="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
-            <p class="mt-2 text-[11px] text-gray-400 dark:text-gray-500">
+            <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">
               {{ t('task.other_fields_hint') }}
             </p>
           </div>
@@ -428,7 +458,7 @@ const handleBackgroundClick = () => {
             <button
               type="button"
               @click="addCustomField"
-              class="text-[11px] font-medium text-gray-400 hover:text-indigo-500 flex items-center transition-colors cursor-pointer"
+              class="text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-accent flex items-center transition-colors cursor-pointer"
             >
               <PlusCircle class="w-3 h-3 mr-1" /> {{ t('task.add_field') }}
             </button>
@@ -447,65 +477,88 @@ const handleBackgroundClick = () => {
           />
 
           <!-- Footer Meta Bar -->
-          <div class="px-5 pt-3 border-t border-gray-50 dark:border-[#2c2c2c] bg-white dark:bg-[#1c1c1e] flex items-center justify-start gap-2 flex-wrap relative" :style="!props.showActions ? 'padding-bottom: max(env(safe-area-inset-bottom), 12px);' : 'padding-bottom: 12px;'">
+          <div class="px-5 pt-3 border-t border-gray-50 dark:border-border-dark bg-white dark:bg-[#1c1c1e] flex items-center justify-start gap-2 flex-wrap relative" :style="!props.showActions ? 'padding-bottom: max(env(safe-area-inset-bottom), 12px);' : 'padding-bottom: 12px;'">
+              <!--
+                Status and quadrant, which the Board and the Matrix set by
+                dragging — and dragging is all there was, so on a phone, from
+                the keyboard, or from any other view the task could not be
+                moved at all. The same values the drops write.
+              -->
+              <div class="relative flex items-center p-1.5 px-2 rounded-md bg-gray-50 dark:bg-surface-hover-dark hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer text-text dark:text-text-dark" :title="t('task.status')">
+                  <CircleDot class="w-[18px] h-[18px] mr-2" :class="STATUS_ICON_CLASS[editingTaskParams.status] || 'text-gray-500 dark:text-gray-400'" />
+                  <span class="text-xs font-semibold">{{ statusLabel }}</span>
+                  <select v-model="editingTaskParams.status" class="absolute inset-0 opacity-0 cursor-pointer z-10" :aria-label="t('task.status')">
+                      <option v-for="col in BOARD_COLUMNS" :key="col.id" :value="col.id">{{ t(STATUS_LABEL_KEY[col.id]) }}</option>
+                  </select>
+              </div>
+
+              <div v-if="!props.showActions" class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer" :class="editingTaskParams.eisenhower_quadrant ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.quadrant')">
+                  <Grid2x2 class="w-[18px] h-[18px]" :class="editingTaskParams.eisenhower_quadrant ? 'text-rose-500 mr-2' : ''" />
+                  <span v-if="editingTaskParams.eisenhower_quadrant" class="text-xs font-semibold">{{ t('task.matrix_' + editingTaskParams.eisenhower_quadrant) }}</span>
+                  <select v-model="editingTaskParams.eisenhower_quadrant" class="absolute inset-0 opacity-0 cursor-pointer z-10" :aria-label="t('task.quadrant')">
+                      <option value="">{{ t('task.quadrant_auto') }}</option>
+                      <option v-for="q in QUADRANTS" :key="q" :value="q">{{ t('task.matrix_' + q) }}</option>
+                  </select>
+              </div>
+
               <!-- Dates -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Dates" @click.stop="activeDropdown = activeDropdown === 'dates' ? null : 'dates'">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.set_dates')" @click.stop="activeDropdown = activeDropdown === 'dates' ? null : 'dates'">
                   <Calendar class="w-[18px] h-[18px]" :class="(editingTaskParams.start_date || editingTaskParams.due_date) ? 'text-blue-500 mr-2' : ''"/>
                   
                   <span v-if="editingTaskParams.start_date || editingTaskParams.due_date" class="text-xs font-semibold">
                       <template v-if="editingTaskParams.start_date && editingTaskParams.due_date">
-                          {{ editingTaskParams.start_date === getTodayStr() ? 'Today' : editingTaskParams.start_date }} &rarr; {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}
+                          {{ editingTaskParams.start_date === getTodayStr() ? t('task.today') : editingTaskParams.start_date }} &rarr; {{ editingTaskParams.due_date === getTodayStr() ? t('task.today') : editingTaskParams.due_date }}
                       </template>
                       <template v-else-if="editingTaskParams.start_date">
-                          {{ editingTaskParams.start_date === getTodayStr() ? 'Today' : editingTaskParams.start_date }}
+                          {{ editingTaskParams.start_date === getTodayStr() ? t('task.today') : editingTaskParams.start_date }}
                       </template>
                       <template v-else-if="editingTaskParams.due_date">
-                          Due: {{ editingTaskParams.due_date === getTodayStr() ? 'Today' : editingTaskParams.due_date }}<template v-if="editingTaskParams.due_time"> {{ editingTaskParams.due_time }}</template>
+                          {{ t('task.due_prefix') }} {{ editingTaskParams.due_date === getTodayStr() ? t('task.today') : editingTaskParams.due_date }}<template v-if="editingTaskParams.due_time"> {{ editingTaskParams.due_time }}</template>
                       </template>
                   </span>
                   
-                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'dates' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-48 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
-                          <label class="block text-xs font-semibold text-gray-500 mb-1">Start Date</label>
-                          <input type="date" v-model="editingTaskParams.start_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Start date" />
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'dates' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-48 bg-white dark:bg-surface-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('task.start_date') }}</label>
+                          <input type="date" v-model="editingTaskParams.start_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" :aria-label="t('task.start_date')" />
                           
-                          <label class="block text-xs font-semibold text-gray-500 mb-1">Due Date</label>
-                          <input type="date" v-model="editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" aria-label="Due date" />
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('task.due_date_col') }}</label>
+                          <input type="date" v-model="editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 mb-3 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" :aria-label="t('task.due_date_col')" />
 
-                          <label class="block text-xs font-semibold text-gray-500 mb-1">{{ t('task.due_time_label') }}</label>
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('task.due_time_label') }}</label>
                           <input type="time" v-model="editingTaskParams.due_time" :disabled="!editingTaskParams.due_date" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-blue-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed" :aria-label="t('task.due_time_label')" />
-                          <p class="text-[10px] text-gray-400 mt-1">{{ t('task.due_time_hint') }}</p>
+                          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('task.due_time_hint') }}</p>
                       </div>
                   </div>
               </div>
 
               <!-- Repeat -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="isRepeating ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.repeat')" @click.stop="activeDropdown = activeDropdown === 'repeat' ? null : 'repeat'">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="isRepeating ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.repeat')" @click.stop="activeDropdown = activeDropdown === 'repeat' ? null : 'repeat'">
                   <Repeat class="w-[18px] h-[18px]" :class="isRepeating ? (repeatNeedsDate ? 'text-amber-500 mr-2' : 'text-teal-500 mr-2') : ''" />
 
                   <span v-if="isRepeating" class="text-xs font-semibold">{{ t('task.' + editingTaskParams.recurrence) }}</span>
 
-                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'repeat' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-56 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
-                          <label class="block text-xs font-semibold text-gray-500 mb-1">{{ t('task.repeat') }}</label>
-                          <select v-model="editingTaskParams.recurrence" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer text-[#1c1c1e] dark:text-[#f4f4f5]" :aria-label="t('task.repeat')">
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'repeat' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-56 bg-white dark:bg-surface-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('task.repeat') }}</label>
+                          <select v-model="editingTaskParams.recurrence" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-teal-500 cursor-pointer text-text dark:text-text-dark" :aria-label="t('task.repeat')">
                               <option v-for="option in RECURRENCE_OPTIONS" :key="option" :value="option">
                                   {{ option === 'none' ? t('task.does_not_repeat') : t('task.' + option) }}
                               </option>
                           </select>
 
                           <template v-if="isRepeating">
-                              <label class="block text-xs font-semibold text-gray-500 mb-1 mt-3">{{ t('task.repeat_until') }}</label>
+                              <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1 mt-3">{{ t('task.repeat_until') }}</label>
                               <input type="date" v-model="editingTaskParams.recurrence_end_at" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-teal-500 [color-scheme:light] dark:[color-scheme:dark] cursor-pointer" :aria-label="t('task.repeat_until')" />
-                              <p class="text-[10px] text-gray-400 mt-1">{{ t('task.repeat_until_hint') }}</p>
-                              <p v-if="repeatNeedsDate" class="text-[10px] text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.repeat_needs_date') }}</p>
+                              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('task.repeat_until_hint') }}</p>
+                              <p v-if="repeatNeedsDate" class="text-xs text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.repeat_needs_date') }}</p>
                           </template>
                       </div>
                   </div>
               </div>
 
               <!-- Parent task -->
-              <div v-if="parentOptions.length" class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.parent_id ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.parent_task')">
+              <div v-if="parentOptions.length" class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.parent_id ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.parent_task')">
                   <CornerDownRight class="w-[18px] h-[18px]" :class="editingTaskParams.parent_id ? 'text-sky-500 mr-2' : ''" />
 
                   <span v-if="editingTaskParams.parent_id" class="text-xs font-semibold max-w-[120px] truncate text-sky-600 dark:text-sky-400">{{ parentTitle }}</span>
@@ -517,14 +570,14 @@ const handleBackgroundClick = () => {
               </div>
 
               <!-- Reminders -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.reminders.length > 0 ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" :title="t('task.reminders')" @click.stop="activeDropdown = activeDropdown === 'reminders' ? null : 'reminders'">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.reminders.length > 0 ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.reminders')" @click.stop="activeDropdown = activeDropdown === 'reminders' ? null : 'reminders'">
                   <Bell class="w-[18px] h-[18px]" :class="editingTaskParams.reminders.length > 0 ? (remindersNeedDueDate ? 'text-amber-500 mr-2' : 'text-purple-500 mr-2') : ''" />
 
                   <span v-if="editingTaskParams.reminders.length > 0" class="text-xs font-semibold max-w-[150px] truncate">{{ editingTaskParams.reminders.join(', ') }}</span>
 
-                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'reminders' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-64 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
-                          <label class="block text-xs font-semibold text-gray-500 mb-2">{{ t('task.reminders') }}</label>
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'reminders' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-64 bg-white dark:bg-surface-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ t('task.reminders') }}</label>
 
                           <div v-if="editingTaskParams.reminders.length" class="flex items-center gap-1.5 flex-wrap mb-2">
                               <span v-for="(rem, idx) in editingTaskParams.reminders" :key="rem" class="flex items-center gap-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 px-2 py-1 rounded-md text-xs font-medium">
@@ -536,7 +589,7 @@ const handleBackgroundClick = () => {
                               </span>
                           </div>
 
-                          <select v-model="reminderPreset" @change="reminderPreset !== 'custom' && addReminder()" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer text-[#1c1c1e] dark:text-[#f4f4f5]" :aria-label="t('task.add_reminder')">
+                          <select v-model="reminderPreset" @change="reminderPreset !== 'custom' && addReminder()" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 cursor-pointer text-text dark:text-text-dark" :aria-label="t('task.add_reminder')">
                               <option value="">{{ t('task.add_reminder') }}</option>
                               <option value="0m">{{ t('task.reminder_at_due') }}</option>
                               <option v-for="preset in REMINDER_PRESETS" :key="preset" :value="preset">{{ t('task.reminder_before', { value: preset }) }}</option>
@@ -544,40 +597,40 @@ const handleBackgroundClick = () => {
                           </select>
 
                           <div v-if="reminderPreset === 'custom'" class="flex items-center gap-1.5 mt-2">
-                              <input v-model="customReminder" @keyup.enter="addReminder" type="text" :placeholder="t('task.reminder_custom_placeholder')" class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                              <input v-model="customReminder" @keyup.enter="addReminder" type="text" :placeholder="t('task.reminder_custom_placeholder')" class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-text dark:text-text-dark" />
                               <button @click="addReminder" class="bg-purple-600 hover:bg-purple-700 text-white p-1.5 rounded-md transition-colors cursor-pointer shrink-0" :aria-label="t('task.a11y_add_reminder')">
                                   <Plus class="w-4 h-4" />
                               </button>
                           </div>
 
-                          <p v-if="reminderError" class="text-[10px] text-red-500 mt-1.5">{{ reminderError }}</p>
-                          <p v-else-if="remindersNeedDueDate" class="text-[10px] text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.reminders_need_due_date') }}</p>
+                          <p v-if="reminderError" class="text-xs text-red-500 mt-1.5">{{ reminderError }}</p>
+                          <p v-else-if="remindersNeedDueDate" class="text-xs text-amber-600 dark:text-amber-500 mt-1.5">{{ t('task.reminders_need_due_date') }}</p>
                       </div>
                   </div>
               </div>
 
               <!-- Tags -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.tags.length > 0 ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Manage Tags" @click.stop="activeDropdown = activeDropdown === 'tags' ? null : 'tags'">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.tags.length > 0 ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.tags')" @click.stop="activeDropdown = activeDropdown === 'tags' ? null : 'tags'">
                   <Tag class="w-[18px] h-[18px]" :class="editingTaskParams.tags.length > 0 ? 'text-blue-500 mr-2' : ''"/>
                   
                   <span v-if="editingTaskParams.tags.length > 0" class="text-xs font-semibold max-w-[150px] truncate">{{ editingTaskParams.tags }}</span>
                   
-                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'tags' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-56 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
-                          <label class="block text-xs font-semibold text-gray-500 mb-1">Tags (comma separated)</label>
-                          <input v-model="editingTaskParams.tags" placeholder="e.g. work, urgent" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-2 outline-none focus:ring-1 focus:ring-blue-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                  <div class="absolute bottom-full left-0 pb-2 transition-all z-50" :class="activeDropdown === 'tags' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-56 bg-white dark:bg-surface-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-3 pointer-events-auto cursor-default">
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('task.tags_comma_label') }}</label>
+                          <input v-model="editingTaskParams.tags" :placeholder="t('task.tags_placeholder')" class="w-full text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-2 outline-none focus:ring-1 focus:ring-blue-500 text-text dark:text-text-dark" />
                       </div>
                   </div>
               </div>
 
               <!-- Priority -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.priority ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Priority">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.priority ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.bulk_priority')">
                   <Flag class="w-[18px] h-[18px]" :class="editingTaskParams.priority ? 'text-orange-500 mr-2' : ''" />
                   
                   <span v-if="editingTaskParams.priority" class="text-xs font-semibold uppercase text-orange-600 dark:text-orange-400">{{ editingTaskParams.priority }}</span>
                   
-                  <select v-model="editingTaskParams.priority" class="absolute inset-0 opacity-0 cursor-pointer z-10">
-                      <option value="">None</option>
+                  <select v-model="editingTaskParams.priority" class="absolute inset-0 opacity-0 cursor-pointer z-10" :aria-label="t('task.bulk_priority')">
+                      <option value="">{{ t('task.group_no_priority') }}</option>
                       <option value="P1">P1</option>
                       <option value="P2">P2</option>
                       <option value="P3">P3</option>
@@ -586,15 +639,15 @@ const handleBackgroundClick = () => {
               </div>
 
               <!-- Project -->
-              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.project_id ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" title="Set Project">
+              <div class="relative flex items-center p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer group" :class="editingTaskParams.project_id ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" :title="t('task.bulk_project')">
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="editingTaskParams.project_id ? 'text-indigo-500 mr-2' : ''"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                   
                   <span v-if="editingTaskParams.project_id" class="text-xs font-semibold max-w-[100px] truncate text-indigo-600 dark:text-indigo-400">
-                      {{ props.projects?.find(p => p.id === editingTaskParams.project_id)?.title || 'Project' }}
+                      {{ props.projects?.find(p => p.id === editingTaskParams.project_id)?.title || t('task.bulk_project') }}
                   </span>
                   
-                  <select v-model="editingTaskParams.project_id" class="absolute inset-0 opacity-0 cursor-pointer z-10">
-                      <option value="">No Project</option>
+                  <select v-model="editingTaskParams.project_id" class="absolute inset-0 opacity-0 cursor-pointer z-10" :aria-label="t('task.bulk_project')">
+                      <option value="">{{ t('task.group_no_project') }}</option>
                       <option v-for="proj in props.projects" :key="proj.id" :value="proj.id">{{ proj.title }}</option>
                   </select>
               </div>
@@ -604,8 +657,8 @@ const handleBackgroundClick = () => {
                   <button 
                       @click.stop="toggleTransferDropdown"
                       class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] cursor-pointer flex items-center transition-colors" 
-                      :class="editingTaskParams.is_transferred ? 'bg-gray-50 dark:bg-[#2a2a2a] px-2 text-[#1c1c1e] dark:text-[#f4f4f5]' : 'justify-center text-gray-400'" 
-                      title="Transfer Task"
+                      :class="editingTaskParams.is_transferred ? 'bg-gray-50 dark:bg-surface-hover-dark px-2 text-text dark:text-text-dark' : 'justify-center text-gray-500'" 
+                      :title="t('task.transfer_task')"
                   >
                       <Send class="w-[18px] h-[18px]" :class="editingTaskParams.is_transferred ? 'text-purple-500 mr-2' : ''" />
                       <span v-if="editingTaskParams.is_transferred && editingTaskParams.transferred_to" class="text-xs font-semibold max-w-[120px] truncate text-purple-600 dark:text-purple-400">
@@ -613,17 +666,19 @@ const handleBackgroundClick = () => {
                       </span>
                   </button>
                   
-                  <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 transition-all z-50" :class="activeDropdown === 'transfer' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 md:group-hover:visible'" @click.stop>
-                      <div class="w-64 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-[#2c2c2c] rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
-                          <label class="block text-[10px] font-semibold text-gray-400 mb-1 w-full text-left ml-1">Transfer to:</label>
+                  <div v-if="editingTaskParams.is_transferred" class="absolute bottom-full left-1/2 -translate-x-1/2 pb-2 transition-all z-50" :class="activeDropdown === 'transfer' ? 'opacity-100 visible' : 'opacity-0 invisible md:group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 md:group-hover:visible'" @click.stop>
+                      <div class="w-64 bg-white dark:bg-surface-dark border border-gray-200 dark:border-border-dark rounded-xl shadow-[0_4px_20px_rgb(0,0,0,0.15)] flex flex-col p-2 pointer-events-auto cursor-default items-center">
+                          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1 w-full text-left ml-1">{{ t('task.transfer_to_label') }}</label>
                           <div class="flex items-center gap-1.5 w-full">
-                              <input :value="transferInput" @input="onTransferInput" @click="activeDropdown = 'transfer'" placeholder="Name..." class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                              <input :value="transferInput" @input="onTransferInput" @click="activeDropdown = 'transfer'" :placeholder="t('task.transfer_name_placeholder')" class="flex-1 min-w-0 text-sm bg-gray-50 dark:bg-[#2c2c2c] border border-gray-100 dark:border-gray-700 rounded-md p-1.5 outline-none focus:ring-1 focus:ring-purple-500 text-text dark:text-text-dark" />
                               
                               <button 
                                   @click.stop="editingTaskParams.track_progress = !editingTaskParams.track_progress"
                                   class="p-1.5 rounded-md hover:opacity-80 transition-opacity shrink-0 flex items-center justify-center border"
-                                  :title="editingTaskParams.track_progress ? 'Tracking Progress' : 'Not Tracking'"
-                                  :class="editingTaskParams.track_progress ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-500 border-blue-200 dark:border-blue-800' : 'text-gray-400 dark:text-gray-500 bg-gray-50 dark:bg-[#2a2a2a] border-gray-200 dark:border-[#2c2c2c]'"
+                                  :title="editingTaskParams.track_progress ? t('task.tracking_progress') : t('task.not_tracking')"
+                                  :aria-label="editingTaskParams.track_progress ? t('task.tracking_progress') : t('task.not_tracking')"
+                                  :aria-pressed="!!editingTaskParams.track_progress"
+                                  :class="editingTaskParams.track_progress ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-500 border-blue-200 dark:border-blue-800' : 'text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-surface-hover-dark border-gray-200 dark:border-border-dark'"
                               >
                                   <Eye v-if="editingTaskParams.track_progress" class="w-4 h-4" />
                                   <EyeOff v-else class="w-4 h-4" />
@@ -631,23 +686,24 @@ const handleBackgroundClick = () => {
                               
                               <button 
                                   @click.stop="clearTransfer"
-                                  class="p-1.5 rounded-md hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition-colors shrink-0 flex items-center justify-center text-gray-400 dark:text-gray-500 border border-transparent"
-                                  title="Remove Transfer"
+                                  class="p-1.5 rounded-md hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 transition-colors shrink-0 flex items-center justify-center text-gray-500 dark:text-gray-400 border border-transparent"
+                                  :title="t('task.remove_transfer')"
+                                  :aria-label="t('task.remove_transfer')"
                               >
                                   <X class="w-4 h-4" />
                               </button>
                           </div>
 
-                          <div v-if="activeDropdown === 'transfer'" class="w-full mt-2 max-h-48 overflow-y-auto custom-scrollbar flex flex-col gap-1 border-t border-gray-100 dark:border-[#2c2c2c] pt-2">
+                          <div v-if="activeDropdown === 'transfer'" class="w-full mt-2 max-h-48 overflow-y-auto custom-scrollbar flex flex-col gap-1 border-t border-gray-100 dark:border-border-dark pt-2">
                               <button v-for="p in filteredPeople" :key="p.id" @click.stop="selectPerson(p)" class="text-left px-2 py-1.5 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] rounded-md truncate transition-colors shrink-0">
                                   {{ p.title }}
                               </button>
                               <div v-if="filteredPeople.length > 0" class="h-px bg-gray-100 dark:bg-[#2c2c2c] my-1 shrink-0"></div>
                               <button v-if="transferInput.trim() && !filteredPeople.find(p => p.title.toLowerCase() === transferInput.trim().toLowerCase())" @click.stop="createNewPerson" class="text-left px-2 py-1.5 text-xs text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-md truncate transition-colors flex items-center gap-1 shrink-0">
-                                  <Plus class="w-3 h-3" /> Create: "{{ transferInput }}"
+                                  <Plus class="w-3 h-3" /> {{ t('task.transfer_create_person', { name: transferInput }) }}
                               </button>
                               <button v-if="transferInput.trim()" @click.stop="usePlainText" class="text-left px-2 py-1.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] rounded-md truncate transition-colors shrink-0">
-                                  Use text: "{{ transferInput }}"
+                                  {{ t('task.transfer_use_text', { name: transferInput }) }}
                               </button>
                           </div>
                       </div>
@@ -655,20 +711,20 @@ const handleBackgroundClick = () => {
               </div>
 
               <!-- Delete Button (Only when editing existing task, i.e., !props.showActions) -->
-              <div v-if="!props.showActions" class="ml-auto relative flex items-center p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 hover:text-red-500 cursor-pointer transition-colors" title="Delete Task" @click.stop="emit('delete')">
+              <div v-if="!props.showActions" class="ml-auto relative flex items-center p-1.5 rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-400 hover:text-red-500 cursor-pointer transition-colors" :title="t('task.a11y_delete_task')" role="button" tabindex="0" :aria-label="t('task.a11y_delete_task')" @click.stop="emit('delete')" @keydown.enter="emit('delete')">
                   <Trash2 class="w-[18px] h-[18px]" />
               </div>
           </div>
 
           <!-- Bottom Actions (Only for Convert mode) -->
-          <div v-if="props.showActions" class="pt-4 px-6 bg-gray-50 dark:bg-[#191919] border-t border-[#e6e6e6] dark:border-[#2c2c2c] flex items-center justify-end gap-3 shrink-0" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
+          <div v-if="props.showActions" class="pt-4 px-6 bg-gray-50 dark:bg-surface-alt-dark border-t border-border dark:border-border-dark flex items-center justify-end gap-3 shrink-0" style="padding-bottom: max(env(safe-area-inset-bottom), 16px);">
               <button @click="close" class="px-5 py-2 hover:bg-gray-200 dark:hover:bg-[#2c2c2c] text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-all cursor-pointer border border-transparent">
-                  Cancel
+                  {{ t('task.delete_cancel') }}
               </button>
-              <button @click="save" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-all shadow-sm cursor-pointer flex items-center gap-1.5 border border-transparent active:scale-95">
-                  <CheckCircle2 class="w-4 h-4" /> Create Task
+              <button @click="save" class="btn-primary">
+                  <CheckCircle2 class="w-4 h-4" /> {{ t('task.create_task') }}
               </button>
           </div>
       </div>
-  </div>
+  </AppDialog>
 </template>

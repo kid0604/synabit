@@ -172,7 +172,7 @@ const renderGraph = () => {
         .attr("stroke-opacity", (d: any) => d.type === 'related-tag' ? 0.2 : 0.4)
         .attr("stroke-dasharray", (d: any) => d.type === 'related-tag' ? "2,2" : "none")
         .attr("stroke-width", 1.5)
-        .attr("class", "text-gray-400 dark:text-zinc-600")
+        .attr("class", "text-gray-500 dark:text-zinc-600")
         .attr("marker-end", (d: any) => {
             if (d.type === 'related-tag') return null; // No arrow for secondary relations
             return document.documentElement.classList.contains('dark') ? "url(#arrow-dark)" : "url(#arrow)";
@@ -373,15 +373,15 @@ onUnmounted(() => {
            @click="isShowMore = !isShowMore" 
            class="px-2 py-1 bg-white dark:bg-[#2c2c2c] border border-gray-200 dark:border-[#3f3f46] text-xs font-medium text-gray-600 dark:text-gray-300 rounded shadow-sm hover:bg-gray-50 dark:hover:bg-[#3f3f46] transition-colors"
        >
-           {{ isShowMore ? 'Show Less' : 'Show More' }}
+           {{ isShowMore ? $t('note.graph_show_less') : $t('note.graph_show_more') }}
        </button>
     </div>
 
-    <div class="absolute bottom-2 left-2 flex gap-3 text-[10px] text-gray-500 font-medium">
-       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-500 inline-block"></span> Current</div>
-       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> Linked</div>
-       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> Tag</div>
-       <div v-if="isShowMore" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span> Related Note</div>
+    <div class="absolute bottom-2 left-2 flex gap-3 text-xs text-gray-500 dark:text-gray-400 font-medium">
+       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-500 inline-block"></span> {{ $t('note.graph_current') }}</div>
+       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span> {{ $t('note.graph_linked') }}</div>
+       <div class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500 inline-block"></span> {{ $t('note.graph_tag') }}</div>
+       <div v-if="isShowMore" class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-amber-500 inline-block"></span> {{ $t('note.graph_related') }}</div>
     </div>
   </div>
 </template>

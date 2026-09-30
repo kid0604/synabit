@@ -5,8 +5,6 @@ import { buildEventPayload } from '../helpers';
 import { logger } from '../../../utils/logger';
 import { openCheckboxes } from '../checkboxes';
 import type { NoteCheckbox } from '../checkboxes';
-import { i18n } from '../../../i18n';
-import { ask } from '@tauri-apps/plugin-dialog';
 
 export function useEventRelations(
     ns: any,
@@ -144,11 +142,25 @@ export function useEventRelations(
         }
     };
 
+    /**
+     * The note or board being asked about. This one keeps its question: the
+     * file is deleted outright rather than sent to the trash, so there is
+     * nothing for an undo to bring back.
+     */
+    const pendingRelationDelete = ref<any | null>(null);
+    let answerRelation: ((yes: boolean) => void) | null = null;
+
+    const answerRelationDelete = (yes: boolean) => {
+        pendingRelationDelete.value = null;
+        answerRelation?.(yes);
+        answerRelation = null;
+    };
+
     const deleteRelationNode = async (bl: any) => {
-        const isConfirmed = await ask(
-            i18n.global.t('calendar.delete_relation_body', { type: bl.node_type, title: bl.title }),
-            { title: i18n.global.t('calendar.delete_item'), kind: 'warning' },
-        );
+        const isConfirmed = await new Promise<boolean>((resolve) => {
+            pendingRelationDelete.value = bl;
+            answerRelation = resolve;
+        });
         if (!isConfirmed) return;
         
         try {
@@ -244,6 +256,7 @@ export function useEventRelations(
         noteActions, isMakingTasks, loadNoteActions, makeTasksFromNotes,
         peopleQuery, peopleMatches, isAddingPerson, searchPeople, addPerson, removePerson,
         loadEventBacklinks, createMeetingNote, deleteRelationNode, openLinkedNote,
+        pendingRelationDelete, answerRelationDelete,
         resetEventBacklinks, resetCreatingNote,
     };
 }

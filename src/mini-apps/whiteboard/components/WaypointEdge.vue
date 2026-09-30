@@ -208,9 +208,8 @@ function removeWaypoint(index: number) {
       :cy="wp.y"
       r="4"
       fill="#fff"
-      stroke="#7c3aed"
       stroke-width="2"
-      style="pointer-events: none"
+      style="pointer-events: none; stroke: var(--color-accent)"
     />
     <!-- Transparent larger circles for easier grabbing -->
     <circle

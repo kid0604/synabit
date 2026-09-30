@@ -425,3 +425,26 @@ export function filterTransactions(
     return true;
   });
 }
+
+/**
+ * The months without the transactions waiting on an undo.
+ *
+ * What every reader of the ledger past the list should be handed — Reports
+ * was given the raw months and counted a deleted transaction for the seven
+ * seconds it could still be taken back. A month holding none of them is
+ * returned as it was, so nothing downstream sees a change it need not.
+ */
+export function withoutHidden<M extends { node: { properties?: Record<string, unknown> } }>(
+  months: M[],
+  hidden: ReadonlySet<string>,
+): M[] {
+  if (hidden.size === 0) return months;
+  return months.map(m => {
+    const txs = m.node.properties?.transactions as { id: string }[] | undefined;
+    if (!txs || !txs.some(tx => hidden.has(tx.id))) return m;
+    return {
+      ...m,
+      node: { ...m.node, properties: { ...m.node.properties, transactions: txs.filter(tx => !hidden.has(tx.id)) } },
+    };
+  });
+}

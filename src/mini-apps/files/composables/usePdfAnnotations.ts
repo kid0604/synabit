@@ -1,5 +1,6 @@
 import { ref, computed, type Ref } from 'vue';
 import { useNodeService } from '../../../composables/useNodeService';
+import { i18n } from '../../../i18n';
 
 export interface PdfAnnotation {
   id: string;
@@ -223,7 +224,7 @@ export function usePdfAnnotations(vaultPath: Ref<string>) {
     try {
       await ns.writeNode({
         relPath: id,
-        title: `Drawing on page ${page}`,
+        title: i18n.global.t('file.drawing_on_page', { page }),
         nodeType: 'pdf_drawing',
         properties: {
           pdf_id: fileId,

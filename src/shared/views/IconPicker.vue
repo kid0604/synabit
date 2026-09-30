@@ -86,7 +86,7 @@ const position = computed(() => {
         :placeholder="t('things.icon_search')"
         class="w-full px-2.5 py-1.5 mb-2 rounded-md text-xs outline-none
                bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700
-               text-text dark:text-text-dark placeholder-gray-400"
+               text-text dark:text-text-dark placeholder:text-gray-500 dark:placeholder:text-gray-400"
       />
 
       <div class="grid grid-cols-8 gap-1 max-h-56 overflow-y-auto">
@@ -99,21 +99,21 @@ const position = computed(() => {
           class="relative aspect-square flex items-center justify-center rounded-md
                  cursor-pointer transition-colors"
           :class="name === chosen
-            ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300'
+            ? 'bg-accent/10 text-accent dark:text-accent-dark'
             : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/10'"
         >
           <component :is="iconNamed(name)" class="w-4 h-4" />
         </button>
       </div>
 
-      <p v-if="!names.length" class="py-6 text-center text-xs text-gray-400">
+      <p v-if="!names.length" class="py-6 text-center text-xs text-gray-500 dark:text-gray-400">
         {{ t('things.icon_none_match') }}
       </p>
       <!-- Said rather than silently cut: a grid that stops looks complete. -->
-      <p v-else-if="hidden" class="pt-1.5 text-center text-[11px] text-gray-400">
+      <p v-else-if="hidden" class="pt-1.5 text-center text-xs text-gray-500 dark:text-gray-400">
         {{ t('things.icon_more', { n: hidden }) }}
       </p>
-      <p v-else-if="!searching" class="pt-1.5 text-center text-[11px] text-gray-400">
+      <p v-else-if="!searching" class="pt-1.5 text-center text-xs text-gray-500 dark:text-gray-400">
         {{ t('things.icon_search_all', { n: ICON_NAMES.length }) }}
       </p>
 
@@ -129,12 +129,12 @@ const position = computed(() => {
           @click="emit('pick', null)"
           class="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-left
                  cursor-pointer hover:bg-gray-100 dark:hover:bg-white/10"
-          :class="chosen ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400'"
+          :class="chosen ? 'text-gray-600 dark:text-gray-300' : 'text-gray-500'"
         >
           <RotateCcw class="w-3.5 h-3.5" />
           {{ t('things.icon_default') }}
           <component :is="iconForNodeType(nodeType)" v-if="!chosen" class="w-3.5 h-3.5 ml-auto" />
-          <Check v-if="!chosen" class="w-3.5 h-3.5 text-blue-500" />
+          <Check v-if="!chosen" class="w-3.5 h-3.5 text-accent dark:text-accent-dark" />
         </button>
       </div>
     </div>

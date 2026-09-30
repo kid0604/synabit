@@ -10,6 +10,7 @@
 import { ref, watch } from 'vue';
 import { useFocusTrap } from '../composables/useFocusTrap';
 import { useI18n } from 'vue-i18n';
+import AppDialog from '../../../shared/components/AppDialog.vue';
 import { X, Settings, LayoutList, LayoutGrid, List, ArrowDownWideNarrow, ArrowUpWideNarrow } from 'lucide-vue-next';
 import type { FeedConfig, ViewMode, SortOrder } from '../types/feed.types';
 
@@ -51,22 +52,17 @@ const handleSave = () => {
   });
 };
 
-const handleKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') emit('close');
-};
 </script>
 
 <template>
-  <div ref="dialog" class="fixed inset-0 z-[200] flex items-center justify-center" role="dialog" aria-modal="true" :aria-label="t('feeds.settings')" tabindex="-1" @keydown="handleKeydown">
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="emit('close')"></div>
-
-    <div class="relative w-full max-w-lg mx-4 bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2c2c2c] overflow-hidden animate-in">
-      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-[#2c2c2c]">
+  <AppDialog :show="true" :aria-label="t('feeds.settings')" size="md" @close="emit('close')">
+    <div ref="dialog">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-border-dark">
         <h2 class="text-lg font-bold flex items-center gap-2">
-          <Settings class="w-5 h-5 text-orange-500" />
+          <Settings class="w-5 h-5 text-accent dark:text-accent-dark" />
           {{ t('feeds.settings') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.close_settings')">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.close_settings')">
           <X class="w-5 h-5" />
         </button>
       </div>
@@ -74,7 +70,7 @@ const handleKeydown = (e: KeyboardEvent) => {
       <div class="px-6 py-5 space-y-6 max-h-[65vh] overflow-y-auto">
         <!-- Layout -->
         <section class="space-y-2">
-          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{{ t('feeds.settings_layout') }}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.settings_layout') }}</h3>
           <div class="flex items-center gap-2">
             <button
               v-for="layout in LAYOUTS"
@@ -83,7 +79,7 @@ const handleKeydown = (e: KeyboardEvent) => {
               :class="[
                 'flex-1 flex flex-col items-center gap-1.5 px-3 py-3 rounded-xl border text-xs transition-all duration-200',
                 draft.defaultView === layout.id
-                  ? 'border-orange-400 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium'
+                  ? 'border-accent bg-accent/10 text-accent dark:text-accent-dark font-medium'
                   : 'border-border dark:border-border-dark text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
               ]"
             >
@@ -95,7 +91,7 @@ const handleKeydown = (e: KeyboardEvent) => {
 
         <!-- Order -->
         <section class="space-y-2">
-          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{{ t('feeds.settings_sort') }}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.settings_sort') }}</h3>
           <div class="flex items-center gap-2">
             <button
               v-for="sort in SORTS"
@@ -104,7 +100,7 @@ const handleKeydown = (e: KeyboardEvent) => {
               :class="[
                 'flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl border text-xs transition-all duration-200',
                 draft.sortOrder === sort.id
-                  ? 'border-orange-400 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium'
+                  ? 'border-accent bg-accent/10 text-accent dark:text-accent-dark font-medium'
                   : 'border-border dark:border-border-dark text-gray-500 dark:text-gray-400 hover:border-gray-300 dark:hover:border-gray-600'
               ]"
             >
@@ -119,45 +115,45 @@ const handleKeydown = (e: KeyboardEvent) => {
           <label class="flex items-start justify-between gap-4 cursor-pointer">
             <span class="min-w-0">
               <span class="block text-sm text-gray-700 dark:text-gray-300">{{ t('feeds.mark_read_on_scroll_label') }}</span>
-              <span class="block text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('feeds.mark_read_on_scroll_hint') }}</span>
+              <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ t('feeds.mark_read_on_scroll_hint') }}</span>
             </span>
             <input
               v-model="draft.markReadOnScroll"
               type="checkbox"
-              class="mt-1 w-4 h-4 shrink-0 accent-orange-500"
+              class="mt-1 w-4 h-4 shrink-0 accent-accent"
             />
           </label>
         </section>
 
         <!-- Refreshing -->
         <section class="space-y-2">
-          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{{ t('feeds.settings_refresh') }}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.settings_refresh') }}</h3>
           <label class="flex items-center justify-between gap-4 text-sm text-gray-700 dark:text-gray-300">
             <span class="min-w-0">{{ t('feeds.update_interval_label') }}</span>
             <span class="flex items-center gap-2 shrink-0">
               <input
                 v-model.number="draft.globalUpdateInterval"
                 type="number" min="5" max="1440" step="5"
-                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
               />
-              <span class="text-xs text-gray-400 w-12">{{ t('feeds.minutes') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 w-12">{{ t('feeds.minutes') }}</span>
             </span>
           </label>
-          <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('feeds.update_interval_hint') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('feeds.update_interval_hint') }}</p>
         </section>
 
         <!-- Storage -->
         <section class="space-y-2">
-          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{{ t('feeds.settings_storage') }}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.settings_storage') }}</h3>
           <label class="flex items-center justify-between gap-4 text-sm text-gray-700 dark:text-gray-300">
             <span class="min-w-0">{{ t('feeds.cleanup_days_label') }}</span>
             <span class="flex items-center gap-2 shrink-0">
               <input
                 v-model.number="draft.autoCleanupDays"
                 type="number" min="1" max="3650"
-                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
               />
-              <span class="text-xs text-gray-400 w-12">{{ t('feeds.days') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 w-12">{{ t('feeds.days') }}</span>
             </span>
           </label>
           <label class="flex items-center justify-between gap-4 text-sm text-gray-700 dark:text-gray-300">
@@ -166,30 +162,30 @@ const handleKeydown = (e: KeyboardEvent) => {
               <input
                 v-model.number="draft.maxArticlesPerFeed"
                 type="number" min="50" max="10000" step="50"
-                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-500"
+                class="w-24 px-2.5 py-1.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-sm text-right text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent/30 focus:border-accent"
               />
-              <span class="text-xs text-gray-400 w-12">{{ t('feeds.articles') }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 w-12">{{ t('feeds.articles') }}</span>
             </span>
           </label>
-          <p class="text-xs text-gray-400 dark:text-gray-500">{{ t('feeds.cleanup_hint') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('feeds.cleanup_hint') }}</p>
         </section>
 
         <!-- Reading -->
         <section class="space-y-3">
-          <h3 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">{{ t('feeds.settings_reading') }}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.settings_reading') }}</h3>
           <label class="block space-y-1.5">
             <span class="flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
               {{ t('feeds.font_size_label') }}
-              <span class="text-xs text-gray-400">{{ draft.readingFontSize }}px</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ draft.readingFontSize }}px</span>
             </span>
-            <input v-model.number="draft.readingFontSize" type="range" min="12" max="24" step="1" class="w-full accent-orange-500" />
+            <input v-model.number="draft.readingFontSize" type="range" min="12" max="24" step="1" class="w-full accent-accent" />
           </label>
           <label class="block space-y-1.5">
             <span class="flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
               {{ t('feeds.max_width_label') }}
-              <span class="text-xs text-gray-400">{{ draft.readingMaxWidth }}px</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ draft.readingMaxWidth }}px</span>
             </span>
-            <input v-model.number="draft.readingMaxWidth" type="range" min="480" max="1200" step="20" class="w-full accent-orange-500" />
+            <input v-model.number="draft.readingMaxWidth" type="range" min="480" max="1200" step="20" class="w-full accent-accent" />
           </label>
           <p
             class="mt-1 px-4 py-3 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-text dark:text-text-dark leading-relaxed"
@@ -198,14 +194,14 @@ const handleKeydown = (e: KeyboardEvent) => {
         </section>
       </div>
 
-      <div class="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-[#2c2c2c]">
+      <div class="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-200 dark:border-border-dark">
         <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
           {{ t('feeds.cancel') }}
         </button>
-        <button @click="handleSave" class="px-4 py-2 rounded-xl bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 transition-colors shadow-sm">
+        <button @click="handleSave" class="btn-primary">
           {{ t('feeds.save') }}
         </button>
       </div>
     </div>
-  </div>
+  </AppDialog>
 </template>

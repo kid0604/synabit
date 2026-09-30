@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
+import { ref, computed, onMounted } from 'vue';
 import { X, Search, UserPlus, Users } from 'lucide-vue-next';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
@@ -44,15 +45,15 @@ onMounted(() => {
 });
 
 const RELATION_TYPES = [
-    { value: 'friend', label: '👫 Friend', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-    { value: 'family', label: '👨‍👩‍👧 Family', color: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' },
-    { value: 'colleague', label: '💼 Colleague', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
-    { value: 'partner', label: '❤️ Partner', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
-    { value: 'mentor', label: '🎓 Mentor', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
-    { value: 'mentee', label: '📚 Mentee', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
-    { value: 'neighbor', label: '🏠 Neighbor', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
-    { value: 'introduced_by', label: '🤝 Introduced by', color: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300' },
-    { value: 'client', label: '📋 Client', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
+    { value: 'friend', label: 'people.rel_friend', emoji: '👫', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+    { value: 'family', label: 'people.rel_family', emoji: '👨‍👩‍👧', color: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300' },
+    { value: 'colleague', label: 'people.rel_colleague', emoji: '💼', color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' },
+    { value: 'partner', label: 'people.rel_partner', emoji: '❤️', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' },
+    { value: 'mentor', label: 'people.rel_mentor', emoji: '🎓', color: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300' },
+    { value: 'mentee', label: 'people.rel_mentee', emoji: '📚', color: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' },
+    { value: 'neighbor', label: 'people.rel_neighbor', emoji: '🏠', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' },
+    { value: 'introduced_by', label: 'people.rel_introduced_by', emoji: '🤝', color: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300' },
+    { value: 'client', label: 'people.rel_client', emoji: '📋', color: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' },
 ];
 
 const filteredPeople = computed(() => {
@@ -105,18 +106,12 @@ const handleLink = () => {
     emit('link', selectedPerson.value, relationStr, since.value.trim(), until.value.trim());
 };
 
-onMounted(() => {
-    const handleKeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') emit('close');
-    };
-    window.addEventListener('keydown', handleKeydown);
-    onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
-});
 </script>
 
 <template>
-    <div class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4" @mousedown.self="emit('close')">
-        <div class="w-full max-w-md bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden border border-gray-200 dark:border-gray-700">
+    <AppDialog :show="true" labelledby="link-person-title" size="md" unstyled
+               panel-class="bg-white dark:bg-surface-dark rounded-2xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden border border-gray-200 dark:border-gray-700"
+               @close="emit('close')">
             <!-- Header -->
             <div class="p-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
                 <div class="flex items-center gap-3">
@@ -124,8 +119,8 @@ onMounted(() => {
                         <UserPlus class="w-4 h-4 text-white" />
                     </div>
                     <div>
-                        <h2 class="text-sm font-bold">{{ $t('people.link_a_person') }}</h2>
-                        <p class="text-[11px] text-gray-500 dark:text-gray-400">to <strong>{{ person.title }}</strong></p>
+                        <h2 id="link-person-title" class="text-sm font-bold">{{ $t('people.link_a_person') }}</h2>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.link_to', { name: person.title }) }}</p>
                     </div>
                 </div>
                 <button @click="emit('close')" class="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" :aria-label="$t('people.close')">
@@ -136,7 +131,7 @@ onMounted(() => {
             <!-- Search -->
             <div class="px-5 pt-4 pb-2 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
                 <div class="relative">
-                    <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                     <input v-model="searchQuery" type="text" :placeholder="$t('people.search_contacts_ph')"
                         class="w-full pl-9 pr-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                 </div>
@@ -145,8 +140,8 @@ onMounted(() => {
             <!-- People List -->
             <div class="flex-1 overflow-y-auto p-3">
                 <div v-if="filteredPeople.length === 0" class="text-center py-8">
-                    <Users class="w-8 h-8 mx-auto mb-2 text-gray-300 dark:text-gray-600" />
-                    <p class="text-sm text-gray-500">{{ searchQuery ? 'No matching contacts' : 'All contacts are already linked' }}</p>
+                    <Users class="w-8 h-8 mx-auto mb-2 text-gray-500 dark:text-gray-400" aria-hidden="true" />
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ searchQuery ? $t('people.no_matching_contacts') : $t('people.all_already_linked') }}</p>
                 </div>
                 <button v-for="p in filteredPeople" :key="p.id"
                     @click="selectedPerson = p"
@@ -163,8 +158,8 @@ onMounted(() => {
                     <div class="flex-1 min-w-0">
                         <p class="text-sm font-medium truncate transition-colors"
                            :class="selectedPerson?.id === p.id ? 'text-blue-700 dark:text-blue-300' : 'group-hover:text-blue-600 dark:group-hover:text-blue-400'">{{ p.title }}</p>
-                        <p v-if="p.properties?.companies?.length" class="text-[11px] text-gray-500 dark:text-gray-400 truncate">{{ p.properties.companies[0].value }}</p>
-                        <p v-else-if="p.properties?.company" class="text-[11px] text-gray-500 dark:text-gray-400 truncate">{{ p.properties.company }}</p>
+                        <p v-if="p.properties?.companies?.length" class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ p.properties.companies[0].value }}</p>
+                        <p v-else-if="p.properties?.company" class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ p.properties.company }}</p>
                     </div>
                     
                     <div class="w-5 h-5 rounded-full flex items-center justify-center border flex-shrink-0 transition-colors"
@@ -176,7 +171,7 @@ onMounted(() => {
 
             <!-- Relation Type Selector (Bottom) -->
             <div class="px-5 pt-3 pb-4 border-t border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50/30 dark:bg-gray-800/20">
-                <label class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 block">{{ $t('people.relationship') }}</label>
+                <label class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2 block">{{ $t('people.relationship') }}</label>
                 <div class="flex flex-wrap gap-1.5">
                     <button v-for="rel in RELATION_TYPES" :key="rel.value"
                         @click="selectedRelation = rel.value"
@@ -184,7 +179,7 @@ onMounted(() => {
                             selectedRelation === rel.value
                                 ? rel.color + ' border-transparent ring-2 ring-offset-1 ring-blue-500/30 dark:ring-offset-[#1e1e1e]'
                                 : 'border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800']"
-                    >{{ rel.label }}</button>
+                    >{{ rel.emoji }} {{ $t(rel.label) }}</button>
                     <!-- Custom Option -->
                     <button @click="selectedRelation = 'custom'"
                         :class="['px-2.5 py-1 text-xs font-medium rounded-lg border transition-all',
@@ -201,17 +196,17 @@ onMounted(() => {
 
                 <div class="mt-3 grid grid-cols-2 gap-2">
                     <label class="block">
-                        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_since') }}</span>
+                        <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_since') }}</span>
                         <input v-model="since" type="text" inputmode="numeric" :placeholder="$t('people.link_date_hint')"
                             class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                     </label>
                     <label class="block">
-                        <span class="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_until') }}</span>
+                        <span class="text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1 block">{{ $t('people.link_until') }}</span>
                         <input v-model="until" type="text" inputmode="numeric" :placeholder="$t('people.link_date_hint')"
                             class="w-full px-3 py-1.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm tabular-nums focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                     </label>
                 </div>
-                <p v-if="!datesValid" class="mt-1.5 text-[11px] text-red-500">{{ $t('people.link_date_invalid') }}</p>
+                <p v-if="!datesValid" class="mt-1.5 text-xs text-red-500">{{ $t('people.link_date_invalid') }}</p>
             </div>
 
             <!-- Footer Actions -->
@@ -219,14 +214,10 @@ onMounted(() => {
                 <button @click="emit('close')" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg transition-colors">
                     {{ $t('people.cancel') }}
                 </button>
-                <button @click="handleLink" :disabled="!canLink"
-                    :class="['px-5 py-2 text-sm font-bold rounded-lg transition-all flex items-center gap-2',
-                        canLink ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md' : 'bg-gray-200 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed']"
-                >
+                <button @click="handleLink" :disabled="!canLink" class="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
                     <UserPlus class="w-4 h-4" />
                     {{ $t('people.link_connection') }}
                 </button>
             </div>
-        </div>
-    </div>
+    </AppDialog>
 </template>

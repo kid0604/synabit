@@ -4,8 +4,8 @@ import { useEventForm } from '../composables/useEventForm';
 import { indexOccurrencesByDate } from '../helpers';
 import type { EventMetadata } from '../types';
 import type { EventsInRange } from '../../../types/ipc';
+import { appNotices } from '../../../composables/useAppNotice';
 
-vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn(async () => true) }));
 
 const event = (over: Partial<EventMetadata>): EventMetadata => ({
     id: 'Events/a.md', title: 'Standup', is_all_day: false,
@@ -288,12 +288,67 @@ describe('an event as it actually arrives from the vault', () => {
         return indexOccurrencesByDate(range).get('2026-03-02')![0];
     };
 
-    it('deletes the file the event came from', async () => {
+    it('deletes the file the event came from, once the undo window closes', async () => {
         const ev = fromTheVault();
         const h = harness([ev]);
         await h.form.deleteEvent(ev, '2026-03-02');
 
+        // Gone from the screen at once, still on disk.
+        expect(h.form.heldEventIds.value.has('Events/a.md')).toBe(true);
+        expect(h.deletes).toEqual([]);
+
+        await h.form.eventUndo.commit();
         expect(h.deletes.map(d => d.relPath)).toEqual(['Events/a.md']);
+        expect(h.form.heldEventIds.value.size).toBe(0);
+    });
+
+    it('puts a deleted event back on Undo and never touches the file', async () => {
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        await h.form.deleteEvent(ev, '2026-03-02');
+        h.form.eventUndo.undo();
+
+        expect(h.form.heldEventIds.value.size).toBe(0);
+        await h.form.eventUndo.commit();
+        expect(h.deletes).toEqual([]);
+    });
+
+    /**
+     * The delete used to swallow every error: the event stayed gone from the
+     * screen, stayed in the vault, and nobody was told.
+     */
+    it('brings the event back and says so when the delete fails', async () => {
+        appNotices.value = [];
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        h.ns.deleteNode.mockRejectedValueOnce(new Error('read-only vault'));
+        await h.form.deleteEvent(ev, '2026-03-02');
+
+        await h.form.eventUndo.commit();
+        expect(h.form.heldEventIds.value.size).toBe(0);
+        expect(appNotices.value.map(n => n.kind)).toEqual(['error']);
+    });
+
+    it('does not call a delete failed because the reload after it did', async () => {
+        appNotices.value = [];
+        const ev = fromTheVault();
+        const deletes: string[] = [];
+        const ns = {
+            writeNode: vi.fn(async () => {}),
+            deleteNode: vi.fn(async (p: any) => { deletes.push(p.relPath); }),
+            getEventSeries: vi.fn(async () => [ev]),
+            getNode: vi.fn(async () => ev),
+        };
+        const form = useEventForm(
+            ns, computed(() => '2026-03-02'),
+            async () => { throw new Error('index busy'); },
+            async () => {}, () => {}, () => {},
+        );
+        await form.deleteEvent(ev, '2026-03-02');
+        await form.eventUndo.commit();
+
+        expect(deletes).toEqual(['Events/a.md']);
+        expect(appNotices.value).toEqual([]);
     });
 
     it('saves an edit over that file rather than writing a second one', async () => {

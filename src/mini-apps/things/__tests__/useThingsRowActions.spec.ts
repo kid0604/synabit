@@ -118,6 +118,29 @@ describe('what a row’s menu does to a node', () => {
    * still there for as long as the screen was open, hours after it meant
    * anything. The bar and the offer now run off the same number.
    */
+  /** WCAG 2.2.1: the offer holds while the pointer or focus is on it. */
+  it('holds the offer while paused and gives back what was left', async () => {
+    vi.useFakeTimers();
+    try {
+      trashNode.mockResolvedValue('.trash/sapiens.md');
+      const actions = useThingsRowActions(() => '/vault');
+      await actions.remove(book.id, book.title);
+
+      vi.advanceTimersByTime(3000);
+      actions.pauseUndo();
+      vi.advanceTimersByTime(60_000);
+      expect(actions.trashed.value, 'still offered while paused').not.toBeNull();
+
+      actions.resumeUndo();
+      vi.advanceTimersByTime(UNDO_WINDOW_SECONDS * 1000 - 3000 - 1);
+      expect(actions.trashed.value).not.toBeNull();
+      vi.advanceTimersByTime(2);
+      expect(actions.trashed.value).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('stops offering the undo once the window has passed', async () => {
     vi.useFakeTimers();
     try {

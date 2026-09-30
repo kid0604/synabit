@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue';
 import type { Editor } from '@tiptap/vue-3';
+import { i18n } from '../../../../i18n';
 
 export interface LocationModalState {
   show: boolean;
@@ -112,7 +113,7 @@ export function useLocationPicker() {
         lng: parseFloat(item.lon),
       }));
     } catch (e: any) {
-      locationModal.value.error = 'Could not search. Check your internet connection.';
+      locationModal.value.error = i18n.global.t('note.editor.location.search_failed');
       locationModal.value.suggestions = [];
     } finally {
       locationModal.value.searching = false;
@@ -203,7 +204,7 @@ export function useLocationPicker() {
     const provider = detectRouteProvider(url);
 
     // Extract label from URL
-    let label = r.label || 'Directions';
+    let label = r.label || i18n.global.t('note.editor.location.directions');
     if (!r.label) {
       try {
         const u = new URL(url);

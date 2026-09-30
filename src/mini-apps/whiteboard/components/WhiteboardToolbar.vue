@@ -58,15 +58,15 @@ onClickOutside(bgMenuRef, () => {
 });
 
 const categories = [
-  { key: 'basic', label: 'Basic' },
-  { key: 'flowchart', label: 'Flowchart' },
-  { key: 'arrow', label: 'Block Arrows' },
-  { key: 'uml', label: 'UML' },
-  { key: 'er', label: 'Entity Relationship' },
-  { key: 'network', label: 'Network / Cloud' },
-  { key: 'bpmn', label: 'BPMN' },
-  { key: 'wireframe', label: 'Wireframe / UI' },
-  { key: 'callout', label: 'Callouts' },
+  { key: 'basic', labelKey: 'whiteboard.shape_category.basic' },
+  { key: 'flowchart', labelKey: 'whiteboard.shape_category.flowchart' },
+  { key: 'arrow', labelKey: 'whiteboard.shape_category.arrow' },
+  { key: 'uml', labelKey: 'whiteboard.shape_category.uml' },
+  { key: 'er', labelKey: 'whiteboard.shape_category.er' },
+  { key: 'network', labelKey: 'whiteboard.shape_category.network' },
+  { key: 'bpmn', labelKey: 'whiteboard.shape_category.bpmn' },
+  { key: 'wireframe', labelKey: 'whiteboard.shape_category.wireframe' },
+  { key: 'callout', labelKey: 'whiteboard.shape_category.callout' },
 ];
 
 const drawColors = [
@@ -115,6 +115,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="selectTool('select')"
       :class="['wb-toolbar-btn', activeTool === 'select' && 'wb-toolbar-btn--active']"
       :title="$t('whiteboard.select_tool')"
+      :aria-label="$t('whiteboard.select_tool')"
     >
       <MousePointer2 class="w-4 h-4" />
     </button>
@@ -122,6 +123,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="selectTool('pan')"
       :class="['wb-toolbar-btn', activeTool === 'pan' && 'wb-toolbar-btn--active']"
       :title="$t('whiteboard.pan_tool')"
+      :aria-label="$t('whiteboard.pan_tool')"
     >
       <Hand class="w-4 h-4" />
     </button>
@@ -132,6 +134,7 @@ function selectDrawSub(sub: DrawSubTool) {
         @click="selectTool('draw')"
         :class="['wb-toolbar-btn', activeTool === 'draw' && 'wb-toolbar-btn--active']"
         :title="$t('whiteboard.draw_tool')"
+        :aria-label="$t('whiteboard.draw_tool')"
       >
         <Pencil v-if="drawSubIcon === 'pen'" class="w-4 h-4" />
         <Highlighter v-else-if="drawSubIcon === 'highlighter'" class="w-4 h-4" />
@@ -144,10 +147,10 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('pen')"
             :class="['wb-draw-sub-btn', drawSubTool === 'pen' && 'wb-draw-sub-btn--active']"
-            title="Pen"
+            :title="$t('whiteboard.pen')"
           >
             <Pencil class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Pen</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.pen') }}</span>
           </button>
           <button
             @click.stop="selectDrawSub('highlighter')"
@@ -155,7 +158,7 @@ function selectDrawSub(sub: DrawSubTool) {
             :title="$t('whiteboard.highlighter')"
           >
             <Highlighter class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Highlight</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.highlight') }}</span>
           </button>
           <button
             @click.stop="selectDrawSub('eraser')"
@@ -163,12 +166,12 @@ function selectDrawSub(sub: DrawSubTool) {
             :title="$t('whiteboard.eraser_tool')"
           >
             <Eraser class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Eraser</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.eraser') }}</span>
           </button>
         </div>
 
         <!-- Size slider (all sub-tools) -->
-        <div class="wb-draw-cat-label mt-2">{{ drawSubTool === 'eraser' ? 'Eraser Size' : 'Size' }}</div>
+        <div class="wb-draw-cat-label mt-2">{{ drawSubTool === 'eraser' ? $t('whiteboard.eraser_size') : $t('whiteboard.size') }}</div>
         <div class="flex items-center gap-2 px-1">
           <input
             type="range"
@@ -177,6 +180,7 @@ function selectDrawSub(sub: DrawSubTool) {
             :value="drawSize"
             @input="$emit('update:drawSize', Number(($event.target as HTMLInputElement).value))"
             class="wb-draw-slider flex-1"
+            :aria-label="drawSubTool === 'eraser' ? $t('whiteboard.eraser_size') : $t('whiteboard.size')"
           />
           <span class="wb-draw-size-label">{{ drawSize }}px</span>
         </div>
@@ -191,7 +195,8 @@ function selectDrawSub(sub: DrawSubTool) {
               @click.stop="$emit('update:drawColor', c)"
               :class="['wb-draw-color-btn', drawColor === c && 'wb-draw-color-btn--active']"
               :style="{ background: c }"
-              aria-label="Select Color"
+              :aria-label="c"
+              :title="c"
             ></button>
           </div>
         </template>
@@ -204,20 +209,22 @@ function selectDrawSub(sub: DrawSubTool) {
         @click="selectTool('shape')"
         :class="['wb-toolbar-btn', activeTool === 'shape' && 'wb-toolbar-btn--active']"
         :title="$t('whiteboard.shapes_tool')"
+        :aria-label="$t('whiteboard.shapes_tool')"
       >
         <Shapes class="w-4 h-4" />
       </button>
       <!-- Shape picker popup -->
       <div v-if="showShapeMenu" class="wb-shape-picker">
         <div v-for="cat in categories" :key="cat.key" class="wb-shape-category">
-          <div class="wb-shape-cat-label">{{ cat.label }}</div>
+          <div class="wb-shape-cat-label">{{ $t(cat.labelKey) }}</div>
           <div class="wb-shape-grid">
             <button
               v-for="shape in SHAPES.filter(s => s.category === cat.key)"
               :key="shape.id"
               @click.stop="selectShape(shape.id)"
               class="wb-shape-grid-btn"
-              :title="shape.label"
+              :title="$t(shape.labelKey)"
+              :aria-label="$t(shape.labelKey)"
             >
               <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="w-6 h-6">
                 <path
@@ -251,6 +258,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="selectTool('mindmap')"
       :class="['wb-toolbar-btn', activeTool === 'mindmap' && 'wb-toolbar-btn--active']"
       :title="$t('whiteboard.mindmap_tool')"
+      :aria-label="$t('whiteboard.mindmap_tool')"
     >
       <Network class="w-4 h-4" />
     </button>
@@ -258,6 +266,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="selectTool('text')"
       :class="['wb-toolbar-btn', activeTool === 'text' && 'wb-toolbar-btn--active']"
       :title="$t('whiteboard.text_tool')"
+      :aria-label="$t('whiteboard.text_tool')"
     >
       <Type class="w-4 h-4" />
     </button>
@@ -266,6 +275,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('add-image')"
       class="wb-toolbar-btn"
       :title="$t('whiteboard.image_tool')"
+      :aria-label="$t('whiteboard.image_tool')"
     >
       <ImageIcon class="w-4 h-4" />
     </button>
@@ -278,6 +288,7 @@ function selectDrawSub(sub: DrawSubTool) {
       :disabled="!canUndo"
       class="wb-toolbar-btn"
       :title="$t('whiteboard.undo')"
+      :aria-label="$t('whiteboard.undo')"
     >
       <Undo2 class="w-4 h-4" />
     </button>
@@ -286,6 +297,7 @@ function selectDrawSub(sub: DrawSubTool) {
       :disabled="!canRedo"
       class="wb-toolbar-btn"
       :title="$t('whiteboard.redo')"
+      :aria-label="$t('whiteboard.redo')"
     >
       <Redo2 class="w-4 h-4" />
     </button>
@@ -297,6 +309,7 @@ function selectDrawSub(sub: DrawSubTool) {
         @click="showBgMenu = !showBgMenu"
         :class="['wb-toolbar-btn', showBgMenu && 'wb-toolbar-btn--active']"
         :title="$t('whiteboard.background_style')"
+        :aria-label="$t('whiteboard.background_style')"
       >
         <Grip v-if="backgroundPattern === 'dots'" class="w-4 h-4" />
         <Grid3X3 v-else-if="backgroundPattern === 'lines'" class="w-4 h-4" />
@@ -310,26 +323,26 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="$emit('update:backgroundPattern', 'none')"
             :class="['wb-draw-sub-btn', backgroundPattern === 'none' && 'wb-draw-sub-btn--active']"
-            title="None"
+            :title="$t('whiteboard.blank')"
           >
             <Square class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Blank</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.blank') }}</span>
           </button>
           <button
             @click.stop="$emit('update:backgroundPattern', 'dots')"
             :class="['wb-draw-sub-btn', backgroundPattern === 'dots' && 'wb-draw-sub-btn--active']"
-            title="Dots"
+            :title="$t('whiteboard.dots')"
           >
             <Grip class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Dots</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.dots') }}</span>
           </button>
           <button
             @click.stop="$emit('update:backgroundPattern', 'lines')"
             :class="['wb-draw-sub-btn', backgroundPattern === 'lines' && 'wb-draw-sub-btn--active']"
-            title="Lines"
+            :title="$t('whiteboard.lines')"
           >
             <Grid3X3 class="w-4 h-4" />
-            <span class="text-[10px] mt-0.5">Lines</span>
+            <span class="text-xs mt-0.5">{{ $t('whiteboard.lines') }}</span>
           </button>
         </div>
 
@@ -341,7 +354,8 @@ function selectDrawSub(sub: DrawSubTool) {
             class="wb-draw-color-btn relative overflow-hidden"
             :class="{ 'wb-draw-color-btn--active': backgroundColor === color }"
             :style="{ backgroundColor: color === 'transparent' ? '#ffffff' : color }"
-            :title="color === 'transparent' ? 'Default/Transparent' : color"
+            :title="color === 'transparent' ? $t('whiteboard.colors.default') : color"
+            :aria-label="color === 'transparent' ? $t('whiteboard.colors.default') : color"
             @click.stop="$emit('update:backgroundColor', color)"
           >
             <div v-if="color === 'transparent'" class="absolute inset-0 flex items-center justify-center opacity-30">
@@ -356,6 +370,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('export')"
       class="wb-toolbar-btn"
       :title="$t('whiteboard.export_png')"
+      :aria-label="$t('whiteboard.export_png')"
     >
       <Download class="w-4 h-4" />
     </button>
@@ -501,15 +516,15 @@ function selectDrawSub(sub: DrawSubTool) {
 }
 .wb-draw-sub-btn--active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.1);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .wb-draw-sub-btn--active {
-  background: rgba(124, 58, 237, 0.2);
-  color: #a78bfa;
+  background: color-mix(in oklab, var(--color-accent) 20%, transparent);
+  color: var(--color-accent-dark);
 }
 .wb-draw-cat-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -542,7 +557,7 @@ function selectDrawSub(sub: DrawSubTool) {
   cursor: pointer;
 }
 .wb-draw-size-label {
-  font-size: 11px;
+  font-size: 12px;
   min-width: 32px;
   text-align: right;
   color: var(--color-text-secondary, #52525b);
@@ -568,7 +583,7 @@ function selectDrawSub(sub: DrawSubTool) {
 }
 .wb-draw-color-btn--active {
   border-color: var(--color-accent, #7c3aed);
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.3);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 30%, transparent);
 }
 
 /* ─── Shape Picker Popup ─────────────────────────── */
@@ -614,7 +629,7 @@ function selectDrawSub(sub: DrawSubTool) {
   border-color: var(--color-border-dark, #2c2c2c);
 }
 .wb-shape-cat-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;

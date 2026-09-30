@@ -248,7 +248,7 @@ onUnmounted(() => {
             <Maximize2 class="w-4 h-4" />
           </button>
 
-          <span class="ml-3 text-[11px] text-white/40 select-none">
+          <span class="ml-3 text-xs text-white/40 select-none">
             {{ $t('syn.diagram_hint') }}
           </span>
 

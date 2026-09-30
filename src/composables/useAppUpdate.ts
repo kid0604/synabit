@@ -3,6 +3,7 @@ import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
 import { load, type Store } from '@tauri-apps/plugin-store'
 import { type } from '@tauri-apps/plugin-os'
+import { i18n } from '../i18n'
 
 /**
  * Composable for managing app auto-updates via Tauri updater plugin.
@@ -149,7 +150,7 @@ export function useAppUpdate() {
    */
   async function downloadAndInstall() {
     if (!pendingUpdate) {
-      error.value = 'No pending update'
+      error.value = i18n.global.t('update.none_pending')
       return
     }
 

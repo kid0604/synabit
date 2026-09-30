@@ -35,7 +35,7 @@ import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
 import tippy, { type Instance as TippyInstance } from 'tippy.js';
-import type { SlashCommandItem } from './SlashCommandMenu.vue';
+import type { SlashCommandItem } from './editor/config/slashCommandItems';
 import SlashCommandMenu from './SlashCommandMenu.vue';
 import NoteMentionMenu from './NoteMentionMenu.vue';
 import EmojiSuggestionMenu from './EmojiSuggestionMenu.vue';
@@ -64,7 +64,7 @@ import { ArrowExtension, CustomBlockquote } from './editor/extensions/arrowTypog
 import { useAssetPaths } from './editor/composables/useAssetPaths';
 import { useEditorModals } from './editor/composables/useEditorModals';
 import { useLocationPicker } from './editor/composables/useLocationPicker';
-import { createSlashCommandItems } from './editor/config/slashCommandItems';
+import { createSlashCommandItems, visibleSlashItems } from './editor/config/slashCommandItems';
 import { splitMentionQuery } from './editor/mentionQuery';
 import { createDeferredSerializer } from './editor/deferredSerializer';
 import { contextTargetFor } from './editor/contextTarget';
@@ -83,6 +83,8 @@ import WhiteboardPickerModal from './editor/components/modals/WhiteboardPickerMo
 import EmbedPickerModal from './EmbedPickerModal.vue';
 import PdfModal from './editor/components/modals/PdfModal.vue';
 import EmojiPickerModal from './editor/components/modals/EmojiPickerModal.vue';
+import EditorToolbar from './editor/toolbar/EditorToolbar.vue';
+import { useWindowSize } from '@vueuse/core';
 
 const lowlight = createLowlight(common);
 
@@ -123,6 +125,18 @@ const props = defineProps<{
    * did.
    */
   placeholder?: string;
+  /**
+   * Show the formatting toolbar. Notes turns it on (and off again in Zen
+   * mode); the other apps that mount this editor keep the plain surface they
+   * had.
+   */
+  toolbar?: boolean;
+  /**
+   * Offer "Template" in the slash menu and "+ Insert", raising
+   * `insert-template` when it is chosen. Notes only — see `onTemplate` in
+   * `slashCommandItems.ts`.
+   */
+  templates?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -141,10 +155,20 @@ const emit = defineEmits<{
    * `onBlur` below, which is also what raises this.
    */
   (e: 'blur'): void;
+  /** "Template" was chosen from the slash menu or "+ Insert". */
+  (e: 'insert-template'): void;
 }>();
 
 // --- Settings ---
-const { nestedNumberListStyle, codeBlockTabSize } = useSettings();
+const { nestedNumberListStyle, codeBlockTabSize, simpleMode } = useSettings();
+
+/**
+ * Where the toolbar goes: above the text, or pinned to the bottom on a phone,
+ * where the thumb is and where the keyboard pushes it up to meet the caret.
+ * The same 768px line the rest of the app draws between the two layouts.
+ */
+const { width: windowWidth } = useWindowSize();
+const toolbarPlacement = computed<'top' | 'bottom'>(() => (windowWidth.value < 768 ? 'bottom' : 'top'));
 
 // --- Composables ---
 const { injectLocalAssets, stripLocalAssets } = useAssetPaths(props.vaultPath);
@@ -294,12 +318,16 @@ const updateBubbleMenu = () => {
 // `App.vue`'s decision, the same one that gates Cmd+J; see `SYN_ASK`.
 const { t } = useI18n();
 const synAsk = inject(SYN_ASK, synAskFallback, true);
+// Simple mode leaves Syn out of the editor's menus. The shell gates `SYN_ASK`
+// itself as well; this is the editor's own half, so a host that provides the
+// flag without knowing about simple mode still gets it right.
+const synInMenus = computed(() => synAsk.allowed.value && !simpleMode.value);
 const askSynTitle = computed(() => {
-  if (!synAsk.allowed.value) return null;
+  if (!synInMenus.value) return null;
   const shortcut = synAsk.shortcut.value;
   return shortcut ? t('syn.ask_about_selection_hint', { shortcut }) : t('syn.ask_about_selection');
 });
-const askSynBlockLabel = computed(() => (synAsk.allowed.value ? t('syn.ask_about_block') : null));
+const askSynBlockLabel = computed(() => (synInMenus.value ? t('syn.ask_about_block') : null));
 
 /**
  * The selected text, read from the document rather than the DOM.
@@ -347,7 +375,16 @@ const slashCommandItems = (): SlashCommandItem[] => createSlashCommandItems({
   whiteboardPickerModal: modals.whiteboardPickerModal,
   embedPickerModal: modals.embedPickerModal,
   pdfModal: modals.pdfModal,
+  onTemplate: props.templates ? () => emit('insert-template') : undefined,
 });
+
+/**
+ * What the slash menu and "+ Insert" offer: everything, less the power tools
+ * in simple mode. Read on every call rather than captured, so turning simple
+ * mode on or off applies to the next `/` without reopening the note.
+ */
+const offeredSlashItems = (): SlashCommandItem[] => visibleSlashItems(slashCommandItems(), simpleMode.value);
+const toolbarInsertItems = computed(() => (props.toolbar ? offeredSlashItems() : []));
 
 // --- Editor ---
 const editor = useEditor({
@@ -373,7 +410,7 @@ const editor = useEditor({
       linkOnPaste: true,
       protocols: ['http', 'https', 'ftp', 'mailto', 'synabit'],
       HTMLAttributes: {
-        title: 'Cmd/Ctrl + Click to open link',
+        title: t('note.editor.link_open_hint'),
         class: 'synabit-link',
       },
     }),
@@ -510,14 +547,18 @@ const editor = useEditor({
     TextStyle,
     Color,
     Placeholder.configure({
-      placeholder: props.placeholder ?? 'Type / for commands...',
+      placeholder: () => props.placeholder ?? t('note.editor.placeholder'),
     }),
     SlashCommands.configure({
       suggestion: {
         char: '/',
         items: ({ query }: { query: string }) => {
-          return slashCommandItems().filter(item =>
-            item.title.toLowerCase().includes(query.toLowerCase())
+          // The translated name, and the English one too: `/heading` should
+          // still work for somebody whose interface is in Vietnamese.
+          const q = query.toLowerCase();
+          return offeredSlashItems().filter(item =>
+            t(item.titleKey).toLowerCase().includes(q) ||
+            item.title.toLowerCase().includes(q)
           );
         },
         render: () => {
@@ -705,6 +746,20 @@ const editor = useEditor({
     }),
     TransclusionExtension,
     BlockIdHider,
+    // Cmd/Ctrl+K for a link, as in most editors people have used. Free in
+    // this app: the global shortcuts stop at Cmd+J, which says why it left
+    // Cmd+K alone — and a search box is not what Cmd+K means inside text.
+    Extension.create({
+      name: 'linkShortcut',
+      addKeyboardShortcuts() {
+        return {
+          'Mod-k': () => {
+            modals.setLink();
+            return true;
+          },
+        };
+      },
+    }),
   ],
   onUpdate: () => {
     serializer.schedule();
@@ -922,7 +977,7 @@ const editor = useEditor({
                      const absPath = `${props.vaultPath}${sep}${relativePath}`;
                      const renderUrl = convertFileSrc(absPath);
                      
-                     editor.value?.commands.setImage({ src: renderUrl, alt: file.name || 'Pasted Image' });
+                     editor.value?.commands.setImage({ src: renderUrl, alt: file.name || t('note.editor.pasted_image') });
                  } catch(e) { logger.error("Paste image failed", e); }
               });
             }
@@ -970,7 +1025,19 @@ const focus = () => {
   }
 };
 
-defineExpose({ loadContent, focus, flushSerialize });
+/**
+ * Put a piece of Markdown in at the caret, as typing would — undoable, and
+ * saved like any other edit. What a template chosen from `/template` arrives
+ * as.
+ */
+const insertMarkdown = (markdown: string) => {
+  const ed = editor.value;
+  if (!ed) return;
+  const html = (ed.storage as any).markdown.parser.parse(injectLocalAssets(markdown));
+  ed.chain().focus().insertContent(html).run();
+};
+
+defineExpose({ loadContent, focus, flushSerialize, insertMarkdown });
 
 // --- Watch for external model changes ---
 watch(() => props.modelValue, (newVal) => {
@@ -1038,6 +1105,15 @@ onBeforeUnmount(() => {
       @ask-syn="askSynAboutBlock"
     />
 
+    <!-- Formatting toolbar, above the text -->
+    <EditorToolbar
+      v-if="toolbar && editor && toolbarPlacement === 'top'"
+      :editor="editor"
+      :insert-items="toolbarInsertItems"
+      placement="top"
+      @link="modals.setLink"
+    />
+
     <!-- Editor Content -->
     <div :class="{
       'list-style-decimal': nestedNumberListStyle === 'decimal',
@@ -1049,6 +1125,15 @@ onBeforeUnmount(() => {
         @click="modals.blockCtxMenu.value.show = false; modals.closeLinkContextMenu();"
       />
     </div>
+
+    <!-- Formatting toolbar, pinned to the bottom on a phone -->
+    <EditorToolbar
+      v-if="toolbar && editor && toolbarPlacement === 'bottom'"
+      :editor="editor"
+      :insert-items="toolbarInsertItems"
+      placement="bottom"
+      @link="modals.setLink"
+    />
 
     <!-- Modals -->
     <LinkModal

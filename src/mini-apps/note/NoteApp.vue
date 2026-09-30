@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject, defineAsyncComponent, toRef } from 'vue';
-import { FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download, History, Copy, Trash2 } from 'lucide-vue-next';
+import { Type, FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download, History, Copy, Trash2, LayoutTemplate } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask, message } from '@tauri-apps/plugin-dialog';
+import { showAppNotice } from '../../composables/useAppNotice';
 
 import TiptapEditor from './TiptapEditor.vue';
 import NoteGraph from './NoteGraph.vue';
@@ -14,8 +14,12 @@ import NoteExportModal from './NoteExportModal.vue';
 import NoteHistoryModal from './NoteHistoryModal.vue';
 import NoteListItem from './components/NoteListItem.vue';
 import NoteContextMenu from './components/NoteContextMenu.vue';
-import NoteUndoToast from './components/NoteUndoToast.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import NoteDuplicatesModal from './NoteDuplicatesModal.vue';
+import TemplatePickerModal from './components/TemplatePickerModal.vue';
+import { userTemplatesFrom, instantiateTemplate, isTemplatePath, TEMPLATE_FOLDER, type NoteTemplate } from './templates/noteTemplates';
+import { i18n } from '../../i18n';
 
 import { useAppStore } from '../../stores/useAppStore';
 import { storeToRefs } from 'pinia';
@@ -58,7 +62,7 @@ const props = defineProps<{
 
 const appStore = useAppStore();
 const appLockStore = useAppLockStore();
-const { enableDailyNotes, dailyNoteFormat, dailyNoteTag } = storeToRefs(appStore);
+const { enableDailyNotes, dailyNoteFormat, dailyNoteTag, simpleMode, noteToolbarVisible } = storeToRefs(appStore);
 const vaultPathRef = toRef(props, 'vaultPath');
 
 // ── Navigation ──────────────────────────────────────────────
@@ -144,30 +148,32 @@ const del = useNoteDelete({
     tabContents: tabs.tabContents,
     activeTabs: tabs.activeTabs,
     tabAccessTime: tabs.tabAccessTime,
-    saveTimeouts: save.saveTimeouts,
+    flushSave: save.flushSave,
     ns, scanVault,
     onFailed: (note) => {
-        void message(t('note.delete_failed'), { title: note.title, kind: 'error' });
+        showAppNotice(t('note.delete_failed_restored', { title: note.title || t('note.untitled_note') }), 'error');
     },
 });
 
-const deleteNote = async (id: string) => {
+const deleteNote = (id: string) => {
     activeContextMenu.value = null;
-
-    // Asked for, and then held back anyway. The two are not the same guard: a
-    // dialog catches the click somebody did not mean to make, and the undo
-    // window catches the one they meant at the time and regretted a second
-    // later. Neither has to be traded for the other.
-    const confirmed = await ask(t('note.delete_body'), {
-        title: t('note.delete_title'),
-        kind: 'warning',
-        okLabel: t('note.delete_confirm'),
-        cancelLabel: t('note.cancel'),
-    });
-    if (!confirmed) return;
-
     return del.deleteNote(id);
 };
+
+/**
+ * What the undo toast says. One note is named; several are counted — listing
+ * thirteen titles in a bar this size means truncating twelve of them, which
+ * tells the reader less than the number does.
+ */
+const undoMessage = computed(() => {
+    const held = del.pending.value?.notes ?? [];
+    return held.length > 1
+        ? t('note.deleted_many_toast', { count: held.length })
+        : t('note.deleted_toast', { title: held[0]?.note.title || t('note.untitled_note') });
+});
+
+/** Restarts the countdown bar when one deletion follows another with no gap. */
+const undoKey = computed(() => (del.pending.value?.notes ?? []).map((e) => e.note.id).join('|'));
 
 // ─── Selecting several notes in the manager ───────────────
 const selection = useNoteSelection();
@@ -206,17 +212,6 @@ const handleManagerRowClick = (id: string, event: MouseEvent) => {
 const deleteSelected = async () => {
     const ids = selection.ids.value;
     if (ids.length === 0) return;
-
-    const confirmed = await ask(
-        ids.length > 1 ? t('note.delete_many_body') : t('note.delete_body'),
-        {
-            title: ids.length > 1 ? t('note.delete_many_title', { count: ids.length }) : t('note.delete_title'),
-            kind: 'warning',
-            okLabel: t('note.delete_confirm'),
-            cancelLabel: t('note.cancel'),
-        },
-    );
-    if (!confirmed) return;
 
     // Cleared before the delete, not after: the rows are gone from the list
     // either way, and a selection still holding their ids would put the
@@ -259,7 +254,7 @@ const openHistory = (id: string) => {
     if (appLockStore.isEnabled && appLockStore.isNoteProtected(id) && !appLockStore.isNoteAccessible(id)) {
         lock.pendingNoteId.value = id;
         lock.pendingNoteAction.value = 'history';
-        lock.noteLockTitle.value = "Enter PIN to view this note's history";
+        lock.noteLockTitle.value = 'note.pin_to_view_history';
         lock.showNoteLockScreen.value = true;
         return;
     }
@@ -386,7 +381,7 @@ function handleNoteSelect(id: string) {
     if (appLockStore.isEnabled && appLockStore.isNoteProtected(id) && !appLockStore.isNoteAccessible(id)) {
         lock.pendingNoteId.value = id;
         lock.pendingNoteAction.value = 'view';
-        lock.noteLockTitle.value = 'Enter PIN to view this note';
+        lock.noteLockTitle.value = 'note.pin_to_view';
         lock.showNoteLockScreen.value = true;
         return;
     }
@@ -460,6 +455,116 @@ async function createNewNote() {
     } catch(e) { logger.error("Failed to create note:", e); }
     finally { isCreatingNote = false; }
 }
+
+// ── Templates ───────────────────────────────────────────────
+/**
+ * The template picker, for a new note ("New from template…" beside the new
+ * note button) or for the open one (`/template` in the editor). See
+ * `templates/noteTemplates.ts` for where templates come from.
+ */
+const templatePicker = ref<{ show: boolean; mode: 'create' | 'insert' }>({ show: false, mode: 'create' });
+
+/** Every note in `Templates/`. Built from the list, so it is never stale. */
+const userTemplates = computed<NoteTemplate[]>(() => userTemplatesFrom(notes.value, t('note.untitled_note')));
+
+const openTemplatePicker = (mode: 'create' | 'insert') => {
+    templatePicker.value = { show: true, mode };
+};
+
+/** A template note's body: the open tab's copy if it has one, else the file's. */
+const readNoteBody = async (id: string): Promise<string> => {
+    if (id === currentNoteId.value) flushActiveEditor();
+    const open = tabs.tabContents.value[id];
+    if (open !== undefined) return open;
+    const full = await ns.getNode(id);
+    return typeof full?.content === 'string' ? full.content : '';
+};
+
+const appLocale = () => String(i18n.global.locale.value);
+
+const onTemplateChosen = async ({ template, body }: { template: NoteTemplate; body: string }) => {
+    const mode = templatePicker.value.mode;
+    templatePicker.value.show = false;
+    if (mode === 'insert') insertTemplateIntoOpenNote(template, body);
+    else await createNoteFromTemplate(template, body);
+};
+
+/**
+ * A new note, already written.
+ *
+ * Made the way any new note is — `createNode`, so it gets its identity and
+ * creation date from the same place — and then given the template's title,
+ * body and tags in one write, before it is opened. Opening first and filling
+ * after would have the editor's autosave racing the fill.
+ */
+async function createNoteFromTemplate(template: NoteTemplate, body: string) {
+    if (!props.vaultPath || isCreatingNote) return;
+    isCreatingNote = true;
+    save.setSuppressWatcherUntil(Date.now() + 3000);
+    try {
+        const filled = instantiateTemplate(template, body, new Date(), appLocale());
+        const newPath = await ns.createNode({ directory: 'Notes', nodeType: 'note' });
+        if (!newPath) return;
+        await ns.writeNode({
+            relPath: newPath,
+            nodeType: 'note',
+            title: filled.title || t('note.untitled_note'),
+            properties: { tags: template.tags },
+            content: filled.body,
+        });
+        await scanVault();
+        currentNoteId.value = newPath;
+        manager.viewMode.value = 'editor';
+        if (window.innerWidth < 768) sidebar.showLeft.value = false;
+    } catch (e) {
+        logger.error('Failed to create a note from a template:', e);
+    } finally {
+        isCreatingNote = false;
+    }
+}
+
+/** At the caret of the open note, with `{{title}}` meaning that note's title. */
+function insertTemplateIntoOpenNote(template: NoteTemplate, body: string) {
+    const id = currentNoteId.value;
+    if (!id) return;
+    const title = notes.value.find((n) => n.id === id)?.title || template.name;
+    const filled = instantiateTemplate({ name: title, titlePattern: title }, body, new Date(), appLocale());
+    const refs = (save.editorRefs.value || save.editorRefs) as Record<string, { insertMarkdown?: (md: string) => void }>;
+    refs[id]?.insertMarkdown?.(filled.body);
+}
+
+/** "Saved as template" — said briefly, then gone. */
+const templateSavedMessage = ref<string | null>(null);
+let templateSavedTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Copy a note into `Templates/`.
+ *
+ * A copy, not a move: the note someone has been writing in stays where it
+ * was, and the template is free to be pared down without touching it. Its
+ * tags go along, so a note made from it starts in the same place in the tag
+ * tree.
+ */
+const saveAsTemplate = async (id: string) => {
+    activeContextMenu.value = null;
+    const note = notes.value.find((n) => n.id === id);
+    if (!note || !props.vaultPath) return;
+    save.setSuppressWatcherUntil(Date.now() + 3000);
+    try {
+        const body = await readNoteBody(id);
+        const title = note.title || t('note.untitled_note');
+        const newPath = await ns.createNode({ directory: TEMPLATE_FOLDER, nodeType: 'note' });
+        if (!newPath) return;
+        await ns.writeNode({ relPath: newPath, nodeType: 'note', title, properties: { tags: note.tags }, content: body });
+        await scanVault();
+        templateSavedMessage.value = t('note.templates.saved_toast', { title });
+        if (templateSavedTimer) clearTimeout(templateSavedTimer);
+        templateSavedTimer = setTimeout(() => { templateSavedMessage.value = null; }, 4000);
+    } catch (e) {
+        logger.error('Failed to save a note as a template:', e);
+        showAppNotice(t('note.templates.save_failed'), 'error');
+    }
+};
 
 // ── Scan Vault ──────────────────────────────────────────────
 async function scanVault() {
@@ -581,6 +686,7 @@ const onSynabitNavigate = (e: Event) => {
 };
 
 onUnmounted(() => {
+    if (templateSavedTimer) clearTimeout(templateSavedTimer);
     document.body.classList.remove('zen-mode');
     window.removeEventListener('mousemove', sidebar.onMouseMove);
     window.removeEventListener('mouseup', sidebar.onMouseUp);
@@ -679,35 +785,42 @@ onMounted(async () => {
     <!-- Note Sidebar -->
     <aside
       v-show="sidebar.showLeft.value && !isFloatingView"
-      class="border-r border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col relative shrink-0 max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-50"
+      class="border-r border-border dark:border-border-dark bg-surface-alt dark:bg-surface-alt-dark flex flex-col relative shrink-0 max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-50"
       :style="{ width: sidebar.leftWidth.value + 'px' }"
     >
       <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragLeft($event)"></div>
 
-      <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
-         <button @click="sidebar.showLeft.value = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-[#8b8b8b] transition-colors" :title="$t('note.close_sidebar')">
+      <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-border dark:border-border-dark" data-tauri-drag-region>
+         <button @click="sidebar.showLeft.value = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-muted transition-colors" :title="$t('note.close_sidebar')">
             <X class="w-4 h-4" />
          </button>
          <div class="flex gap-1 ml-auto" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-[#52525b] dark:text-[#a1a1aa] hover:text-[#1c1c1e] dark:hover:text-white transition-colors" :title="$t('note.todays_daily_note')">
+           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-text-secondary dark:text-text-secondary-dark hover:text-text dark:hover:text-white transition-colors" :title="$t('note.todays_daily_note')">
              <Sun class="w-3.5 h-3.5" />
              <span class="text-xs font-medium">{{ $t('note.today') }}</span>
            </button>
-           <button @click="handleCreateNewNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md bg-[#e6e6e6] text-[#1c1c1e] dark:bg-[#333] dark:text-white hover:opacity-80 transition-opacity" :title="$t('note.new_note')">
+           <button @click="handleCreateNewNote" class="btn-primary" :title="$t('note.new_note')">
              <Plus class="w-3.5 h-3.5" />
-             <span class="text-xs font-medium">{{ $t('note.new_note') }}</span>
+             <span>{{ $t('note.new_note') }}</span>
+           </button>
+           <!--
+             Beside the new note button rather than inside a menu on it: one
+             more click to reach the only thing such a menu would hold.
+           -->
+           <button @click="openTemplatePicker('create')" class="btn-icon !w-8 !h-8" :aria-label="$t('note.templates.new_from_template_ellipsis')" :title="$t('note.templates.new_from_template_ellipsis')">
+             <LayoutTemplate class="w-4 h-4" />
            </button>
          </div>
       </div>
 
-      <div class="px-3 pt-3 pb-2 sticky top-0 bg-[#fbfbfc] dark:bg-[#191919] z-10" @mousedown.stop>
+      <div class="px-3 pt-3 pb-2 sticky top-0 bg-surface-alt dark:bg-surface-alt-dark z-10" @mousedown.stop>
           <div class="relative w-full">
-            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8b8b8b] dark:text-[#71717a]" />
-            <input v-model="search.searchQuery.value" type="text" :placeholder="$t('note.search_placeholder')" class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-[#e6e6e6] dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-400 dark:placeholder:text-gray-500">
-            <button v-if="search.searchQuery.value" @click="search.searchQuery.value = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" aria-label="Search.search Query.value =">
+            <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted dark:text-muted-dark" />
+            <input v-model="search.searchQuery.value" type="text" :placeholder="$t('note.search_placeholder')" class="w-full pl-8 pr-14 py-1.5 bg-white dark:bg-[#2c2c2c] border border-border dark:border-transparent mx-auto block rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-black dark:focus:ring-white transition-shadow text-text dark:text-text-dark placeholder:text-gray-500 dark:placeholder:text-gray-500">
+            <button v-if="search.searchQuery.value" @click="search.searchQuery.value = ''" class="absolute right-7 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#3f3f46] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" :aria-label="$t('note.clear_search')" :title="$t('note.clear_search')">
               <X class="w-3.5 h-3.5" />
             </button>
-            <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', search.isCaseSensitiveSearch.value ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" :title="$t('note.match_case')">
+            <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-sm transition-colors', search.isCaseSensitiveSearch.value ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#3f3f46]']" :title="$t('note.match_case')">
               <CaseSensitive class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -717,16 +830,16 @@ onMounted(async () => {
          <!-- Pinned Section -->
          <div class="mb-4" v-if="search.allPinnedNotes.value.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.pinned_notes') }}</span>
-                 <button @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.pinned_notes') }}</span>
+                 <button @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.topPinnedNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="true"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
+                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @save-as-template="saveAsTemplate" @delete="deleteNote"
                  />
-                 <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-blue-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors">
+                 <button v-if="search.allPinnedNotes.value.length > 5" @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="w-full text-center py-2.5 mt-2 text-xs font-medium text-accent dark:text-accent-dark hover:bg-accent/10 rounded-lg transition-colors">
                      {{ $t('note.show_more', { count: search.allPinnedNotes.value.length - 5 }) }}
                  </button>
              </div>
@@ -735,38 +848,38 @@ onMounted(async () => {
          <!-- Tags Section -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.top_tags') }}</span>
-                 <button @click="manager.openNoteManager('tags', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.top_tags') }}</span>
+                 <button @click="manager.openNoteManager('tags', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5" v-if="tags.topTags.value.length > 0">
                  <div v-for="tag in tags.topTags.value" :key="tag.name"
                       @click="tags.toggleTagSelection(tag.name)"
                       class="w-full flex items-center justify-between px-3 py-1.5 rounded-lg text-sm transition-colors cursor-pointer group"
-                      :class="tags.selectedTags.value.has(tag.name) ? 'bg-black/5 dark:bg-white/10' : 'hover:bg-gray-100 dark:hover:bg-[#2a2a2a] text-[#52525b] dark:text-[#a1a1aa]'">
+                      :class="tags.selectedTags.value.has(tag.name) ? 'bg-black/5 dark:bg-white/10' : 'hover:bg-gray-100 dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark'">
                       <div class="flex items-center gap-2 truncate">
                           <Hash class="w-3.5 h-3.5 opacity-70 group-hover:text-black dark:group-hover:text-white transition-colors" />
                           <span class="truncate select-none group-hover:text-black dark:group-hover:text-white transition-colors">{{ tag.name.split('/').pop() }}</span>
                       </div>
-                      <span class="text-[10px] opacity-50 bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{{ tag.count }}</span>
+                      <span class="text-xs opacity-50 bg-black/5 dark:bg-white/10 px-1.5 py-0.5 rounded-full min-w-[20px] text-center">{{ tag.count }}</span>
                  </div>
              </div>
-             <div v-else class="text-center p-4 text-xs text-gray-400">{{ $t('note.no_tags_found') }}</div>
+             <div v-else class="text-center p-4 text-xs text-gray-500 dark:text-gray-400">{{ $t('note.no_tags_found') }}</div>
          </div>
 
          <!-- Recent Notes -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-[11px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider">{{ $t('note.recent_notes') }}</span>
-                 <button @click="manager.openNoteManager('notes', () => { sidebar.showLeft.value = false; })" class="text-[10px] text-purple-500 hover:text-purple-600 font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
+                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.recent_notes') }}</span>
+                 <button @click="manager.openNoteManager('notes', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
              <div class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.recentNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="false"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
-                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @delete="deleteNote"
+                    @pin="togglePin" @open-window="openInNewWindow" @rename="rename.handleRenamePrompt($event, closeContextMenu)" @toggle-lock="lock.toggleNoteLock($event, closeContextMenu)" @history="openHistory" @save-as-template="saveAsTemplate" @delete="deleteNote"
                  />
              </div>
-             <div v-if="search.recentNotes.value.length === 0" class="p-8 text-center text-sm text-[#52525b] dark:text-[#a1a1aa]">
+             <div v-if="search.recentNotes.value.length === 0" class="p-8 text-center text-sm text-text-secondary dark:text-text-secondary-dark">
                {{ $t('note.no_notes_match') }}
              </div>
          </div>
@@ -774,56 +887,71 @@ onMounted(async () => {
     </aside>
 
     <!-- Main Area: Editor / Manager -->
-    <main class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] min-w-[300px] max-md:min-w-0" @mousedown.stop>
+    <main class="flex-1 flex flex-col bg-base dark:bg-base-dark min-w-[300px] max-md:min-w-0" @mousedown.stop>
       <template v-if="manager.viewMode.value === 'editor'">
           <div v-if="!isFloatingView" class="h-10 flex-shrink-0 w-full flex items-center justify-between px-4" data-tauri-drag-region>
-            <div class="flex gap-2">
+            <div class="flex items-center gap-1">
               <NavButtons />
-              <button @click="sidebar.showLeft.value = !sidebar.showLeft.value" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_sidebar')">
-                <PanelLeftClose v-if="sidebar.showLeft.value" class="w-4 h-4" />
-                <PanelLeft v-else class="w-4 h-4" />
+              <button type="button" @click="sidebar.showLeft.value = !sidebar.showLeft.value" class="btn-icon" :title="$t('note.toggle_sidebar')" :aria-label="$t('note.toggle_sidebar')" :aria-expanded="sidebar.showLeft.value">
+                <PanelLeftClose v-if="sidebar.showLeft.value" class="w-4 h-4" aria-hidden="true" />
+                <PanelLeft v-else class="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
-            <div class="flex gap-2">
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="zenMode = !zenMode" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="zenMode ? 'Exit Zen Mode' : 'Zen Mode'">
-                <Monitor class="w-4 h-4" />
+            <!--
+              One row of the same 36px icon buttons, all grey. A setting that is
+              on shows as pressed (a soft fill), not in the accent colour: the
+              accent is for the one thing to do on a screen, and a row of
+              toggles where one is purple reads as a mistake. The panel toggle
+              sits after a divider, because it opens a pane rather than
+              changing the note.
+            -->
+            <div v-if="currentNoteId && manager.viewMode.value === 'editor'" class="flex items-center gap-1">
+              <!-- Show or hide the formatting row; remembered, and also in Settings → Notes. -->
+              <button v-if="!zenMode" type="button" @click="noteToolbarVisible = !noteToolbarVisible" class="btn-icon" :class="noteToolbarVisible ? 'bg-surface-hover dark:bg-surface-hover-dark text-text dark:text-text-dark' : ''" :title="noteToolbarVisible ? $t('note.hide_toolbar') : $t('note.show_toolbar')" :aria-label="$t('note.formatting_toolbar')" :aria-pressed="noteToolbarVisible">
+                <Type class="w-4 h-4" aria-hidden="true" />
               </button>
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="editorFullWidth = !editorFullWidth" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="editorFullWidth ? 'Standard Width' : 'Full Width'">
-                <div v-if="editorFullWidth" class="flex items-center space-x-[1px]">
+              <button type="button" @click="zenMode = !zenMode" class="btn-icon hidden md:inline-flex" :title="zenMode ? $t('note.exit_zen_mode') : $t('note.zen_mode')" :aria-label="zenMode ? $t('note.exit_zen_mode') : $t('note.zen_mode')">
+                <Monitor class="w-4 h-4" aria-hidden="true" />
+              </button>
+              <button type="button" @click="editorFullWidth = !editorFullWidth" class="btn-icon hidden md:inline-flex" :title="editorFullWidth ? $t('note.standard_width') : $t('note.full_width')" :aria-label="editorFullWidth ? $t('note.standard_width') : $t('note.full_width')">
+                <span v-if="editorFullWidth" class="flex items-center gap-px" aria-hidden="true">
                   <ArrowRight class="w-3 h-3" />
                   <ArrowLeft class="w-3 h-3" />
-                </div>
-                <div v-else class="flex items-center space-x-[1px]">
+                </span>
+                <span v-else class="flex items-center gap-px" aria-hidden="true">
                   <ArrowLeft class="w-3 h-3" />
                   <ArrowRight class="w-3 h-3" />
-                </div>
+                </span>
               </button>
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="openHistory(currentNoteId)" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="$t('note.history_title')">
-                <History class="w-4 h-4" />
+              <button type="button" @click="openHistory(currentNoteId)" class="btn-icon hidden md:inline-flex" :title="$t('note.history_title')" :aria-label="$t('note.history_title')">
+                <History class="w-4 h-4" aria-hidden="true" />
               </button>
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="noteExport.exportModalVisible.value = true" class="p-1 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors hidden md:flex items-center justify-center w-8 h-7" :title="$t('note.export_note')">
-                <Download class="w-4 h-4" />
+              <button type="button" @click="noteExport.exportModalVisible.value = true" class="btn-icon hidden md:inline-flex" :title="$t('note.export_note')" :aria-label="$t('note.export_note')">
+                <Download class="w-4 h-4" aria-hidden="true" />
               </button>
-              <div class="relative flex items-center h-full"></div>
-              <button v-if="currentNoteId && manager.viewMode.value === 'editor'" @click="sidebar.showRight.value = !sidebar.showRight.value" class="p-1 relative ml-2 rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 transition-colors" :title="$t('note.toggle_right_sidebar')">
-                <PanelRightClose v-if="sidebar.showRight.value" class="w-4 h-4" />
-                <PanelRight v-else class="w-4 h-4" />
-              </button>
+              <!-- The graph and linked mentions are power tools; simple mode leaves out the way in. -->
+              <template v-if="!simpleMode">
+                <span class="w-px h-5 mx-1 bg-border dark:bg-border-dark" aria-hidden="true" />
+                <button type="button" @click="sidebar.showRight.value = !sidebar.showRight.value" class="btn-icon" :title="$t('note.toggle_right_sidebar')" :aria-label="$t('note.toggle_right_sidebar')" :aria-expanded="sidebar.showRight.value">
+                  <PanelRightClose v-if="sidebar.showRight.value" class="w-4 h-4" aria-hidden="true" />
+                  <PanelRight v-else class="w-4 h-4" aria-hidden="true" />
+                </button>
+              </template>
             </div>
           </div>
 
           <div v-if="zenMode" class="absolute top-4 right-4 z-50">
-             <button @click="zenMode = false" class="p-2 bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 rounded-full text-gray-500 hover:text-black dark:hover:text-white transition-all shadow-sm backdrop-blur-md opacity-0 hover:opacity-100 group-hover:opacity-100" :title="$t('note.exit_zen_mode')">
+             <button @click="zenMode = false" class="p-2 bg-black/10 dark:bg-white/10 hover:bg-black/20 dark:hover:bg-white/20 rounded-full text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-all shadow-sm backdrop-blur-md opacity-0 hover:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100" :title="$t('note.exit_zen_mode')">
                 <Monitor class="w-4 h-4" />
              </button>
           </div>
 
-          <div v-else-if="!isFloatingView && manager.viewMode.value !== 'editor'" class="h-8 flex-shrink-0 w-full z-50 bg-[#fdfdfc] dark:bg-[#242424]" data-tauri-drag-region></div>
+          <div v-else-if="!isFloatingView && manager.viewMode.value !== 'editor'" class="h-8 flex-shrink-0 w-full z-50 bg-base dark:bg-base-dark" data-tauri-drag-region></div>
 
           <template v-if="tabs.activeTabs.value.length > 0">
             <template v-for="tabId in tabs.activeTabs.value" :key="tabId">
               <div v-show="currentNoteId === tabId" class="flex-1 overflow-y-auto w-full relative">
-                <div v-if="tabs.tabContents.value[tabId] === undefined" class="absolute inset-0 flex items-center justify-center bg-[#fdfdfc] dark:bg-[#242424]">
+                <div v-if="tabs.tabContents.value[tabId] === undefined" class="absolute inset-0 flex items-center justify-center bg-base dark:bg-base-dark">
                     <div class="w-8 h-8 rounded-full border-2 border-gray-200 border-t-gray-400 animate-spin"></div>
                 </div>
                 <div v-else class="px-4 md:px-12 pb-12 mx-auto w-full cursor-text transition-all duration-300" :class="editorFullWidth ? 'max-w-none' : 'max-w-4xl'">
@@ -832,15 +960,15 @@ onMounted(async () => {
                       <span v-for="tag in notes.find(n => n.id === tabId)?.tags" :key="tag" class="text-xs px-2 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 flex items-center gap-1 group/tag">
                           <Hash class="w-3 h-3 opacity-50"/>
                           {{ tag }}
-                          <button @click="tags.removeTag(tag)" class="opacity-0 group-hover/tag:opacity-100 hover:text-red-500 transition-opacity ml-1 p-0.5" aria-label="Tags.remove Tag"><X class="w-3 h-3"/></button>
+                          <button @click="tags.removeTag(tag)" class="opacity-0 group-hover/tag:opacity-100 group-focus-within/tag:opacity-100 pointer-coarse:opacity-100 hover:text-red-500 transition-opacity ml-1 p-0.5" :aria-label="$t('note.remove_tag', { tag })" :title="$t('note.remove_tag', { tag })"><X class="w-3 h-3"/></button>
                        </span>
                        <div class="relative flex items-center">
-                          <Plus class="w-3 h-3 absolute left-1.5 text-gray-400" />
-                          <input v-model="tags.newTagInput.value" @keydown="tags.addTag" :placeholder="$t('note.add_tag')" class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-[#1c1c1e] dark:text-[#f4f4f5]" />
+                          <Plus class="w-3 h-3 absolute left-1.5 text-gray-500 dark:text-gray-400" />
+                          <input v-model="tags.newTagInput.value" @keydown="tags.addTag" :placeholder="$t('note.add_tag')" class="text-xs bg-transparent border border-dashed border-gray-300 dark:border-gray-600 rounded-md py-1 pl-5 pr-2 w-24 focus:w-32 focus:outline-none focus:border-gray-400 transition-all text-text dark:text-text-dark" />
                        </div>
                    </div>
                    <div class="w-full grid grow-wrap" :data-replicated-value="(tabs.focusedTitles.value[tabId] !== undefined ? tabs.focusedTitles.value[tabId] : notes.find(n => n.id === tabId)?.title) || ''">
-                     <textarea class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder:text-gray-300 dark:placeholder:text-gray-700 resize-none overflow-hidden col-start-1 row-start-1 h-full"
+                     <textarea class="note-title-input w-full text-4xl font-bold bg-transparent border-none outline-none text-text dark:text-text-dark placeholder:text-gray-300 dark:placeholder:text-gray-700 resize-none overflow-hidden col-start-1 row-start-1 h-full"
                        rows="1"
                        :value="tabs.focusedTitles.value[tabId] !== undefined ? tabs.focusedTitles.value[tabId] : notes.find(n => n.id === tabId)?.title"
                        @focus="tabs.focusedTitles.value[tabId] = ($event.target as HTMLTextAreaElement).value"
@@ -851,13 +979,13 @@ onMounted(async () => {
                    </div>
                 </div>
                 <div class="mt-4 pb-20 w-full text-text dark:text-text-dark" :class="{'zen-editor-container': zenMode && !editorFullWidth}">
-                   <TiptapEditor :ref="(el) => { const refs = save.editorRefs.value || save.editorRefs; if (el) refs[tabId] = el; else delete refs[tabId]; }" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :zen-mode="zenMode" :current-note-id="tabId" @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" />
+                   <TiptapEditor :ref="(el) => { const refs = save.editorRefs.value || save.editorRefs; if (el) refs[tabId] = el; else delete refs[tabId]; }" :model-value="tabs.tabContents.value[tabId]" :vault-path="vaultPath" :zen-mode="zenMode" :current-note-id="tabId" :toolbar="!zenMode && noteToolbarVisible" templates @update:model-value="(val: string) => save.onEditorUpdate(val, tabId)" @open-internal-note="handleOpenInternalNote" @insert-template="openTemplatePicker('insert')" />
                 </div>
                 </div>
               </div>
             </template>
           </template>
-          <div v-else class="flex-1 flex items-center justify-center text-[#52525b] dark:text-[#a1a1aa]">
+          <div v-else class="flex-1 flex items-center justify-center text-text-secondary dark:text-text-secondary-dark">
             <div class="text-center">
               <FileText class="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p>{{ $t('note.select_to_start') }}</p>
@@ -865,15 +993,15 @@ onMounted(async () => {
           </div>
       </template>
       <template v-else-if="manager.viewMode.value === 'manager'">
-          <div class="flex-1 flex flex-col bg-[#fdfdfc] dark:bg-[#242424] h-full relative z-0 overflow-y-auto">
-             <div class="flex items-center justify-between px-6 h-10 border-b border-[#e6e6e6] dark:border-[#2c2c2c] shrink-0 sticky top-0 bg-[#fdfdfc] dark:bg-[#242424] z-10" data-tauri-drag-region>
+          <div class="flex-1 flex flex-col bg-base dark:bg-base-dark h-full relative z-0 overflow-y-auto">
+             <div class="flex items-center justify-between px-6 h-10 border-b border-border dark:border-border-dark shrink-0 sticky top-0 bg-base dark:bg-base-dark z-10" data-tauri-drag-region>
                 <div class="flex items-center gap-3">
-                   <button @click="manager.viewMode.value = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500" aria-label="Manager.view Mode.value =">
+                   <button @click="manager.viewMode.value = 'editor'" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors text-gray-500 dark:text-gray-400" :aria-label="$t('note.back_to_editor')" :title="$t('note.back_to_editor')">
                       <ArrowLeft class="w-5 h-5" />
                    </button>
-                   <h1 class="text-xl font-bold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2">
-                      {{ manager.managerFilter.value === 'tags' && !manager.managerSearchQuery.value ? $t('note.all_tags') : manager.managerSearchQuery.value ? $t('note.search_results') : manager.managerFilter.value === 'notes' || !manager.managerFilter.value ? $t('note.all_notes') : manager.managerFilter.value === 'pinned' ? $t('note.pinned_notes') : $t('note.tag_prefix') + manager.managerFilter.value.split('/').pop() }}
-                      <span class="text-[12px] font-medium px-2 py-0.5 mt-0.5 rounded-full bg-gray-100 dark:bg-[#333] text-gray-500">
+                   <h1 class="text-xl font-bold text-text dark:text-text-dark flex items-center gap-2">
+                      {{ manager.managerFilter.value === 'tags' && !manager.managerSearchQuery.value ? $t('note.all_tags') : manager.managerSearchQuery.value ? $t('note.search_results') : manager.managerFilter.value === 'notes' || !manager.managerFilter.value ? $t('note.all_notes') : manager.managerFilter.value === 'pinned' ? $t('note.pinned_notes') : $t('note.tag_heading', { tag: manager.managerFilter.value.split('/').pop() }) }}
+                      <span class="text-[12px] font-medium px-2 py-0.5 mt-0.5 rounded-full bg-gray-100 dark:bg-[#333] text-gray-500 dark:text-gray-400">
                         {{ manager.managerFilter.value === 'tags' && !manager.managerSearchQuery.value ? tags.allTags.value.length : manager.managerFilteredNotes.value.length }}
                       </span>
                    </h1>
@@ -885,7 +1013,7 @@ onMounted(async () => {
                    -->
                    <button
                      @click="duplicatesModalVisible = true"
-                     class="ml-auto flex items-center gap-2 px-3 py-1.5 text-[13px] rounded-lg text-gray-500 hover:text-[#1c1c1e] dark:hover:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors"
+                     class="ml-auto flex items-center gap-2 px-3 py-1.5 text-[13px] rounded-lg text-gray-500 dark:text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors"
                      :title="$t('note.duplicates_hint')"
                    >
                      <Copy class="w-4 h-4" />
@@ -896,12 +1024,12 @@ onMounted(async () => {
 
              <div class="flex-1 flex flex-col p-8 md:p-12 lg:p-16 w-full max-w-6xl mx-auto">
                  <div class="relative w-full mb-8">
-                   <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#8b8b8b] dark:text-[#71717a]" />
-                   <input v-model="manager.managerSearchQuery.value" type="text" :placeholder="$t('note.search_manager_placeholder')" class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-shadow placeholder:text-gray-400 manager-search-input">
-                   <button v-if="manager.managerSearchQuery.value" @click="manager.managerSearchQuery.value = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" aria-label="Manager.manager Search Query.value =">
+                   <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted dark:text-muted-dark" />
+                   <input v-model="manager.managerSearchQuery.value" type="text" :placeholder="$t('note.search_manager_placeholder')" class="w-full pl-12 pr-20 py-3 bg-white dark:bg-[#1a1a1a] border border-border dark:border-border-dark rounded-xl text-base shadow-sm focus:outline-none focus:ring-2 focus:ring-accent/50 transition-shadow placeholder:text-gray-500 dark:placeholder:text-gray-400 manager-search-input">
+                   <button v-if="manager.managerSearchQuery.value" @click="manager.managerSearchQuery.value = ''" class="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-gray-100 dark:hover:bg-[#2c2c2c] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors" :aria-label="$t('note.clear_search')" :title="$t('note.clear_search')">
                      <X class="w-4 h-4" />
                    </button>
-                   <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', search.isCaseSensitiveSearch.value ? 'bg-purple-100 text-purple-600 dark:bg-purple-500/20 dark:text-purple-400' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" :title="$t('note.match_case')">
+                   <button @click="search.isCaseSensitiveSearch.value = !search.isCaseSensitiveSearch.value" :class="['absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-md transition-colors', search.isCaseSensitiveSearch.value ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-[#2c2c2c]']" :title="$t('note.match_case')">
                      <CaseSensitive class="w-4 h-4" />
                    </button>
                  </div>
@@ -909,10 +1037,10 @@ onMounted(async () => {
                  <!-- Tags View -->
                  <div v-if="manager.managerFilter.value === 'tags' && !manager.managerSearchQuery.value" class="w-full">
                     <div class="flex flex-wrap gap-3">
-                       <div v-for="tag in tags.allTags.value" :key="tag.name" @click="manager.managerFilter.value = tag.name" class="px-4 py-2 bg-white dark:bg-[#1f1f1f] border border-[#e6e6e6] dark:border-[#2c2c2c] rounded-lg cursor-pointer hover:border-[#d4d4d8] dark:hover:border-[#444] transition-all flex items-center gap-2 group">
-                          <Hash class="w-4 h-4 text-gray-400 group-hover:text-[#1c1c1e] dark:group-hover:text-white transition-colors" />
-                          <span class="font-medium text-[#1c1c1e] dark:text-[#f4f4f5]">{{ tag.name.split('/').pop() }}</span>
-                          <span class="text-xs bg-gray-100 dark:bg-[#2c2c2c] px-2 py-0.5 rounded text-gray-500">{{ tag.count }}</span>
+                       <div v-for="tag in tags.allTags.value" :key="tag.name" @click="manager.managerFilter.value = tag.name" class="px-4 py-2 bg-white dark:bg-[#1f1f1f] border border-border dark:border-border-dark rounded-lg cursor-pointer hover:border-[#d4d4d8] dark:hover:border-[#444] transition-all flex items-center gap-2 group">
+                          <Hash class="w-4 h-4 text-gray-500 group-hover:text-text dark:group-hover:text-white transition-colors" />
+                          <span class="font-medium text-text dark:text-text-dark">{{ tag.name.split('/').pop() }}</span>
+                          <span class="text-xs bg-gray-100 dark:bg-[#2c2c2c] px-2 py-0.5 rounded text-gray-500 dark:text-gray-400">{{ tag.count }}</span>
                        </div>
                     </div>
                  </div>
@@ -923,24 +1051,24 @@ onMounted(async () => {
                      Only on screen while something is ticked. A bar that is
                      always there, greyed out, teaches people to stop reading it.
                    -->
-                   <div v-if="selection.active.value" class="mb-3 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-blue-50 dark:bg-blue-900/20 border border-blue-200/70 dark:border-blue-800/50">
-                      <span class="text-[13px] font-medium text-blue-900 dark:text-blue-100">{{ $t('note.selected_count', { count: selection.count.value }) }}</span>
+                   <div v-if="selection.active.value" class="mb-3 flex items-center gap-3 px-4 py-2.5 rounded-xl bg-accent/10 border border-accent/30">
+                      <span class="text-[13px] font-medium text-text dark:text-text-dark">{{ $t('note.selected_count', { count: selection.count.value }) }}</span>
                       <button @click="deleteSelected" class="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[13px] font-medium text-white bg-red-500 hover:bg-red-600 transition-colors">
                          <Trash2 class="w-3.5 h-3.5" />
                          {{ $t('note.delete_selected') }}
                       </button>
-                      <button @click="selection.clear()" class="px-3 py-1.5 rounded-lg text-[13px] font-medium text-blue-900 dark:text-blue-100 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                      <button @click="selection.clear()" class="px-3 py-1.5 rounded-lg text-[13px] font-medium text-text dark:text-text-dark hover:bg-accent/10 transition-colors">
                          {{ $t('note.clear_selection') }}
                       </button>
                    </div>
-                   <div class="bg-white dark:bg-[#252525] border border-[#e6e6e6] dark:border-[#333] rounded-xl overflow-hidden shadow-sm">
+                   <div class="bg-white dark:bg-[#252525] border border-border dark:border-[#333] rounded-xl overflow-hidden shadow-sm">
                       <table class="w-full text-left border-collapse">
                          <thead>
-                            <tr class="bg-gray-50 dark:bg-[#1a1a1a] border-b border-[#e6e6e6] dark:border-[#333]">
+                            <tr class="bg-gray-50 dark:bg-[#1a1a1a] border-b border-border dark:border-[#333]">
                                <th class="py-2.5 px-4 w-8">
                                   <input
                                      type="checkbox"
-                                     class="w-3.5 h-3.5 align-middle accent-blue-500 cursor-pointer"
+                                     class="w-3.5 h-3.5 align-middle accent-accent cursor-pointer"
                                      :checked="selection.allVisibleSelected(visibleManagerIds)"
                                      :indeterminate="selection.someVisibleSelected(visibleManagerIds)"
                                      :aria-label="$t('note.select_all_on_page')"
@@ -948,15 +1076,15 @@ onMounted(async () => {
                                      @click="selection.toggleAll(visibleManagerIds)"
                                   />
                                </th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-5/12">{{ $t('note.title_col') }}</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase">{{ $t('note.tags_col') }}</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase whitespace-nowrap text-right">{{ $t('note.modified_col') }}</th>
-                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 uppercase w-12 text-center">{{ $t('note.action_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase w-5/12">{{ $t('note.title_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ $t('note.tags_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase whitespace-nowrap text-right">{{ $t('note.modified_col') }}</th>
+                               <th class="py-2.5 px-4 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase w-12 text-center">{{ $t('note.action_col') }}</th>
                             </tr>
                          </thead>
-                         <tbody class="divide-y divide-[#e6e6e6] dark:divide-[#333] text-sm">
+                         <tbody class="divide-y divide-border dark:divide-[#333] text-sm">
                             <tr v-for="note in manager.managerPaginatedNotes.value" :key="note.id" @click="handleManagerRowClick(note.id, $event)" class="cursor-pointer transition-colors group"
-                                :class="selection.isSelected(note.id) ? 'bg-blue-50/70 dark:bg-blue-900/20' : 'hover:bg-gray-50 dark:hover:bg-[#2a2a2a]'">
+                                :class="selection.isSelected(note.id) ? 'bg-accent/10' : 'hover:bg-gray-50 dark:hover:bg-surface-hover-dark'">
                                <!--
                                  One cell, two things. The tick takes over from
                                  the icon on hover, or as soon as anything is
@@ -966,11 +1094,11 @@ onMounted(async () => {
                                -->
                                <td class="py-3 px-4 w-8" @click.stop>
                                   <div class="relative w-3.5 h-3.5">
-                                     <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20 transition-opacity group-hover:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
-                                     <FileText v-else class="w-3.5 h-3.5 text-gray-400 opacity-50 transition-opacity group-hover:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
+                                     <Pin v-if="note.pinned" class="w-3.5 h-3.5 text-orange-500 fill-orange-500/20 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
+                                     <FileText v-else class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 opacity-50 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0" :class="{ '!opacity-0': selection.active.value }" />
                                      <input
                                         type="checkbox"
-                                        class="absolute inset-0 w-3.5 h-3.5 accent-blue-500 cursor-pointer opacity-0 transition-opacity group-hover:opacity-100"
+                                        class="absolute inset-0 w-3.5 h-3.5 accent-accent cursor-pointer opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100"
                                         :class="{ '!opacity-100': selection.active.value }"
                                         :checked="selection.isSelected(note.id)"
                                         :aria-label="$t('note.select_note')"
@@ -978,42 +1106,43 @@ onMounted(async () => {
                                      />
                                   </div>
                                </td>
-                               <td class="py-3 px-4 font-medium text-[#1c1c1e] dark:text-[#f4f4f5] max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}</td>
+                               <td class="py-3 px-4 font-medium text-text dark:text-text-dark max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}<span v-if="isTemplatePath(note.id)" class="ml-2 text-xs px-1.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 font-medium">{{ $t('note.templates.badge') }}</span></td>
                                <td class="py-3 px-4">
                                   <div class="flex flex-wrap gap-1" v-if="note.tags.length">
-                                     <span v-for="tag in note.tags.slice(0, 3)" :key="tag" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
-                                     <span v-if="note.tags.length > 3" class="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500">+{{ note.tags.length - 3 }}</span>
+                                     <span v-for="tag in note.tags.slice(0, 3)" :key="tag" class="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
+                                     <span v-if="note.tags.length > 3" class="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400">+{{ note.tags.length - 3 }}</span>
                                   </div>
-                                  <span v-else class="text-xs text-gray-400 italic">{{ $t('note.no_tags') }}</span>
+                                  <span v-else class="text-xs text-gray-500 dark:text-gray-400 italic">{{ $t('note.no_tags') }}</span>
                                </td>
                                <td class="py-3 px-4 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap text-right">{{ formatDate(note.date) }}</td>
                                <td class="py-3 px-4 w-12 text-center" @click.stop>
                                   <div class="relative flex justify-center">
-                                     <button @click="(e) => toggleContext('manager_'+note.id, e)" class="p-1 rounded md:opacity-0 opacity-100 group-hover:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
-                                        <MoreVertical class="w-4 h-4 text-gray-500" />
+                                     <button @click="(e) => toggleContext('manager_'+note.id, e)" :aria-label="$t('note.more_actions')" :title="$t('note.more_actions')" class="p-1 rounded md:opacity-0 opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:bg-gray-200 dark:hover:bg-[#444] transition">
+                                        <MoreVertical class="w-4 h-4 text-gray-500 dark:text-gray-400" />
                                      </button>
                                      <NoteContextMenu v-if="activeContextMenu === 'manager_'+note.id" :note-id="note.id" :is-pinned="note.pinned" variant="manager"
                                         @pin="togglePin($event); activeContextMenu = null;"
                                         @history="openHistory"
+                                        @save-as-template="saveAsTemplate"
                                         @delete="deleteNote($event); activeContextMenu = null;"
                                      />
                                   </div>
                                </td>
                             </tr>
                             <tr v-if="manager.managerFilteredNotes.value.length === 0">
-                               <td colspan="5" class="py-12 text-center text-gray-500">{{ $t('note.no_notes_found') }}</td>
+                               <td colspan="5" class="py-12 text-center text-gray-500 dark:text-gray-400">{{ $t('note.no_notes_found') }}</td>
                             </tr>
                          </tbody>
                       </table>
                    </div>
 
                    <!-- Pagination Controls -->
-                   <div v-if="manager.managerTotalPages.value > 1" class="mt-4 flex items-center justify-between text-[13px] text-gray-500">
-                      <div>{{ $t('note.showing') }} {{ (manager.managerCurrentPage.value - 1) * manager.managerItemsPerPage + 1 }} {{ $t('note.to') }} {{ Math.min(manager.managerCurrentPage.value * manager.managerItemsPerPage, manager.managerFilteredNotes.value.length) }} {{ $t('note.of') }} {{ manager.managerFilteredNotes.value.length }} {{ $t('note.notes_lowercase') }}</div>
+                   <div v-if="manager.managerTotalPages.value > 1" class="mt-4 flex items-center justify-between text-[13px] text-gray-500 dark:text-gray-400">
+                      <div>{{ $t('note.pagination_range', { from: (manager.managerCurrentPage.value - 1) * manager.managerItemsPerPage + 1, to: Math.min(manager.managerCurrentPage.value * manager.managerItemsPerPage, manager.managerFilteredNotes.value.length), total: manager.managerFilteredNotes.value.length }) }}</div>
                       <div class="flex items-center gap-2">
-                         <button @click="manager.managerPrevPage()" :disabled="manager.managerCurrentPage.value === 1" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.previous') }}</button>
-                         <span class="font-medium px-2 text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.page') }} {{ manager.managerCurrentPage.value }} {{ $t('note.of') }} {{ manager.managerTotalPages.value }}</span>
-                         <button @click="manager.managerNextPage()" :disabled="manager.managerCurrentPage.value === manager.managerTotalPages.value" class="px-3 py-1.5 rounded-lg border border-[#e6e6e6] dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t('note.next') }}</button>
+                         <button @click="manager.managerPrevPage()" :disabled="manager.managerCurrentPage.value === 1" class="px-3 py-1.5 rounded-lg border border-border dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-text dark:text-text-dark">{{ $t('note.previous') }}</button>
+                         <span class="font-medium px-2 text-text dark:text-text-dark">{{ $t('note.page_of', { page: manager.managerCurrentPage.value, total: manager.managerTotalPages.value }) }}</span>
+                         <button @click="manager.managerNextPage()" :disabled="manager.managerCurrentPage.value === manager.managerTotalPages.value" class="px-3 py-1.5 rounded-lg border border-border dark:border-[#333] hover:bg-gray-50 dark:hover:bg-[#2c2c2c] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-text dark:text-text-dark">{{ $t('note.next') }}</button>
                       </div>
                    </div>
                  </div>
@@ -1023,31 +1152,31 @@ onMounted(async () => {
     </main>
 
     <!-- Right Sidebar: Graph & Backlinks -->
-    <aside v-if="currentNoteId && !isFloatingView && manager.viewMode.value === 'editor'" v-show="sidebar.showRight.value" class="shrink-0 relative border-l border-[#e6e6e6] dark:border-[#2c2c2c] bg-[#fbfbfc] dark:bg-[#191919] flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: sidebar.rightWidth.value + 'px' }">
+    <aside v-if="currentNoteId && !isFloatingView && manager.viewMode.value === 'editor' && !simpleMode" v-show="sidebar.showRight.value" class="shrink-0 relative border-l border-border dark:border-border-dark bg-surface-alt dark:bg-surface-alt-dark flex flex-col overflow-hidden max-md:!w-full max-md:absolute max-md:inset-0 max-md:z-[60]" :style="{ width: sidebar.rightWidth.value + 'px' }">
       <div class="hidden md:block absolute top-0 left-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragRight"></div>
-      <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]" data-tauri-drag-region>
-          <Globe class="w-4 h-4 text-gray-500 mr-2" />
-          <span class="font-bold text-[11px] tracking-wider text-gray-500 uppercase mt-0.5">{{ $t('note.graph_view') }}</span>
-          <button @click="sidebar.showRight.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-400 transition-colors" aria-label="Sidebar.show Right Sidebar.value = false">
+      <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-border dark:border-border-dark" data-tauri-drag-region>
+          <Globe class="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
+          <span class="font-bold text-xs tracking-wider text-gray-500 dark:text-gray-400 uppercase mt-0.5">{{ $t('note.graph_view') }}</span>
+          <button @click="sidebar.showRight.value = false" class="p-1 ml-auto rounded-md hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors" :aria-label="$t('note.close_right_sidebar')" :title="$t('note.close_right_sidebar')">
              <X class="w-3.5 h-3.5" />
           </button>
       </div>
-      <div class="h-1/2 border-b border-[#e6e6e6] dark:border-[#2c2c2c] overflow-hidden">
-          <NoteGraph v-if="activeNote" :current-note-id="currentNoteId || ''" :current-note-title="activeNote.title || 'Untitled Node'" :tags="activeNote.tags || []" :outgoing-links="backlinks.currentOutgoingLinks.value" :backlinks="backlinks.currentBacklinks.value" :all-notes="notes" @open-note="handleOpenInternalNote" />
+      <div class="h-1/2 border-b border-border dark:border-border-dark overflow-hidden">
+          <NoteGraph v-if="activeNote" :current-note-id="currentNoteId || ''" :current-note-title="activeNote.title || $t('note.untitled_note')" :tags="activeNote.tags || []" :outgoing-links="backlinks.currentOutgoingLinks.value" :backlinks="backlinks.currentBacklinks.value" :all-notes="notes" @open-note="handleOpenInternalNote" />
       </div>
-      <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
-          <span class="font-bold text-[11px] tracking-wider text-[#8b8b8b] dark:text-[#71717a] uppercase mt-0.5">{{ $t('note.linked_mentions') }} ({{ backlinks.currentBacklinks.value.length }})</span>
+      <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-border dark:border-border-dark">
+          <span class="font-bold text-xs tracking-wider text-muted dark:text-muted-dark uppercase mt-0.5">{{ $t('note.linked_mentions_count', { count: backlinks.currentBacklinks.value.length }) }}</span>
       </div>
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
-          <div v-if="backlinks.currentBacklinks.value.length === 0" class="text-[13px] text-gray-400 text-center py-4">{{ $t('note.no_linked_mentions') }}</div>
-          <div v-for="bl in backlinks.currentBacklinks.value" :key="bl.id" @click="handleOpenInternalNote({ id: bl.id, type: bl.node_type })" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-[#e6e6e6] dark:hover:border-[#2f2f2f] transition-all group">
+          <div v-if="backlinks.currentBacklinks.value.length === 0" class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-4">{{ $t('note.no_linked_mentions') }}</div>
+          <div v-for="bl in backlinks.currentBacklinks.value" :key="bl.id" @click="handleOpenInternalNote({ id: bl.id, type: bl.node_type })" class="p-3 border border-transparent rounded-lg cursor-pointer hover:bg-white/50 dark:hover:bg-[#252525] hover:border-border dark:hover:border-[#2f2f2f] transition-all group">
             <h5 class="flex items-center gap-2 pr-2">
                 <Calendar v-if="bl.node_type === 'event'" class="w-3.5 h-3.5 text-rose-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
                 <CheckSquare v-else-if="bl.node_type === 'task'" class="w-3.5 h-3.5 text-emerald-500 shrink-0 opacity-80 group-hover:opacity-100 transition-colors"/>
-                <FileText v-else class="w-3.5 h-3.5 text-gray-400 shrink-0 opacity-80 group-hover:text-purple-500 group-hover:opacity-100 transition-colors"/>
-                <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate">{{ bl.title }}</span>
-                <span v-if="bl.node_type === 'event' && bl.properties && bl.properties.start_at" class="ml-auto text-[9px] text-gray-400 font-medium tracking-wider whitespace-nowrap">{{ (bl.properties.start_at as string).split('T')[0] }}</span>
-                <button v-if="(bl as any)._is_outgoing_project" @click.stop="backlinks.unlinkProject(bl.id, bl.title)" class="ml-auto p-1.5 -mr-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 transition-all" :title="$t('note.unlink_project')">
+                <FileText v-else class="w-3.5 h-3.5 text-gray-500 shrink-0 opacity-80 group-hover:text-accent dark:group-hover:text-accent-dark group-hover:opacity-100 transition-colors"/>
+                <span class="text-[13px] font-medium text-text dark:text-text-dark truncate">{{ bl.title }}</span>
+                <span v-if="bl.node_type === 'event' && bl.properties && bl.properties.start_at" class="ml-auto text-xs text-gray-500 dark:text-gray-400 font-medium tracking-wider whitespace-nowrap">{{ (bl.properties.start_at as string).split('T')[0] }}</span>
+                <button v-if="(bl as any)._is_outgoing_project" @click.stop="backlinks.unlinkProject(bl.id, bl.title)" class="ml-auto p-1.5 -mr-1.5 text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" :title="$t('note.unlink_project')">
                    <X class="w-3.5 h-3.5" />
                 </button>
             </h5>
@@ -1056,16 +1185,29 @@ onMounted(async () => {
     </aside>
 
     <!-- Rename Modal -->
+    <AppDialog :show="rename.renameModal.value.show" labelledby="note-rename-title" size="sm" panel-class="p-6" @close="rename.renameModal.value.show = false">
+      <h3 id="note-rename-title" class="text-base font-semibold text-text dark:text-text-dark mb-4">{{ $t('note.rename_note') }}</h3>
+      <input v-model="rename.renameModal.value.value" type="text" class="w-full px-3 py-2 rounded-lg border border-border-subtle dark:border-[#444] bg-white dark:bg-surface-dark text-text dark:text-text-dark text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20" @keydown.enter="rename.confirmRename" autofocus :aria-label="$t('note.rename_note')" />
+      <div class="flex justify-end gap-2 mt-4">
+        <button @click="rename.renameModal.value.show = false" class="btn-secondary">{{ $t('note.cancel') }}</button>
+        <button @click="rename.confirmRename" class="btn-primary">{{ $t('note.rename') }}</button>
+      </div>
+    </AppDialog>
+
+    <!-- Templates -->
+    <TemplatePickerModal
+      v-if="templatePicker.show"
+      :show="templatePicker.show"
+      :mode="templatePicker.mode"
+      :user-templates="userTemplates"
+      :load-body="readNoteBody"
+      @close="templatePicker.show = false"
+      @choose="onTemplateChosen"
+    />
     <Teleport to="body">
-      <div v-if="rename.renameModal.value.show" class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="rename.renameModal.value.show = false">
-        <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl p-6 w-80 border border-[#e6e6e6] dark:border-[#3a3a3a]">
-          <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-4">{{ $t('note.rename_note') }}</h3>
-          <input v-model="rename.renameModal.value.value" type="text" class="w-full px-3 py-2 rounded-lg border border-[#e0e0e0] dark:border-[#444] bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] text-sm focus:outline-none focus:ring-2 focus:ring-black/10 dark:focus:ring-white/20" @keydown.enter="rename.confirmRename" autofocus :aria-label="$t('note.rename_note')" />
-          <div class="flex justify-end gap-2 mt-4">
-            <button @click="rename.renameModal.value.show = false" class="px-4 py-1.5 text-sm rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-[#333] transition-colors">{{ $t('note.cancel') }}</button>
-            <button @click="rename.confirmRename" class="px-4 py-1.5 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity">{{ $t('note.rename') }}</button>
-          </div>
-        </div>
+      <div v-if="templateSavedMessage" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl shadow-2xl max-w-[420px] bg-surface dark:bg-surface-dark border border-border dark:border-border-dark" role="status" aria-live="polite">
+        <LayoutTemplate class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 shrink-0" />
+        <span class="text-[13px] text-text dark:text-text-dark truncate min-w-0">{{ templateSavedMessage }}</span>
       </div>
     </Teleport>
 
@@ -1078,10 +1220,15 @@ onMounted(async () => {
     />
 
     <!-- Undo window on a deleted note -->
-    <NoteUndoToast
-      :pending="del.pending.value"
+    <UndoToast
+      :show="del.pending.value !== null"
+      :restart-key="undoKey"
+      :message="undoMessage"
+      :undo-label="$t('common.undo')"
       :seconds="7"
       @undo="del.undoDelete"
+      @pause="del.pause"
+      @resume="del.resume"
     />
 
     <!-- Version History -->
@@ -1105,7 +1252,7 @@ onMounted(async () => {
     <!-- Per-Note Lock Screen -->
     <LockScreenComponent
       v-if="lock.showNoteLockScreen.value"
-      :title="lock.noteLockTitle.value"
+      :title="$t(lock.noteLockTitle.value)"
       @unlocked="lock.handleNoteLockUnlocked"
       @cancelled="lock.showNoteLockScreen.value = false; lock.pendingNoteId.value = null"
     />

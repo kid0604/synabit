@@ -8,6 +8,10 @@ import { useNow } from '../composables/useNow';
 import { useTimeGridDrag } from '../composables/useTimeGridDrag';
 import TimeAxis from './TimeAxis.vue';
 import DayColumn from './DayColumn.vue';
+import { showLunar, shortLunar, isNotableLunarDay, fullLunar } from '../lunarDisplay';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const HOUR_HEIGHT = 48;
 const AXIS_WIDTH = 56;
@@ -83,24 +87,36 @@ watch(() => props.days[0]?.dateStr, () => { nextTick(scrollToNow); });
         <div class="flex border-b border-[#ececeb] dark:border-[#333] z-10 bg-white dark:bg-[#1a1a1a] shrink-0">
             <div class="flex items-end justify-center pb-1 border-r border-[#ececeb] dark:border-[#333] bg-gray-50/50 dark:bg-[#222]"
                  :style="{ width: AXIS_WIDTH + 'px' }">
-                <span class="text-[9px] font-bold text-gray-400 uppercase tracking-wider">{{ $t('calendar.all_day') }}</span>
+                <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('calendar.all_day') }}</span>
             </div>
             <div v-for="day in split" :key="'head-' + day.dateStr"
                  class="flex-1 min-w-0 flex flex-col border-r last:border-r-0 border-[#ececeb] dark:border-[#333]">
                 <button v-if="showDayHeaders" type="button" @click="emit('click-day', day.date)"
                         class="text-center py-1.5 border-b border-[#ececeb] dark:border-[#333] transition-colors"
-                        :class="isSameDay(day.date, now) ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300' : 'bg-gray-50/50 dark:bg-[#222] text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282828]'">
-                    <span class="text-[10px] uppercase font-bold tracking-wider block">{{ dayNamesShort()[weekdayOffset(day.date)] }}</span>
+                        :class="isSameDay(day.date, now) ? 'bg-accent/10 dark:bg-accent/15 text-accent dark:text-accent-dark' : 'bg-gray-50/50 dark:bg-[#222] text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#282828]'">
+                    <span class="text-xs uppercase font-bold tracking-wider block">{{ dayNamesShort()[weekdayOffset(day.date)] }}</span>
                     <span class="text-base font-bold"
-                          :class="{ 'bg-purple-600 text-white rounded-full w-6 h-6 flex items-center justify-center mx-auto': isSameDay(day.date, now) }">
+                          :class="{ 'bg-accent text-white rounded-full w-6 h-6 flex items-center justify-center mx-auto': isSameDay(day.date, now) }">
                         {{ day.date.getDate() }}
                     </span>
+                    <span v-if="showLunar" class="block text-xs tabular-nums"
+                          :class="isNotableLunarDay(day.date) ? 'text-accent dark:text-accent-dark font-semibold' : 'text-muted dark:text-muted-dark'"
+                          :title="fullLunar(day.date, t)">
+                        {{ shortLunar(day.date, day === split[0]) }}
+                    </span>
                 </button>
+                <!-- Day view has no column heading — the page title names the
+                     day — so the lunar date gets a line of its own, in full. -->
+                <div v-else-if="showLunar"
+                     class="text-center py-1.5 border-b border-[#ececeb] dark:border-[#333] bg-gray-50/50 dark:bg-[#222] text-xs font-medium"
+                     :class="isNotableLunarDay(day.date) ? 'text-accent dark:text-accent-dark' : 'text-muted dark:text-muted-dark'">
+                    {{ fullLunar(day.date, t) }}
+                </div>
                 <div class="p-1 min-h-[36px] max-h-24 overflow-y-auto no-scrollbar flex flex-col gap-1 bg-gray-50/20 dark:bg-[#1d1d1d]">
                     <!-- Drag one down onto an hour to decide when to do it. -->
                     <button v-for="tk in getTasksForDate(day.dateStr)" :key="'tsk-' + tk.id" type="button"
                             :title="$t('calendar.block_task_hint')"
-                            class="truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200 dark:border-[#3a3a3a] text-gray-600 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#2c2c2c] text-left cursor-grab"
+                            class="truncate px-1.5 py-0.5 rounded text-xs font-medium border border-gray-200 dark:border-border-subtle-dark text-gray-600 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#2c2c2c] text-left cursor-grab"
                             @pointerdown="startBlock($event, { id: tk.id, title: tk.title }, day.dateStr)"
                             @click="emit('open-task', tk.id)">
                         <CheckSquare class="w-2.5 h-2.5 shrink-0" :class="tk.status === 'done' ? 'text-green-500' : ''"
@@ -108,7 +124,7 @@ watch(() => props.days[0]?.dateStr, () => { nextTick(scrollToNow); });
                         <span class="truncate" :class="tk.status === 'done' ? 'line-through' : ''">{{ tk.title }}</span>
                     </button>
                     <button v-for="ev in day.allDay" :key="'ad-' + ev.id" type="button"
-                            class="truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 text-left"
+                            class="truncate px-1.5 py-0.5 rounded text-xs font-medium border border-blue-200 dark:border-blue-800/50 text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 flex items-center gap-1 text-left"
                             @click="emit('edit-event', ev, day.dateStr)">
                         <CalendarIcon class="w-2.5 h-2.5 shrink-0" /><span class="truncate">{{ ev.title }}</span>
                     </button>

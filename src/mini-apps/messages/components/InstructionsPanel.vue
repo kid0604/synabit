@@ -137,14 +137,14 @@ watch(() => props.vaultPath, load, { immediate: true });
           class="w-full min-h-[320px] px-3 py-2.5 rounded-xl resize-y
                  bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                  text-[13px] leading-relaxed font-mono text-text dark:text-text-dark
-                 placeholder-gray-400 dark:placeholder-gray-500 outline-none
+                 placeholder-gray-500 dark:placeholder-gray-400 outline-none
                  focus:border-violet-400 dark:focus:border-violet-500/50
                  focus:ring-1 focus:ring-violet-400/20 transition-all"
         />
 
         <!-- What Syn actually gets. A silently truncated instruction is one
              somebody believes is in force and is not. -->
-        <p class="text-[11px]" :class="over ? 'text-amber-600 dark:text-amber-500' : 'text-gray-400'">
+        <p class="text-xs" :class="over ? 'text-amber-600 dark:text-amber-500' : 'text-gray-500'">
           {{ over
             ? t('syn.instructions_over_budget', { used, budget: BUDGET })
             : t('syn.instructions_budget', { used, budget: BUDGET }) }}
@@ -154,7 +154,7 @@ watch(() => props.vaultPath, load, { immediate: true });
              the place the file lives. -->
         <div
           v-if="path"
-          class="flex items-start gap-2 text-[11px] text-gray-400 dark:text-gray-500"
+          class="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400"
         >
           <FileText class="w-3.5 h-3.5 shrink-0 mt-px" />
           <span class="min-w-0">
@@ -168,16 +168,14 @@ watch(() => props.vaultPath, load, { immediate: true });
         <button
           @click="save"
           :disabled="!dirty || isSaving"
-          class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-lg
-                 bg-violet-500 text-white hover:bg-violet-600 transition-colors cursor-pointer
-                 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="btn-primary"
         >
           <Loader2 v-if="isSaving" class="w-4 h-4 animate-spin" />
           <Check v-else-if="justSaved" class="w-4 h-4" />
           <Save v-else class="w-4 h-4" />
           {{ justSaved ? t('syn.instructions_saved') : t('threads.save') }}
         </button>
-        <span v-if="dirty" class="text-[11px] text-gray-400">{{ t('syn.instructions_unsaved') }}</span>
+        <span v-if="dirty" class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.instructions_unsaved') }}</span>
       </div>
     </template>
   </div>

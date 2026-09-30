@@ -26,6 +26,7 @@ import { logger } from './utils/logger';
 import { safeCode, useSafeApi, type ItemSummary } from './mini-apps/safe/api';
 import { kindInfo } from './mini-apps/safe/kinds';
 import { errorText } from './shared/errorText';
+import { applyUiScale } from './utils/uiScale';
 
 const t = (key: string, args?: Record<string, unknown>) => i18n.global.t(key, args ?? {});
 /** A Safe refusal in words: its own sentence when it has one, never a bare key. */
@@ -171,6 +172,8 @@ onMounted(async () => {
     const theme = await settings.get<'light' | 'dark' | 'system'>('themeMode');
     const dark = theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.classList.toggle('dark', dark);
+    // The interface size chosen in Settings, as the main window has it.
+    await applyUiScale((await settings.get<number>('uiScale')) ?? 1);
   } catch (e) {
     logger.error('[Safe] quick access could not read settings', e);
   }
@@ -227,7 +230,7 @@ onUnmounted(() => {
         </li>
       </ul>
       <p v-if="message" class="px-4 py-1.5 text-xs text-danger" role="alert">{{ message }}</p>
-      <p class="px-4 py-2 border-t border-border dark:border-border-dark text-[11px] text-text-tertiary dark:text-text-tertiary-dark">{{ hint }}</p>
+      <p class="px-4 py-2 border-t border-border dark:border-border-dark text-xs text-text-tertiary dark:text-text-tertiary-dark">{{ hint }}</p>
     </template>
 
     <form v-else-if="state === 'locked'" class="flex-1 flex flex-col items-center justify-center gap-3 px-10" data-tauri-drag-region @submit.prevent="unlock">
@@ -243,7 +246,7 @@ onUnmounted(() => {
         class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark outline-none focus:ring-2 focus:ring-accent"
       />
       <p v-if="message" class="text-xs text-danger text-center" role="alert">{{ message }}</p>
-      <button type="submit" :disabled="!password || busy" class="w-full py-2 rounded-lg bg-accent text-white text-sm font-medium disabled:opacity-40">
+      <button type="submit" :disabled="!password || busy" class="btn-primary w-full">
         {{ busy ? t('safe.unlock.unlocking') : t('safe.unlock.submit') }}
       </button>
     </form>

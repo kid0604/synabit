@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
+import { ref } from 'vue';
 import { X, Gift, ArrowUpRight, ArrowDownLeft } from 'lucide-vue-next';
 
 defineProps<{
@@ -27,25 +28,19 @@ const save = () => {
     emit('close');
 };
 
-onMounted(() => {
-    const handleKeydown = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') emit('close');
-    };
-    window.addEventListener('keydown', handleKeydown);
-    onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
-});
 </script>
 
 <template>
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click="emit('close')">
-        <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl w-full max-w-md flex flex-col overflow-hidden" @click.stop>
+    <AppDialog :show="true" labelledby="gift-modal-title" size="md" unstyled
+               panel-class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+               @close="emit('close')">
             <!-- Header -->
             <div class="px-5 py-4 border-b border-border dark:border-border-dark flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
-                <h2 class="text-base font-semibold flex items-center gap-2">
+                <h2 id="gift-modal-title" class="text-base font-semibold flex items-center gap-2">
                     <Gift class="w-4 h-4 text-pink-500" />
                     {{ $t('people.log_gift') }} — {{ person.title }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" :aria-label="$t('people.close')">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors" :aria-label="$t('people.close')">
                     <X class="w-4 h-4" />
                 </button>
             </div>
@@ -103,10 +98,9 @@ onMounted(() => {
             <!-- Footer -->
             <div class="px-5 py-4 border-t border-border dark:border-border-dark flex justify-end gap-3 bg-gray-50/50 dark:bg-gray-800/50">
                 <button @click="emit('close')" class="px-4 py-2 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
-                <button @click="save" :disabled="!form.description.trim()" class="px-4 py-2 text-sm bg-pink-500 text-white rounded-lg hover:bg-pink-600 transition-colors disabled:opacity-50 font-medium flex items-center gap-1.5">
+                <button @click="save" :disabled="!form.description.trim()" class="btn-primary disabled:opacity-50">
                     <Gift class="w-3.5 h-3.5" /> {{ $t('people.log_gift') }}
                 </button>
             </div>
-        </div>
-    </div>
+    </AppDialog>
 </template>

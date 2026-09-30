@@ -70,19 +70,19 @@ const onToggle = (event: Event) => {
              focus-visible:outline-2 focus-visible:outline-violet-500"
     >
       <ChevronRight
-        class="w-4 h-4 shrink-0 text-gray-400 transition-transform duration-150 group-open:rotate-90"
+        class="w-4 h-4 shrink-0 text-gray-500 dark:text-gray-400 transition-transform duration-150 group-open:rotate-90"
         aria-hidden="true"
       />
-      <span class="text-[11px] font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300">
+      <span class="text-xs font-bold uppercase tracking-wider text-gray-600 dark:text-gray-300">
         {{ title }}
       </span>
       <span
         v-if="savesItself"
-        class="px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
+        class="px-1.5 py-0.5 rounded-md text-xs font-medium bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
       >
         {{ savesItselfLabel }}
       </span>
-      <span v-if="summary" class="ml-auto min-w-0 truncate text-xs text-gray-400 dark:text-gray-500">
+      <span v-if="summary" class="ml-auto min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
         {{ summary }}
       </span>
     </summary>

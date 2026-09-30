@@ -1,6 +1,6 @@
 import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open, ask, message } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { i18n } from '../../../i18n';
 
@@ -405,10 +405,10 @@ export function useFileStore(vaultPath: () => string) {
       const selectedPath = await open({
         directory: true,
         multiple: false,
-        title: "Select a folder to sync"
+        title: t('file.pick_folder_title')
       });
       if (selectedPath && typeof selectedPath === 'string') {
-        const folderName = selectedPath.split('/').pop() || selectedPath.split('\\').pop() || "Unknown Folder";
+        const folderName = selectedPath.split(/[\\/]/).filter(Boolean).pop() || t('file.unknown_folder');
         await invoke('add_file_source', { vaultPath: vaultPath(), path: selectedPath, name: folderName });
         await fetchSources();
         void watchSourceFolders();
@@ -491,7 +491,7 @@ export function useFileStore(vaultPath: () => string) {
     try {
       const selected = await open({
         multiple: true,
-        title: "Select files to import",
+        title: t('file.pick_files_title'),
       });
       if (!selected) return;
       await importPaths(Array.isArray(selected) ? selected : [selected]);
@@ -655,9 +655,36 @@ export function useFileStore(vaultPath: () => string) {
   /** How many rows are fetched in one request. */
   const PAGE_SIZE = 100;
 
-  /** One slot per matching file; `null` until that page has been fetched. */
-  const rows = ref<(FileMetadata | null)[]>([]);
-  const total = ref(0);
+  /**
+   * One slot per matching file, at the offset the database gave it; `null`
+   * until that page has been fetched.
+   */
+  const rawRows = ref<(FileMetadata | null)[]>([]);
+  const rawTotal = ref(0);
+
+  /**
+   * Files taken off the screen for an undo window, by identity and by path.
+   *
+   * They are filtered out where the list is read rather than spliced out of
+   * `rawRows`: splicing shifted every later slot down by one, so the next page
+   * fetched landed one row off and a file went missing at each page boundary.
+   * `pending` means the delete has not been written yet; `deleted` means it
+   * has, and the entry can go once a reload has asked the database again.
+   */
+  const hidden = ref(new Map<string, { path: string; state: 'pending' | 'deleted' }>());
+  const isHidden = (f: { id: string; path: string } | null) => {
+    if (!f || hidden.value.size === 0) return false;
+    if (hidden.value.has(f.id)) return true;
+    for (const h of hidden.value.values()) if (h.path === f.path) return true;
+    return false;
+  };
+
+  /** The list as shown: every slot, less the files waiting on an undo. */
+  const rows = computed(() =>
+    hidden.value.size === 0 ? rawRows.value : rawRows.value.filter(f => !isHidden(f))
+  );
+  /** How many rows are shown — the database's count less the hidden ones. */
+  const total = computed(() => Math.max(0, rawTotal.value - (rawRows.value.length - rows.value.length)));
   /** Pages already asked for, so scrolling back does not ask again. */
   let requestedPages = new Set<number>();
   /** Bumped on every reload, so a page arriving late cannot land in a new list. */
@@ -686,8 +713,21 @@ export function useFileStore(vaultPath: () => string) {
     };
   };
 
+  /**
+   * Run before every reload. The screen sets it to finish a delete still
+   * waiting on its undo, so the fresh list does not bring the file back.
+   */
+  let beforeReload: (() => unknown) | null = null;
+  const setBeforeReload = (fn: (() => unknown) | null) => { beforeReload = fn; };
+
   /** Start the list again: new count, nothing loaded, first page on its way. */
   const reload = async () => {
+    await beforeReload?.();
+    // A delete already written is gone from what the database will answer.
+    // One still waiting on its undo stays hidden.
+    if ([...hidden.value.values()].some(h => h.state === 'deleted')) {
+      hidden.value = new Map([...hidden.value].filter(([, h]) => h.state === 'pending'));
+    }
     const mine = ++generation;
     requestedPages = new Set();
     clearSelection();
@@ -701,14 +741,14 @@ export function useFileStore(vaultPath: () => string) {
         limit: PAGE_SIZE,
       });
       if (mine !== generation) return;
-      total.value = page.total;
-      rows.value = new Array(page.total).fill(null);
+      rawTotal.value = page.total;
+      rawRows.value = new Array(page.total).fill(null);
       placePage(0, page.files);
       requestedPages.add(0);
     } catch (e) {
       logger.error("Failed to load files", e);
-      rows.value = [];
-      total.value = 0;
+      rawRows.value = [];
+      rawTotal.value = 0;
     } finally {
       if (mine === generation) isLoading.value = false;
     }
@@ -721,15 +761,22 @@ export function useFileStore(vaultPath: () => string) {
   const searchIsRanked = () => fileBackendSearchIds.value !== null;
 
   const placePage = (offset: number, files: FileMetadata[]) => {
-    for (let i = 0; i < files.length; i++) rows.value[offset + i] = files[i];
+    for (let i = 0; i < files.length; i++) rawRows.value[offset + i] = files[i];
     // Vue tracks the array, not its holes.
-    rows.value = [...rows.value];
+    rawRows.value = [...rawRows.value];
   };
 
-  /** Fetch whatever pages the rows between `from` and `to` need. */
+  /**
+   * Fetch whatever pages the rows between `from` and `to` need.
+   *
+   * `from` and `to` are positions on screen. A hidden file above them moves
+   * each one down a slot in `rawRows`, so the end is stretched by however many
+   * are hidden — at most a page more than strictly needed, never one less.
+   */
   const ensureLoaded = async (from: number, to: number) => {
+    to += rawRows.value.length - rows.value.length;
     const first = Math.max(0, Math.floor(from / PAGE_SIZE));
-    const last = Math.min(Math.floor(Math.max(to, 0) / PAGE_SIZE), Math.floor(Math.max(total.value - 1, 0) / PAGE_SIZE));
+    const last = Math.min(Math.floor(Math.max(to, 0) / PAGE_SIZE), Math.floor(Math.max(rawTotal.value - 1, 0) / PAGE_SIZE));
 
     for (let page = first; page <= last; page++) {
       if (requestedPages.has(page)) continue;
@@ -808,8 +855,14 @@ export function useFileStore(vaultPath: () => string) {
       total_duplicate_files: duplicateGroups.value.reduce((acc, g) => acc + g.count - 1, 0),
       total_wasted_bytes: duplicateGroups.value.reduce((acc, g) => acc + g.wasted_bytes, 0),
     };
+    // A file waiting on its undo is left out of every rescan too.
+    const groups = hidden.value.size === 0
+      ? duplicateGroups.value
+      : duplicateGroups.value
+        .map(g => ({ ...g, files: g.files.filter(f => !isHidden(f)) }))
+        .filter(g => g.files.length > 1);
     return {
-      groups: duplicateGroups.value,
+      groups,
       ...summary,
     };
   });
@@ -888,25 +941,40 @@ export function useFileStore(vaultPath: () => string) {
     }
   };
 
-  const deleteFile = async (file: FileMetadata): Promise<boolean> => {
-    const confirmed = await ask(t('file.delete_body', { name: file.filename }), {
-      title: t('file.delete_title'),
-      kind: 'warning',
-      okLabel: t('file.delete_confirm'),
-      cancelLabel: t('file.cancel'),
-    });
-    if (!confirmed) return false;
+  /**
+   * Take a file off the screen ahead of deleting it, for the undo window.
+   *
+   * Nothing is written here: the file is still on disk until `deleteFile`
+   * runs, which is what lets Undo be `unhideFile` rather than a restore from
+   * the trash. Every row sharing the file's identity or path goes, as does its
+   * place in a duplicate report — including one from a rescan made meanwhile.
+   */
+  const hideFile = (file: FileMetadata) => {
+    const next = new Map(hidden.value);
+    next.set(file.id, { path: file.path, state: 'pending' });
+    hidden.value = next;
+  };
 
-    try {
-      await invoke('delete_file', { vaultPath: vaultPath(), fileId: file.id, filePath: file.path });
-      // Remove from local state
-      rows.value = rows.value.filter(f => f?.id !== file.id);
-      total.value = Math.max(0, total.value - 1);
-      return true;
-    } catch (e) {
-      logger.error('Failed to delete file', e);
-      await message(`Failed to delete: ${e}`, { title: 'Error', kind: 'error' });
-      return false;
+  /** Put a hidden file back, for Undo or a delete that failed. */
+  const unhideFile = (file: FileMetadata) => {
+    if (!hidden.value.has(file.id)) return;
+    const next = new Map(hidden.value);
+    next.delete(file.id);
+    hidden.value = next;
+  };
+
+  /**
+   * Move a file to the vault's `.trash` folder. Throws when it could not be,
+   * so the caller can put the row back and say so.
+   */
+  const deleteFile = async (file: FileMetadata) => {
+    await invoke('delete_file', { vaultPath: vaultPath(), fileId: file.id, filePath: file.path });
+    // Stays hidden: the slots already fetched still hold it until a reload.
+    const entry = hidden.value.get(file.id);
+    if (entry) {
+      const next = new Map(hidden.value);
+      next.set(file.id, { ...entry, state: 'deleted' });
+      hidden.value = next;
     }
   };
 
@@ -938,7 +1006,7 @@ export function useFileStore(vaultPath: () => string) {
     collections, fetchCollections, saveCollection, deleteCollection, applyCollection,
     sortBy, sortDescending,
     // The list: as long as the filtered set, loaded a page at a time.
-    rows, total, loadedFiles, ensureLoaded, reload, findFile, allTags,
+    rows, total, loadedFiles, ensureLoaded, reload, setBeforeReload, findFile, allTags,
     // Selection and bulk work
     selection, isSelected, selectFile, selectAllMatching, clearSelection,
     selectedFiles, selectionSize, tagSelection,
@@ -953,7 +1021,7 @@ export function useFileStore(vaultPath: () => string) {
     removePerson,
     openLocalFile,
     // Duplicates
-    duplicateReport, isScanningDuplicates, scanDuplicates, getFileReferences, deleteFile,
+    duplicateReport, isScanningDuplicates, scanDuplicates, getFileReferences, hideFile, unhideFile, deleteFile,
     // Helpers
     getFileTypeGroup, formatSize,
     // Init

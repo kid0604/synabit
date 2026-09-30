@@ -2,6 +2,7 @@
 import { ref } from 'vue';
 import { useFocusTrap } from '../composables/useFocusTrap';
 import { useI18n } from 'vue-i18n';
+import AppDialog from '../../../shared/components/AppDialog.vue';
 import { Upload, Download, X, FileText, Check, AlertCircle, Loader2 } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
 import { open, save } from '@tauri-apps/plugin-dialog';
@@ -11,8 +12,8 @@ const emit = defineEmits<{ close: []; imported: [] }>();
 const { t } = useI18n();
 const feedService = useArticleService();
 
-// This dialog has no input to autofocus, so nothing used to hold focus — and
-// with nothing focused inside it, its own Escape handler never fired.
+// AppDialog moves focus in and handles Escape; the trap keeps Tab inside and
+// hands focus back when the dialog is unmounted rather than closed.
 const dialog = ref<HTMLElement | null>(null);
 useFocusTrap(dialog);
 
@@ -71,37 +72,30 @@ const handleExport = async () => {
   }
 };
 
-const handleKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Escape') emit('close');
-};
 </script>
 
 <template>
-  <div ref="dialog" class="fixed inset-0 z-[200] flex items-center justify-center" role="dialog" aria-modal="true" :aria-label="t('feeds.import_export_opml')" tabindex="-1" @keydown="handleKeydown">
-    <!-- Backdrop -->
-    <div class="absolute inset-0 bg-black/50 backdrop-blur-sm" @click="emit('close')"></div>
-
-    <!-- Modal -->
-    <div class="relative w-full max-w-lg mx-4 bg-white dark:bg-[#1a1a1a] rounded-2xl shadow-2xl border border-gray-200 dark:border-[#2c2c2c] overflow-hidden animate-in">
+  <AppDialog :show="true" :aria-label="t('feeds.import_export_opml')" size="md" @close="emit('close')">
+    <div ref="dialog">
       <!-- Header -->
-      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-[#2c2c2c]">
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-border-dark">
         <h2 class="text-lg font-bold flex items-center gap-2">
-          <FileText class="w-5 h-5 text-orange-500" />
+          <FileText class="w-5 h-5 text-accent dark:text-accent-dark" />
           {{ t('feeds.import_export_opml') }}
         </h2>
-        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.a11y_close')">
+        <button @click="emit('close')" class="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.a11y_close')">
           <X class="w-5 h-5" />
         </button>
       </div>
 
       <!-- Tabs -->
-      <div class="flex border-b border-gray-200 dark:border-[#2c2c2c]">
+      <div class="flex border-b border-gray-200 dark:border-border-dark">
         <button
           @click="activeTab = 'import'"
           :class="[
             'flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200',
             activeTab === 'import'
-              ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-500'
+              ? 'text-accent dark:text-accent-dark border-b-2 border-accent'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
           ]"
         >
@@ -113,7 +107,7 @@ const handleKeydown = (e: KeyboardEvent) => {
           :class="[
             'flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-all duration-200',
             activeTab === 'export'
-              ? 'text-orange-600 dark:text-orange-400 border-b-2 border-orange-500'
+              ? 'text-accent dark:text-accent-dark border-b-2 border-accent'
               : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
           ]"
         >
@@ -127,18 +121,18 @@ const handleKeydown = (e: KeyboardEvent) => {
         <!-- Import Tab -->
         <div v-if="activeTab === 'import'" class="space-y-4">
           <div
-            class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center hover:border-orange-400 dark:hover:border-orange-500 transition-colors cursor-pointer"
+            class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-xl p-8 text-center hover:border-accent transition-colors cursor-pointer"
             @click="handleImport"
           >
-            <Upload class="w-10 h-10 text-gray-400 dark:text-gray-500 mx-auto mb-3" />
+            <Upload class="w-10 h-10 text-gray-500 dark:text-gray-400 mx-auto mb-3" />
             <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('feeds.browse_file') }}</p>
-            <p class="text-xs text-gray-400 dark:text-gray-500">OPML, XML</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400">OPML, XML</p>
           </div>
 
           <!-- Importing spinner -->
           <div v-if="importing" class="flex items-center justify-center gap-2 py-3">
-            <Loader2 class="w-5 h-5 animate-spin text-orange-500" />
-            <span class="text-sm text-gray-500">{{ t('feeds.importing') }}</span>
+            <Loader2 class="w-5 h-5 animate-spin text-accent dark:text-accent-dark" />
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('feeds.importing') }}</span>
           </div>
 
           <!-- Import result -->
@@ -160,12 +154,12 @@ const handleKeydown = (e: KeyboardEvent) => {
         <!-- Export Tab -->
         <div v-if="activeTab === 'export'" class="space-y-4">
           <div class="text-center py-4">
-            <Download class="w-10 h-10 text-gray-400 dark:text-gray-500 mx-auto mb-3" />
+            <Download class="w-10 h-10 text-gray-500 dark:text-gray-400 mx-auto mb-3" />
             <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">{{ t('feeds.export_opml') }}</p>
             <button
               @click="handleExport"
               :disabled="exporting"
-              class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-orange-500 text-white text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              class="btn-primary"
             >
               <Loader2 v-if="exporting" class="w-4 h-4 animate-spin" />
               <Download v-else class="w-4 h-4" />
@@ -186,28 +180,12 @@ const handleKeydown = (e: KeyboardEvent) => {
       </div>
 
       <!-- Footer -->
-      <div class="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-[#2c2c2c]">
+      <div class="flex items-center justify-end px-6 py-4 border-t border-gray-200 dark:border-border-dark">
         <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
           {{ t('feeds.cancel') }}
         </button>
       </div>
     </div>
-  </div>
+  </AppDialog>
 </template>
 
-<style scoped>
-.animate-in {
-  animation: modal-in 0.2s ease-out;
-}
-
-@keyframes modal-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95) translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-</style>

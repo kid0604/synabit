@@ -8,11 +8,11 @@
         <span class="truncate">{{ displayTitle }}</span>
       </div>
       <div class="flex items-center space-x-1">
-        <button @click="openNote" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" title="Open source note">
+        <button @click="openNote" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors" :title="$t('note.editor.embed_view.open_source')">
           <ExternalLinkIcon class="w-4 h-4 text-gray-500 dark:text-gray-400" />
         </button>
-        <button @click="removeNode" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" title="Remove embed">
-          <XIcon class="w-4 h-4 text-gray-400 hover:text-red-500" />
+        <button @click="removeNode" class="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded transition-colors" :title="$t('note.editor.embed_view.remove')">
+          <XIcon class="w-4 h-4 text-gray-500 dark:text-gray-400 hover:text-red-500" />
         </button>
       </div>
     </div>
@@ -21,7 +21,7 @@
     <div class="p-4 relative">
       <div v-if="loading" class="flex items-center justify-center py-4 text-gray-500 dark:text-gray-400">
         <Loader2Icon class="w-5 h-5 animate-spin mr-2" />
-        <span class="text-sm">Loading content...</span>
+        <span class="text-sm">{{ $t('note.editor.embed_view.loading') }}</span>
       </div>
       <div v-else-if="error" class="text-red-500 text-sm py-2">
         {{ error }}
@@ -35,11 +35,13 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3';
 import { invoke } from '@tauri-apps/api/core';
 import { Link as LinkIcon, ExternalLink as ExternalLinkIcon, Loader2 as Loader2Icon, X as XIcon } from 'lucide-vue-next';
 
 const props = defineProps(nodeViewProps);
+const { t } = useI18n();
 
 const loading = ref(true);
 const content = ref('');
@@ -51,9 +53,9 @@ const resolvedTitle = ref('');
 
 const displayTitle = computed(() => {
   if (resolvedTitle.value) return resolvedTitle.value;
-  if (!target.value) return 'Embedded content';
+  if (!target.value) return t('note.editor.embed_view.untitled');
   if (!target.value.includes('#')) return target.value;
-  return 'Loading…';
+  return t('note.editor.loading');
 });
 
 /** Strip YAML frontmatter from note content */
@@ -82,7 +84,7 @@ const resolveNodeId = async (): Promise<string | null> => {
 
 const loadBlock = async () => {
   if (!target.value) {
-    error.value = "No target specified.";
+    error.value = t('note.editor.embed_view.no_target');
     loading.value = false;
     return;
   }
@@ -90,7 +92,7 @@ const loadBlock = async () => {
   try {
     const nodeId = await resolveNodeId();
     if (!nodeId) {
-      error.value = "Note not found.";
+      error.value = t('note.editor.embed_view.not_found');
       loading.value = false;
       return;
     }

@@ -2,7 +2,7 @@
   <div class="space-y-6">
     <!-- Sync Policies -->
     <div class="space-y-3">
-      <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-2">{{ $t('settings.mobile.policies', 'Cellular Policies') }}</h4>
+      <h4 class="text-[13px] font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">{{ $t('settings.mobile.policies', 'Cellular Policies') }}</h4>
       <div class="flex items-center justify-between p-3 rounded-xl bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/5">
         <div>
           <h5 class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ $t('settings.mobile.cellular_sync', 'Sync on Cellular') }}</h5>
@@ -11,32 +11,33 @@
         <select 
           v-model="policy"
           @change="updatePolicy"
+          :aria-label="$t('settings.mobile.cellular_sync')"
           class="bg-white dark:bg-[#222] border border-gray-200 dark:border-white/10 rounded-lg text-sm px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
         >
-          <option value="all">All Data</option>
-          <option value="text_only">Text Only</option>
-          <option value="off">Off</option>
+          <option value="all">{{ $t('settings.mobile.policy_all') }}</option>
+          <option value="text_only">{{ $t('settings.mobile.policy_text_only') }}</option>
+          <option value="off">{{ $t('settings.mobile.policy_off') }}</option>
         </select>
       </div>
     </div>
 
     <!-- Data Usage Stats -->
     <div class="space-y-3">
-      <h4 class="text-[13px] font-semibold text-[#8b8b8b] dark:text-[#71717a] uppercase tracking-wider mb-2">{{ $t('settings.mobile.data_usage', 'Data Usage (Today)') }}</h4>
+      <h4 class="text-[13px] font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">{{ $t('settings.mobile.data_usage', 'Data Usage (Today)') }}</h4>
       <div class="grid grid-cols-2 gap-3">
         <!-- Cellular -->
         <div class="p-4 rounded-xl bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/5">
           <div class="flex items-center gap-2 mb-3">
             <div class="w-2 h-2 rounded-full bg-blue-500"></div>
-            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Cellular</span>
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ $t('settings.mobile.cellular') }}</span>
           </div>
           <div class="space-y-1">
             <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Sent</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ $t('settings.mobile.sent') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ formatBytes(metrics.cellular_bytes_tx) }}</span>
             </div>
             <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Received</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ $t('settings.mobile.received') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ formatBytes(metrics.cellular_bytes_rx) }}</span>
             </div>
           </div>
@@ -50,11 +51,11 @@
           </div>
           <div class="space-y-1">
             <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Sent</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ $t('settings.mobile.sent') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ formatBytes(metrics.wifi_bytes_tx) }}</span>
             </div>
             <div class="flex justify-between text-xs">
-              <span class="text-gray-500">Received</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ $t('settings.mobile.received') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ formatBytes(metrics.wifi_bytes_rx) }}</span>
             </div>
           </div>

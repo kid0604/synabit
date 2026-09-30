@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { X, Wallet, Users, FileText } from 'lucide-vue-next';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import type { Debt, FinanceAccount, Transaction } from './types';
 import { formatAmountInput, formatMinorForInput, parseAmountInput } from './currency';
+
+const { t } = useI18n();
 
 const props = defineProps<{
     show: boolean;
@@ -104,7 +108,7 @@ const save = () => {
             category: debt.type === 'lend' ? 'Lending' : 'Borrowing',
             accountId: debt.accountId,
             date: debt.startDate,
-            note: `${debt.type === 'lend' ? `Lent to ${debt.person}` : `Borrowed from ${debt.person}`}${debt.note ? ` - ${debt.note}` : ''}`,
+            note: `${debt.type === 'lend' ? t('finance.debt_note_lent', { person: debt.person }) : t('finance.debt_note_borrowed', { person: debt.person })}${debt.note ? ` - ${debt.note}` : ''}`,
             debtId: debt.id,
             personId: debt.personId
         };
@@ -116,19 +120,14 @@ const save = () => {
 </script>
 
 <template>
-    <div v-if="show" class="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6">
-        <!-- Backdrop -->
-        <div class="absolute inset-0 bg-gray-900/40 dark:bg-black/60 backdrop-blur-sm" @click="emit('close')"></div>
-        
-        <!-- Modal -->
-        <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-3xl shadow-2xl w-full max-w-md relative flex flex-col max-h-full overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+    <AppDialog :show="show" labelledby="finance-debt-title" panel-class="!overflow-hidden flex flex-col" @close="emit('close')">
             
             <!-- Header -->
             <div class="px-6 py-5 border-b border-border dark:border-border-dark flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/30">
-                <h3 class="text-xl font-bold text-text dark:text-text-dark flex items-center gap-2">
-                    {{ isNew ? 'New Debt' : 'Edit Debt' }}
+                <h3 id="finance-debt-title" class="text-xl font-bold text-text dark:text-text-dark flex items-center gap-2">
+                    {{ isNew ? $t('finance.new_debt') : $t('finance.edit_debt') }}
                 </h3>
-                <button @click="emit('close')" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500" aria-label="More Options">
+                <button @click="emit('close')" class="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors text-gray-500 dark:text-gray-400" :aria-label="$t('finance.close')" :title="$t('finance.close')">
                     <X class="w-5 h-5" />
                 </button>
             </div>
@@ -142,13 +141,13 @@ const save = () => {
                         @click="type = 'lend'"
                         :class="['flex-1 py-2.5 rounded-lg font-bold text-sm transition-all', type === 'lend' ? 'bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Lend (Receivable)
+                        {{ $t('finance.lend_receivable') }}
                     </button>
                     <button 
                         @click="type = 'borrow'"
                         :class="['flex-1 py-2.5 rounded-lg font-bold text-sm transition-all', type === 'borrow' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Borrow (Payable)
+                        {{ $t('finance.borrow_payable') }}
                     </button>
                 </div>
 
@@ -158,7 +157,7 @@ const save = () => {
                     <div>
                         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.person') }}</label>
                         <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
+                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500 dark:text-gray-400">
                                 <Users class="w-5 h-5" />
                             </div>
                             <input 
@@ -166,7 +165,7 @@ const save = () => {
                                 type="text" 
                                 list="debt-people-list"
                                 :placeholder="$t('finance.person_ph')"
-                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600"
+                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-500 dark:placeholder-gray-400"
                             />
                             <datalist id="debt-people-list" v-if="people">
                                 <option v-for="p in people" :key="p.id" :value="p.title"></option>
@@ -183,21 +182,21 @@ const save = () => {
                                 @input="formatCurrencyInput"
                                 type="text" 
                                 placeholder="0"
-                                class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-bold text-lg placeholder-gray-400 dark:placeholder-gray-600"
+                                class="w-full pl-4 pr-12 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-bold text-lg placeholder-gray-500 dark:placeholder-gray-400"
                             />
                         </div>
                     </div>
 
                     <!-- Account -->
                     <div v-if="isNew">
-                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ type === 'lend' ? 'Withdraw from' : 'Deposit to' }} Account</label>
+                        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ type === 'lend' ? $t('finance.withdraw_from_account') : $t('finance.deposit_to_account') }}</label>
                         <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-400">
+                            <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-gray-500 dark:text-gray-400">
                                 <Wallet class="w-5 h-5" />
                             </div>
                             <select 
                                 v-model="accountId" 
-                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium appearance-none cursor-pointer"
+                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-medium appearance-none cursor-pointer"
                             >
                                 <option value="" disabled>{{ $t('finance.select_account') }}</option>
                                 <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
@@ -213,7 +212,7 @@ const save = () => {
                                 <input 
                                     v-model="startDate" 
                                     type="date" 
-                                    class="w-full pl-3 pr-3 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium"
+                                    class="w-full pl-3 pr-3 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-medium"
                                 />
                             </div>
                         </div>
@@ -223,7 +222,7 @@ const save = () => {
                                 <input 
                                     v-model="dueDate" 
                                     type="date" 
-                                    class="w-full pl-3 pr-3 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium"
+                                    class="w-full pl-3 pr-3 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-medium"
                                 />
                             </div>
                         </div>
@@ -233,14 +232,14 @@ const save = () => {
                     <div>
                         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-1.5 ml-1">{{ $t('finance.note_opt') }}</label>
                         <div class="relative">
-                            <div class="absolute top-3.5 left-3.5 pointer-events-none text-gray-400">
+                            <div class="absolute top-3.5 left-3.5 pointer-events-none text-gray-500 dark:text-gray-400">
                                 <FileText class="w-5 h-5" />
                             </div>
                             <textarea 
                                 v-model="note" 
                                 :placeholder="$t('finance.reason_ph')"
                                 rows="2"
-                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-400 dark:placeholder-gray-600 resize-none"
+                                class="w-full pl-11 pr-4 py-3 bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-xl focus:ring-2 focus:ring-accent outline-none transition-all text-text dark:text-text-dark font-medium placeholder-gray-500 dark:placeholder-gray-400 resize-none"
                             ></textarea>
                         </div>
                     </div>
@@ -250,18 +249,17 @@ const save = () => {
             
             <!-- Footer -->
             <div class="p-5 border-t border-border dark:border-border-dark bg-gray-50/50 dark:bg-gray-800/30 flex gap-3">
-                <button @click="emit('close')" class="flex-1 px-4 py-3 rounded-xl font-bold text-gray-600 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">
-                    Cancel
+                <button @click="emit('close')" class="flex-1 btn-secondary">
+                    {{ $t('finance.cancel') }}
                 </button>
                 <button 
                     @click="save" 
                     :disabled="!person || !totalAmountStr || !startDate || !accountId"
-                    class="flex-1 px-4 py-3 rounded-xl font-bold text-white bg-blue-500 hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    class="flex-1 btn-primary"
                 >
-                    Save Debt
+                    {{ $t('finance.save_debt') }}
                 </button>
             </div>
             
-        </div>
-    </div>
+    </AppDialog>
 </template>

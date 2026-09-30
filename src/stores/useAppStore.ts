@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { load, Store } from '@tauri-apps/plugin-store';
+import { normaliseUiScale } from '../utils/uiScale';
 
 export const useAppStore = defineStore('app', () => {
   // Vault & Sync
@@ -27,6 +28,9 @@ export const useAppStore = defineStore('app', () => {
   
   // Daily Notes
   const enableDailyNotes = ref<boolean>(true);
+  // The formatting row above a note's text. On by default; some people would
+  // rather write on a bare page and reach formatting through / and selection.
+  const noteToolbarVisible = ref<boolean>(true);
   const dailyNoteFormat = ref<string>('YYYY-MM-DD');
   const dailyNoteTag = ref<string>('daily');
   
@@ -45,6 +49,17 @@ export const useAppStore = defineStore('app', () => {
     // Theme
     const themeMode = ref<'light' | 'dark' | 'system'>('system');
     const appLanguage = ref<'en' | 'vi'>('en');
+    // How large the whole interface is drawn; see utils/uiScale.
+    const uiScale = ref(1);
+    // Fewer apps and no power-user tools; see shared/simpleMode.
+    const simpleMode = ref(false);
+    // Whether the user ever made these two choices, as opposed to still being
+    // on the defaults. Read from whether the key exists in settings.json: the
+    // watchers below only write a value once it changes, so an absent key is
+    // a choice never made. `shared/appAccess.startApp` and the first-run mode
+    // question in App.vue are what ask.
+    const simpleModeChosen = ref(false);
+    const defaultAppChosen = ref(false);
     
     // Unified Sync Settings
     const activeSyncProvider = ref<'none' | 'local' | 'server'>('none');
@@ -83,6 +98,13 @@ export const useAppStore = defineStore('app', () => {
       
       const lang = await storeInstance.get('appLanguage');
       if (lang) appLanguage.value = lang as 'en' | 'vi';
+
+      const scale = await storeInstance.get('uiScale');
+      uiScale.value = normaliseUiScale(scale);
+
+      const simple = await storeInstance.get('simpleMode');
+      if (typeof simple === 'boolean') simpleMode.value = simple;
+      simpleModeChosen.value = await storeInstance.has('simpleMode');
       
       const arcDays = await storeInstance.get('taskArchiveDays');
       if (arcDays) taskArchiveDays.value = Number(arcDays);
@@ -100,6 +122,9 @@ export const useAppStore = defineStore('app', () => {
       
       const enDaily = await storeInstance.has('enableDailyNotes');
       if (enDaily) enableDailyNotes.value = (await storeInstance.get('enableDailyNotes')) as boolean;
+
+      const toolbarPref = await storeInstance.get('noteToolbarVisible');
+      if (typeof toolbarPref === 'boolean') noteToolbarVisible.value = toolbarPref;
       
       const dailyFmt = await storeInstance.get('dailyNoteFormat');
       if (dailyFmt) dailyNoteFormat.value = dailyFmt as string;
@@ -124,6 +149,7 @@ export const useAppStore = defineStore('app', () => {
       
       const defApp = await storeInstance.get('defaultApp');
       if (defApp) defaultApp.value = defApp as any;
+      defaultAppChosen.value = await storeInstance.has('defaultApp');
       
       const hApps = await storeInstance.get('hiddenSidebarApps');
       if (hApps && Array.isArray(hApps)) hiddenSidebarApps.value = hApps as string[];
@@ -227,6 +253,9 @@ export const useAppStore = defineStore('app', () => {
       watch(enableDailyNotes, async (v) => {
         if (storeInstance) await storeInstance.set('enableDailyNotes', v);
       });
+      watch(noteToolbarVisible, async (v) => {
+        if (storeInstance) await storeInstance.set('noteToolbarVisible', v);
+      });
       watch(dailyNoteFormat, async (v) => {
         if (storeInstance) await storeInstance.set('dailyNoteFormat', v);
       });
@@ -253,6 +282,7 @@ export const useAppStore = defineStore('app', () => {
       });
 
     watch(defaultApp, async (v) => {
+      defaultAppChosen.value = true;
       if (storeInstance) await storeInstance.set('defaultApp', v);
     });
     watch(hiddenSidebarApps, async (v) => {
@@ -263,6 +293,13 @@ export const useAppStore = defineStore('app', () => {
     });
     watch(appLanguage, async (v) => {
       if (storeInstance) await storeInstance.set('appLanguage', v);
+    });
+    watch(uiScale, async (v) => {
+      if (storeInstance) await storeInstance.set('uiScale', v);
+    });
+    watch(simpleMode, async (v) => {
+      simpleModeChosen.value = true;
+      if (storeInstance) await storeInstance.set('simpleMode', v);
     });
     watch(activeSyncProvider, async (v) => {
       if (storeInstance) await storeInstance.set('activeSyncProvider', v);
@@ -303,6 +340,19 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /**
+   * Record the answer to the first-run "Simple or Everything" question.
+   *
+   * Written explicitly rather than left to the watcher, because "Everything"
+   * is the value simple mode already has: the watcher would see no change,
+   * write nothing, and the question would come back.
+   */
+  async function chooseSimpleMode(on: boolean) {
+    simpleMode.value = on;
+    simpleModeChosen.value = true;
+    if (storeInstance) await storeInstance.set('simpleMode', on);
+  }
+
   async function setTheme(mode: 'light' | 'dark' | 'system') {
     themeMode.value = mode;
     if (storeInstance) {
@@ -321,6 +371,7 @@ export const useAppStore = defineStore('app', () => {
     taskListSort,
     taskListGroup,
     enableDailyNotes,
+    noteToolbarVisible,
     dailyNoteFormat,
     dailyNoteTag,
     nestedNumberListStyle,
@@ -333,6 +384,11 @@ export const useAppStore = defineStore('app', () => {
     hiddenSidebarApps,
     themeMode,
     appLanguage,
+    uiScale,
+    simpleMode,
+    simpleModeChosen,
+    defaultAppChosen,
+    chooseSimpleMode,
     activeSyncProvider,
     syncAutoEnabled,
     syncAutoInterval,

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * Creating or editing an item, in the shared `ModalDialog` (a real modal
- * `<dialog>`, which also knows the Escape and closed-dialog traps).
+ * Creating or editing an item, in the shared `AppDialog`, which owns Escape,
+ * the scrim and where focus goes.
  *
  * # Concealed values are not sent here to be edited
  *
@@ -11,7 +11,7 @@
  * WebView. Changing one starts from empty or from the generator.
  */
 import { computed, nextTick, onMounted, reactive, ref } from 'vue';
-import ModalDialog from '../calendar/components/ModalDialog.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { useI18n } from 'vue-i18n';
 import { Dices, Eye, EyeOff, Plus, X } from 'lucide-vue-next';
 import type { EditValue, FieldKind, ItemEdit, ItemKind, ItemView, SafeApi, TotpEdit } from './api';
@@ -122,14 +122,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ModalDialog :show="true" labelled-by="safe-editor-title" card-class="max-w-[560px] max-h-[calc(100vh-64px)] text-text dark:text-text-dark" @close="emit('close')">
+  <AppDialog :show="true" labelledby="safe-editor-title" :initial-focus="() => titleInput" size="md" unstyled panel-class="bg-surface dark:bg-surface-dark text-text dark:text-text-dark rounded-2xl shadow-2xl border border-border dark:border-border-dark flex flex-col overflow-hidden max-h-[calc(100vh-64px)]" @close="emit('close')">
     <form class="flex flex-col min-h-0" @submit.prevent="submit">
       <header class="px-5 pt-5 pb-3 flex items-center gap-3">
         <component :is="kindInfo(kind).icon" class="w-5 h-5 text-accent" />
         <h2 id="safe-editor-title" class="text-lg font-semibold flex-1">
           {{ item ? t('safe.editor.edit_title') : t('safe.editor.new_title', { kind: t(`safe.kind.${kind}`) }) }}
         </h2>
-        <button type="button" class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark" :aria-label="t('safe.editor.cancel')" @click="emit('close')">
+        <button type="button" class="btn-icon -mr-2" :aria-label="t('safe.editor.cancel')" :title="t('safe.editor.cancel')" @click="emit('close')">
           <X class="w-4 h-4" />
         </button>
       </header>
@@ -146,7 +146,7 @@ onMounted(async () => {
             <select v-model="f.kind" class="text-xs bg-transparent text-text-tertiary dark:text-text-tertiary-dark focus:outline-none" :disabled="f.keep">
               <option v-for="k in FIELD_KINDS" :key="k" :value="k">{{ t(`safe.field_kind.${k}`) }}</option>
             </select>
-            <button type="button" class="p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-tertiary dark:text-text-tertiary-dark" :aria-label="t('safe.editor.remove_field')" @click="fields.splice(i, 1)">
+            <button type="button" class="inline-flex items-center justify-center min-w-6 min-h-6 p-1 rounded hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-tertiary dark:text-text-tertiary-dark" :aria-label="t('safe.editor.remove_field')" @click="fields.splice(i, 1)">
               <X class="w-3.5 h-3.5" />
             </button>
           </div>
@@ -186,7 +186,7 @@ onMounted(async () => {
                 class="w-full px-3 py-2 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark focus:outline-none focus:ring-2 focus:ring-accent"
                 :class="{ 'font-mono pr-9': isConcealed(f.kind) }"
               />
-              <button v-if="isConcealed(f.kind) && !isKeyBlock(f)" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary dark:text-text-tertiary-dark" :aria-label="f.shown ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="f.shown = !f.shown">
+              <button v-if="isConcealed(f.kind) && !isKeyBlock(f)" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-text-tertiary dark:text-text-tertiary-dark" :aria-label="f.shown ? t('safe.detail.hide') : t('safe.detail.reveal')" :title="f.shown ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="f.shown = !f.shown">
                 <EyeOff v-if="f.shown" class="w-4 h-4" /><Eye v-else class="w-4 h-4" />
               </button>
             </div>
@@ -197,7 +197,7 @@ onMounted(async () => {
           <PasswordGenerator v-if="f.generating && !f.keep" :api="api" @use="useGenerated(f, $event)" />
         </div>
 
-        <button type="button" class="inline-flex items-center gap-1.5 text-sm text-accent hover:underline" @click="addField">
+        <button type="button" class="inline-flex items-center gap-1.5 min-h-6 text-sm text-accent hover:underline" @click="addField">
           <Plus class="w-4 h-4" /> {{ t('safe.editor.add_field') }}
         </button>
 
@@ -209,7 +209,7 @@ onMounted(async () => {
               <X class="w-4 h-4" />
             </button>
           </div>
-          <button type="button" class="inline-flex items-center gap-1.5 text-sm text-accent hover:underline" @click="urls.push('')">
+          <button type="button" class="inline-flex items-center gap-1.5 min-h-6 text-sm text-accent hover:underline" @click="urls.push('')">
             <Plus class="w-4 h-4" /> {{ t('safe.editor.add_website') }}
           </button>
         </div>
@@ -255,10 +255,10 @@ onMounted(async () => {
         <button type="button" class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" @click="emit('close')">
           {{ t('safe.editor.cancel') }}
         </button>
-        <button type="submit" :disabled="busy || !title.trim()" class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium hover:opacity-90 disabled:opacity-40">
+        <button type="submit" :disabled="busy || !title.trim()" class="btn-primary">
           {{ t('safe.editor.save') }}
         </button>
       </footer>
     </form>
-  </ModalDialog>
+  </AppDialog>
 </template>

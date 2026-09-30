@@ -40,6 +40,10 @@ import DeleteFieldDialog from '../../shared/views/DeleteFieldDialog.vue';
 import RemoveKindDialog from '../../shared/views/RemoveKindDialog.vue';
 import RenameKindDialog from '../../shared/views/RenameKindDialog.vue';
 import SchemaManager from '../../shared/views/SchemaManager.vue';
+import TemplatePicker from './components/TemplatePicker.vue';
+import { kindFromTemplate, templateCreates, templateKindNames, existingTemplateKind, type KindTemplate } from './templates';
+import { i18n } from '../../i18n';
+import { iconNamed } from '../../shared/views/nodeTypeIcon';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import LockScreen from '../../shared/components/LockScreen.vue';
@@ -62,11 +66,15 @@ import ObjectDetail from '../../shared/views/ObjectDetail.vue';
 import NoteGraph from '../note/NoteGraph.vue';
 import type { QueryRow, QueryResult } from '../../shared/views/types';
 import { invoke } from '@tauri-apps/api/core';
+import { storeToRefs } from 'pinia';
+import { useAppStore } from '../../stores/useAppStore';
 import { logger } from '../../utils/logger';
 
 const props = defineProps<{ vaultPath: string }>();
 
 const { t } = useI18n();
+// Simple mode folds the filter words away entirely, tips included.
+const { simpleMode } = storeToRefs(useAppStore());
 
 const { types, browsable, internal, load: loadTypes, loading: typesLoading, fieldsFor, observedFor, usualFieldsFor, kindOfField } = useObservedTypes();
 const arrange = useThingsArrangement();
@@ -816,7 +824,8 @@ const shapeOf = (nodeType: string): SchemaField[] => {
 };
 
 const reshape = async (nodeType: string, next: SchemaField[]) => {
-  await schema.save(nodeType, next);
+  // A failure has been said by `save`, and the shape on screen is the old one.
+  await schema.save(nodeType, next).catch(() => {});
 };
 
 const moveShapeField = async (key: string, by: number) => {
@@ -922,10 +931,56 @@ const managedKinds = computed(() =>
  * appears in the rail at zero and stays there until somebody makes one, which
  * is what designing ahead is supposed to feel like.
  */
-const designKind = async (nodeType: string, fields: SchemaField[]) => {
-  await schema.save(nodeType, fields);
+const designKind = async (nodeType: string, fields: SchemaField[]): Promise<boolean> => {
+  try {
+    await schema.save(nodeType, fields);
+  } catch {
+    // `save` has said so. Nothing to open.
+    return false;
+  }
   // `openType` leaves the manager on its own now.
   openType(nodeType);
+  return true;
+};
+
+/** Whether "Start from a template" is open. */
+const pickingTemplate = ref(false);
+
+/**
+ * Make the kind a template describes, and go to it.
+ *
+ * Through `designKind`, the path the kind designer takes, so a template leaves
+ * exactly what designing the same kind by hand would: a schema and nothing
+ * else. The words are translated here, once, into the language the app is in
+ * — see `templates.ts` for why the files, not the screen, get the translation.
+ *
+ * A kind of that name already there is opened as it is. Its shape is
+ * somebody's, and a template must not redeclare it.
+ */
+const startFromTemplate = async (template: KindTemplate) => {
+  pickingTemplate.value = false;
+  const { nodeType, fields } = kindFromTemplate(template, t);
+  const existing = [
+    ...kinds.value.map(k => k.node_type),
+    ...internal.value.map(k => k.node_type),
+    ...schema.schemas.value.map(s => s.nodeType),
+  ];
+  // In any case and in any language the app speaks: the same template picked
+  // before a language switch made `book`, and must not make `sách` now.
+  const translators = i18n.global.availableLocales.map(locale =>
+    (key: string) => i18n.global.t(key, {}, { locale }));
+  const already = existingTemplateKind([nodeType, ...templateKindNames(template, translators)], existing);
+  if (already) {
+    openType(already);
+    return;
+  }
+  if (!templateCreates(nodeType, existing)) return;
+  // A kind whose fields failed to save gets no icon either: the icon alone
+  // would make a kind file holding nothing else.
+  if (!(await designKind(nodeType, fields))) return;
+  // The icon the picker showed, so the rail shows it too. A second write, and
+  // the same one the kind page's icon picker makes.
+  if (iconNamed(template.icon)) await schema.saveIcon(nodeType, template.icon);
 };
 
 /**
@@ -976,8 +1031,11 @@ const afterRenameKind = async (to: string) => {
 
   const declared = schema.schemaFor(from);
   if (declared) {
-    if (!schema.schemaFor(to)) await schema.save(to, declared.fields);
-    await schema.remove(from);
+    // The old declaration goes only once the new one is written; a failed
+    // save leaves it where it was rather than losing it.
+    let carried = true;
+    if (!schema.schemaFor(to)) carried = await schema.save(to, declared.fields).then(() => true, () => false);
+    if (carried) await schema.remove(from);
   }
 
   await loadTypes();
@@ -1167,7 +1225,7 @@ onBeforeUnmount(() => {
       -->
       <div class="px-3 pt-3 pb-1 flex-shrink-0">
         <div class="relative">
-          <Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+          <Search class="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none" />
           <input
             v-model="typed"
             type="text"
@@ -1176,8 +1234,8 @@ onBeforeUnmount(() => {
             :placeholder="t('things.query_placeholder')"
             class="w-full pl-8 pr-2 py-1.5 rounded-lg bg-white dark:bg-white/5
                    border border-gray-200 dark:border-gray-700/50 text-xs
-                   text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 outline-none
-                   focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors"
+                   text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
+                   focus:border-accent dark:focus:border-accent/50 transition-colors"
           />
         </div>
       </div>
@@ -1188,32 +1246,43 @@ onBeforeUnmount(() => {
         type list is five to ten entries on a real vault — it does not earn
         the width.
       -->
+      <!-- The app's one main action, with its words on it. -->
+      <div class="px-3 pt-2 flex-shrink-0">
+        <button type="button" @click="startCreate" class="btn-primary w-full">
+          <Plus class="w-4 h-4" aria-hidden="true" />
+          {{ t('things.create') }}
+        </button>
+        <!-- Beside the main action rather than inside it: "a new thing of the
+             kind I am in" and "a whole new kind, ready-made" are different
+             requests, and the second is the one a newcomer needs. -->
+        <button
+          type="button"
+          @click="pickingTemplate = true"
+          class="btn-secondary w-full mt-2"
+        >
+          {{ t('things.templates.start') }}
+        </button>
+      </div>
       <div class="px-4 pt-2 pb-2 flex items-center justify-between flex-shrink-0">
-        <h2 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+        <h2 class="text-xs font-semibold text-gray-500 dark:text-gray-400">
           {{ t('things.in_your_vault') }}
         </h2>
         <span class="flex items-center gap-0.5">
           <button
             type="button"
-            @click="startCreate"
-            class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
-            :title="t('things.create')"
-          >
-            <Plus class="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
             @click="viewMode = 'manager'"
-            class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+            class="p-1 rounded text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
             :title="t('things.manager_title')"
+            :aria-label="t('things.manager_title')"
           >
             <Boxes class="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
             @click="refresh"
-            class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+            class="p-1 rounded text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
             :title="t('things.refresh')"
+            :aria-label="t('things.refresh')"
           >
             <RefreshCw class="w-3.5 h-3.5" :class="typesLoading ? 'animate-spin' : ''" />
           </button>
@@ -1233,10 +1302,10 @@ onBeforeUnmount(() => {
           @click="openType(entry.node_type)"
           class="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm transition-colors cursor-pointer"
           :class="entry.node_type === activeType
-            ? 'bg-gray-200/70 dark:bg-white/10 text-[#1c1c1e] dark:text-[#f4f4f5]'
+            ? 'bg-gray-200/70 dark:bg-white/10 text-text dark:text-text-dark'
             : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
         >
-          <component :is="iconForNodeType(entry.node_type)" class="w-4 h-4 flex-shrink-0 text-gray-400" />
+          <component :is="iconForNodeType(entry.node_type)" class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
           <!--
             The type's own name, not a translated label. For `note` and `task`
             that reads as English beside a Vietnamese interface; for `animal` it
@@ -1249,7 +1318,7 @@ onBeforeUnmount(() => {
             everything else. See `shared/nodeRoutes.ts`.
           -->
           <span class="truncate">{{ nameForNodeType(entry.node_type) }}</span>
-          <span class="ml-auto text-xs text-gray-400 dark:text-gray-600 tabular-nums">{{ entry.count }}</span>
+          <span class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ entry.count }}</span>
         </button>
 
         <!--
@@ -1262,11 +1331,11 @@ onBeforeUnmount(() => {
           type="button"
           @click="openType(activeType)"
           class="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm cursor-pointer
-                 bg-gray-200/70 dark:bg-white/10 text-[#1c1c1e] dark:text-[#f4f4f5]"
+                 bg-gray-200/70 dark:bg-white/10 text-text dark:text-text-dark"
         >
-          <component :is="iconForNodeType(activeType)" class="w-4 h-4 flex-shrink-0 text-gray-400" />
+          <component :is="iconForNodeType(activeType)" class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
           <span class="truncate">{{ activeType }}</span>
-          <span class="ml-auto text-xs text-gray-400 dark:text-gray-600 tabular-nums">
+          <span class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">
             {{ kinds.find(k => k.node_type === activeType)?.count ?? 0 }}
           </span>
         </button>
@@ -1285,7 +1354,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="viewMode = 'manager'"
           class="w-full px-2 py-1.5 text-left rounded-lg text-xs cursor-pointer
-                 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                  hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
         >
           {{ t('things.see_all', { total: kinds.length }) }} →
@@ -1293,9 +1362,10 @@ onBeforeUnmount(() => {
 
         <p
           v-if="!typesLoading && kinds.length === 0"
-          class="px-2 py-3 text-xs text-gray-400 dark:text-gray-500"
+          class="px-2 py-3 text-xs text-gray-500 dark:text-gray-400"
         >
           {{ t('things.vault_empty') }}
+          <span class="block mt-1">{{ t('things.intro') }}</span>
         </p>
 
         <!--
@@ -1307,8 +1377,8 @@ onBeforeUnmount(() => {
           <button
             type="button"
             @click="showInternal = !showInternal"
-            class="w-full flex items-center gap-1.5 px-2 py-1.5 mt-2 text-[11px] font-semibold uppercase
-                   tracking-wider text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300
+            class="w-full flex items-center gap-1.5 px-2 py-1.5 mt-2 text-xs font-semibold uppercase
+                   tracking-wider text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                    transition-colors cursor-pointer"
           >
             <ChevronRight class="w-3 h-3 transition-transform" :class="showInternal ? 'rotate-90' : ''" />
@@ -1319,12 +1389,12 @@ onBeforeUnmount(() => {
             :key="entry.node_type"
             type="button"
             @click="openType(entry.node_type)"
-            class="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-gray-500 dark:text-gray-500
+            class="w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg text-sm text-gray-500 dark:text-gray-400
                    hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
           >
-            <component :is="iconForNodeType(entry.node_type)" class="w-4 h-4 flex-shrink-0 text-gray-400" />
+            <component :is="iconForNodeType(entry.node_type)" class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
             <span class="truncate font-mono text-xs">{{ entry.node_type }}</span>
-            <span class="ml-auto text-xs text-gray-400 dark:text-gray-600 tabular-nums">{{ entry.count }}</span>
+            <span class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ entry.count }}</span>
           </button>
         </template>
 
@@ -1334,7 +1404,7 @@ onBeforeUnmount(() => {
           which is a change to one field rather than a different feature.
         -->
         <template v-if="saved.views.value.length">
-          <div class="px-2 py-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">
+          <div class="px-2 py-1.5 mt-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
             {{ t('things.saved_views') }}
           </div>
           <div
@@ -1344,15 +1414,16 @@ onBeforeUnmount(() => {
                    text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
           >
             <button type="button" @click="openView(view)" class="flex items-center gap-2.5 min-w-0 flex-1 cursor-pointer">
-              <Bookmark class="w-4 h-4 flex-shrink-0" :class="view.home === 'sidebar' ? 'text-violet-500' : 'text-gray-400'" />
+              <Bookmark class="w-4 h-4 flex-shrink-0" :class="view.home === 'sidebar' ? 'text-accent dark:text-accent-dark' : 'text-gray-500'" />
               <span class="truncate text-left">{{ view.name }}</span>
             </button>
             <button
               type="button"
               @click="saved.setHome(view, view.home === 'sidebar' ? 'things' : 'sidebar')"
-              class="p-0.5 rounded text-gray-300 hover:text-violet-500 opacity-0 group-hover:opacity-100
-                     focus:opacity-100 transition-all cursor-pointer"
+              class="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-accent opacity-0 group-hover:opacity-100 group-focus-within:opacity-100
+                     focus:opacity-100 pointer-coarse:opacity-100 transition-all cursor-pointer"
               :title="view.home === 'sidebar' ? t('things.unpin') : t('things.pin')"
+              :aria-label="view.home === 'sidebar' ? t('things.unpin') : t('things.pin')"
             >
               <PinOff v-if="view.home === 'sidebar'" class="w-3 h-3" />
               <Pin v-else class="w-3 h-3" />
@@ -1360,9 +1431,10 @@ onBeforeUnmount(() => {
             <button
               type="button"
               @click="askRemoveView(view)"
-              class="p-0.5 rounded text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100
-                     focus:opacity-100 transition-all cursor-pointer"
+              class="p-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100
+                     focus:opacity-100 pointer-coarse:opacity-100 transition-all cursor-pointer"
               :title="t('things.delete_view')"
+              :aria-label="t('things.delete_view')"
             >
               <Trash2 class="w-3 h-3" />
             </button>
@@ -1378,7 +1450,7 @@ onBeforeUnmount(() => {
       -->
       <p
         v-if="result && layout === 'list'"
-        class="px-3.5 pt-2 text-[11px] text-gray-400 tabular-nums flex-shrink-0"
+        class="px-3.5 pt-2 text-xs text-gray-500 dark:text-gray-400 tabular-nums flex-shrink-0"
       >
         {{ t('things.n_results', { n: total }) }}
       </p>
@@ -1393,8 +1465,8 @@ onBeforeUnmount(() => {
         v-if="result && fields.length"
         class="px-3 pb-2 flex flex-wrap items-center gap-1.5 flex-shrink-0"
       >
-        <label class="relative inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-          <ArrowUpDown class="w-3 h-3 text-gray-400" />
+        <label class="relative inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+          <ArrowUpDown class="w-3 h-3 text-gray-500 dark:text-gray-400" />
           <select
             v-model="arrange.sortField.value"
             @change="rerun"
@@ -1406,15 +1478,15 @@ onBeforeUnmount(() => {
         <button
           type="button"
           @click="arrange.sortDescending.value = !arrange.sortDescending.value; rerun()"
-          class="px-1.5 py-0.5 rounded text-[11px] text-gray-500 dark:text-gray-400
+          class="px-1.5 py-0.5 rounded text-xs text-gray-500 dark:text-gray-400
                  hover:bg-gray-200/60 dark:hover:bg-white/5 transition-colors cursor-pointer"
           :title="t('things.sort_direction')"
         >
           {{ arrange.sortDescending.value ? '↓' : '↑' }}
         </button>
 
-        <label class="relative inline-flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
-          <Rows3 class="w-3 h-3 text-gray-400" />
+        <label class="relative inline-flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+          <Rows3 class="w-3 h-3 text-gray-500 dark:text-gray-400" />
           <select
             v-model="arrange.groupBy.value"
             @change="rerun"
@@ -1428,7 +1500,7 @@ onBeforeUnmount(() => {
         <button
           type="button"
           @click="saveCurrentView"
-          class="ml-auto p-1 rounded text-gray-400 hover:text-violet-500 transition-colors cursor-pointer"
+          class="ml-auto p-1 rounded text-gray-500 dark:text-gray-400 hover:text-accent transition-colors cursor-pointer"
           :title="t('things.save_view')"
         >
           <Bookmark class="w-3.5 h-3.5" />
@@ -1443,7 +1515,7 @@ onBeforeUnmount(() => {
             class="px-1.5 py-0.5 transition-colors cursor-pointer"
             :class="layout === kind
               ? 'bg-gray-200/70 dark:bg-white/10 text-gray-700 dark:text-gray-200'
-              : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'"
+              : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-white/5'"
             :title="kind"
           >
             <List v-if="kind === 'list'" class="w-3 h-3" />
@@ -1453,16 +1525,16 @@ onBeforeUnmount(() => {
 
         <details class="relative">
           <summary
-            class="list-none inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px]
+            class="list-none inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs
                    text-gray-500 dark:text-gray-400 hover:bg-gray-200/60 dark:hover:bg-white/5
                    transition-colors cursor-pointer select-none"
           >
-            <Columns3 class="w-3 h-3 text-gray-400" />
+            <Columns3 class="w-3 h-3 text-gray-500 dark:text-gray-400" />
             {{ arrange.columns.value.length || t('things.columns') }}
           </summary>
           <div
             class="absolute left-0 top-full mt-1 z-30 w-44 max-h-56 overflow-y-auto p-1.5
-                   rounded-lg border border-gray-200 dark:border-[#2c2c2c]
+                   rounded-lg border border-gray-200 dark:border-border-dark
                    bg-white dark:bg-[#1a1a1c] shadow-xl"
           >
             <label
@@ -1475,7 +1547,7 @@ onBeforeUnmount(() => {
                 type="checkbox"
                 :checked="arrange.columns.value.includes(f)"
                 @change="arrange.toggleColumn(f); rerun()"
-                class="accent-violet-500"
+                class="accent-accent"
               />
               <span class="truncate font-mono">{{ f }}</span>
             </label>
@@ -1491,7 +1563,7 @@ onBeforeUnmount(() => {
       <p
         v-if="error"
         class="mx-3 mb-2 px-2.5 py-2 rounded-lg bg-red-500/5 border border-red-500/20
-               text-[11px] text-red-500 dark:text-red-400 whitespace-pre-wrap break-words flex-shrink-0"
+               text-xs text-red-500 dark:text-red-400 whitespace-pre-wrap break-words flex-shrink-0"
       >
         {{ error }}
       </p>
@@ -1504,7 +1576,7 @@ onBeforeUnmount(() => {
         the thing you pinned back where you pinned it *from*.
       -->
       <div v-if="layout === 'list' && pinned.length" class="flex-shrink-0 px-2 pt-2">
-        <h3 class="px-1.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+        <h3 class="px-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           {{ t('things.pinned_section') }}
         </h3>
         <button
@@ -1519,7 +1591,7 @@ onBeforeUnmount(() => {
             : 'hover:bg-gray-100 dark:hover:bg-white/5'"
         >
           <Pin class="w-3 h-3 flex-none text-amber-500" />
-          <span class="min-w-0 truncate text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5]">
+          <span class="min-w-0 truncate text-[13px] text-text dark:text-text-dark">
             {{ row.title || t('things.untitled') }}
           </span>
         </button>
@@ -1529,7 +1601,7 @@ onBeforeUnmount(() => {
           type="button"
           @click="showAllPinned"
           class="w-full px-1.5 py-1.5 text-left rounded-lg text-xs cursor-pointer
-                 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                  hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
         >
           {{ t('things.see_all', { total: pinnedTotal }) }} →
@@ -1538,8 +1610,8 @@ onBeforeUnmount(() => {
 
       <h3
         v-if="layout === 'list' && pinned.length"
-        class="px-3.5 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-wider
-               text-gray-400 flex-shrink-0"
+        class="px-3.5 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider
+               text-gray-500 dark:text-gray-400 flex-shrink-0"
       >
         {{ t('things.recent_section') }}
       </h3>
@@ -1565,7 +1637,7 @@ onBeforeUnmount(() => {
         v-if="layout === 'list' && railCapped"
         type="button"
         @click="layout = 'table'"
-        class="flex-shrink-0 w-full px-3 py-2 text-left text-[11px] cursor-pointer
+        class="flex-shrink-0 w-full px-3 py-2 text-left text-xs cursor-pointer
                border-t border-gray-100 dark:border-[#232326]
                text-gray-500 dark:text-gray-400
                hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
@@ -1611,14 +1683,14 @@ onBeforeUnmount(() => {
           <button
             type="button"
             @click="viewMode = 'manager'"
-            class="p-1.5 -ml-1.5 rounded-md text-gray-500 cursor-pointer
+            class="p-1.5 -ml-1.5 rounded-md text-gray-500 dark:text-gray-400 cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
             :aria-label="t('things.back_to_kinds')"
             :title="t('things.back_to_kinds')"
           >
             <ArrowLeft class="w-4.5 h-4.5" />
           </button>
-          <component :is="iconForNodeType(activeType)" class="w-4 h-4 text-gray-400 flex-none" />
+          <component :is="iconForNodeType(activeType)" class="w-4 h-4 text-gray-500 dark:text-gray-400 flex-none" />
           <!--
             The app's own token classes, and no `font-mono`.
             
@@ -1630,7 +1702,7 @@ onBeforeUnmount(() => {
             {{ activeType }}
           </h1>
           <span
-            class="text-[11px] font-medium px-2 py-0.5 rounded-full tabular-nums
+            class="text-xs font-medium px-2 py-0.5 rounded-full tabular-nums
                    bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
           >
             {{ total }}
@@ -1658,7 +1730,7 @@ onBeforeUnmount(() => {
         -->
         <div class="px-4 pt-4 flex items-center gap-2 flex-shrink-0">
           <div class="relative flex-1">
-            <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 pointer-events-none" />
             <input
               v-model="typed"
               type="text"
@@ -1667,19 +1739,27 @@ onBeforeUnmount(() => {
               :placeholder="t('things.query_placeholder')"
               class="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none
                      bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700
-                     text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400
-                     focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors"
+                     text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400
+                     focus:border-accent dark:focus:border-accent/50 transition-colors"
             />
           </div>
           <p
             v-if="result"
-            class="text-[11px] tabular-nums whitespace-nowrap"
-            :class="truncated ? 'text-amber-700 dark:text-amber-500' : 'text-gray-400'"
+            class="text-xs tabular-nums whitespace-nowrap"
+            :class="truncated ? 'text-amber-700 dark:text-amber-500' : 'text-gray-500'"
             :title="truncated ? t('things.showing_hint') : ''"
           >
             {{ truncated ? t('things.showing_some', { shown, total }) : t('things.n_results', { n: total }) }}
           </p>
         </div>
+        <details v-if="!simpleMode" class="px-4 pt-1 flex-shrink-0">
+          <summary class="cursor-pointer text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+            {{ t('things.search_tips') }}
+          </summary>
+          <p class="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            {{ t('things.search_tips_body') }}
+          </p>
+        </details>
 
         <div class="flex-1 overflow-auto min-h-0 p-4">
         <TableView
@@ -1707,7 +1787,7 @@ onBeforeUnmount(() => {
           >
             {{ loadingMore ? t('things.loading_more') : t('things.load_more') }}
           </button>
-          <span class="text-[11px] text-gray-400 tabular-nums">
+          <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
             {{ t('things.showing_some', { shown, total }) }}
           </span>
         </div>
@@ -1765,10 +1845,10 @@ onBeforeUnmount(() => {
           class="flex items-center gap-3 px-6 h-11 shrink-0
                  border-b border-gray-100 dark:border-[#232326]"
         >
-          <component :is="iconForNodeType(activeType)" class="w-4 h-4 flex-none text-gray-400" />
-          <h1 class="font-mono text-sm text-[#1c1c1e] dark:text-[#f4f4f5]">{{ activeType }}</h1>
+          <component :is="iconForNodeType(activeType)" class="w-4 h-4 flex-none text-gray-500 dark:text-gray-400" />
+          <h1 class="font-mono text-sm text-text dark:text-text-dark">{{ activeType }}</h1>
           <span
-            class="text-[11px] font-medium px-2 py-0.5 rounded-full
+            class="text-xs font-medium px-2 py-0.5 rounded-full
                    bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400 tabular-nums"
           >
             {{ types.find(t => t.node_type === activeType)?.count ?? 0 }}
@@ -1777,7 +1857,7 @@ onBeforeUnmount(() => {
 
         <div class="flex-1 flex items-center justify-center px-8 text-center">
           <div class="max-w-sm space-y-4">
-            <p class="text-sm text-gray-400 dark:text-gray-500 leading-relaxed">
+            <p class="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
               {{ t('things.internal_kind_what', { type: activeType }) }}
             </p>
             <button
@@ -1798,9 +1878,30 @@ onBeforeUnmount(() => {
         v-else-if="!detail.node.value"
         class="flex-1 flex items-center justify-center px-8 text-center"
       >
-        <p class="text-sm text-gray-400 dark:text-gray-500 max-w-sm leading-relaxed">
-          {{ t('things.pick_a_type') }}
-        </p>
+        <!-- What Things is for, in one sentence, before how to use it: the
+             second sentence means nothing to somebody who does not know the
+             first. And a way in that needs no knowing at all. -->
+        <div class="max-w-sm">
+          <p class="text-sm font-medium text-text dark:text-text-dark leading-relaxed">
+            {{ t('things.intro') }}
+          </p>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400 leading-relaxed">
+            {{ t('things.pick_a_type') }}
+          </p>
+          <button type="button" class="btn-secondary mt-4" @click="pickingTemplate = true">
+            {{ t('things.templates.start') }}
+          </button>
+          <!-- The filter words, for whoever wants them — folded, and never
+               the first thing a newcomer reads. -->
+          <details v-if="!simpleMode" class="mt-6 text-left">
+            <summary class="cursor-pointer text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+              {{ t('things.search_tips') }}
+            </summary>
+            <p class="mt-2 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+              {{ t('things.search_tips_body') }}
+            </p>
+          </details>
+        </div>
       </div>
 
       <template v-if="detail.node.value">
@@ -1836,7 +1937,7 @@ onBeforeUnmount(() => {
             @click="zenMode = !zenMode"
             class="p-1.5 rounded-md transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
-            :class="zenMode ? 'text-blue-500' : 'text-gray-400'"
+            :class="zenMode ? 'text-blue-500' : 'text-gray-500 dark:text-gray-400'"
             :title="zenMode ? t('things.zen_exit') : t('things.zen')"
           >
             <Monitor class="w-4 h-4" />
@@ -1847,7 +1948,7 @@ onBeforeUnmount(() => {
             @click="contentFullWidth = !contentFullWidth"
             class="p-1.5 rounded-md transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
-            :class="contentFullWidth ? 'text-blue-500' : 'text-gray-400'"
+            :class="contentFullWidth ? 'text-blue-500' : 'text-gray-500 dark:text-gray-400'"
             :title="contentFullWidth ? t('things.width_standard') : t('things.width_full')"
           >
             <div v-if="contentFullWidth" class="flex items-center space-x-[1px]">
@@ -1863,7 +1964,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             @click="openHistory"
-            class="p-1.5 rounded-md text-gray-400 transition-colors cursor-pointer
+            class="p-1.5 rounded-md text-gray-500 dark:text-gray-400 transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
             :title="t('things.history')"
           >
@@ -1873,7 +1974,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             @click="nodeExport.exportModalVisible.value = true"
-            class="p-1.5 rounded-md text-gray-400 transition-colors cursor-pointer
+            class="p-1.5 rounded-md text-gray-500 dark:text-gray-400 transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
             :title="t('things.export')"
           >
@@ -1883,7 +1984,7 @@ onBeforeUnmount(() => {
           <button
             type="button"
             @click="showRail = !showRail"
-            class="p-1.5 rounded-md text-gray-400 transition-colors cursor-pointer
+            class="p-1.5 rounded-md text-gray-500 dark:text-gray-400 transition-colors cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5"
             :title="t('things.toggle_rail')"
           >
@@ -1895,7 +1996,7 @@ onBeforeUnmount(() => {
         <ObjectDetail
           ref="detailRef"
           :class="layout === 'table'
-            ? 'absolute inset-0 z-20 border-l border-gray-200 dark:border-[#2c2c2c] shadow-2xl'
+            ? 'absolute inset-0 z-20 border-l border-gray-200 dark:border-border-dark shadow-2xl'
             : ''"
           v-model:title="detail.title.value"
           v-model:body="detail.body.value"
@@ -1928,7 +2029,7 @@ onBeforeUnmount(() => {
     <aside
       v-if="viewMode === 'things' && detail.node.value && showRail && !zenMode"
       class="flex-shrink-0 relative border-l border-gray-100 dark:border-[#232326]
-             flex flex-col min-h-0 bg-[#fbfbfc] dark:bg-[#101012]
+             flex flex-col min-h-0 bg-surface-alt dark:bg-[#101012]
              max-md:!w-[300px]"
       :style="{ width: sidebar.rightWidth.value + 'px' }"
     >
@@ -1939,8 +2040,8 @@ onBeforeUnmount(() => {
         @mousedown.stop="sidebar.startDragRight"
       ></div>
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-gray-100 dark:border-[#232326]">
-        <Globe class="w-4 h-4 text-gray-400 mr-2" />
-        <span class="font-semibold text-[11px] tracking-wider text-gray-400 dark:text-gray-500 uppercase">
+        <Globe class="w-4 h-4 text-gray-500 dark:text-gray-400 mr-2" />
+        <span class="font-semibold text-xs tracking-wider text-gray-500 dark:text-gray-400 uppercase">
           {{ t('things.graph') }}
         </span>
 
@@ -1955,7 +2056,7 @@ onBeforeUnmount(() => {
           :title="graphMarks === 'dots' ? t('things.graph_show_icons') : t('things.graph_show_dots')"
           :aria-pressed="graphMarks === 'icons'"
           class="ml-auto p-1 rounded-md cursor-pointer transition-colors
-                 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                  hover:bg-gray-100 dark:hover:bg-white/10"
         >
           <Boxes v-if="graphMarks === 'dots'" class="w-4 h-4" />
@@ -1982,7 +2083,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="h-10 flex-shrink-0 flex items-center px-4 border-b border-gray-100 dark:border-[#232326]">
-        <span class="font-semibold text-[11px] tracking-wider text-gray-400 dark:text-gray-500 uppercase">
+        <span class="font-semibold text-xs tracking-wider text-gray-500 dark:text-gray-400 uppercase">
           {{ t('things.linked_mentions') }} ({{ links.backlinks.value.length }})
         </span>
       </div>
@@ -1990,7 +2091,7 @@ onBeforeUnmount(() => {
       <div class="flex-1 overflow-y-auto p-2 space-y-1 min-h-0">
         <p
           v-if="links.backlinks.value.length === 0"
-          class="text-[13px] text-gray-400 text-center py-4"
+          class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-4"
         >
           {{ t('things.no_linked_mentions') }}
         </p>
@@ -2004,17 +2105,17 @@ onBeforeUnmount(() => {
                  transition-all cursor-pointer"
         >
           <span class="flex items-center gap-2">
-            <component :is="iconForNodeType(bl.node_type)" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
-            <span class="truncate text-[13px] text-[#1c1c1e] dark:text-[#f4f4f5]">{{ bl.title || bl.id }}</span>
+            <component :is="iconForNodeType(bl.node_type)" class="w-3.5 h-3.5 flex-shrink-0 text-gray-500 dark:text-gray-400" />
+            <span class="truncate text-[13px] text-text dark:text-text-dark">{{ bl.title || bl.id }}</span>
           </span>
           <span
             v-if="bl.preview && nodeLock.hidesBody(bl.id)"
-            class="flex items-center gap-1 mt-1 text-[11px] italic text-gray-400"
+            class="flex items-center gap-1 mt-1 text-xs italic text-gray-500 dark:text-gray-400"
           >
             <Lock class="w-3 h-3 text-amber-500 shrink-0" />
             {{ t('things.content_protected') }}
           </span>
-          <span v-else-if="bl.preview" class="block mt-1 truncate text-[11px] text-gray-400">{{ bl.preview }}</span>
+          <span v-else-if="bl.preview" class="block mt-1 truncate text-xs text-gray-500 dark:text-gray-400">{{ bl.preview }}</span>
         </button>
       </div>
     </aside>
@@ -2094,6 +2195,12 @@ onBeforeUnmount(() => {
       @close="pickingFieldAt = null"
     />
 
+    <TemplatePicker
+      :show="pickingTemplate"
+      @pick="startFromTemplate"
+      @close="pickingTemplate = false"
+    />
+
     <!-- The PIN a protected note asks for, whichever way it was reached. -->
     <LockScreen
       v-if="nodeLock.pending.value"
@@ -2136,6 +2243,8 @@ onBeforeUnmount(() => {
       :undo-label="t('things.undo')"
       :seconds="UNDO_WINDOW_SECONDS"
       @undo="undoRemove"
+      @pause="rowActions.pauseUndo"
+      @resume="rowActions.resumeUndo"
     />
   </div>
 </template>

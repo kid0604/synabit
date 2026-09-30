@@ -2,6 +2,15 @@ import { ref } from 'vue';
 import type { Ref } from 'vue';
 import type { NoteItem } from '../helpers';
 import { buildNotePayload, rememberRecentNotes } from '../helpers';
+import { i18n } from '../../../i18n';
+import { logger } from '../../../utils/logger';
+import { showAppNotice } from '../../../composables/useAppNotice';
+
+/** Say a rename did not go through, in words that suggest what to try. */
+const renameFailed = (err: unknown, title: string) => {
+  logger.error('Renaming a note failed', err);
+  showAppNotice(i18n.global.t('note.rename_failed', { title }), 'error');
+};
 
 export function useNoteRename(
   notes: Ref<NoteItem[]>,
@@ -125,7 +134,7 @@ export function useNoteRename(
         }
         delete focusedTitles.value[newPath];
         scanVault();
-    } catch(err) { alert(err); }
+    } catch(err) { renameFailed(err, newName); }
   };
 
   const renameTopTitle = async (e: Event) => {
@@ -186,7 +195,7 @@ export function useNoteRename(
         if (isEnter) {
             setTimeout(focusEditor, 50);
         }
-    } catch(err) { alert(err); }
+    } catch(err) { renameFailed(err, newTitle); }
   };
 
   return { renameModal, handleRenamePrompt, confirmRename, renameTopTitle };

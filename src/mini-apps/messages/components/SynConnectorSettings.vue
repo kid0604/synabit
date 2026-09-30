@@ -71,15 +71,13 @@ watch(() => props.vaultPath, load);
 
 const field =
   'w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50 ' +
-  'text-sm text-text dark:text-text-dark placeholder-gray-400 outline-none ' +
+  'text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none ' +
   'focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20 transition-all';
 const plainButton =
   'px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer border border-gray-200 dark:border-gray-700/50 ' +
   'text-text dark:text-text-dark hover:bg-gray-50 dark:hover:bg-white/5 transition-colors ' +
   'disabled:opacity-40 disabled:cursor-not-allowed';
-const primaryButton =
-  'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer bg-violet-500 text-white ' +
-  'hover:bg-violet-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed';
+const primaryButton = 'btn-primary';
 const subtleDanger =
   'px-2 py-1 rounded-lg text-xs font-medium cursor-pointer text-red-600 dark:text-red-400 ' +
   'hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors disabled:opacity-40';
@@ -175,7 +173,7 @@ const subtleDanger =
           :class="field"
           placeholder="https://example.com/…"
         />
-        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_url_hint') }}</p>
+        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_url_hint') }}</p>
       </div>
 
       <template v-else>
@@ -192,7 +190,7 @@ const subtleDanger =
             :class="[field, 'font-mono']"
             placeholder="/usr/local/bin/my-connector"
           />
-          <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_command_hint') }}</p>
+          <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.connector_command_hint') }}</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_args') }}</label>
@@ -224,19 +222,19 @@ const subtleDanger =
             :placeholder="secret.stored ? t('syn.connector_secret_stored') : t('syn.connector_secret_value')"
             :aria-label="t('syn.connector_secret_value')"
           />
-          <button type="button" class="p-1.5 text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="t('syn.connector_remove')" @click="dropSecret(i)">
+          <button type="button" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-500 cursor-pointer" :aria-label="t('syn.connector_remove')" @click="dropSecret(i)">
             <X class="w-4 h-4" />
           </button>
         </div>
         <button type="button" class="text-xs text-violet-600 dark:text-violet-400 hover:underline cursor-pointer" @click="addSecret">
           + {{ t('syn.connector_add_secret') }}
         </button>
-        <p class="mt-1.5 text-[11px] text-gray-500 dark:text-gray-400">{{ t('syn.connector_secret_hint') }}</p>
+        <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.connector_secret_hint') }}</p>
       </div>
 
       <!-- Said where the server is set up, once, as information: choosing a
            server is the choice. -->
-      <p class="text-[11px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.connector_honest') }}</p>
+      <p class="text-xs text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.connector_honest') }}</p>
 
       <div v-if="tested" class="text-xs space-y-1">
         <p v-if="tested.desktop_only" class="text-gray-500 dark:text-gray-400">{{ t('syn.connector_status_desktop_only') }}</p>
@@ -251,7 +249,7 @@ const subtleDanger =
             <li v-for="tool in tested.tools" :key="tool.name" class="flex items-baseline gap-2 min-w-0">
               <span class="font-mono text-text dark:text-text-dark truncate">{{ tool.name }}</span>
               <span
-                class="shrink-0 text-[10px] px-1.5 rounded-full"
+                class="shrink-0 text-xs px-1.5 rounded-full"
                 :class="tool.read_only
                   ? 'bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-gray-300'
                   : 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300'"

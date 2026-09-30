@@ -112,14 +112,14 @@ const until = (row: QueryRow) => {
 
 <template>
   <div v-if="result" data-dated-view class="px-4 py-3">
-    <p v-if="!result.rows.length" data-dated-empty class="py-2 text-[12px] text-gray-400">
+    <p v-if="!result.rows.length" data-dated-empty class="py-2 text-[12px] text-gray-500 dark:text-gray-400">
       {{ $t('nexus.lens_nothing') }}
     </p>
 
     <!-- What was already going on: the job, the course, the trip that began
          before this stretch and ran into it. -->
     <div v-if="ongoing.length" data-ongoing class="flex gap-4 py-1.5">
-      <span class="w-[86px] flex-shrink-0 pt-[3px] text-[11px] text-gray-400">{{ $t('nexus.dated_ongoing') }}</span>
+      <span class="w-[86px] flex-shrink-0 pt-[3px] text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.dated_ongoing') }}</span>
       <div class="flex min-w-0 flex-grow flex-col gap-1">
         <button
           v-for="row in ongoing"
@@ -132,7 +132,7 @@ const until = (row: QueryRow) => {
           <span class="min-w-0 flex-grow break-words text-[13px] text-gray-900 dark:text-gray-100">
             {{ row.title || untitledLabel || $t('nexus.lens_untitled') }}
           </span>
-          <span class="flex-shrink-0 text-[11px] tabular-nums text-gray-400">{{ dayOfRow(row) }} → {{ row.until }}</span>
+          <span class="flex-shrink-0 text-xs tabular-nums text-gray-500 dark:text-gray-400">{{ dayOfRow(row) }} → {{ row.until }}</span>
         </button>
       </div>
     </div>
@@ -140,7 +140,7 @@ const until = (row: QueryRow) => {
     <div v-for="group in days" :key="group.day" data-day class="flex gap-4 py-1.5">
       <span
         data-day-label
-        class="w-[86px] flex-shrink-0 pt-[3px] text-[11px] tabular-nums text-gray-400"
+        class="w-[86px] flex-shrink-0 pt-[3px] text-xs tabular-nums text-gray-500 dark:text-gray-400"
       >
         {{ group.day || '—' }}
       </span>
@@ -161,14 +161,14 @@ const until = (row: QueryRow) => {
                that says what happened, and an ellipsis takes exactly that. -->
           <span data-dated-title class="min-w-0 flex-grow break-words text-[13px] text-gray-900 dark:text-gray-100">
             {{ row.title || untitledLabel || $t('nexus.lens_untitled') }}
-            <span v-if="until(row)" data-dated-until class="text-[11px] tabular-nums text-gray-400">
+            <span v-if="until(row)" data-dated-until class="text-xs tabular-nums text-gray-500 dark:text-gray-400">
               → {{ until(row) }}
             </span>
           </span>
           <span
             v-for="cell in cells(row)"
             :key="cell"
-            class="max-w-[40%] flex-shrink-0 truncate text-[11px] text-gray-500 dark:text-gray-400"
+            class="max-w-[40%] flex-shrink-0 truncate text-xs text-gray-500 dark:text-gray-400"
           >
             {{ cell }}
           </span>
@@ -179,7 +179,7 @@ const until = (row: QueryRow) => {
           data-put-away
           :aria-label="$t('nexus.put_away_moment')"
           :title="$t('nexus.put_away_moment')"
-          class="flex-shrink-0 px-1 text-[13px] leading-none text-gray-300 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
+          class="flex-shrink-0 px-1 text-[13px] leading-none text-gray-500 dark:text-gray-400 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-gray-600 dark:hover:text-gray-200"
           @click="emit('putAway', row)"
         >
           ×
@@ -188,7 +188,7 @@ const until = (row: QueryRow) => {
       </div>
     </div>
 
-    <p v-if="hasMore" data-dated-more class="pt-2 text-[11px] text-gray-400">
+    <p v-if="hasMore" data-dated-more class="pt-2 text-xs text-gray-500 dark:text-gray-400">
       {{ $t('nexus.lens_more', { count: result.total - result.rows.length }) }}
     </p>
   </div>

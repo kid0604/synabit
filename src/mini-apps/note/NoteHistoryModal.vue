@@ -10,10 +10,11 @@
 import { ref, watch, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { ask } from '@tauri-apps/plugin-dialog';
 import { History, X, RotateCcw, Laptop } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import LedgerNote from './components/LedgerNote.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
+import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 
 const props = defineProps<{
   vaultPath: string;
@@ -179,18 +180,20 @@ const selectVersion = (id: string) => {
 
 watch(viewMode, () => void loadPane());
 
-const restore = async () => {
-  if (!selected.value || selected.value.is_current) return;
+/** Whether the "restore this version?" question is on screen. */
+const confirmingRestore = ref(false);
 
+const restore = () => {
+  if (!selected.value || selected.value.is_current) return;
   // The dialog describes what happens rather than warning about it, because
   // nothing here is destroyed: a restore is one more edit on top, and the
   // version being replaced stays in this same list.
-  const confirmed = await ask(t('note.history_restore_body'), {
-    title: t('note.history_restore_title', { when: formatWhen(selected.value) }),
-    okLabel: t('note.history_restore_confirm'),
-    cancelLabel: t('note.cancel'),
-  });
-  if (!confirmed) return;
+  confirmingRestore.value = true;
+};
+
+const confirmRestore = async () => {
+  confirmingRestore.value = false;
+  if (!selected.value || selected.value.is_current) return;
 
   restoring.value = true;
   try {
@@ -225,16 +228,15 @@ const showOriginal = () => {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-[999] flex items-center justify-center bg-black/40 backdrop-blur-sm" @click.self="emit('close')">
-    <div class="bg-white dark:bg-[#2a2a2a] rounded-2xl shadow-2xl w-[95vw] max-w-[900px] h-[85vh] max-h-[640px] border border-[#e6e6e6] dark:border-[#3a3a3a] overflow-hidden flex flex-col">
+  <AppDialog :show="true" labelledby="note-history-title" size="xl" panel-class="h-[85vh] !max-h-[640px] !overflow-hidden flex flex-col" @close="emit('close')">
       <!-- Header -->
-      <div class="flex items-center justify-between px-5 py-4 border-b border-[#e6e6e6] dark:border-[#3a3a3a]">
-        <h3 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] flex items-center gap-2 min-w-0">
-          <History class="w-4 h-4 text-gray-500 shrink-0" />
+      <div class="flex items-center justify-between px-5 py-4 border-b border-border dark:border-border-subtle-dark">
+        <h3 id="note-history-title" class="text-base font-semibold text-text dark:text-text-dark flex items-center gap-2 min-w-0">
+          <History class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
           <span class="truncate">{{ $t('note.history_title') }}</span>
-          <span class="text-gray-400 font-normal truncate">— {{ noteTitle }}</span>
+          <span class="text-gray-500 dark:text-gray-400 font-normal truncate">— {{ noteTitle }}</span>
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 transition-colors shrink-0" :aria-label="$t('note.cancel')">
+        <button @click="emit('close')" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-[#333] text-gray-500 dark:text-gray-400 transition-colors shrink-0" :aria-label="$t('note.close')" :title="$t('note.close')">
           <X class="w-4 h-4" />
         </button>
       </div>
@@ -243,9 +245,9 @@ const showOriginal = () => {
 
       <div class="flex-1 flex min-h-0 max-md:flex-col">
         <!-- Version list -->
-        <div class="w-64 max-md:w-full max-md:h-40 shrink-0 border-r max-md:border-r-0 max-md:border-b border-[#e6e6e6] dark:border-[#3a3a3a] overflow-y-auto p-2 space-y-1">
-          <div v-if="loadingList" class="text-[13px] text-gray-400 text-center py-6">{{ $t('note.history_loading') }}</div>
-          <div v-else-if="versions.length === 0" class="text-[13px] text-gray-400 text-center py-6 px-3 leading-relaxed">{{ $t('note.history_empty') }}</div>
+        <div class="w-64 max-md:w-full max-md:h-40 shrink-0 border-r max-md:border-r-0 max-md:border-b border-border dark:border-border-subtle-dark overflow-y-auto p-2 space-y-1">
+          <div v-if="loadingList" class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-6">{{ $t('note.history_loading') }}</div>
+          <div v-else-if="versions.length === 0" class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-6 px-3 leading-relaxed">{{ $t('note.history_empty') }}</div>
           <button
             v-for="version in versions"
             :key="version.id"
@@ -261,20 +263,20 @@ const showOriginal = () => {
                 only "somewhere else" — a second laptop looks exactly like a
                 phone from here — so the icon must not claim to know which.
               -->
-              <Laptop v-if="!version.is_local" class="w-3 h-3 text-gray-400 shrink-0" :aria-label="$t('note.history_other_device')" />
-              <span class="text-[13px] font-medium text-[#1c1c1e] dark:text-[#f4f4f5] truncate" :class="version.is_local ? 'pl-[18px]' : ''">{{ formatWhen(version) }}</span>
+              <Laptop v-if="!version.is_local" class="w-3 h-3 text-gray-500 dark:text-gray-400 shrink-0" :aria-label="$t('note.history_other_device')" />
+              <span class="text-[13px] font-medium text-text dark:text-text-dark truncate" :class="version.is_local ? 'pl-[18px]' : ''">{{ formatWhen(version) }}</span>
             </div>
             <div class="flex items-center gap-2 mt-0.5 pl-[18px]">
-              <span class="text-[11px] tabular-nums" :class="version.delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : version.delta < 0 ? 'text-rose-500' : 'text-gray-400'">{{ formatDelta(version) }}</span>
-              <span v-if="version.is_current" class="text-[10px] uppercase tracking-wider font-semibold text-gray-400">{{ $t('note.history_current') }}</span>
+              <span class="text-xs tabular-nums" :class="version.delta > 0 ? 'text-emerald-600 dark:text-emerald-400' : version.delta < 0 ? 'text-rose-500' : 'text-gray-500'">{{ formatDelta(version) }}</span>
+              <span v-if="version.is_current" class="text-xs uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400">{{ $t('note.history_current') }}</span>
             </div>
           </button>
         </div>
 
         <!-- Preview -->
-        <div class="flex-1 min-w-0 flex flex-col bg-gray-50/50 dark:bg-[#242424]/50">
+        <div class="flex-1 min-w-0 flex flex-col bg-gray-50/50 dark:bg-base-dark/50">
           <!-- What the pane is showing -->
-          <div v-if="selected" class="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-[#e6e6e6] dark:border-[#3a3a3a]">
+          <div v-if="selected" class="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-border dark:border-border-subtle-dark">
             <div class="flex bg-gray-100 dark:bg-[#1f1f1f] p-0.5 rounded-lg">
               <button
                 v-for="mode in viewModes"
@@ -282,29 +284,29 @@ const showOriginal = () => {
                 @click="viewMode = mode.id"
                 :disabled="mode.id === 'restore' && selected.is_current"
                 class="px-2.5 py-1 text-[12px] rounded-md transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
-                :class="viewMode === mode.id ? 'bg-white dark:bg-[#2c2c2c] text-[#1c1c1e] dark:text-[#f4f4f5] shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
+                :class="viewMode === mode.id ? 'bg-white dark:bg-[#2c2c2c] text-text dark:text-text-dark shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300'"
               >
                 {{ $t(mode.label) }}
               </button>
             </div>
-            <span v-if="diff && !diff.unchanged" class="ml-auto text-[11px] tabular-nums flex items-center gap-2">
+            <span v-if="diff && !diff.unchanged" class="ml-auto text-xs tabular-nums flex items-center gap-2">
               <span class="text-emerald-600 dark:text-emerald-400">+{{ diff.added }}</span>
               <span class="text-rose-500">−{{ diff.removed }}</span>
             </span>
           </div>
 
           <div class="flex-1 min-h-0 overflow-y-auto">
-            <div v-if="loadingPreview" class="text-[13px] text-gray-400 text-center py-10">{{ $t('note.history_loading') }}</div>
+            <div v-if="loadingPreview" class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-10">{{ $t('note.history_loading') }}</div>
 
             <!-- Full text -->
-            <pre v-else-if="viewMode === 'full' && preview" class="p-5 text-[13px] leading-relaxed whitespace-pre-wrap break-words font-mono text-[#1c1c1e] dark:text-[#f4f4f5]">{{ preview }}</pre>
+            <pre v-else-if="viewMode === 'full' && preview" class="p-5 text-[13px] leading-relaxed whitespace-pre-wrap break-words font-mono text-text dark:text-text-dark">{{ preview }}</pre>
 
             <!-- Diff -->
-            <div v-else-if="diff && diff.unchanged" class="text-[13px] text-gray-400 text-center py-10 px-6 leading-relaxed">{{ $t('note.history_identical') }}</div>
+            <div v-else-if="diff && diff.unchanged" class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-10 px-6 leading-relaxed">{{ $t('note.history_identical') }}</div>
             <div v-else-if="diff" class="py-2 text-[13px] font-mono leading-relaxed">
               <template v-for="(group, gi) in diff.groups" :key="gi">
                 <!-- A fold marks the unchanged stretch this group skipped over. -->
-                <div v-if="gi > 0" class="px-4 py-1 text-[11px] text-gray-400 select-none border-y border-dashed border-[#e6e6e6] dark:border-[#3a3a3a] my-1">⋯</div>
+                <div v-if="gi > 0" class="px-4 py-1 text-xs text-gray-500 dark:text-gray-400 select-none border-y border-dashed border-border dark:border-border-subtle-dark my-1">⋯</div>
                 <div
                   v-for="(line, li) in group.lines"
                   :key="`${gi}-${li}`"
@@ -326,27 +328,36 @@ const showOriginal = () => {
               </template>
             </div>
 
-            <div v-else class="text-[13px] text-gray-400 text-center py-10">{{ $t('note.history_select') }}</div>
+            <div v-else class="text-[13px] text-gray-500 dark:text-gray-400 text-center py-10">{{ $t('note.history_select') }}</div>
           </div>
         </div>
       </div>
 
       <!-- Footer -->
-      <div class="p-4 border-t border-[#e6e6e6] dark:border-[#3a3a3a] bg-gray-50/50 dark:bg-[#242424]/50 flex items-center gap-2">
+      <div class="p-4 border-t border-border dark:border-border-subtle-dark bg-gray-50/50 dark:bg-base-dark/50 flex items-center gap-2">
         <p v-if="error" class="text-[12px] text-rose-500 truncate">{{ error }}</p>
-        <p v-else class="text-[12px] text-gray-400 truncate">{{ $t('note.history_hint') }}</p>
+        <p v-else class="text-[12px] text-gray-500 dark:text-gray-400 truncate">{{ $t('note.history_hint') }}</p>
         <button @click="emit('close')" class="ml-auto shrink-0 px-4 py-2 text-sm rounded-lg text-gray-600 dark:text-gray-300 font-medium hover:bg-gray-200 dark:hover:bg-[#333] transition-colors">
           {{ $t('note.cancel') }}
         </button>
         <button
           @click="restore"
           :disabled="!selected || selected.is_current || restoring"
-          class="shrink-0 px-4 py-2 text-sm rounded-lg bg-black dark:bg-white text-white dark:text-black font-medium hover:opacity-80 transition-opacity flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="btn-primary shrink-0"
         >
           <RotateCcw class="w-4 h-4" />
           {{ restoring ? $t('note.history_restoring') : $t('note.history_restore') }}
         </button>
       </div>
-    </div>
-  </div>
+
+    <ConfirmModal
+      :show="confirmingRestore"
+      :title="selected ? $t('note.history_restore_title', { when: formatWhen(selected) }) : ''"
+      :message="$t('note.history_restore_body')"
+      :confirm-text="$t('note.history_restore_confirm')"
+      :cancel-text="$t('note.cancel')"
+      @confirm="confirmRestore"
+      @cancel="confirmingRestore = false"
+    />
+  </AppDialog>
 </template>

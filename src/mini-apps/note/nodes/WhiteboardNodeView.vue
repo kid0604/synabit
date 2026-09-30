@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { NodeViewWrapper } from '@tiptap/vue-3';
 import {
   PenTool, ExternalLink, Trash2,
@@ -21,6 +22,8 @@ const props = defineProps<{
   editor: any;
   selected: boolean;
 }>();
+
+const { t } = useI18n();
 
 // Inject vaultPath from editor storage (set by TiptapEditor)
 const vaultPath = computed(() => props.editor?.storage?.whiteboard?.vaultPath || '');
@@ -53,7 +56,7 @@ const loadBoard = async () => {
   const path = props.node.attrs.boardPath;
   const vp = vaultPath.value;
   if (!path || !vp) {
-    error.value = 'No vault path';
+    error.value = t('note.editor.whiteboard.load_failed');
     loading.value = false;
     return;
   }
@@ -66,13 +69,13 @@ const loadBoard = async () => {
       boardData.value = null;
       error.value =
         read.reason === 'too-new'
-          ? 'This board was made by a newer version of Synabit'
-          : 'Failed to load whiteboard';
+          ? t('note.editor.whiteboard.too_new')
+          : t('note.editor.whiteboard.load_failed');
       return;
     }
     boardData.value = read.data;
   } catch (e: any) {
-    error.value = 'Failed to load whiteboard';
+    error.value = t('note.editor.whiteboard.load_failed');
     logger.error('WhiteboardNodeView: load failed', e);
   } finally {
     loading.value = false;
@@ -478,7 +481,7 @@ function getShapeTransform(node: WBNode): string {
         <!-- Loading -->
         <div v-if="loading" class="wb-embed-loading">
           <div class="wb-loading-spinner" />
-          <span>Loading whiteboard…</span>
+          <span>{{ $t('note.editor.whiteboard.loading') }}</span>
         </div>
 
         <!-- Error -->
@@ -490,7 +493,7 @@ function getShapeTransform(node: WBNode): string {
         <!-- Empty board -->
         <div v-else-if="!boardData || boardData.nodes.length === 0" class="wb-embed-empty">
           <PenTool class="w-8 h-8 opacity-30" />
-          <span>Empty whiteboard</span>
+          <span>{{ $t('note.editor.whiteboard.empty') }}</span>
         </div>
 
         <!-- SVG Render -->
@@ -661,21 +664,21 @@ function getShapeTransform(node: WBNode): string {
       <Transition name="wb-bubble">
         <div v-if="selected" class="wb-embed-bubble" @mousedown.prevent>
           <!-- Alignment -->
-          <button @click="setAlign('left')" title="Align left" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'left' }">
+          <button @click="setAlign('left')" :title="$t('note.editor.align_left')" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'left' }">
             <AlignLeft class="w-3.5 h-3.5" />
           </button>
-          <button @click="setAlign('center')" title="Align center" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'center' }">
+          <button @click="setAlign('center')" :title="$t('note.editor.align_center')" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'center' }">
             <AlignCenter class="w-3.5 h-3.5" />
           </button>
-          <button @click="setAlign('right')" title="Align right" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'right' }">
+          <button @click="setAlign('right')" :title="$t('note.editor.align_right')" class="wb-bubble-btn" :class="{ 'wb-bubble-active': blockAlign === 'right' }">
             <AlignRight class="w-3.5 h-3.5" />
           </button>
           <div class="wb-bubble-sep" />
-          <button @click="openInApp" title="Open in Whiteboard" class="wb-bubble-btn">
+          <button @click="openInApp" :title="$t('note.editor.whiteboard.open')" class="wb-bubble-btn">
             <ExternalLink class="w-3.5 h-3.5" />
           </button>
           <div class="wb-bubble-sep" />
-          <button @click="deleteNode" title="Remove" class="wb-bubble-btn wb-bubble-danger">
+          <button @click="deleteNode" :title="$t('note.editor.remove')" class="wb-bubble-btn wb-bubble-danger">
             <Trash2 class="w-3.5 h-3.5" />
           </button>
         </div>
@@ -685,11 +688,11 @@ function getShapeTransform(node: WBNode): string {
       <div class="wb-embed-info">
         <div class="wb-embed-label">
           <PenTool class="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-          <span class="wb-embed-name">{{ node.attrs.title || 'Untitled Board' }}</span>
+          <span class="wb-embed-name">{{ node.attrs.title || $t('note.editor.whiteboard.untitled') }}</span>
         </div>
         <div class="wb-embed-meta">
-          <span v-if="nodeCount > 0" class="wb-embed-count">{{ nodeCount }} nodes</span>
-          <span class="wb-embed-badge">Whiteboard</span>
+          <span v-if="nodeCount > 0" class="wb-embed-count">{{ $t('note.editor.whiteboard.node_count', { count: nodeCount }, nodeCount) }}</span>
+          <span class="wb-embed-badge">{{ $t('note.editor.whiteboard.badge') }}</span>
         </div>
       </div>
     </div>
@@ -925,7 +928,7 @@ function getShapeTransform(node: WBNode): string {
   border-radius: 6px;
   cursor: pointer;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   transition: all 0.12s;
   white-space: nowrap;
@@ -1021,14 +1024,14 @@ function getShapeTransform(node: WBNode): string {
 }
 
 .wb-embed-count {
-  font-size: 10px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #6b7280;
 }
 
-.dark .wb-embed-count { color: #71717a; }
+.dark .wb-embed-count { color: #9ca3af; }
 
 .wb-embed-badge {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;

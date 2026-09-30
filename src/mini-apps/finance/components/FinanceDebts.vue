@@ -123,7 +123,7 @@ const toggleStatus = (debt: Debt) => {
                     </div>
                     <div>
                         <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">{{ $t('finance.total_lent') }}</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">{{ $t('finance.money_owed') }}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ $t('finance.money_owed') }}</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalLend) }}</p>
@@ -140,7 +140,7 @@ const toggleStatus = (debt: Debt) => {
                     </div>
                     <div>
                         <h3 class="font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider text-sm">{{ $t('finance.total_borrowed') }}</h3>
-                        <p class="text-xs text-gray-400 mt-0.5">{{ $t('finance.money_owe') }}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ $t('finance.money_owe') }}</p>
                     </div>
                 </div>
                 <p class="text-3xl font-bold text-text dark:text-text-dark">{{ formatCurrency(totalBorrow) }}</p>
@@ -156,27 +156,27 @@ const toggleStatus = (debt: Debt) => {
                         @click="currentTab = 'lend'"
                         :class="['px-6 py-2 rounded-lg font-medium text-sm transition-colors', currentTab === 'lend' ? 'bg-white dark:bg-gray-700 text-green-600 dark:text-green-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Receivables
+                        {{ $t('finance.receivables') }}
                     </button>
                     <button 
                         @click="currentTab = 'borrow'"
                         :class="['px-6 py-2 rounded-lg font-medium text-sm transition-colors', currentTab === 'borrow' ? 'bg-white dark:bg-gray-700 text-red-600 dark:text-red-400 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200']"
                     >
-                        Payables
+                        {{ $t('finance.payables') }}
                     </button>
                 </div>
 
-                <button @click="openAddDebt" class="flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors font-medium text-sm">
+                <button @click="openAddDebt" class="btn-primary">
                     <Plus class="w-4 h-4" />
-                    Add {{ currentTab === 'lend' ? 'receivable' : 'payable' }}
+                    {{ currentTab === 'lend' ? $t('finance.add_receivable') : $t('finance.add_payable') }}
                 </button>
             </div>
 
             <!-- List -->
             <div class="p-0">
-                <div v-if="displayDebts.length === 0" class="p-12 flex flex-col items-center justify-center text-gray-400">
+                <div v-if="displayDebts.length === 0" class="p-12 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400">
                     <BookOpen class="w-12 h-12 mb-4 opacity-20" />
-                    <p>No {{ currentTab === 'lend' ? 'receivables' : 'payables' }} found.</p>
+                    <p>{{ currentTab === 'lend' ? $t('finance.no_receivables') : $t('finance.no_payables') }}</p>
                 </div>
                 
                 <div v-else class="divide-y divide-border dark:divide-border-dark">
@@ -184,7 +184,7 @@ const toggleStatus = (debt: Debt) => {
                         
                         <!-- Status Icon -->
                         <div class="shrink-0 flex items-start">
-                            <div v-if="debt.status === 'completed'" class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-500">
+                            <div v-if="debt.status === 'completed'" class="w-10 h-10 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center text-gray-500 dark:text-gray-400">
                                 <CheckCircle2 class="w-5 h-5" />
                             </div>
                             <div v-else-if="isOverdue(debt)" class="w-10 h-10 rounded-full bg-red-50 dark:bg-red-900/20 flex items-center justify-center text-red-500 relative">
@@ -205,15 +205,15 @@ const toggleStatus = (debt: Debt) => {
                                 <div>
                                     <h4 class="font-bold text-text dark:text-text-dark text-lg flex items-center gap-2">
                                         {{ debt.person }}
-                                        <span v-if="debt.status === 'completed'" class="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 uppercase">Completed</span>
+                                        <span v-if="debt.status === 'completed'" class="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 uppercase">{{ $t('finance.completed') }}</span>
                                     </h4>
-                                    <p class="text-sm text-gray-500 mt-0.5 truncate">{{ debt.note || (debt.type === 'lend' ? 'Lent money' : 'Borrowed money') }}</p>
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5 truncate">{{ debt.note || (debt.type === 'lend' ? $t('finance.lent_money') : $t('finance.borrowed_money')) }}</p>
                                 </div>
                                 <div class="text-right shrink-0">
                                     <p class="font-bold text-lg" :class="[debt.status === 'completed' ? 'text-gray-500' : (debt.type === 'lend' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')]">
                                         {{ formatCurrency(debt.totalAmount) }}
                                     </p>
-                                    <p class="text-xs text-gray-500 mt-0.5 font-medium">Paid: {{ formatCurrency(debt.paidAmount) }}</p>
+                                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 font-medium">{{ $t('finance.paid_amount', { amount: formatCurrency(debt.paidAmount) }) }}</p>
                                 </div>
                             </div>
 
@@ -226,38 +226,38 @@ const toggleStatus = (debt: Debt) => {
                             </div>
 
                             <div class="flex flex-wrap items-center justify-between gap-2 mt-1">
-                                <div class="flex items-center gap-4 text-xs text-gray-500 font-medium">
+                                <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 font-medium">
                                     <div class="flex items-center gap-1.5">
                                         <Calendar class="w-3.5 h-3.5" />
                                         {{ formatDate(debt.startDate) }}
                                     </div>
                                     <div v-if="debt.dueDate" class="flex items-center gap-1.5" :class="{ 'text-red-500 font-bold': isOverdue(debt) }">
                                         <AlertCircle class="w-3.5 h-3.5" />
-                                        Due: {{ formatDate(debt.dueDate) }}
+                                        {{ $t('finance.due_on', { date: formatDate(debt.dueDate) }) }}
                                     </div>
                                 </div>
                                 
                                 <!-- Actions -->
-                                <div class="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div class="flex items-center gap-2 opacity-100 sm:opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
                                     <button 
                                         @click="toggleStatus(debt)" 
                                         class="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                                     >
-                                        {{ debt.status === 'active' ? 'Close debt' : 'Reopen' }}
+                                        {{ debt.status === 'active' ? $t('finance.close_debt') : $t('finance.reopen') }}
                                     </button>
                                     <button 
                                         @click="openEditDebt(debt)" 
                                         class="px-3 py-1.5 text-xs font-bold rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
                                     >
-                                        Edit
+                                        {{ $t('finance.edit') }}
                                     </button>
                                     <button 
                                         v-if="debt.status === 'active' && debt.paidAmount < debt.totalAmount"
                                         @click="openRepayment(debt)" 
                                         class="px-4 py-1.5 text-xs font-bold rounded-lg text-white shadow-sm transition-colors flex items-center gap-1"
-                                        :class="debt.type === 'lend' ? 'bg-green-500 hover:bg-green-600' : 'bg-blue-500 hover:bg-blue-600'"
+                                        :class="debt.type === 'lend' ? 'bg-green-500 hover:bg-green-600' : 'bg-accent hover:bg-accent/90'"
                                     >
-                                        {{ debt.type === 'lend' ? 'Collect' : 'Repay' }}
+                                        {{ debt.type === 'lend' ? $t('finance.collect') : $t('finance.repay') }}
                                     </button>
                                 </div>
                             </div>

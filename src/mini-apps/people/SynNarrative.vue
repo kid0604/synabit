@@ -123,13 +123,13 @@ const open = (n: number) => {
                         :key="n"
                         type="button"
                         data-citation
-                        class="mx-0.5 align-super rounded px-1 text-[10px] font-semibold tabular-nums text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/30"
+                        class="mx-0.5 align-super rounded px-1 text-xs font-semibold tabular-nums text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/30"
                         :title="sourceOf(n) ? `${sourceOf(n)!.title} · ${sourceOf(n)!.date}` : ''"
                         @click="open(n)"
                     >{{ n }}</button>{{ ' ' }}
                 </template>
             </p>
-            <p v-if="narrative.sentences.length" class="text-[11px] text-gray-400">
+            <p v-if="narrative.sentences.length" class="text-xs text-gray-500 dark:text-gray-400">
                 {{ $t('people.narrative_rule') }}
                 <template v-if="narrative.dropped"> {{ $t('people.narrative_dropped', { count: narrative.dropped }) }}</template>
             </p>

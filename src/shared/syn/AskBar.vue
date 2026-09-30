@@ -512,7 +512,7 @@ const onKeydown = (event: KeyboardEvent) => {
               <p class="text-[12px] text-gray-500 dark:text-gray-400">{{ t('syn.plan_waiting') }}</p>
               <button
                 type="button"
-                class="px-3 py-1.5 rounded-lg text-[12px] font-medium bg-violet-600 hover:bg-violet-700 text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
+                class="btn-primary"
                 @click="approvePlan"
               >
                 {{ t('syn.plan_go') }}
@@ -540,7 +540,7 @@ const onKeydown = (event: KeyboardEvent) => {
 
           <button
             v-if="canContinueElsewhere"
-            class="my-3 inline-flex items-center gap-1 text-[12px] text-gray-500 hover:text-gray-800 dark:hover:text-gray-200"
+            class="my-3 inline-flex items-center gap-1 text-[12px] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
             @click="emit('open-in-messages', conversationId!)"
           >
             {{ t('syn.ask_open_in_messages') }}
@@ -555,7 +555,7 @@ const onKeydown = (event: KeyboardEvent) => {
             <input
               v-model="newThreadTitle"
               :placeholder="t('syn.thread_new_placeholder')"
-              class="flex-1 bg-transparent text-[13px] outline-none placeholder-gray-400"
+              class="flex-1 bg-transparent text-[13px] outline-none placeholder:text-gray-500 dark:placeholder:text-gray-400"
               @keydown.enter="onThreadTitleEnter"
               @keydown.stop
             />
@@ -572,7 +572,7 @@ const onKeydown = (event: KeyboardEvent) => {
           <ul class="max-h-40 overflow-y-auto -mx-1">
             <li v-if="props.focus?.thread">
               <button
-                class="w-full text-left px-2 py-1.5 rounded-md text-[13px] text-gray-500 hover:bg-black/5 dark:hover:bg-white/10"
+                class="w-full text-left px-2 py-1.5 rounded-md text-[13px] text-gray-500 dark:text-gray-400 hover:bg-black/5 dark:hover:bg-white/10"
                 @click="choose(undefined)"
               >
                 {{ t('syn.thread_none') }}
@@ -590,18 +590,18 @@ const onKeydown = (event: KeyboardEvent) => {
                 <span class="truncate">{{ thread.title }}</span>
                 <span
                   v-if="thread.id === justStarted"
-                  class="shrink-0 text-[11px] text-emerald-600 dark:text-emerald-400"
+                  class="shrink-0 text-xs text-emerald-600 dark:text-emerald-400"
                 >
                   {{ t('syn.thread_just_started') }}
                 </span>
-                <span class="ml-auto shrink-0 text-[11px] text-gray-400">
+                <span class="ml-auto shrink-0 text-xs text-gray-500 dark:text-gray-400">
                   {{ t(`syn.thread_state_${thread.state}`) }}
                 </span>
               </button>
             </li>
             <li
               v-if="!choices.length"
-              class="px-2 py-1.5 text-[12px] text-gray-400"
+              class="px-2 py-1.5 text-[12px] text-gray-500 dark:text-gray-400"
             >
               {{ t('syn.thread_none_yet') }}
             </li>
@@ -614,13 +614,13 @@ const onKeydown = (event: KeyboardEvent) => {
             v-model="question"
             rows="1"
             :placeholder="t('syn.ask_placeholder')"
-            class="flex-1 resize-none bg-transparent text-[15px] leading-relaxed outline-none text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400 max-h-32"
+            class="flex-1 resize-none bg-transparent text-[15px] leading-relaxed outline-none text-text dark:text-text-dark placeholder:text-gray-500 dark:placeholder:text-gray-400 max-h-32"
             spellcheck="false"
             @keydown="onKeydown"
           ></textarea>
 
           <button
-            class="shrink-0 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10"
+            class="shrink-0 p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10"
             :title="t('syn.ask_close')"
             @click="close"
           >
@@ -632,11 +632,11 @@ const onKeydown = (event: KeyboardEvent) => {
              difference between Syn ignoring the paragraph and never having
              been given it is otherwise invisible. -->
         <div
-          class="flex items-center justify-between gap-3 px-5 pb-3 text-[11px] text-gray-400 dark:text-gray-500 select-none"
+          class="flex items-center justify-between gap-3 px-5 pb-3 text-xs text-gray-500 dark:text-gray-400 select-none"
         >
           <button
             class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 -ml-1.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10"
-            :class="current ? 'text-indigo-500 dark:text-indigo-400' : ''"
+            :class="current ? 'text-accent dark:text-accent-dark' : ''"
             :title="t('syn.thread_pick')"
             @click="togglePicker"
           >
@@ -659,8 +659,8 @@ const onKeydown = (event: KeyboardEvent) => {
 
           <button
             type="button"
-            class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-violet-500"
-            :class="planFirst ? 'text-violet-600 dark:text-violet-400' : ''"
+            class="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-black/5 dark:hover:bg-white/10 focus-visible:outline-2 focus-visible:outline-accent"
+            :class="planFirst ? 'text-accent dark:text-accent-dark' : ''"
             :aria-pressed="planFirst"
             :title="t('syn.plan_toggle_hint')"
             @click="planFirst = !planFirst"

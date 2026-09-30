@@ -106,7 +106,7 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
   window.removeEventListener('mouseup', endPaneDrag);
 });
-import { FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
+import { Loader2, FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
@@ -124,6 +124,7 @@ const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2
 const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
+import AppNotice from './shared/components/AppNotice.vue';
 const SafeRequestCard = defineAsyncComponent(() => import('./mini-apps/safe/SafeRequestCard.vue'));
 const SshApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/SshApproveCard.vue'));
 const CliApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/CliApproveCard.vue'));
@@ -136,8 +137,13 @@ import { useSync } from './composables/useSync';
 import { useAppLock } from './composables/useAppLock';
 import { usePlatform } from './composables/usePlatform';
 import { useBackGuard } from './composables/useBackGuard';
-import { appInPlatformScope } from './shared/platformScope';
 import { BUILT_IN_APPS, appName } from './shared/appRegistry';
+import { appOffered, redirectTarget, startApp, appForOpenType, hiddenBySimpleMode } from './shared/appAccess';
+import { simpleModePass, modeChoiceCopy } from './shared/simpleMode';
+import { appInPlatformScope } from './shared/platformScope';
+import { showAppNotice } from './composables/useAppNotice';
+import { when } from './utils/when';
+import { useNow } from '@vueuse/core';
 import { railOverflow, railSlots } from './shared/railFit';
 import { ensureNotificationPermission } from './composables/useNotificationPermission';
 import { useAppUpdate } from './composables/useAppUpdate';
@@ -149,6 +155,7 @@ import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 import DesktopLayout from './layouts/DesktopLayout.vue';
 import MobileLayout from './layouts/MobileLayout.vue';
 import AskBar from './shared/syn/AskBar.vue';
+import AppDialog from './shared/components/AppDialog.vue';
 import { captureFocus, buildFocus, focusWithSelection, type SynFocus } from './shared/syn/focus';
 import { SYN_ASK, SYN_ASK_ABOUT, type AskAboutDetail } from './shared/syn/selectionAsk';
 import { routeQuickQuestion, QUICK_QUESTION_EVENT } from './shared/syn/quickAsk';
@@ -176,22 +183,33 @@ const {
 
 // ─── Settings ─────────────────────────────────────────────
 const {
-  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, showE2eeOnboarding, showRecoveryModal
+  showSettingsModal, openSettings, initSettings, applyTheme, defaultApp, hiddenSidebarApps, simpleMode, showE2eeOnboarding, showRecoveryModal
 } = useSettings();
 
 const getAppName = (appId: string): string => appName(appId);
 
 /**
- * The mini-apps this platform ships at all.
+ * When the last sync worked, in words ("5 minutes ago"), for the sync button's
+ * tooltip. It used to print the stored ISO string. Ticks once a minute so an
+ * open tooltip does not go on saying "now" for an hour.
+ */
+const now = useNow({ interval: 60_000 });
+const lastSyncedText = computed(() => appStore.syncLastSuccessful
+    ? i18n.global.t('shell.sync.synced_at', { time: when(appStore.syncLastSuccessful, i18n.global.locale.value, now.value.getTime()) })
+    : '');
+
+/**
+ * The mini-apps this platform ships at all, less the ones simple mode hides.
  *
  * Distinct from what the user chose to hide, and from what fits on screen. An
- * app outside the platform's scope is not in the product here — it never
- * reaches the bottom bar, the More menu, or the router.
+ * app outside the platform's scope, or outside simple mode while it is on, is
+ * not in the product here — it never reaches the bottom bar, the More menu, or
+ * the router. See `shared/appAccess.ts`.
  *
  * Note this keys off `isMobileOS` and not `useMobileLayout`: a desktop window
  * dragged narrow adopts the mobile layout, and must keep every app.
  */
-const platformApps = computed(() => BUILT_IN_APPS.filter(a => appInPlatformScope(a.id)));
+const platformApps = computed(() => BUILT_IN_APPS.filter(a => appOffered(a.id, simpleMode.value)));
 
 const mobileVisibleApps = computed(() => {
     return platformApps.value
@@ -231,7 +249,7 @@ const railOverflowed = computed(() => {
 });
 
 const isAppVisible = (appId: string) => {
-    if (!appInPlatformScope(appId)) return false;
+    if (!appOffered(appId, simpleMode.value)) return false;
     if (hiddenSidebarApps.value.includes(appId)) return false;
     if (useMobileLayout.value && !mobileVisibleApps.value.includes(appId)) return false;
     if (railOverflowed.value.includes(appId)) return false;
@@ -263,6 +281,20 @@ const { vaultPath, vaultType, activeSyncProvider } = storeToRefs(appStore);
 
 const { useMobileLayout, isMobileOS, isMac, initOS } = usePlatform();
 
+// How much the phone's tab bar takes from the bottom, so the toast stack
+// (style.css, `.app-toasts`) sits above it rather than on it.
+watch(useMobileLayout, (mobile) => {
+  document.documentElement.style.setProperty('--bottom-bar', mobile ? '4rem' : '0px');
+}, { immediate: true });
+
+/**
+ * A rail button's shape. On a phone the icon carries its name underneath —
+ * the hover tooltip the desktop uses has no hover to open it there.
+ */
+const railButtonShape = computed(() => useMobileLayout.value
+    ? 'relative group flex-1 min-w-0 h-14 px-0.5 rounded-xl flex flex-col items-center justify-center gap-1 transition-all cursor-pointer'
+    : 'relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer');
+
 // ─── App View State (Vue Router) ──────────────────────────
 const router = useRouter();
 const route = useRoute();
@@ -276,6 +308,19 @@ const activeTool = computed({
           });
       }
   }
+});
+
+/**
+ * Leave an app the moment simple mode hides it.
+ *
+ * The router guard only runs on the next navigation, so without this somebody
+ * who turns simple mode on while in Whiteboard would stay in a Whiteboard that
+ * has no sidebar button — the one state the mode exists to prevent. `replace`,
+ * so Back does not lead straight back into it.
+ */
+watch(simpleMode, (on) => {
+    const target = redirectTarget(route.name as string | undefined, on, (name) => BUILT_IN_APPS.some(a => a.id === name));
+    if (target) router.replace({ name: target }).catch(err => logger.warn('Router navigation error:', err));
 });
 
 // ─── Navigation History (Back/Forward) — declared early so watcher can use them ─────
@@ -495,6 +540,66 @@ const openHiddenApp = (appId: string) => {
 };
 
 
+/**
+ * The first-run question, "Simple or Everything", asked once a folder exists.
+ *
+ * Asked of anyone who has never answered it or touched the setting — which in
+ * practice is a new install, since `simpleModeChosen` only reads false before
+ * the first answer. Somebody upgrading keeps their vault open and never sees
+ * this screen; somebody who switches to a new folder later is asked once.
+ *
+ * Nothing is preselected. "Everything" is what the app has always been, so it
+ * would be the natural default — but a default is a choice made for the people
+ * least likely to change it, and they are exactly who simple mode is for.
+ */
+const choosingMode = ref(false);
+
+/** Which words the mode question uses: a phone does not have every app the desktop names. */
+const modeCopy = computed(() => modeChoiceCopy(appInPlatformScope));
+
+/** Back from the mode question to the folder question. */
+const backToFolder = () => {
+    choosingMode.value = false;
+    clearVault();
+};
+
+/**
+ * Whether startup is still finding out where the folder is.
+ *
+ * A phone picks its own folder (`resolve_mobile_vault_path`), but that answer
+ * arrives after the first paint, and until it does there is no folder — so the
+ * welcome screen's "choose a folder" step flashed up for a moment on every
+ * first launch, and then vanished. Until the answer is in, the screen stays
+ * neutral instead.
+ */
+const resolvingFolder = ref(true);
+
+const chooseMode = async (simple: boolean) => {
+    await appStore.chooseSimpleMode(simple);
+    choosingMode.value = false;
+    enterVault();
+};
+
+/**
+ * Open a vault that was just chosen: the start app for the current mode, then
+ * a scan so the index is this folder's, then the empty-vault rule.
+ */
+const enterVault = () => {
+    activeTool.value = openingApp.value = startApp({
+        defaultApp: defaultApp.value,
+        defaultAppChosen: appStore.defaultAppChosen,
+        simpleMode: simpleMode.value,
+        vaultEmpty: null,
+    });
+    scanVaultNodes().then(() => landOnQuickCapIfEmpty()).catch(logger.error);
+};
+
+/** After a folder is set: ask the mode question, or go straight in. */
+const afterVaultChosen = () => {
+    if (!appStore.simpleModeChosen) choosingMode.value = true;
+    else enterVault();
+};
+
 const selectVault = async () => {
     try {
         if (isMobileOS.value) {
@@ -502,6 +607,7 @@ const selectVault = async () => {
             // reports where the vault lives.
             const resolved = await invoke<string>('resolve_mobile_vault_path');
             await appStore.setVaultPath(resolved, 'local');
+            afterVaultChosen();
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
 
      // Feeds refresh on a timer for as long as the app is running, not only
@@ -515,7 +621,7 @@ const selectVault = async () => {
 
         const defaultPath = await documentDir().catch(() => undefined);
         const selected = await open({ 
-            title: 'Select Note Vault Directory', 
+            title: i18n.global.t('shell.welcome.pick_folder'), 
             defaultPath,
             directory: true, 
             multiple: false 
@@ -523,6 +629,7 @@ const selectVault = async () => {
         if (selected) {
             await appStore.setVaultPath(selected as string, 'local');
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
+            afterVaultChosen();
         }
     } catch(err) { logger.error(String(err)); }
 };
@@ -618,8 +725,29 @@ const navigateToItem = (app: string, itemId: string, scrollTop?: number, skipNav
     else if (app === 'file') { callWhenReady(() => filesAppRef.value, 'openFileById', itemId, skipNavPush); }
 };
 
+/**
+ * Say why a link goes nowhere, and offer the two ways through.
+ *
+ * A link into Whiteboard, Files, Safe or Syn used to do nothing at all in
+ * simple mode: the router sent the app back to Notes and the item never
+ * opened. Now the person hears that the item lives in an app simple mode
+ * hides, and can open it this once or turn the mode off.
+ */
+const offerHiddenApp = (app: string, retry: () => void) => {
+    const t = i18n.global.t;
+    showAppNotice(t('shell.simple_link.body', { app: appName(app) }), 'info', [
+        { label: t('shell.simple_link.open_anyway'), run: () => { simpleModePass.value = app; retry(); } },
+        { label: t('shell.simple_link.turn_off'), run: () => { simpleMode.value = false; retry(); } },
+    ]);
+};
+
 const handleEditFromNexus = async (id: string, type: string, query?: string) => {
     logger.debug(`App.vue: handleEditFromNexus received id: ${id}, type: ${type}`);
+    const target = appForOpenType(type);
+    if (target && simpleModePass.value !== target && hiddenBySimpleMode(target, simpleMode.value)) {
+        offerHiddenApp(target, () => void handleEditFromNexus(id, type, query));
+        return;
+    }
     // Note: watcher on activeTool now handles pushing to back stack automatically
     if (type === 'note') { 
         activeTool.value = 'note'; 
@@ -746,6 +874,51 @@ const scanVaultNodes = async (): Promise<void> => {
     }
 };
 
+/**
+ * The app the shell opened on, so the empty-vault rule can tell whether the
+ * user has gone anywhere since. Empty once it has had its say.
+ */
+const openingApp = ref('');
+
+/**
+ * Move a new user from the start screen to QuickCap when the vault is empty.
+ *
+ * The rule is `startApp` in `shared/appAccess.ts`: only when no start app was
+ * ever chosen in Settings, and only when the vault holds no notes and no
+ * tasks. This is the half that asks the vault.
+ *
+ * Asked after `scan_all_nodes`, never before: until the scan has run the index
+ * need not match the folder — a folder somebody just chose has not been read
+ * at all — so an earlier answer could call a full folder empty.
+ * On an empty vault the scan is instant, so the move lands before anybody
+ * could have started reading Nexus. It never moves somebody who has already
+ * gone somewhere else, and it only runs once per start.
+ *
+ * `get_node_summaries` is the cheapest existing question — there is no count
+ * command — and it is only asked of people who never chose a start app.
+ */
+const landOnQuickCapIfEmpty = async () => {
+    const from = openingApp.value;
+    openingApp.value = '';
+    if (!from || appStore.defaultAppChosen || !vaultPath.value) return;
+    if (activeTool.value !== from) return;
+    try {
+        const [notes, tasks] = await Promise.all([
+            invoke<unknown[]>('get_node_summaries', { nodeType: 'note' }),
+            invoke<unknown[]>('get_node_summaries', { nodeType: 'task' }),
+        ]);
+        const target = startApp({
+            defaultApp: defaultApp.value,
+            defaultAppChosen: appStore.defaultAppChosen,
+            simpleMode: simpleMode.value,
+            vaultEmpty: notes.length === 0 && tasks.length === 0,
+        });
+        if (activeTool.value === from && target !== from) activeTool.value = target;
+    } catch (e) {
+        logger.warn('Could not tell whether the vault is empty', e);
+    }
+};
+
 const checkUnreadNotifications = async () => {
     if (!vaultPath.value) return;
     try {
@@ -815,6 +988,10 @@ const { enabled: synEnabled } = useSynEnabled(() => vaultPath.value ?? '');
 const askBarAllowed = computed(() => {
     if (!vaultPath.value) return false;
     if (!synEnabled.value) return false;
+    // Simple mode hides Syn along with its apps. Its buttons went with it, but
+    // the key, the selection button and the editor's toolbar all ask this, so
+    // this is the one place that has to say no for all of them.
+    if (simpleMode.value) return false;
     if (!appLockStore.isEnabled) return true;
     if (appLockStore.isAppLocked) return false;
     return appLockStore.isMiniAppAccessible(activeTool.value);
@@ -970,7 +1147,10 @@ const askWithQuestion = async (text: string) => {
 const collectQuickQuestion = async () => {
     const route = routeQuickQuestion({
         hasVault: !!vaultPath.value,
-        synEnabled: synEnabled.value,
+        // In simple mode there is no bar to put the question in, and waiting
+        // for one would hold it until the mode is turned off. It is kept as a
+        // capture instead, the same as with Syn switched off.
+        synEnabled: synEnabled.value && !simpleMode.value,
         allowed: askBarAllowed.value,
     });
     if (route === 'wait') return;
@@ -1013,6 +1193,9 @@ const handleKeyboardNav = (e: KeyboardEvent) => {
         // Cmd/Ctrl+J. Clear of the neighbours that matter: Cmd+K is a search
         // box in enough apps that taking it would surprise people, and the
         // global capture hotkey already owns Cmd+Shift+Space.
+        // Only taken when there is a bar to open: in simple mode, or with Syn
+        // off or locked away, the key is left to whatever else wants it.
+        if (!askBarOpen.value && !askBarAllowed.value) return;
         e.preventDefault();
         if (askBarOpen.value) askBarOpen.value = false;
         else openAskBar();
@@ -1086,21 +1269,37 @@ onMounted(async () => {
       floatingNoteId.value = floatingId;
       activeTool.value = 'note';
   } else {
-      activeTool.value = defaultApp.value;
+      // Emptiness is not known yet — the scan below has not run — so this is
+      // the chosen app or the mode's home. `landOnQuickCapIfEmpty` may move a
+      // brand-new user on once the scan has answered.
+      activeTool.value = openingApp.value = startApp({
+          defaultApp: defaultApp.value,
+          defaultAppChosen: appStore.defaultAppChosen,
+          simpleMode: simpleMode.value,
+          vaultEmpty: null,
+      });
   }
 
   // Runs whether or not a vault is already configured, because an install made
   // by an earlier version has one in app-private storage — invisible to the
   // user and unreachable over USB. The backend moves it and hands back where
   // it ended up; calling this again once it has moved does nothing.
+  if (!isMobileOS.value) resolvingFolder.value = false;
   if (isMobileOS.value) {
       try {
           const resolved = await invoke<string>('resolve_mobile_vault_path');
           if (resolved !== vaultPath.value) {
+              // No folder before this call is a first run: a phone picks the
+              // folder itself, so this is where the welcome screen's mode
+              // question gets its turn.
+              const firstRun = !vaultPath.value;
               await appStore.setVaultPath(resolved, 'local');
+              if (firstRun && !appStore.simpleModeChosen) choosingMode.value = true;
           }
       } catch (e) {
           logger.error('Could not resolve the vault location on this device', e);
+      } finally {
+          resolvingFolder.value = false;
       }
   }
 
@@ -1114,6 +1313,7 @@ onMounted(async () => {
      
      // Scan all nodes on startup so Nexus sees fresh Indexed DB data
      scanVaultNodes().then(async () => {
+         void landOnQuickCapIfEmpty();
          // Record what changed while the app was closed. See `timeline/ledger.rs`.
          invoke('ledger_sweep', { vaultPath: vaultPath.value }).catch(logger.error);
          readNotesInBackground();
@@ -1365,23 +1565,23 @@ onUnmounted(() => {
     <!-- ═══ Auto-Update Banner ═══ -->
     <Transition name="slide-down">
       <div v-if="updateAvailable && !updateDownloading"
-           class="fixed top-0 left-0 right-0 z-[9999] bg-indigo-600 text-white px-4 py-2.5 flex items-center justify-between shadow-lg">
+           class="fixed top-0 left-0 right-0 z-[9999] bg-accent text-white px-4 py-2.5 flex items-center justify-between shadow-lg">
         <div class="flex items-center gap-2.5 min-w-0">
           <svg class="w-4 h-4 flex-shrink-0 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
           </svg>
           <div class="min-w-0">
             <span class="text-sm font-medium truncate block">{{ $t('update.available', { version: updateVersion }) }}</span>
-            <span v-if="updateNotes" class="text-xs text-indigo-200 truncate block mt-0.5">{{ updateNotes.split('\n')[0] }}</span>
+            <span v-if="updateNotes" class="text-xs text-white/80 truncate block mt-0.5">{{ updateNotes.split('\n')[0] }}</span>
           </div>
         </div>
         <div class="flex items-center gap-2 flex-shrink-0">
           <button @click="downloadAndInstall"
-                  class="bg-white text-indigo-600 px-3 py-1 rounded-md text-xs font-semibold hover:bg-indigo-50 transition cursor-pointer">
+                  class="bg-white text-accent px-3 py-1 rounded-md text-xs font-semibold hover:bg-white/90 transition cursor-pointer">
             {{ $t('update.installNow') }}
           </button>
           <button @click="dismissUpdate"
-                  class="text-indigo-200 hover:text-white px-2 py-1 text-xs transition cursor-pointer">
+                  class="text-white/80 hover:text-white px-2 py-1 text-xs transition cursor-pointer">
             {{ $t('update.later') }}
           </button>
         </div>
@@ -1390,30 +1590,70 @@ onUnmounted(() => {
 
     <!-- ═══ Update Download Progress ═══ -->
     <div v-if="updateDownloading"
-         class="fixed top-0 left-0 right-0 z-[9999] bg-indigo-600 text-white px-4 py-2.5 shadow-lg">
+         class="fixed top-0 left-0 right-0 z-[9999] bg-accent text-white px-4 py-2.5 shadow-lg">
       <div class="flex items-center justify-between mb-1.5">
         <span class="text-xs font-medium">{{ $t('update.downloading') }}</span>
         <span class="text-xs tabular-nums">{{ updateProgress }}%</span>
       </div>
-      <div class="w-full bg-indigo-400/50 rounded-full h-1.5">
+      <div class="w-full bg-white/30 rounded-full h-1.5">
         <div class="bg-white h-1.5 rounded-full transition-all duration-300 ease-out"
              :style="{ width: updateProgress + '%' }"/>
       </div>
     </div>
 
     <!-- Application State 0: Initializing -->
-    <div v-if="!appStore.isReady" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
+    <div v-if="!appStore.isReady || (!vaultPath && resolvingFolder)" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
+      <!-- Neutral while startup finds the folder, rather than flashing the
+           "choose a folder" step a phone never needs. -->
+      <div v-if="appStore.isReady" role="status" class="flex items-center justify-center">
+        <Loader2 class="w-6 h-6 animate-spin text-gray-500 dark:text-gray-400" aria-hidden="true" />
+        <span class="sr-only">{{ $t('shell.welcome.loading') }}</span>
+      </div>
     </div>
 
     <!-- Application State 1: No Vault Selected -->
-    <div v-else-if="!vaultPath" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
-        <div class="max-w-lg w-full text-center space-y-8">
+    <div v-else-if="!vaultPath || choosingMode" class="flex-1 flex flex-col items-center justify-center p-8 bg-base dark:bg-base-dark" data-tauri-drag-region>
+        <!-- Step 2: simple or everything. Two cards, nothing preselected. -->
+        <div v-if="vaultPath" class="max-w-lg w-full text-center space-y-8">
+            <div>
+               <h1 class="text-2xl font-bold mb-2">{{ $t('shell.welcome.mode_title') }}</h1>
+               <p class="text-text-secondary dark:text-text-secondary-dark text-sm">{{ $t('shell.welcome.mode_subtitle') }}</p>
+            </div>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center" @mousedown.stop>
+              <button @click="chooseMode(true)" class="group flex flex-col items-center gap-3 p-6 sm:w-56 rounded-2xl border-2 border-border dark:border-[#333] hover:border-black dark:hover:border-white bg-surface dark:bg-surface-dark transition-all hover:shadow-lg active:scale-[0.98] cursor-pointer">
+                <div class="w-12 h-12 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center group-hover:bg-gray-200 dark:group-hover:bg-gray-700 transition-colors">
+                  <FileText class="w-6 h-6 text-gray-600 dark:text-gray-300" />
+                </div>
+                <div>
+                  <p class="font-semibold text-sm">{{ $t(`shell.welcome.mode_simple${modeCopy}`) }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t(`shell.welcome.mode_simple_desc${modeCopy}`) }}</p>
+                </div>
+              </button>
+              <button @click="chooseMode(false)" class="group flex flex-col items-center gap-3 p-6 sm:w-56 rounded-2xl border-2 border-border dark:border-[#333] hover:border-black dark:hover:border-white bg-surface dark:bg-surface-dark transition-all hover:shadow-lg active:scale-[0.98] cursor-pointer">
+                <div class="w-12 h-12 rounded-xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center group-hover:bg-gray-200 dark:group-hover:bg-gray-700 transition-colors">
+                  <Waypoints class="w-6 h-6 text-gray-600 dark:text-gray-300" />
+                </div>
+                <div>
+                  <p class="font-semibold text-sm">{{ $t('shell.welcome.mode_full') }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t(`shell.welcome.mode_full_desc${modeCopy}`) }}</p>
+                </div>
+              </button>
+            </div>
+            <div @mousedown.stop>
+              <button type="button" class="btn-secondary" @click="backToFolder">
+                <ArrowLeft class="w-4 h-4" aria-hidden="true" /> {{ $t('shell.welcome.back_to_folder') }}
+              </button>
+            </div>
+        </div>
+
+        <!-- Step 1: where the vault lives. -->
+        <div v-else class="max-w-lg w-full text-center space-y-8">
             <div class="w-20 h-20 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mx-auto shadow-inner">
-               <FileText class="w-10 h-10 text-gray-400" />
+               <FileText class="w-10 h-10 text-gray-500 dark:text-gray-400" />
             </div>
             <div>
-               <h1 class="text-2xl font-bold mb-2">Welcome to Synabit</h1>
-               <p class="text-text-secondary dark:text-text-secondary-dark text-sm">Choose how you want to store your vault.</p>
+               <h1 class="text-2xl font-bold mb-2">{{ $t('shell.welcome.title') }}</h1>
+               <p class="text-text-secondary dark:text-text-secondary-dark text-sm">{{ $t('shell.welcome.subtitle') }}</p>
             </div>
             
             <div class="flex gap-4 justify-center" @mousedown.stop>
@@ -1422,8 +1662,8 @@ onUnmounted(() => {
                   <FolderOpen class="w-6 h-6 text-gray-600 dark:text-gray-300" />
                 </div>
                 <div>
-                  <p class="font-semibold text-sm">Local Folder</p>
-                  <p class="text-[11px] text-gray-400 mt-1">Store on this computer</p>
+                  <p class="font-semibold text-sm">{{ $t('shell.welcome.local_folder') }}</p>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ isMobileOS ? $t('shell.welcome.store_on_device') : $t('shell.welcome.store_on_computer') }}</p>
                 </div>
               </button>
               
@@ -1459,7 +1699,7 @@ onUnmounted(() => {
         <template v-if="!isFloatingView" #[useMobileLayout?`bottombar`:`sidebar`]>
           <nav :class="useMobileLayout ? 'w-full flex justify-around items-center h-full' : 'w-16 flex-shrink-0 bg-sidebar dark:bg-sidebar-dark border-r border-border dark:border-border-dark flex flex-col items-center py-4 z-[55] h-full'" data-tauri-drag-region>
               <div ref="railList" :class="useMobileLayout ? 'flex justify-around items-center w-full' : 'flex-1 min-h-0 flex flex-col items-center gap-3 mt-4 w-full *:shrink-0'" @mousedown.stop>
-                <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'nexus' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('nexus')" @click="activeTool = 'nexus'" :aria-label="getAppName('nexus')" :aria-current="activeTool === 'nexus' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'nexus' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <!--
                      A globe here and a globe on the browser button were the
                      same picture for two different things. The globe belongs to
@@ -1467,76 +1707,90 @@ onUnmounted(() => {
                      with a search over it, which is what this draws.
                    -->
                    <Waypoints class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Nexus</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('nexus') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('nexus') }}</span>
                 </button>
 
-                <button v-if="isAppVisible('messages')" @click="activeTool = 'messages'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'messages' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('messages')" @click="activeTool = 'messages'" :aria-label="getAppName('messages')" :aria-current="activeTool === 'messages' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'messages' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <MessageCircle class="w-5 h-5" />
-                   <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Syn</span>
+                   <div v-if="unreadNotificationCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-xs font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ unreadNotificationCount > 99 ? '99+' : unreadNotificationCount }}</div>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('messages') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('messages') }}</span>
                 </button>
 
-                <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'quickcap' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('quickcap')" @click="activeTool = 'quickcap'" :aria-label="getAppName('quickcap')" :aria-current="activeTool === 'quickcap' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'quickcap' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <!--
                      Caps waiting to be turned into something. Grey rather than
                      red: an inbox with things in it is the normal state, not an
                      alarm, and a colour that shouts gets ignored within a week.
                    -->
-                   <span v-if="quickCapCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-gray-400 dark:bg-gray-600 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ quickCapCount > 99 ? '99+' : quickCapCount }}</span>
+                   <span v-if="quickCapCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-gray-400 dark:bg-gray-600 text-white text-xs font-bold rounded-full flex items-center justify-center ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a] shadow-sm">{{ quickCapCount > 99 ? '99+' : quickCapCount }}</span>
                    <Zap class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">QuickCap</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('quickcap') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('quickcap') }}</span>
                 </button>
-                <button v-if="isAppVisible('note')" @click="activeTool = 'note'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'note' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('note')" @click="activeTool = 'note'" :aria-label="getAppName('note')" :aria-current="activeTool === 'note' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'note' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <FileText class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Notes</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('note') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('note') }}</span>
                 </button>
-                <button v-if="isAppVisible('task')" @click="activeTool = 'task'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'task' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('task')" @click="activeTool = 'task'" :aria-label="getAppName('task')" :aria-current="activeTool === 'task' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'task' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <CheckSquare class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Tasks</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('task') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('task') }}</span>
                 </button>
-                <button v-if="isAppVisible('calendar')" @click="activeTool = 'calendar'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'calendar' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('calendar')" @click="activeTool = 'calendar'" :aria-label="getAppName('calendar')" :aria-current="activeTool === 'calendar' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'calendar' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Calendar class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Calendar</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('calendar') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('calendar') }}</span>
                 </button>
-                <button v-if="isAppVisible('file')" @click="activeTool = 'file'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'file' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('file')" @click="activeTool = 'file'" :aria-label="getAppName('file')" :aria-current="activeTool === 'file' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'file' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <FolderOpen class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Files</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('file') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('file') }}</span>
                 </button>
-                <button v-if="isAppVisible('whiteboard')" @click="activeTool = 'whiteboard'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'whiteboard' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('whiteboard')" @click="activeTool = 'whiteboard'" :aria-label="getAppName('whiteboard')" :aria-current="activeTool === 'whiteboard' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'whiteboard' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Palette class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Whiteboard</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('whiteboard') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('whiteboard') }}</span>
                 </button>
-                <button v-if="isAppVisible('people')" @click="activeTool = 'people'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'people' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('people')" @click="activeTool = 'people'" :aria-label="getAppName('people')" :aria-current="activeTool === 'people' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'people' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Users class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">People</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('people') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('people') }}</span>
                 </button>
 
-                <button v-if="isAppVisible('finance')" @click="activeTool = 'finance'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'finance' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('finance')" @click="activeTool = 'finance'" :aria-label="getAppName('finance')" :aria-current="activeTool === 'finance' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'finance' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Wallet class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Finance</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('finance') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('finance') }}</span>
                 </button>
 
-                <button v-if="isAppVisible('feeds')" @click="activeTool = 'feeds'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'feeds' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('feeds')" @click="activeTool = 'feeds'" :aria-label="getAppName('feeds')" :aria-current="activeTool === 'feeds' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'feeds' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Rss class="w-5 h-5" />
-                   <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Feeds</span>
+                   <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('feeds') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('feeds') }}</span>
                 </button>
 
 
-                <button v-if="isAppVisible('things')" @click="activeTool = 'things'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'things' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('things')" @click="activeTool = 'things'" :aria-label="getAppName('things')" :aria-current="activeTool === 'things' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'things' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Boxes class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Things</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('things') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('things') }}</span>
                 </button>
 
-                <button v-if="isAppVisible('safe')" @click="activeTool = 'safe'" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', activeTool === 'safe' ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <button v-if="isAppVisible('safe')" @click="activeTool = 'safe'" :aria-label="getAppName('safe')" :aria-current="activeTool === 'safe' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'safe' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <KeyRound class="w-5 h-5" />
-                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Safe</span>
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('safe') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('safe') }}</span>
                 </button>
 
-                <div v-if="moreMenuApps.length > 0" class="relative flex justify-center">
-                  <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showHiddenAppsMenu || activeInMore ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                <div v-if="moreMenuApps.length > 0" :class="['relative flex justify-center', useMobileLayout && 'flex-1 min-w-0']">
+                  <button @click="showHiddenAppsMenu = !showHiddenAppsMenu" :aria-label="$t('shell.nav.more_apps')" :aria-expanded="showHiddenAppsMenu" :aria-current="activeInMore ? 'page' : undefined" :class="[railButtonShape, useMobileLayout && 'w-full', showHiddenAppsMenu || activeInMore ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                     <MoreHorizontal class="w-5 h-5" />
-                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">More Apps</span>
+                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ $t('shell.nav.more_apps') }}</span>
+                    <span v-else class="text-xs leading-none truncate max-w-full">{{ $t('shell.nav.more') }}</span>
                   </button>
                   
                   <!--
@@ -1546,10 +1800,10 @@ onUnmounted(() => {
                   <!-- Overlay for clicking outside -->
                   <div v-if="showHiddenAppsMenu" class="fixed inset-0 z-40" @click="showHiddenAppsMenu = false"></div>
                   
-                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : railOverflowed.length ? 'absolute left-full bottom-0 ml-2 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-[#2c2c2c] z-50 max-h-[60vh] overflow-y-auto">
-                    <button v-for="app in moreMenuApps" :key="app.id" @click="openHiddenApp(app.id)" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-[#1c1c1e] dark:text-[#f4f4f5] hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
-                      <component :is="app.icon" class="w-5 h-5 text-gray-500" />
-                      <span class="font-medium">{{ app.name }}</span>
+                  <div v-if="showHiddenAppsMenu" :class="useMobileLayout ? 'absolute bottom-full mb-4 right-0 w-48' : railOverflowed.length ? 'absolute left-full bottom-0 ml-2 w-48' : 'absolute left-full top-0 ml-2 w-48'" class="py-2 bg-white dark:bg-[#1a1a1a] rounded-xl shadow-xl border border-gray-200 dark:border-border-dark z-50 max-h-[60vh] overflow-y-auto">
+                    <button v-for="app in moreMenuApps" :key="app.id" @click="openHiddenApp(app.id)" class="w-full flex items-center gap-3 px-4 py-3 text-sm text-text dark:text-text-dark hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors">
+                      <component :is="app.icon" class="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                      <span class="font-medium">{{ getAppName(app.id) }}</span>
                     </button>
                   </div>
                 </div>
@@ -1559,12 +1813,14 @@ onUnmounted(() => {
                   this the bar did not either — on the platform where leaving
                   what you are reading to go and ask costs the most.
                 -->
-                <button v-if="useMobileLayout && askBarAllowed" @mousedown.prevent @click="toggleAskBar" :class="['relative w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', askBarOpen ? 'bg-violet-100 dark:bg-violet-500/15' : 'hover:bg-gray-200 dark:hover:bg-gray-800']" :aria-label="$t('syn.open_ask_bar')" :aria-pressed="askBarOpen">
+                <button v-if="useMobileLayout && askBarAllowed && !simpleMode" @mousedown.prevent @click="toggleAskBar" :class="[railButtonShape, askBarOpen ? 'bg-accent/10' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800']" :aria-label="$t('syn.open_ask_bar')" :aria-pressed="askBarOpen">
                    <img :src="synAvatar" alt="" class="w-6 h-6 rounded-full object-cover" />
+                   <span class="text-xs leading-none truncate max-w-full">{{ $t('shell.nav.ask_syn') }}</span>
                 </button>
 
-                <button v-if="useMobileLayout" @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']" aria-label="Open Settings">
+                <button v-if="useMobileLayout" @click="openSettings()" :class="[railButtonShape, showSettingsModal ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']" :aria-label="$t('shell.nav.open_settings')">
                    <Settings class="w-5 h-5" />
+                   <span class="text-xs leading-none truncate max-w-full">{{ $t('settings.title') }}</span>
                 </button>
              </div>
              
@@ -1585,16 +1841,16 @@ onUnmounted(() => {
                   it was, the same way the key does.
                 -->
                 <button
-                  v-if="askBarAllowed"
+                  v-if="askBarAllowed && !simpleMode"
                   @mousedown.prevent
                   @click="toggleAskBar"
                   :aria-label="$t('syn.open_ask_bar')"
                   :aria-pressed="askBarOpen"
                   :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer',
-                           askBarOpen ? 'bg-violet-100 dark:bg-violet-500/15' : 'hover:bg-gray-200 dark:hover:bg-gray-800']"
+                           askBarOpen ? 'bg-accent/10' : 'hover:bg-gray-200 dark:hover:bg-gray-800']"
                 >
                    <img :src="synAvatar" alt="" class="w-6 h-6 rounded-full object-cover" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ askShortcut ? $t('syn.open_ask_bar_hint', { shortcut: askShortcut }) : $t('syn.open_ask_bar') }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ askShortcut ? $t('syn.open_ask_bar_hint', { shortcut: askShortcut }) : $t('syn.open_ask_bar') }}</span>
                 </button>
 
                 <!--
@@ -1603,26 +1859,33 @@ onUnmounted(() => {
                   wants it — but a pane opened there and left open has to be
                   reachable from wherever you went next, and the mini-apps are
                   where you went next.
+
+                  Simple mode hides it, as it hides Syn's button above — the
+                  shortcut still works for whoever knows it. A pane already open
+                  keeps its button, or it would have no way to close.
                 -->
                 <button
+                  v-if="!simpleMode || synPaneShare > 0"
                   @click="synPaneShare > 0 ? closePane() : openBeside(SOMEWHERE_TO_START)"
+                  :aria-label="synPaneShare > 0 ? $t('shell.browser.close') : $t('shell.browser.open')"
+                  :aria-pressed="synPaneShare > 0"
                   :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer',
-                           synPaneShare > 0 ? 'bg-violet-100 text-violet-600 dark:bg-violet-500/15 dark:text-violet-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']"
+                           synPaneShare > 0 ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']"
                 >
                    <Globe class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ synPaneShare > 0 ? 'Close the browser' : 'Open a browser beside the app' }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ synPaneShare > 0 ? $t('shell.browser.close') : $t('shell.browser.open') }}</span>
                 </button>
 
-                <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? 'Syncing...' : appStore.syncLastSuccessful ? `P2P synced ${appStore.syncLastSuccessful}` : 'Sync Server'">
+                <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? $t('shell.sync.syncing') : lastSyncedText || $t('shell.sync.server')">
                    <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
-                   <span v-if="syncConflictCount > 0" class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-4 text-center">{{ syncConflictCount }}</span>
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? 'Syncing…' : syncState.syncError.value ? 'Sync Error' : syncConflictCount > 0 ? `${syncConflictCount} file(s) kept aside — click to see` : appStore.syncLastSuccessful ? `Synced ${appStore.syncLastSuccessful}` : 'Sync Now' }}</span>
+                   <span v-if="syncConflictCount > 0" class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-xs font-bold leading-4 text-center">{{ syncConflictCount }}</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? $t('shell.sync.syncing') : syncState.syncError.value ? $t('shell.sync.error') : syncConflictCount > 0 ? $t('shell.sync.kept_aside', { count: syncConflictCount }, syncConflictCount) : lastSyncedText || $t('settings.general.sync_now') }}</span>
                 </button>
 
-                 <button @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-[#e6e6e6] text-black dark:bg-[#333] dark:text-white shadow-sm' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                 <button @click="openSettings()" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', showSettingsModal ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Settings class="w-5 h-5" />
-                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 pointer-events-none transition-all z-50 shadow-lg">Settings</span>
+                   <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ $t('settings.title') }}</span>
                 </button>
              </div>
           </nav>
@@ -1634,7 +1897,7 @@ onUnmounted(() => {
                 <!-- Tier 2: Show PIN pad directly for protected mini-apps -->
                 <LockScreen
                     v-if="appLockStore.isEnabled && appLockStore.isAppProtected(route.name as string) && !appLockStore.isMiniAppAccessible(route.name as string)"
-                    :title="`Enter PIN to access ${getAppName(route.name as string)}`"
+                    :title="$t('shell.lock.enter_pin_for_app', { app: getAppName(route.name as string) })"
                     @unlocked="appLockStore.unlockMiniApp(route.name as string)"
                     @cancelled="router.back()"
                 />
@@ -1651,10 +1914,6 @@ onUnmounted(() => {
                     />
                 </keep-alive>
             </router-view>
-            
-            <!-- Conflict Toast -->
-            <SyncConflictToast />
-
         </div>
 
 
@@ -1682,8 +1941,13 @@ onUnmounted(() => {
         </template>
       </component>
 
-      <!-- Sync Conflict Toast (floating bottom-right) -->
+      <!-- Sync Conflict Toast (floating bottom-right). Once, and out here
+           rather than in the content slot: it teleports to body, so a second
+           copy was a second listener stacking the same toast on this one. -->
       <SyncConflictToast />
+      <Teleport to="#app-toasts">
+        <AppNotice />
+      </Teleport>
     </template>
 
     <!-- Syn asking for a secret: the value goes from this card to the Safe, never through Syn. -->
@@ -1704,7 +1968,7 @@ onUnmounted(() => {
     <!-- Tier 1: App Lock Screen -->
     <LockScreen
       v-if="appLockStore.isEnabled && appLockStore.isAppLocked"
-      title="Enter PIN to unlock Synabit"
+      :title="$t('shell.lock.enter_pin_for_app', { app: 'Synabit' })"
       :cancellable="false"
       @unlocked="appLockStore.unlockApp()"
     />
@@ -1721,12 +1985,17 @@ onUnmounted(() => {
 
     <!-- Files kept aside during sync. Deliberately not styled as an error: the
          sync worked, and the only thing the user needs is where their file went. -->
-    <div v-if="showSyncConflicts" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" @click.self="showSyncConflicts = false">
-      <div class="w-full max-w-lg rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
+    <AppDialog
+      :show="showSyncConflicts"
+      labelledby="sync-conflicts-title"
+      unstyled
+      @close="showSyncConflicts = false"
+    >
+      <div class="w-full rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
         <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ syncConflictCount }} file(s) kept</h2>
+          <h2 id="sync-conflicts-title" class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ $t('shell.conflicts.title', { count: syncConflictCount }, syncConflictCount) }}</h2>
           <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            Another device saved its own file to the same place. Yours was not lost — it was renamed and is still in your vault.
+            {{ $t('shell.conflicts.body') }}
           </p>
         </div>
         <ul class="max-h-72 overflow-y-auto px-5 py-3 space-y-3">
@@ -1736,12 +2005,12 @@ onUnmounted(() => {
           </li>
         </ul>
         <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
-          <button @click="syncState.dismissConflicts(); showSyncConflicts = false" class="px-4 py-2 rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer">
-            Got it
+          <button @click="syncState.dismissConflicts(); showSyncConflicts = false" class="btn-primary">
+            {{ $t('shell.conflicts.got_it') }}
           </button>
         </div>
       </div>
-    </div>
+    </AppDialog>
 
     <!-- ═══ Ask Syn (Cmd/Ctrl+J) ═══ -->
     <!--
@@ -1766,13 +2035,14 @@ onUnmounted(() => {
     <div
       v-if="synPaneShare > 0"
       class="fixed top-0 right-0 z-[10001] flex items-center gap-1 px-1.5
-             bg-base dark:bg-base-dark border-b border-l border-[#e6e6e6] dark:border-[#2c2c2c]"
+             bg-base dark:bg-base-dark border-b border-l border-border dark:border-border-dark"
       :style="{ width: `${(synPaneShare * 100).toFixed(4)}%`, height: `${PANE_BAR}px` }"
     >
       <button
         class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
                text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Back"
+        :title="$t('shell.nav.back')"
+        :aria-label="$t('shell.nav.back')"
         @click="panePageBack()"
       >
         <ArrowLeft class="w-4 h-4" />
@@ -1780,7 +2050,8 @@ onUnmounted(() => {
       <button
         class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
                text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Forward"
+        :title="$t('shell.nav.forward')"
+        :aria-label="$t('shell.nav.forward')"
         @click="panePageForward()"
       >
         <ArrowRight class="w-4 h-4" />
@@ -1799,7 +2070,7 @@ onUnmounted(() => {
         spellcheck="false"
         class="flex-1 min-w-0 h-7 px-2 rounded text-xs bg-black/5 dark:bg-white/10
                text-text dark:text-text-dark outline-none select-text
-               focus:ring-1 focus:ring-indigo-500"
+               focus:ring-1 focus:ring-accent"
         @focus="paneAddressFocused = true"
         @blur="paneAddressFocused = false; paneAddress = panePage?.url ?? ''"
         @keydown.enter="goToTypedAddress()"
@@ -1812,7 +2083,8 @@ onUnmounted(() => {
       <button
         class="w-7 h-7 shrink-0 rounded flex items-center justify-center cursor-pointer
                text-text/60 dark:text-text-dark/60 hover:bg-black/5 dark:hover:bg-white/10"
-        title="Close the browser"
+        :title="$t('shell.browser.close')"
+        :aria-label="$t('shell.browser.close')"
         @click="closePane()"
       >
         <X class="w-4 h-4" />

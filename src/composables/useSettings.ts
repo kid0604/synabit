@@ -5,6 +5,7 @@ import { useAppLockStore } from '../stores/useAppLockStore';
 import { useEventBus } from './useEventBus';
 import { invoke } from '@tauri-apps/api/core';
 import { i18n } from '../i18n';
+import { applyUiScale } from '../utils/uiScale';
 
 /**
  * Translate the tray menu.
@@ -43,7 +44,7 @@ export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
   const { 
-    themeMode, appLanguage, taskArchiveDays, taskDeleteConfirm, taskListSort, taskListGroup, enableDailyNotes, dailyNoteFormat, 
+    themeMode, appLanguage, uiScale, simpleMode, taskArchiveDays, taskDeleteConfirm, taskListSort, taskListGroup, enableDailyNotes, noteToolbarVisible, dailyNoteFormat, 
     dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps,
     codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
   } = storeToRefs(appStore);
@@ -59,6 +60,7 @@ export function useSettings() {
     if (isInitialized) return;
     await appStore.initialize();
     applyTheme();
+    void applyUiScale(uiScale.value);
     
     // Initialize App Lock state
     await appLockStore.initialize();
@@ -82,8 +84,10 @@ export function useSettings() {
     
     isInitialized = true;
 
-    // Sync initial language
+    // Sync initial language. `lang` on the root too, so a screen reader
+    // reads Vietnamese with a Vietnamese voice rather than an English one.
     i18n.global.locale.value = appLanguage.value as any;
+    document.documentElement.lang = appLanguage.value;
     void translateTrayMenu();
 
     // Watch for theme changes to apply class
@@ -91,9 +95,14 @@ export function useSettings() {
       applyTheme();
     });
 
+    watch(uiScale, (scale) => {
+      void applyUiScale(scale);
+    });
+
     // Watch for language changes to update i18n
     watch(appLanguage, (newLang) => {
       i18n.global.locale.value = newLang as any;
+      document.documentElement.lang = newLang;
       void translateTrayMenu();
     });
 
@@ -144,12 +153,15 @@ export function useSettings() {
     settingsTab,
     themeMode,
     appLanguage,
+    uiScale,
+    simpleMode,
     applyTheme,
     taskArchiveDays,
     taskDeleteConfirm,
     taskListSort,
     taskListGroup,
     enableDailyNotes,
+    noteToolbarVisible,
     dailyNoteFormat,
     dailyNoteTag,
     nestedNumberListStyle,

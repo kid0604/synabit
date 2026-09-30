@@ -6,7 +6,7 @@
  */
 import { useI18n } from 'vue-i18n';
 import { Terminal } from 'lucide-vue-next';
-import ModalDialog from '../calendar/components/ModalDialog.vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import { useApprovalQueue } from './useApprovalQueue';
 
 const { t } = useI18n();
@@ -21,13 +21,12 @@ const { queue, answer } = useApprovalQueue<Ask>('safe://ssh-approve');
 </script>
 
 <template>
-  <ModalDialog
+  <AppDialog
     v-if="queue.length"
     :show="true"
-    labelled-by="ssh-approve-title"
-    card-class="max-w-[420px] text-text dark:text-text-dark"
-    @close="answer(false)"
-  >
+    labelledby="ssh-approve-title"
+    size="sm" elevated unstyled panel-class="bg-surface dark:bg-surface-dark text-text dark:text-text-dark rounded-2xl shadow-2xl border border-border dark:border-border-dark flex flex-col overflow-hidden max-h-[90vh]"
+    @close="answer(false)">
     <div class="p-5 space-y-4">
       <div class="flex items-start gap-3">
         <div class="w-9 h-9 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
@@ -45,8 +44,8 @@ const { queue, answer } = useApprovalQueue<Ask>('safe://ssh-approve');
         <!-- Deny has the focus: the card appears on its own, and an Enter meant
              for something else must not sign with a key. -->
         <button class="px-4 py-2 rounded-lg text-sm hover:bg-surface-hover dark:hover:bg-surface-hover-dark" autofocus @click="answer(false)">{{ t('safe.ssh.deny') }}</button>
-        <button class="px-4 py-2 rounded-lg bg-accent text-white text-sm font-medium" @click="answer(true)">{{ t('safe.ssh.allow') }}</button>
+        <button class="btn-primary" @click="answer(true)">{{ t('safe.ssh.allow') }}</button>
       </div>
     </div>
-  </ModalDialog>
+  </AppDialog>
 </template>

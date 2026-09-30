@@ -2,7 +2,11 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { Shield, Delete, X, Check } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
-import { useAppLockStore } from '../../stores/useAppLockStore';
+import { useAppLockStore, pinErrorKey } from '../../stores/useAppLockStore';
+import { useI18n } from 'vue-i18n';
+import AppDialog from './AppDialog.vue';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   mode: 'setup' | 'change';
@@ -31,36 +35,36 @@ const _totalSteps = computed(() => (props.mode === 'change' ? 3 : 2));
 
 const stepTitle = computed(() => {
   if (props.mode === 'change') {
-    if (currentStep.value === 0) return 'Enter Current PIN';
-    if (currentStep.value === 1) return 'Create New PIN';
-    return 'Confirm New PIN';
+    if (currentStep.value === 0) return t('shell.pin_setup.enter_current');
+    if (currentStep.value === 1) return t('shell.pin_setup.create_new');
+    return t('shell.pin_setup.confirm_new');
   }
-  if (currentStep.value === 1) return 'Create a 6-digit PIN';
-  return 'Confirm Your PIN';
+  if (currentStep.value === 1) return t('shell.pin_setup.create');
+  return t('shell.pin_setup.confirm');
 });
 
 const stepDescription = computed(() => {
   if (props.mode === 'change') {
-    if (currentStep.value === 0) return 'Verify your identity first';
-    if (currentStep.value === 1) return 'Choose a new 6-digit PIN';
-    return 'Re-enter your new PIN to confirm';
+    if (currentStep.value === 0) return t('shell.pin_setup.enter_current_desc');
+    if (currentStep.value === 1) return t('shell.pin_setup.create_new_desc');
+    return t('shell.pin_setup.confirm_new_desc');
   }
-  if (currentStep.value === 1) return 'This PIN will protect your app';
-  return 'Re-enter the same PIN to confirm';
+  if (currentStep.value === 1) return t('shell.pin_setup.create_desc');
+  return t('shell.pin_setup.confirm_desc');
 });
 
 // Step indicators
 const steps = computed(() => {
   if (props.mode === 'change') {
     return [
-      { num: 0, label: 'Verify' },
-      { num: 1, label: 'New PIN' },
-      { num: 2, label: 'Confirm' },
+      { num: 0, label: t('shell.pin_setup.step_verify') },
+      { num: 1, label: t('shell.pin_setup.step_new') },
+      { num: 2, label: t('shell.pin_setup.step_confirm') },
     ];
   }
   return [
-    { num: 1, label: 'Create' },
-    { num: 2, label: 'Confirm' },
+    { num: 1, label: t('shell.pin_setup.step_create') },
+    { num: 2, label: t('shell.pin_setup.step_confirm') },
   ];
 });
 
@@ -96,8 +100,8 @@ async function handleStepComplete() {
       const result = await store.verifyPin(enteredPin);
       if (!result.success) {
         errorMessage.value = result.locked_until
-          ? 'Too many attempts. Please wait.'
-          : `Wrong PIN. ${result.remaining_attempts} attempt${result.remaining_attempts !== 1 ? 's' : ''} left.`;
+          ? t('shell.lock.too_many')
+          : t('shell.lock.wrong_pin', { count: result.remaining_attempts }, result.remaining_attempts);
         triggerShake();
         pin.value = [];
         return;
@@ -113,7 +117,7 @@ async function handleStepComplete() {
     } else if (currentStep.value === 2) {
       // Confirm PIN
       if (enteredPin !== newPin.value) {
-        errorMessage.value = "PINs don't match. Try again.";
+        errorMessage.value = t('shell.pin_setup.mismatch');
         triggerShake();
         pin.value = [];
         newPin.value = '';
@@ -133,7 +137,10 @@ async function handleStepComplete() {
       emit('done');
     }
   } catch (e) {
-    errorMessage.value = String(e);
+    // The backend's refusals are codes (a PIN already set, a wrong current
+    // PIN, too many tries); anything else is shown as it came.
+    const key = pinErrorKey(e);
+    errorMessage.value = key ? t(key) : String(e);
     triggerShake();
     pin.value = [];
   } finally {
@@ -168,34 +175,34 @@ const numPadKeys = [
 </script>
 
 <template>
-  <Teleport to="body">
-    <Transition appear name="pin-modal">
-      <div v-show="true" class="fixed inset-0 z-[9998] flex items-center justify-center">
-        <!-- Backdrop -->
-        <div
-          class="absolute inset-0 bg-black/40 dark:bg-black/60 backdrop-blur-sm"
-          @mousedown="emit('cancel')"
-        ></div>
-
+  <!-- Elevated: it is opened from Settings, which is a dialog too. -->
+  <AppDialog
+    show
+    labelledby="setup-pin-title"
+    elevated
+    unstyled
+    size="sm"
+    @close="emit('cancel')"
+  >
         <!-- Modal Card -->
         <div
-          class="relative z-10 w-[95vw] max-w-[380px] bg-[#fdfdfc] dark:bg-[#242424] rounded-2xl shadow-2xl border border-[#e6e6e6] dark:border-[#333] overflow-hidden"
+          class="relative w-full bg-base dark:bg-base-dark rounded-2xl shadow-2xl border border-border dark:border-[#333] overflow-hidden"
           @mousedown.stop
         >
           <!-- Header -->
           <div class="flex items-center justify-between px-5 pt-5 pb-0">
             <div class="flex items-center gap-2">
-              <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-[#7c3aed] to-[#a78bfa] dark:from-[#a78bfa] dark:to-[#7c3aed] flex items-center justify-center">
+              <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center">
                 <Shield class="w-4 h-4 text-white" />
               </div>
-              <span class="text-[14px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
-                {{ mode === 'setup' ? 'Set Up PIN' : 'Change PIN' }}
+              <span id="setup-pin-title" class="text-[14px] font-semibold text-text dark:text-text-dark">
+                {{ mode === 'setup' ? $t('settings.security.setup_pin') : $t('settings.security.change_pin') }}
               </span>
             </div>
             <button
               @click="emit('cancel')"
-              class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
-             aria-label="More Options">
+              class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-[#333] text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+             :aria-label="$t('shell.common.close')" :title="$t('shell.common.close')">
               <X class="w-4 h-4" />
             </button>
           </div>
@@ -207,21 +214,21 @@ const numPadKeys = [
                 class="flex items-center gap-1.5"
               >
                 <div
-                  class="w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold transition-all duration-300"
+                  class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300"
                   :class="[
                     currentStep > step.num
                       ? 'bg-green-500 text-white'
                       : currentStep === step.num
-                        ? 'bg-[#7c3aed] dark:bg-[#a78bfa] text-white'
-                        : 'bg-[#e6e6e6] dark:bg-[#3a3a3a] text-[#8b8b8b] dark:text-[#71717a]'
+                        ? 'bg-accent dark:bg-accent-dark text-white'
+                        : 'bg-[#e6e6e6] dark:bg-[#3a3a3a] text-muted dark:text-muted-dark'
                   ]"
                 >
                   <Check v-if="currentStep > step.num" class="w-3.5 h-3.5" />
                   <span v-else>{{ idx + 1 }}</span>
                 </div>
                 <span
-                  class="text-[11px] font-medium transition-colors"
-                  :class="currentStep === step.num ? 'text-[#1c1c1e] dark:text-[#f4f4f5]' : 'text-[#8b8b8b] dark:text-[#71717a]'"
+                  class="text-xs font-medium transition-colors"
+                  :class="currentStep === step.num ? 'text-text dark:text-text-dark' : 'text-muted dark:text-muted-dark'"
                 >
                   {{ step.label }}
                 </span>
@@ -237,10 +244,10 @@ const numPadKeys = [
           <!-- Content -->
           <div class="flex flex-col items-center px-5 pb-6 pt-3">
             <!-- Step Title -->
-            <h3 class="text-[15px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-0.5 text-center">
+            <h3 class="text-[15px] font-semibold text-text dark:text-text-dark mb-0.5 text-center">
               {{ stepTitle }}
             </h3>
-            <p class="text-[12px] text-[#8b8b8b] dark:text-[#71717a] mb-5 text-center">
+            <p class="text-[12px] text-muted dark:text-muted-dark mb-5 text-center">
               {{ stepDescription }}
             </p>
 
@@ -255,7 +262,7 @@ const numPadKeys = [
                 class="w-3 h-3 rounded-full border-2 transition-all duration-200 ease-out"
                 :class="[
                   i <= pin.length
-                    ? 'bg-[#7c3aed] dark:bg-[#a78bfa] border-[#7c3aed] dark:border-[#a78bfa] scale-110'
+                    ? 'bg-accent dark:bg-accent-dark border-accent dark:border-accent-dark scale-110'
                     : 'bg-transparent border-[#d4d4d8] dark:border-[#3f3f46]',
                 ]"
               ></div>
@@ -265,7 +272,7 @@ const numPadKeys = [
             <Transition name="fade">
               <p
                 v-if="errorMessage"
-                class="text-[11px] text-red-500 dark:text-red-400 font-medium mb-3 text-center min-h-[16px]"
+                class="text-xs text-red-500 dark:text-red-400 font-medium mb-3 text-center min-h-[16px]"
               >
                 {{ errorMessage }}
               </p>
@@ -281,7 +288,7 @@ const numPadKeys = [
                     @click="removeDigit"
                     :disabled="isProcessing || pin.length === 0"
                     class="modal-numpad-btn modal-numpad-action"
-                   aria-label="Remove Digit">
+                   :aria-label="$t('shell.lock.remove_digit')">
                     <Delete class="w-4.5 h-4.5" />
                   </button>
 
@@ -304,15 +311,13 @@ const numPadKeys = [
             <!-- Processing indicator -->
             <Transition name="fade">
               <div v-if="isProcessing" class="mt-4 flex items-center gap-2">
-                <div class="w-3.5 h-3.5 border-2 border-[#7c3aed] dark:border-[#a78bfa] border-t-transparent rounded-full animate-spin"></div>
-                <span class="text-[11px] text-[#8b8b8b] dark:text-[#71717a]">Processing…</span>
+                <div class="w-3.5 h-3.5 border-2 border-accent dark:border-accent-dark border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-xs text-muted dark:text-muted-dark">{{ $t('shell.pin_setup.processing') }}</span>
               </div>
             </Transition>
           </div>
         </div>
-      </div>
-    </Transition>
-  </Teleport>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -402,32 +407,6 @@ const numPadKeys = [
 
 .shake {
   animation: shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97);
-}
-
-/* Modal transition */
-.pin-modal-enter-active {
-  transition: opacity 0.2s ease;
-}
-.pin-modal-enter-active > div:last-child {
-  transition: transform 0.2s ease, opacity 0.2s ease;
-}
-.pin-modal-leave-active {
-  transition: opacity 0.15s ease;
-}
-.pin-modal-leave-active > div:last-child {
-  transition: transform 0.15s ease, opacity 0.15s ease;
-}
-.pin-modal-enter-from,
-.pin-modal-leave-to {
-  opacity: 0;
-}
-.pin-modal-enter-from > div:last-child {
-  transform: scale(0.95) translateY(10px);
-  opacity: 0;
-}
-.pin-modal-leave-to > div:last-child {
-  transform: scale(0.95) translateY(10px);
-  opacity: 0;
 }
 
 /* Fade */

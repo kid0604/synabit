@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { FileText, CheckSquare, Zap, Calendar, Folder, File as FileIcon, Link as LinkIcon, Package, Search, ArrowUpDown } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -9,6 +10,21 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits(['open-linked-node']);
+const { t, locale } = useI18n();
+
+// The group names below double as identifiers (the filter value, the icon and
+// layout switches), so they stay English inside and are translated on the way
+// to the screen.
+const TYPE_LABEL_KEYS: Record<string, string> = {
+    'All': 'people.type_all',
+    'Quick Captures': 'people.type_quickcap',
+    'Tasks': 'people.tasks',
+    'Notes': 'people.notes',
+    'Events': 'people.type_events',
+    'Files': 'people.type_files',
+    'Projects': 'people.type_projects',
+};
+const typeLabel = (type: string) => TYPE_LABEL_KEYS[type] ? t(TYPE_LABEL_KEYS[type]) : type;
 
 const filterType = ref('All');
 const searchQuery = ref('');
@@ -21,9 +37,9 @@ const cycleSortMode = () => {
 };
 
 const sortModeLabel = computed(() => {
-    if (sortMode.value === 'recent') return 'Recent';
-    if (sortMode.value === 'oldest') return 'Oldest';
-    return 'A-Z';
+    if (sortMode.value === 'recent') return t('people.sort_recent');
+    if (sortMode.value === 'oldest') return t('people.sort_oldest');
+    return t('people.sort_alpha');
 });
 
 const normalizeType = (type: string) => {
@@ -96,12 +112,12 @@ const getTypeIcon = (type: string) => {
 };
 
 const formatDate = (timestamp: number) => {
-    if (!timestamp) return 'Unknown Date';
-    return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (!timestamp) return t('people.unknown_date');
+    return new Date(timestamp).toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
 const renderPreview = (content: string) => {
-    if (!content) return 'No content preview available.';
+    if (!content) return t('people.no_preview');
     let text = content.replace(/\[([^\]]+)\]\(synabit:\/\/[^)]+\)/g, '@$1');
     text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
     text = text.replace(/^#{1,6}\s+/gm, '');
@@ -134,22 +150,22 @@ const renderPreview = (content: string) => {
 
             <div v-else-if="linkedNodes.length === 0" class="text-center py-8 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
                 <p class="text-gray-500 dark:text-gray-400">{{ $t('people.no_linked_activity') }}</p>
-                <p class="text-xs text-gray-400 mt-1">{{ $t('people.mention') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{person.title}}]]</code> {{ $t('people.mention_desc') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t('people.mention') }} <code class="bg-gray-200 dark:bg-gray-700 px-1 py-0.5 rounded">[[{{person.title}}]]</code> {{ $t('people.mention_desc') }}</p>
             </div>
 
             <div v-else class="space-y-6">
                 <!-- Toolbar -->
                 <div class="flex flex-col sm:flex-row gap-3">
                     <div class="relative flex-1">
-                        <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                         <input v-model="searchQuery" type="text" :placeholder="$t('people.search_linked_ph')" class="w-full pl-9 pr-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all" />
                     </div>
                     <div class="flex items-center gap-2">
                         <select v-model="filterType" class="px-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 dark:text-gray-300 appearance-none min-w-[100px]">
-                            <option v-for="t in availableTypes" :key="t" :value="t">{{ t }}</option>
+                            <option v-for="t in availableTypes" :key="t" :value="t">{{ typeLabel(t) }}</option>
                         </select>
-                        <button @click="cycleSortMode" class="flex items-center gap-1.5 px-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-[#2c2c2c] transition-colors text-gray-700 dark:text-gray-300">
-                            <ArrowUpDown class="w-4 h-4 text-gray-500" />
+                        <button @click="cycleSortMode" :aria-label="$t('people.sort_by', { mode: sortModeLabel })" class="flex items-center gap-1.5 px-3 py-2 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg text-sm hover:bg-gray-50 dark:hover:bg-[#2c2c2c] transition-colors text-gray-700 dark:text-gray-300">
+                            <ArrowUpDown class="w-4 h-4 text-gray-500 dark:text-gray-400" />
                             {{ sortModeLabel }}
                         </button>
                     </div>
@@ -162,7 +178,7 @@ const renderPreview = (content: string) => {
                 <div v-else class="space-y-8">
                     <div v-for="(nodes, typeName) in groupedLinkedNodes" :key="typeName">
                     <h3 class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3 flex items-center gap-2">
-                        <component :is="getTypeIcon(typeName)" class="w-3.5 h-3.5" /> {{ typeName }} ({{ nodes.length }})
+                        <component :is="getTypeIcon(typeName)" class="w-3.5 h-3.5" /> {{ typeLabel(String(typeName)) }} ({{ nodes.length }})
                     </h3>
 
                     <!-- Tasks layout -->
@@ -170,8 +186,8 @@ const renderPreview = (content: string) => {
                         <div v-for="node in nodes" :key="node.id" @click="emit('open-linked-node', node)" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg p-3 hover:shadow-sm transition-all flex items-start gap-3 cursor-pointer">
                             <input type="checkbox" :checked="node.properties.status === 'completed'" disabled class="mt-1 flex-shrink-0 rounded text-blue-500">
                             <div>
-                                <p class="text-sm font-medium" :class="node.properties.status === 'completed' ? 'line-through text-gray-400' : ''">{{ node.title }}</p>
-                                <p class="text-xs text-gray-500 mt-1">{{ formatDate(node.timestamp) }}</p>
+                                <p class="text-sm font-medium" :class="node.properties.status === 'completed' ? 'line-through text-gray-500 dark:text-gray-400' : ''">{{ node.title }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ formatDate(node.timestamp) }}</p>
                             </div>
                         </div>
                     </div>
@@ -181,7 +197,7 @@ const renderPreview = (content: string) => {
                         <div v-for="node in nodes" :key="node.id" class="bg-blue-50/50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/30 rounded-lg p-3 text-sm flex items-start gap-3">
                             <div class="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0"></div>
                             <div class="flex-1 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ node.content || node.title }}</div>
-                            <span class="text-xs text-gray-400 whitespace-nowrap">{{ formatDate(node.timestamp) }}</span>
+                            <span class="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{{ formatDate(node.timestamp) }}</span>
                         </div>
                     </div>
 
@@ -189,11 +205,11 @@ const renderPreview = (content: string) => {
                     <div v-else class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div v-for="node in nodes" :key="node.id" @click="emit('open-linked-node', node)" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg p-4 hover:shadow-sm transition-all cursor-pointer">
                             <h4 class="text-sm font-semibold mb-1 text-blue-600 dark:text-blue-400 truncate">{{ node.title }}</h4>
-                            <p class="text-xs text-gray-500 mb-2">{{ formatDate(node.timestamp) }}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ formatDate(node.timestamp) }}</p>
                             <p v-if="node.content" class="text-xs text-gray-600 dark:text-gray-300 line-clamp-3">{{ renderPreview(node.content) }}</p>
                             <!-- Show properties for non-note types if any -->
                             <div v-if="typeName !== 'Notes' && Object.keys(node.properties || {}).length > 0" class="mt-2 flex flex-wrap gap-1">
-                                <span v-for="(val, key) in node.properties" :key="key" v-show="String(key) !== 'status' && String(key) !== 'id' && typeof val !== 'object'" class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 rounded text-[10px]">
+                                <span v-for="(val, key) in node.properties" :key="key" v-show="String(key) !== 'status' && String(key) !== 'id' && typeof val !== 'object'" class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded text-xs">
                                     {{ key }}: {{ val }}
                                 </span>
                             </div>

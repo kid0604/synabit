@@ -43,28 +43,28 @@ watch(() => props.nodeId, () => {
 });
 
 const COLORS = [
-  { value: '#7c3aed', label: 'Purple' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' },
-  { value: '#ef4444', label: 'Red' },
-  { value: '#ec4899', label: 'Pink' },
-  { value: '#06b6d4', label: 'Cyan' },
-  { value: '#6b7280', label: 'Gray' },
-  { value: '#000000', label: 'Black' },
+  { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
+  { value: '#3b82f6', labelKey: 'whiteboard.colors.blue' },
+  { value: '#10b981', labelKey: 'whiteboard.colors.green' },
+  { value: '#f59e0b', labelKey: 'whiteboard.colors.amber' },
+  { value: '#ef4444', labelKey: 'whiteboard.colors.red' },
+  { value: '#ec4899', labelKey: 'whiteboard.colors.pink' },
+  { value: '#06b6d4', labelKey: 'whiteboard.colors.cyan' },
+  { value: '#6b7280', labelKey: 'whiteboard.colors.gray' },
+  { value: '#000000', labelKey: 'whiteboard.colors.black' },
 ];
 
 const FILL_COLORS = [
-  { value: '', label: 'None' },
+  { value: '', labelKey: 'whiteboard.colors.none' },
   ...COLORS,
 ];
 
 const WIDTHS = [1, 2, 3, 4, 5];
 
 const DASH_STYLES = [
-  { value: 'solid', label: 'Solid', dash: '0' },
-  { value: 'dashed', label: 'Dashed', dash: '8 4' },
-  { value: 'dotted', label: 'Dotted', dash: '2 4' },
+  { value: 'solid', labelKey: 'whiteboard.dash.solid', dash: '0' },
+  { value: 'dashed', labelKey: 'whiteboard.dash.dashed', dash: '8 4' },
+  { value: 'dotted', labelKey: 'whiteboard.dash.dotted', dash: '2 4' },
 ];
 
 const FONT_SIZES = [10, 12, 13, 14, 16, 18, 20, 24];
@@ -97,12 +97,12 @@ function handleDelete() {
   <div class="sp-panel" @mousedown.stop @click.stop>
     <!-- Header -->
     <div class="sp-header">
-      <span class="sp-title">Shape</span>
+      <span class="sp-title">{{ $t('whiteboard.shape') }}</span>
       <div class="sp-header-actions">
-        <button @click="handleDelete" class="sp-icon-btn sp-delete-btn" title="Delete">
+        <button @click="handleDelete" class="sp-icon-btn sp-delete-btn" :title="$t('whiteboard.delete')" :aria-label="$t('whiteboard.delete')">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')">
+        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')" :aria-label="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -111,7 +111,7 @@ function handleDelete() {
     <div class="sp-body">
       <!-- Border Color -->
       <div class="sp-section">
-        <span class="sp-label">Border</span>
+        <span class="sp-label">{{ $t('whiteboard.border') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in COLORS"
@@ -119,14 +119,14 @@ function handleDelete() {
             @click="setStrokeColor(c.value)"
             :class="['sp-swatch', strokeColor === c.value && 'active']"
             :style="{ '--sw-color': c.value }"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Fill Color -->
       <div class="sp-section">
-        <span class="sp-label">Fill</span>
+        <span class="sp-label">{{ $t('whiteboard.fill') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in FILL_COLORS"
@@ -134,14 +134,14 @@ function handleDelete() {
             @click="setFillColor(c.value)"
             :class="['sp-swatch', fillColor === c.value && 'active', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Border Width + Style (compact row) -->
       <div class="sp-section">
-        <span class="sp-label">Stroke</span>
+        <span class="sp-label">{{ $t('whiteboard.stroke') }}</span>
         <div class="sp-row">
           <div class="sp-width-group">
             <button
@@ -161,7 +161,7 @@ function handleDelete() {
             :key="ds.value"
             @click="setDash(ds.value)"
             :class="['sp-dash-chip', dashStyle === ds.value && 'active']"
-            :title="ds.label"
+            :title="$t(ds.labelKey)"
           >
             <svg viewBox="0 0 28 6" class="sp-dash-icon">
               <line x1="1" y1="3" x2="27" y2="3" stroke="currentColor" stroke-width="2"
@@ -173,17 +173,18 @@ function handleDelete() {
 
       <!-- Opacity -->
       <div class="sp-section">
-        <span class="sp-label">Opacity <span class="sp-value">{{ opacity }}%</span></span>
+        <span class="sp-label">{{ $t('whiteboard.opacity') }} <span class="sp-value">{{ opacity }}%</span></span>
         <input
           type="range" min="10" max="100" step="5"
           v-model.number="opacity" @input="emitUpdate"
+          :aria-label="$t('whiteboard.opacity')"
           class="sp-slider"
         />
       </div>
 
       <!-- Font Size -->
       <div class="sp-section">
-        <span class="sp-label">Font</span>
+        <span class="sp-label">{{ $t('whiteboard.font') }}</span>
         <div class="sp-font-row">
           <button
             v-for="s in FONT_SIZES"
@@ -196,7 +197,7 @@ function handleDelete() {
 
       <!-- Label -->
       <div class="sp-section">
-        <span class="sp-label">Label</span>
+        <span class="sp-label">{{ $t('whiteboard.label') }}</span>
         <input
           v-model="nodeLabel"
           @input="updateLabel"
@@ -248,7 +249,7 @@ function handleDelete() {
   border-bottom-color: var(--color-border-dark, #333);
 }
 .sp-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -300,7 +301,7 @@ function handleDelete() {
 }
 .sp-label {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -329,7 +330,7 @@ function handleDelete() {
 }
 .sp-swatch.active {
   border-color: var(--color-accent, #7c3aed);
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.2);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 20%, transparent);
 }
 .sp-swatch:hover:not(.active) {
   transform: scale(1.15);
@@ -388,10 +389,10 @@ function handleDelete() {
 }
 .sp-chip.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
 }
 .dark .sp-chip.active {
-  background: rgba(124, 58, 237, 0.15);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
 }
 .sp-chip:hover:not(.active) {
   background: #ebebeb;
@@ -434,12 +435,12 @@ function handleDelete() {
 }
 .sp-dash-chip.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .sp-dash-chip.active {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .sp-dash-chip:hover:not(.active) {
   background: #ebebeb;
@@ -490,7 +491,7 @@ function handleDelete() {
 }
 .sp-font-chip {
   min-width: 26px;
-  height: 22px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -498,7 +499,7 @@ function handleDelete() {
   border: 1.5px solid transparent;
   background: var(--color-surface-hover, #f5f5f5);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--color-text-secondary, #71717a);
   transition: all 0.12s;
@@ -510,12 +511,12 @@ function handleDelete() {
 }
 .sp-font-chip.active {
   border-color: var(--color-accent, #7c3aed);
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in oklab, var(--color-accent) 8%, transparent);
   color: var(--color-accent, #7c3aed);
 }
 .dark .sp-font-chip.active {
-  background: rgba(124, 58, 237, 0.15);
-  color: var(--color-accent-dark, #a78bfa);
+  background: color-mix(in oklab, var(--color-accent) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 .sp-font-chip:hover:not(.active) {
   background: #ebebeb;

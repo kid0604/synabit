@@ -2,9 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { invoke } from '@tauri-apps/api/core';
 import NoteHistoryModal from '../NoteHistoryModal.vue';
+import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
-vi.mock('@tauri-apps/plugin-dialog', () => ({ ask: vi.fn().mockResolvedValue(true) }));
 vi.mock('vue-i18n', async (importOriginal) => ({
   ...(await importOriginal<typeof import('vue-i18n')>()),
   useI18n: () => ({ t: (key: string) => key, locale: { value: 'en' } }),
@@ -27,7 +27,8 @@ function mountModal(beforeRestore?: () => Promise<void>) {
   });
   return mount(NoteHistoryModal, {
     props: { vaultPath: '/v', noteId: 'Notes/n.md', noteTitle: 'N', beforeRestore },
-    global: { stubs: { 'lucide-vue-next': true }, mocks: { $t: (key: string) => key } },
+    // The dialog teleports to <body>; rendered in place, the test can reach it.
+    global: { stubs: { 'lucide-vue-next': true, teleport: true }, mocks: { $t: (key: string) => key } },
   });
 }
 
@@ -40,6 +41,11 @@ async function restoreOldest(wrapper: ReturnType<typeof mountModal>) {
   await flushPromises();
   const restore = wrapper.findAll('button').find((b) => b.text() === 'note.history_restore');
   await restore!.trigger('click');
+  await flushPromises();
+  // The app's own question, answered yes.
+  const confirm = wrapper.findComponent(ConfirmModal);
+  expect(confirm.props('show')).toBe(true);
+  confirm.vm.$emit('confirm');
   await flushPromises();
 }
 

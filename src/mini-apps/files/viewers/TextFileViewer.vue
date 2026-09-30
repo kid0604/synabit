@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
@@ -7,6 +8,8 @@ import SelectionAskSyn from '../../../shared/syn/SelectionAskSyn.vue';
 
 /** Where a selection has to be for "Ask Syn" to offer itself. */
 const rootRef = ref<HTMLDivElement | null>(null);
+
+const { t } = useI18n();
 
 const props = defineProps<{
   filePath: string;
@@ -38,7 +41,7 @@ const loadContent = async () => {
       path: props.filePath,
     });
   } catch (e: any) {
-    error.value = 'Unable to load file content.';
+    error.value = t('file.load_failed');
     content.value = null;
   } finally {
     isLoading.value = false;
@@ -49,11 +52,11 @@ watch(() => props.filePath, loadContent, { immediate: true });
 </script>
 
 <template>
-  <div ref="rootRef" class="flex-1 overflow-auto bg-white dark:bg-[#1e1e1e]">
+  <div ref="rootRef" class="flex-1 overflow-auto bg-white dark:bg-surface-dark">
     <SelectionAskSyn :within="rootRef" />
     <!-- Loading -->
     <div v-if="isLoading" class="flex items-center justify-center h-full">
-      <div class="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+      <div class="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
     </div>
 
     <!-- Error -->

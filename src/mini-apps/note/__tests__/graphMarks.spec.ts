@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 
 import NoteGraph from '../NoteGraph.vue';
+import { i18n } from '../../../i18n';
 
 // The graph watches its container so a resized sidebar re-lays-out the force
 // simulation. jsdom has no such observer and no layout to report; the graph
@@ -37,7 +38,7 @@ const props = {
 };
 
 const draw = (marks?: 'dots' | 'icons') =>
-  mount(NoteGraph, { props: { ...props, ...(marks ? { marks } : {}) }, attachTo: document.body });
+  mount(NoteGraph, { props: { ...props, ...(marks ? { marks } : {}) }, attachTo: document.body, global: { plugins: [i18n] } });
 
 describe('the marks in the graph', () => {
   it('draws plain discs by default, which is what Notes gets', () => {

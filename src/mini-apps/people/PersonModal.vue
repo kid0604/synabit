@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import AppDialog from '../../shared/components/AppDialog.vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
 import { X, Save, Trash2, User, Hash, AlignLeft, Gift, Flower2, Plus, Camera, Mail, Phone, Building, MapPin, Briefcase, Heart, Globe, Calendar, ChevronRight, Bell } from 'lucide-vue-next';
 import { normalizeRelationships, titleCase } from './composables/relationships';
 import { logger } from '../../utils/logger';
+import { detailLabel } from './detailLabels';
+import { showAppNotice } from '../../composables/useAppNotice';
 import type { PersonMetadata } from './types';
 
 const props = defineProps<{
@@ -125,9 +128,6 @@ onMounted(() => {
         }
     }
 
-    const handleKeydown = (e: KeyboardEvent) => { if (e.key === 'Escape') emit('close'); };
-    window.addEventListener('keydown', handleKeydown);
-    onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
 
     // Auto-expand sections that have data
     if (form.value.experiences.length > 0) showExperiences.value = true;
@@ -173,7 +173,7 @@ const removeExperience = (i: number) => form.value.experiences.splice(i, 1);
  * than the global `$i18n`, which only exists when the plugin is installed and
  * is therefore absent wherever this component is mounted on its own.
  */
-const { locale } = useI18n();
+const { t, locale } = useI18n();
 const monthLabel = (month: number) =>
     new Date(2000, month - 1).toLocaleString(locale?.value || 'en', { month: 'short' });
 
@@ -222,7 +222,7 @@ const handleAvatarUpload = async (event: Event) => {
 };
 
 const savePerson = async () => {
-    if (!form.value.title.trim()) { alert("Name is required"); return; }
+    if (!form.value.title.trim()) { showAppNotice(t('people.name_required'), 'error'); return; }
     addTag(); // Commit any pending tag input
     addRelationship(); // Commit any pending relationship input
     isSaving.value = true;
@@ -282,7 +282,7 @@ const savePerson = async () => {
         emit('close');
     } catch (e) {
         logger.error('Failed to save person', e);
-        alert("Error saving person");
+        showAppNotice(t('people.save_failed'), 'error');
     } finally { isSaving.value = false; }
 };
 
@@ -319,20 +319,21 @@ const getDetailPlaceholder = (d: DetailField) => {
     if (d.type === 'email') return 'john@example.com';
     if (d.type === 'phone') return '+1 234 567 890';
     if (d.type === 'url') return 'https://...';
-    return d.label || 'Value';
+    return d.label || t('people.detail_value_ph');
 };
 </script>
 
 <template>
-    <div class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" @click="emit('close')">
-        <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden" @click.stop>
+    <AppDialog :show="true" labelledby="person-modal-title" size="lg" unstyled
+               panel-class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-2xl max-h-[90vh] flex flex-col overflow-hidden"
+               @close="emit('close')">
             <!-- Header -->
             <div class="px-6 py-4 border-b border-border dark:border-border-dark flex items-center justify-between bg-gray-50/50 dark:bg-gray-800/50">
-                <h2 class="text-lg font-semibold flex items-center gap-2">
+                <h2 id="person-modal-title" class="text-lg font-semibold flex items-center gap-2">
                     <User class="w-5 h-5 text-blue-500" />
-                    {{ props.person ? 'Edit Person' : 'Add New Person' }}
+                    {{ props.person ? $t('people.edit_person') : $t('people.add_person') }}
                 </h2>
-                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 transition-colors" :aria-label="$t('people.close')">
+                <button @click="emit('close')" class="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors" :aria-label="$t('people.close')">
                     <X class="w-5 h-5" />
                 </button>
             </div>
@@ -345,44 +346,44 @@ const getDetailPlaceholder = (d: DetailField) => {
                         <input ref="avatarFileInput" type="file" accept="image/*" class="hidden" @change="handleAvatarUpload" />
                         <button @click="avatarFileInput?.click()" class="w-20 h-20 rounded-2xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center overflow-hidden hover:border-blue-400 transition-colors group relative">
                             <img v-if="avatarSrc" :src="avatarSrc" class="w-full h-full object-cover" />
-                            <div v-else class="flex flex-col items-center text-gray-400 group-hover:text-blue-500 transition-colors">
-                                <Camera class="w-5 h-5" /><span class="text-[10px] mt-0.5">{{ $t('people.photo') }}</span>
+                            <div v-else class="flex flex-col items-center text-gray-500 dark:text-gray-400 group-hover:text-blue-500 transition-colors">
+                                <Camera class="w-5 h-5" /><span class="text-xs mt-0.5">{{ $t('people.photo') }}</span>
                             </div>
-                            <div v-if="avatarSrc" class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"><Camera class="w-5 h-5 text-white" /></div>
+                            <div v-if="avatarSrc" class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 flex items-center justify-center transition-opacity"><Camera class="w-5 h-5 text-white" /></div>
                             <div v-if="isUploadingAvatar" class="absolute inset-0 bg-white/60 flex items-center justify-center"><div class="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div></div>
                         </button>
                     </div>
                     <div class="flex-1">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.full_name_req') }}</label>
                         <div class="relative">
-                            <User class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <User class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                             <input v-model="form.title" type="text" :placeholder="$t('people.full_name_ph')" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" autofocus />
                         </div>
                         <div class="relative mt-2">
-                            <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                             <input v-model="form.nickname" type="text" :placeholder="$t('people.nickname')" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                         <div class="mt-2 flex items-center gap-1.5 flex-wrap">
-                            <span class="text-[11px] text-gray-400">{{ $t('people.display_as') }}</span>
+                            <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.display_as') }}</span>
                             <button @click="form.display_name = 'fullname'"
-                                :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
+                                :class="['px-2 py-0.5 text-xs font-medium rounded-md border transition-all',
                                     form.display_name === 'fullname'
-                                        ? 'bg-blue-500 text-white border-blue-500'
-                                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+                                        ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                                        : 'bg-white dark:bg-surface-dark text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
                                 ]">{{ $t('people.full_name') }}</button>
                             <button v-if="form.nickname.trim()" @click="form.display_name = 'nickname'"
-                                :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
+                                :class="['px-2 py-0.5 text-xs font-medium rounded-md border transition-all',
                                     form.display_name === 'nickname'
-                                        ? 'bg-blue-500 text-white border-blue-500'
-                                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+                                        ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                                        : 'bg-white dark:bg-surface-dark text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
                                 ]">{{ $t('people.nickname') }}</button>
                             <button @click="form.display_name = 'custom'"
-                                :class="['px-2 py-0.5 text-[11px] font-medium rounded-md border transition-all',
+                                :class="['px-2 py-0.5 text-xs font-medium rounded-md border transition-all',
                                     form.display_name === 'custom'
-                                        ? 'bg-blue-500 text-white border-blue-500'
-                                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+                                        ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                                        : 'bg-white dark:bg-surface-dark text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
                                 ]">{{ $t('people.custom') }}</button>
-                            <input v-if="form.display_name === 'custom'" v-model="form.custom_display" type="text" :placeholder="$t('people.custom_display_ph')" class="ml-1 px-2 py-0.5 text-[11px] bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-md focus:ring-2 focus:ring-blue-500 outline-none w-36" />
+                            <input v-if="form.display_name === 'custom'" v-model="form.custom_display" type="text" :placeholder="$t('people.custom_display_ph')" class="ml-1 px-2 py-0.5 text-xs bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-md focus:ring-2 focus:ring-blue-500 outline-none w-36" />
                         </div>
                     </div>
                 </div>
@@ -411,7 +412,7 @@ const getDetailPlaceholder = (d: DetailField) => {
 
                     <!-- Input Field -->
                     <div class="relative">
-                        <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <Heart class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                         <input v-model="relInput" 
                             @keydown.enter.prevent="addRelationship()" 
                             @focus="showRelDropdown = true"
@@ -434,12 +435,12 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <!-- Keep in touch cadence -->
                     <div class="mt-3 flex items-center gap-2 flex-wrap">
                         <label for="contact-frequency" class="text-sm text-gray-600 dark:text-gray-400 flex items-center gap-1.5">
-                            <Bell class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.keep_in_touch') }}
+                            <Bell class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" /> {{ $t('people.keep_in_touch') }}
                         </label>
-                        <select id="contact-frequency" v-model="form.contact_frequency" class="px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                        <select id="contact-frequency" v-model="form.contact_frequency" class="px-2.5 py-1.5 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                             <option v-for="f in frequencyOptions" :key="f.value" :value="f.value">{{ $t(f.labelKey) }}</option>
                         </select>
-                        <span v-if="form.contact_frequency" class="text-[11px] text-gray-400">{{ $t('people.keep_in_touch_hint') }}</span>
+                        <span v-if="form.contact_frequency" class="text-xs text-gray-500 dark:text-gray-400">{{ $t('people.keep_in_touch_hint') }}</span>
                     </div>
                 </div>
 
@@ -449,13 +450,13 @@ const getDetailPlaceholder = (d: DetailField) => {
                         <AlignLeft class="w-4 h-4 text-blue-500" /> {{ $t('people.details') }}
                     </h3>
                     <div v-for="(d, i) in form.details" :key="i" class="flex items-center gap-2 mb-2">
-                        <input v-model="d.label" @input="onLabelChange(d)" type="text" :placeholder="$t('people.label')"
+                        <input :value="detailLabel(d.label, t)" @input="d.label = ($event.target as HTMLInputElement).value; onLabelChange(d)" type="text" :placeholder="$t('people.label')"
                             class="w-28 flex-shrink-0 px-2.5 py-2 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-lg text-xs font-medium focus:ring-2 focus:ring-blue-500 outline-none" />
                         <div class="flex-1 relative">
                             <input v-model="d.value" :type="getDetailInputType(d.type)" :placeholder="getDetailPlaceholder(d)"
                                 class="w-full px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
-                        <button @click="removeDetail(i)" class="p-1.5 text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_detail')"><X class="w-4 h-4" /></button>
+                        <button @click="removeDetail(i)" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_detail')"><X class="w-4 h-4" /></button>
                     </div>
 
                     <!-- Add detail: presets or custom -->
@@ -464,24 +465,24 @@ const getDetailPlaceholder = (d: DetailField) => {
                             <button @click="addDetail()" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
                                 <Plus class="w-3.5 h-3.5" /> {{ $t('people.add_field') }}
                             </button>
-                            <span class="text-gray-300 dark:text-gray-600">|</span>
-                            <button @click="showPresetPicker = !showPresetPicker" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 font-medium">
+                            <span class="text-gray-500 dark:text-gray-400" aria-hidden="true">|</span>
+                            <button @click="showPresetPicker = !showPresetPicker" class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 font-medium">
                                 {{ $t('people.quick_add') }}
                             </button>
                         </div>
                         <div v-if="showPresetPicker" class="absolute left-0 top-full mt-1 z-10 bg-white dark:bg-[#242426] border border-gray-200 dark:border-gray-700 rounded-xl shadow-lg p-2 flex flex-wrap gap-1 w-80">
                             <button @click="addExperience(); showPresetPicker = false;"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
-                                <Building class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.company') }}
+                                <Building class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" /> {{ $t('people.company') }}
                             </button>
                             <button @click="addBirthdayFromQuickAdd"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
-                                <Gift class="w-3.5 h-3.5 text-gray-400" /> {{ $t('people.birthday') }}
+                                <Gift class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" /> {{ $t('people.birthday') }}
                             </button>
                             <button v-for="p in DETAIL_PRESETS" :key="p.label"
                                 @click="addDetail(p)"
                                 class="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/20 text-gray-600 dark:text-gray-300 transition-colors">
-                                <component :is="p.icon" class="w-3.5 h-3.5 text-gray-400" /> {{ p.label }}
+                                <component :is="p.icon" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" /> {{ detailLabel(p.label, t) }}
                             </button>
                         </div>
                     </div>
@@ -492,43 +493,43 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <button @click="showExperiences = !showExperiences" class="w-full flex items-center gap-2 text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
                         <ChevronRight :class="['w-4 h-4 transition-transform', showExperiences ? 'rotate-90' : '']" />
                         <Briefcase class="w-4 h-4 text-blue-500" /> {{ $t('people.work_experience') }}
-                        <span v-if="form.experiences.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ form.experiences.length }}</span>
+                        <span v-if="form.experiences.length" class="text-xs font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ form.experiences.length }}</span>
                     </button>
                     <div v-show="showExperiences" class="mt-3">
                     <div v-for="(exp, i) in form.experiences" :key="i" class="mb-3 bg-gray-50 dark:bg-[#1a1a1a] border border-border dark:border-border-dark rounded-xl p-3 relative group">
-                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all" :aria-label="$t('people.remove_experience')"><X class="w-3.5 h-3.5" /></button>
+                        <button @click="removeExperience(i)" class="absolute top-2 right-2 p-1 text-gray-500 dark:text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" :aria-label="$t('people.remove_experience')"><X class="w-3.5 h-3.5" /></button>
                         <div class="grid grid-cols-2 gap-2 mb-2">
                             <div>
-                                <label class="block text-[11px] text-gray-400 mb-0.5">{{ $t('people.company') }}</label>
+                                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('people.company') }}</label>
                                 <input v-model="exp.company" type="text" :placeholder="$t('people.company_ph')" class="w-full px-3 py-1.5 bg-white dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                             </div>
                             <div>
-                                <label class="block text-[11px] text-gray-400 mb-0.5">{{ $t('people.role') }}</label>
+                                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('people.role') }}</label>
                                 <input v-model="exp.role" type="text" :placeholder="$t('people.position_ph')" class="w-full px-3 py-1.5 bg-white dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                             </div>
                         </div>
                         <div class="grid grid-cols-[1fr_1fr_auto] gap-3 items-end">
                             <div>
-                                <label class="block text-[11px] text-gray-400 mb-0.5">{{ $t('people.from') }}</label>
+                                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('people.from') }}</label>
                                 <div class="flex gap-1.5">
-                                    <select v-model="exp.startMonth" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                                    <select v-model="exp.startMonth" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.month') }}</option>
                                         <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ monthLabel(m) }}</option>
                                     </select>
-                                    <select v-model="exp.startYear" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                                    <select v-model="exp.startYear" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.year') }}</option>
                                         <option v-for="y in yearOptions" :key="y" :value="String(y)">{{ y }}</option>
                                     </select>
                                 </div>
                             </div>
                             <div :class="exp.current ? 'opacity-30 pointer-events-none' : ''">
-                                <label class="block text-[11px] text-gray-400 mb-0.5">{{ $t('people.to_date') }}</label>
+                                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-0.5">{{ $t('people.to_date') }}</label>
                                 <div class="flex gap-1.5">
-                                    <select v-model="exp.endMonth" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                                    <select v-model="exp.endMonth" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.month') }}</option>
                                         <option v-for="m in 12" :key="m" :value="String(m).padStart(2, '0')">{{ monthLabel(m) }}</option>
                                     </select>
-                                    <select v-model="exp.endYear" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
+                                    <select v-model="exp.endYear" :disabled="exp.current" class="flex-1 px-2.5 py-1.5 bg-white dark:bg-surface-dark border border-gray-200 dark:border-gray-700 rounded-lg text-xs text-gray-700 dark:text-gray-300 appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%226%22%3E%3Cpath%20d%3D%22M0%200l5%206%205-6z%22%20fill%3D%22%239ca3af%22%2F%3E%3C%2Fsvg%3E')] bg-[length:10px_6px] bg-[right_8px_center] bg-no-repeat pr-6 focus:ring-2 focus:ring-blue-500/40 outline-none cursor-pointer">
                                         <option value="">{{ $t('people.year') }}</option>
                                         <option v-for="y in yearOptions" :key="y" :value="String(y)">{{ y }}</option>
                                     </select>
@@ -537,8 +538,8 @@ const getDetailPlaceholder = (d: DetailField) => {
                             <button type="button" @click="exp.current = !exp.current; if (exp.current) { exp.endMonth = ''; exp.endYear = ''; }"
                                 :class="['px-3 py-1.5 rounded-lg text-xs font-medium border transition-all',
                                     exp.current
-                                        ? 'bg-blue-500 text-white border-blue-500 shadow-sm'
-                                        : 'bg-white dark:bg-[#1e1e1e] text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
+                                        ? 'bg-accent/10 text-accent dark:text-accent-dark border-accent'
+                                        : 'bg-white dark:bg-surface-dark text-gray-500 border-gray-200 dark:border-gray-700 hover:border-blue-300'
                                 ]">
                                 {{ $t('people.current') }}
                             </button>
@@ -555,27 +556,27 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <button @click="showKeyDates = !showKeyDates" class="w-full flex items-center gap-2 text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider hover:text-gray-700 dark:hover:text-gray-200 transition-colors">
                         <ChevronRight :class="['w-4 h-4 transition-transform', showKeyDates ? 'rotate-90' : '']" />
                         <Calendar class="w-4 h-4 text-blue-500" /> {{ $t('people.key_dates') }}
-                        <span v-if="form.birthday || form.died_on || form.important_dates.length" class="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ (form.birthday ? 1 : 0) + (form.died_on ? 1 : 0) + form.important_dates.length }}</span>
+                        <span v-if="form.birthday || form.died_on || form.important_dates.length" class="text-xs font-medium px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 normal-case">{{ (form.birthday ? 1 : 0) + (form.died_on ? 1 : 0) + form.important_dates.length }}</span>
                     </button>
                     <div v-show="showKeyDates" class="mt-3">
                     <div class="mb-3">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.birthday') }}</label>
                         <div class="relative w-48">
-                            <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <Gift class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                             <input ref="birthdayInputRef" v-model="form.birthday" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                     </div>
                     <div class="mb-3">
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.died_on') }}</label>
                         <div class="relative w-48">
-                            <Flower2 class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <Flower2 class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                             <input v-model="form.died_on" type="date" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                         </div>
                     </div>
                     <div v-for="(d, i) in form.important_dates" :key="i" class="grid grid-cols-[1fr_1fr_auto] gap-2 mb-2">
                         <input v-model="d.label" type="text" :placeholder="$t('people.label_ph')" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
                         <input v-model="d.date" type="date" class="px-3 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
-                        <button @click="removeImportantDate(i)" class="p-2 text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_date')"><X class="w-4 h-4" /></button>
+                        <button @click="removeImportantDate(i)" class="p-2 text-gray-500 dark:text-gray-400 hover:text-red-500 transition-colors" :aria-label="$t('people.remove_date')"><X class="w-4 h-4" /></button>
                     </div>
                     <button @click="addImportantDate" class="flex items-center gap-1.5 text-xs text-blue-500 hover:text-blue-600 font-medium">
                         <Plus class="w-3.5 h-3.5" /> {{ $t('people.add_date') }}
@@ -588,12 +589,12 @@ const getDetailPlaceholder = (d: DetailField) => {
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ $t('people.tags') }}</label>
                     <div class="flex flex-wrap gap-2 mb-2">
                         <span v-for="(tag, index) in form.tags" :key="index" class="px-2.5 py-1 text-sm bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md flex items-center gap-1.5">
-                            <Hash class="w-3 h-3 text-gray-400" /> {{ tag }}
-                            <button @click="removeTag(index)" class="ml-1 text-gray-400 hover:text-red-500 outline-none" :aria-label="$t('people.remove_tag')"><X class="w-3 h-3" /></button>
+                            <Hash class="w-3 h-3 text-gray-500 dark:text-gray-400" /> {{ tag }}
+                            <button @click="removeTag(index)" class="ml-1 text-gray-500 dark:text-gray-400 hover:text-red-500 outline-none" :aria-label="$t('people.remove_tag')"><X class="w-3 h-3" /></button>
                         </span>
                     </div>
                     <div class="relative">
-                        <Hash class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <Hash class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
                         <input v-model="tagInput" @keydown.enter.prevent="addTag" type="text" :placeholder="$t('people.add_tag_ph')" class="w-full pl-9 pr-4 py-2 bg-base dark:bg-base-dark border border-border dark:border-border-dark rounded-lg focus:ring-2 focus:ring-blue-500 transition-all outline-none" />
                     </div>
                 </div>
@@ -609,11 +610,10 @@ const getDetailPlaceholder = (d: DetailField) => {
                 <div v-else></div>
                 <div class="flex items-center gap-3">
                     <button @click="emit('close')" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors">{{ $t('people.cancel') }}</button>
-                    <button @click="savePerson" :disabled="isSaving || isDeleting" class="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors font-medium text-sm disabled:opacity-50">
-                        <Save class="w-4 h-4" /> {{ isSaving ? 'Saving...' : 'Save Person' }}
+                    <button @click="savePerson" :disabled="isSaving || isDeleting" class="btn-primary disabled:opacity-50">
+                        <Save class="w-4 h-4" /> {{ isSaving ? $t('people.saving') : $t('people.save_person') }}
                     </button>
                 </div>
             </div>
-        </div>
-    </div>
+    </AppDialog>
 </template>

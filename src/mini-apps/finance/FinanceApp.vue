@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
-import { ask, open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
+import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
 import { openPath } from '@tauri-apps/plugin-opener';
-import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, PanelLeft, TrendingUp, TrendingDown, RefreshCw, Trash2, AlertTriangle, X, Landmark, CreditCard, Repeat, Paperclip } from 'lucide-vue-next';
+import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, TrendingUp, TrendingDown, RefreshCw, Trash2, AlertTriangle, X, Landmark, CreditCard, Repeat, Paperclip } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import { RECURRING_PATH, monthNodePath, monthNodeTitle, repairFinanceStorage, rowChanges, writeFinanceRows } from './ledger';
 import { pendingByMonth, todayStr, type RecurringRule } from './recurring';
@@ -20,7 +21,9 @@ import {
     type ColumnMap,
     type ImportResult,
 } from './csv';
-import NavButtons from '../../shared/components/NavButtons.vue';
+import AppHeader from '../../shared/components/AppHeader.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
 
 
 import FinanceReports from './components/FinanceReports.vue';
@@ -42,6 +45,7 @@ const props = defineProps<{
   vaultPath: string;
 }>();
 
+const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const bus = useEventBus();
@@ -97,6 +101,20 @@ const currentMonth = computed(() => {
     return null;
 });
 
+/**
+ * Transactions deleted but still inside their undo window. They stay in the
+ * month files until the window closes, so every read of the ledger — the
+ * list, the totals, a month reloaded by sync — has to look past them.
+ */
+const hiddenTxIds = ref(new Set<string>());
+
+/**
+ * The months as the rest of the screen should see them: without the
+ * transactions waiting on an undo. Reports read this rather than `months`,
+ * or a deleted transaction would still count there for seven seconds.
+ */
+const visibleMonths = computed(() => calc.withoutHidden(months.value, hiddenTxIds.value));
+
 // Collect ALL transactions across all month nodes
 const allTransactionsFlat = computed<Transaction[]>(() => {
     const all: Transaction[] = [];
@@ -105,7 +123,24 @@ const allTransactionsFlat = computed<Transaction[]>(() => {
             all.push(...(m.node.properties.transactions as Transaction[]));
         }
     });
-    return all;
+    return hiddenTxIds.value.size ? all.filter(tx => !hiddenTxIds.value.has(tx.id)) : all;
+});
+
+/**
+ * The years the summary can be set to: back to the first transaction on
+ * record, and five ahead for planning. A fixed window of ten years hid any
+ * ledger older than four.
+ */
+const yearOptions = computed(() => {
+    const now = nowDate.getFullYear();
+    let first = now - 4;
+    for (const tx of allTransactionsFlat.value) {
+        const y = new Date(tx.date).getFullYear();
+        if (y < first && y > 1900) first = y;
+    }
+    const years: number[] = [];
+    for (let y = first; y <= now + 5; y++) years.push(y);
+    return years;
 });
 
 // Transactions for the selected month (for summary stats) — filtered by actual transaction date
@@ -156,7 +191,7 @@ const accountBalances = computed(() =>
 
 const getAccountName = (id: string) => {
     const acc = accounts.value.find(a => a.id === id);
-    return acc ? acc.name : 'Unknown';
+    return acc ? acc.name : t('finance.unknown');
 };
 
 /**
@@ -190,7 +225,7 @@ const openReceipt = async (relPath: string) => {
         await openPath(`${props.vaultPath}/${relPath}`);
     } catch (e) {
         logger.error('Could not open the receipt', e);
-        storageError.value = 'That receipt could not be opened. The file may have been moved.';
+        storageError.value = t('finance.storage_error.receipt_open');
     }
 };
 
@@ -199,7 +234,7 @@ const displayCategory = (id: string) =>
 
 const getPersonName = (id: string) => {
     const p = people.value.find(p => p.id === id);
-    return p ? p.title : 'Unknown';
+    return p ? p.title : t('finance.unknown');
 };
 
 const goToPerson = (id: string) => {
@@ -461,7 +496,7 @@ const materialiseRecurring = async () => {
         for (const month of months) await reloadMonth(month.relPath);
     } catch (e) {
         logger.error('Failed to record repeating transactions', e);
-        storageError.value = 'Some repeating transactions could not be recorded. Finance will try again next time you open it.';
+        storageError.value = t('finance.storage_error.recurring_record');
     }
 };
 
@@ -482,7 +517,7 @@ const saveRules = async (updated: RecurringRule[]) => {
         await materialiseRecurring();
     } catch (e) {
         logger.error('Failed to save repeating rules', e);
-        storageError.value = 'That repeating transaction could not be saved. Please try again.';
+        storageError.value = t('finance.storage_error.recurring_save');
     }
 };
 
@@ -506,7 +541,7 @@ const saveDebts = async (updatedDebts: Debt[]) => {
         bus.emit('node:updated', { nodeType: 'finance_debts', id: debtsNode.value.id, title: debtsNode.value.title });
     } catch (e) {
         logger.error('Failed to save debts', e);
-        storageError.value = 'The debts ledger could not be saved. Please try again.';
+        storageError.value = t('finance.storage_error.debts_save');
     }
 };
 
@@ -577,7 +612,7 @@ const handleBalanceAdjust = async (diff: number) => {
         category: ADJUSTMENT,
         accountId: adjustingAccount.value.id,
         date: new Date().toISOString(),
-        note: 'Automatic balance adjustment'
+        note: t('finance.auto_adjust_note')
     };
 
     await saveTransaction(tx);
@@ -633,40 +668,67 @@ const saveTransaction = async (tx: Transaction) => {
         bus.emit('node:updated', { nodeType: 'finance_month', id: targetId, title: monthNodeTitle(date) });
     } catch (e) {
         logger.error('Failed to save transaction', e);
-        storageError.value = 'That transaction could not be saved. Nothing was changed — please try again.';
+        storageError.value = t('finance.storage_error.tx_save');
     }
 };
 
-const deleteTransaction = async (txId: string) => {
+/**
+ * Delete a transaction, with a few seconds to take it back.
+ *
+ * It leaves the screen at once and is removed from its month file only when
+ * the undo window closes. This used to ask first and warn that it could not
+ * be undone; now it can, so it does not ask.
+ */
+const undo = useUndoableAction({
+    onError: () => { storageError.value = t('finance.storage_error.tx_delete'); },
+});
+
+const setHidden = (txId: string, hidden: boolean) => {
+    const next = new Set(hiddenTxIds.value);
+    if (hidden) next.add(txId); else next.delete(txId);
+    hiddenTxIds.value = next;
+};
+
+const deleteTransaction = (txId: string) => {
     // Which month holds it, so the removal goes to the right file.
     const holder = months.value.find(m =>
         ((m.node.properties?.transactions as Transaction[]) || []).some(t => t.id === txId)
     );
     if (!holder) return;
+    const tx = (holder.node.properties.transactions as Transaction[]).find(t => t.id === txId)!;
+    const name = `${tx.type === 'transfer' ? t('finance.internal_transfer') : displayCategory(tx.category)} · ${formatCurrency(tx.amount)}`;
 
-    const confirmed = await ask('This transaction will be permanently removed. This action cannot be undone.', {
-        title: 'Delete transaction?',
-        kind: 'warning',
-        okLabel: 'Delete',
-        cancelLabel: 'Cancel'
-    });
-
-    if (!confirmed) return;
-
-    try {
-        await writeFinanceRows({
-            relPath: holder.id,
-            title: holder.label,
-            nodeType: 'finance_month',
-            removals: [txId],
-        });
-        showTxModal.value = false;
-        await reloadMonth(holder.id);
-        bus.emit('node:updated', { nodeType: 'finance_month', id: holder.id, title: holder.label });
-    } catch (e) {
-        logger.error('Failed to delete transaction', e);
-        storageError.value = 'That transaction could not be deleted. Nothing was changed — please try again.';
-    }
+    showTxModal.value = false;
+    setHidden(txId, true);
+    void undo.run(
+        t('common.deleted_item', { name }),
+        async () => {
+            try {
+                await writeFinanceRows({
+                    relPath: holder.id,
+                    title: holder.label,
+                    nodeType: 'finance_month',
+                    removals: [txId],
+                });
+            } catch (e) {
+                logger.error('Failed to delete transaction', e);
+                throw e;
+            }
+            // The write is done; from here on nothing may count as the delete
+            // failing, or Undo's error path would put back a transaction that
+            // is no longer in the file.
+            bus.emit('node:updated', { nodeType: 'finance_month', id: holder.id, title: holder.label });
+            try {
+                await reloadMonth(holder.id);
+                setHidden(txId, false);
+            } catch (e) {
+                // The month on screen is stale and still holds it: keep it
+                // hidden until the next reload reads the file again.
+                logger.error('Deleted the transaction but could not reload its month', e);
+            }
+        },
+        () => setHidden(txId, false),
+    );
 };
 
 // ---------------------------------------------------------------------------
@@ -696,7 +758,7 @@ const exportLedger = async () => {
         await writeTextFile(path, text);
     } catch (e) {
         logger.error('Failed to export the ledger', e);
-        storageError.value = 'The ledger could not be exported. Nothing was changed.';
+        storageError.value = t('finance.storage_error.export');
     }
 };
 
@@ -726,7 +788,7 @@ const chooseImportFile = async () => {
 
         const rows = parseCsv(await readTextFile(path));
         if (rows.length === 0) {
-            storageError.value = 'That file has nothing in it.';
+            storageError.value = t('finance.storage_error.import_empty');
             return;
         }
 
@@ -748,7 +810,7 @@ const chooseImportFile = async () => {
         showImportModal.value = true;
     } catch (e) {
         logger.error('Failed to read the file', e);
-        storageError.value = 'That file could not be read.';
+        storageError.value = t('finance.storage_error.import_read');
     }
 };
 
@@ -777,7 +839,7 @@ const confirmImport = async () => {
         await loadData();
     } catch (e) {
         logger.error('Failed to import transactions', e);
-        storageError.value = 'Some transactions could not be imported. Nothing else was changed.';
+        storageError.value = t('finance.storage_error.import_failed');
     }
 };
 
@@ -903,11 +965,11 @@ const repairStorageOnce = async () => {
             // Say so rather than carry on looking fine. The files that failed
             // are untouched, not half-written, so the ledger is still readable
             // — it is the repair that did not happen.
-            storageError.value = `${failed} Finance file(s) could not be updated. Your data is unchanged; Finance will try again next time you open it.`;
+            storageError.value = t('finance.storage_error.repair_partial', { count: failed }, failed);
         }
     } catch (e) {
         logger.error('Finance storage repair failed', e);
-        storageError.value = 'Finance could not update its stored files. Your data is unchanged; it will try again next time you open Finance.';
+        storageError.value = t('finance.storage_error.repair_failed');
     }
 };
 
@@ -970,11 +1032,28 @@ defineExpose({ openMonthById });
   <div class="flex-1 flex flex-col h-full bg-base dark:bg-base-dark overflow-hidden relative">
       <!-- Loading Overlay -->
       <div v-if="loading && months.length === 0" class="absolute inset-0 flex items-center justify-center z-[100] bg-base/50 dark:bg-base-dark/50">
-          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
       </div>
       
       <!-- Onboarding -->
       <FinanceOnboarding v-if="needsOnboarding" @complete="finishOnboarding" />
+
+      <AppHeader
+          :title="$t('finance.title')"
+          :subtitle="$t('finance.subtitle')"
+          :icon="Wallet"
+          :sidebar-label="$t('finance.open_sidebar')"
+          :primary-label="$t('finance.add_transaction')"
+          :primary-icon="Plus"
+          @open-sidebar="isSidebarOpen = true"
+          @primary="openAddTx"
+      >
+          <template #actions>
+              <button type="button" @click="showSettingsModal = true" class="btn-icon" :aria-label="$t('finance.settings')" :title="$t('finance.settings')">
+                  <Settings class="w-5 h-5" />
+              </button>
+          </template>
+      </AppHeader>
 
       <!-- A repair that could not finish. Said out loud, because the ledger
            looks perfectly normal either way. -->
@@ -988,41 +1067,14 @@ defineExpose({ openMonthById });
           <button
               @click="storageError = null"
               class="shrink-0 rounded-lg p-1 hover:bg-amber-200/60 dark:hover:bg-amber-900/60 transition-colors"
-              aria-label="Dismiss"
+              :aria-label="$t('finance.dismiss')"
           >
               <X class="w-4 h-4" />
           </button>
       </div>
 
-      <!-- Topbar -->
-      <div v-else class="flex items-center justify-between p-4 md:p-6 shrink-0 relative z-10">
-          <div class="flex items-center gap-3">
-              <button @click="isSidebarOpen = true" class="md:hidden p-1.5 -ml-1 text-gray-500 hover:text-blue-500 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="Is Sidebar Open = true">
-                  <PanelLeft class="w-6 h-6" />
-              </button>
-              <div>
-                  <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
-                      <NavButtons class="hidden md:flex" />
-                      <Wallet class="w-6 h-6 text-blue-500 hidden md:block" />
-                      Finance
-                  </h1>
-                  <p class="text-xs md:text-sm text-gray-500 dark:text-gray-400">{{ $t('finance.subtitle') }}</p>
-              </div>
-          </div>
-          
-          <div class="flex items-center gap-2 md:gap-3">
-              <button @click="showSettingsModal = true" class="p-2 md:p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm" aria-label="Show Settings Modal = true">
-                  <Settings class="w-5 h-5" />
-              </button>
-              <button @click="openAddTx" class="hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-sm font-medium">
-                  <Plus class="w-5 h-5" />
-                  <span>{{ $t('finance.add_transaction') }}</span>
-              </button>
-          </div>
-      </div>
-
       <!-- Main Content Area -->
-      <div v-if="currentMonth || currentView === 'reports' || currentView === 'debts'" class="flex-1 flex gap-6 px-2 md:px-6 pb-2 md:pb-6 overflow-hidden relative">
+      <div v-if="currentMonth || currentView === 'reports' || currentView === 'debts'" class="flex-1 flex gap-6 px-2 md:px-6 pt-4 md:pt-6 pb-2 md:pb-6 overflow-hidden relative">
           
           <!-- Backdrop -->
           <div v-if="isMobile && isSidebarOpen" class="md:hidden absolute inset-0 bg-black/20 dark:bg-black/40 z-[48]" @click="isSidebarOpen = false" />
@@ -1033,36 +1085,41 @@ defineExpose({ openMonthById });
               <!-- Navigation Menu -->
               <div class="flex flex-col gap-1">
                   <button 
+                      :aria-current="currentView === 'transactions' ? 'page' : undefined"
                       @click="currentView = 'transactions'; if(isMobile) isSidebarOpen = false;" 
-                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'transactions' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'transactions' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Wallet class="w-5 h-5" />
-                      Ledger
+                      {{ $t('finance.ledger') }}
                   </button>
                   <button 
+                      :aria-current="currentView === 'reports' ? 'page' : undefined"
                       @click="currentView = 'reports'; if(isMobile) isSidebarOpen = false;" 
-                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'reports' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'reports' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <PieChart class="w-5 h-5" />
-                      Reports & Analytics
+                      {{ $t('finance.reports') }}
                   </button>
                   <button 
+                      :aria-current="currentView === 'debts' ? 'page' : undefined"
                       @click="currentView = 'debts'; if(isMobile) isSidebarOpen = false;" 
-                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'debts' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'debts' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <BookOpen class="w-5 h-5" />
-                      Debts
+                      {{ $t('finance.debts') }}
                   </button>
                   <button 
+                      :aria-current="currentView === 'budgets' ? 'page' : undefined"
                       @click="currentView = 'budgets'; if(isMobile) isSidebarOpen = false;" 
-                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'budgets' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'budgets' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Target class="w-5 h-5" />
-                      Budgets
+                      {{ $t('finance.budgets') }}
                   </button>
                   <button
+                      :aria-current="currentView === 'recurring' ? 'page' : undefined"
                       @click="currentView = 'recurring'; if(isMobile) isSidebarOpen = false;"
-                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'recurring' ? 'bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
+                      :class="['flex items-center gap-3 px-4 py-2.5 rounded-xl font-medium text-sm transition-colors w-full text-left', currentView === 'recurring' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800']"
                   >
                       <Repeat class="w-5 h-5" />
                       {{ $t('finance.recurring') }}
@@ -1070,16 +1127,16 @@ defineExpose({ openMonthById });
               </div>
 
               <!-- Global Net Worth -->
-              <div class="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl p-5 text-white shadow-lg relative overflow-hidden shrink-0">
+              <div class="bg-accent rounded-2xl p-5 text-white shadow-lg relative overflow-hidden shrink-0">
                   <div class="absolute right-0 top-0 opacity-10 pointer-events-none">
                       <Wallet class="w-32 h-32 -mt-4 -mr-4" />
                   </div>
-                  <p class="text-blue-100 text-sm font-medium mb-1">{{ $t('finance.total_net_worth') }}</p>
+                  <p class="text-white/80 text-sm font-medium mb-1">{{ $t('finance.total_net_worth') }}</p>
                   <h2 class="text-3xl font-bold tracking-tight">{{ formatCurrency(globalNetWorth) }}</h2>
                   <!-- What the one figure is made of. Net worth now nets off
                        what is owed either way, and a headline that moves when
                        a debt is recorded should say why. -->
-                  <div v-if="debtSummary.receivable > 0 || debtSummary.payable > 0" class="flex flex-wrap gap-x-3 gap-y-0.5 mt-2 text-[11px] text-blue-100/90">
+                  <div v-if="debtSummary.receivable > 0 || debtSummary.payable > 0" class="flex flex-wrap gap-x-3 gap-y-0.5 mt-2 text-xs text-white/80">
                       <span>{{ $t('finance.in_accounts') }} {{ formatCurrency(accountsTotal) }}</span>
                       <span v-if="debtSummary.receivable > 0">+ {{ $t('finance.owed_to_you') }} {{ formatCurrency(debtSummary.receivable) }}</span>
                       <span v-if="debtSummary.payable > 0">− {{ $t('finance.you_owe') }} {{ formatCurrency(debtSummary.payable) }}</span>
@@ -1091,14 +1148,14 @@ defineExpose({ openMonthById });
                   <h3 class="font-bold text-sm text-gray-500 dark:text-gray-400 uppercase tracking-wider pl-2">{{ $t('finance.my_accounts') }}</h3>
                   <div class="flex flex-col gap-1.5">
                       <div v-for="acc in accountBalances" :key="acc.id" class="flex items-center gap-3 p-3 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors group relative">
-                          <div class="p-2.5 rounded-xl bg-white dark:bg-gray-900 text-blue-500 shadow-sm border border-gray-100 dark:border-gray-800 shrink-0">
+                          <div class="p-2.5 rounded-xl bg-white dark:bg-gray-900 text-accent dark:text-accent-dark shadow-sm border border-gray-100 dark:border-gray-800 shrink-0">
                               <component :is="accountIcon(acc.id)" class="w-5 h-5" />
                           </div>
                           <div class="flex flex-col flex-1 min-w-0">
                               <span class="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">{{ acc.name }}</span>
                               <span class="text-base font-bold text-text dark:text-text-dark truncate">{{ formatCurrency(acc.balance) }}</span>
                           </div>
-                          <button @click="adjustingAccount = acc; showAdjustModal = true" class="absolute right-3 p-1.5 text-gray-400 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700" title="Adjust Balance">
+                          <button @click="adjustingAccount = acc; showAdjustModal = true" class="absolute right-3 p-1.5 text-gray-500 dark:text-gray-400 hover:text-accent opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100 transition-opacity bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-100 dark:border-gray-700" :title="$t('finance.adjust_balance')" :aria-label="$t('finance.adjust_balance')">
                               <Scale class="w-4 h-4" />
                           </button>
                       </div>
@@ -1114,20 +1171,20 @@ defineExpose({ openMonthById });
                   <!-- Month Selector -->
                   <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col md:items-center justify-center gap-3 shrink-0">
                       <div class="flex items-center justify-between md:justify-center w-full">
-                          <span class="text-xs text-gray-500 font-medium uppercase tracking-wider mr-1">Summary for</span>
+                          <span class="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wider mr-1">{{ $t('finance.summary_for') }}</span>
                           <div class="flex items-center gap-2">
                               <div class="relative">
-                                  <select v-model.number="selectedMonthNum" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
+                                  <select v-model.number="selectedMonthNum" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer transition-colors">
                                       <option v-for="m in 12" :key="m" :value="m">{{ m.toString().padStart(2, '0') }}</option>
                                   </select>
-                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                               </div>
-                              <span class="text-lg font-bold text-gray-400">/</span>
+                              <span class="text-lg font-bold text-gray-500 dark:text-gray-400">/</span>
                               <div class="relative">
-                                  <select v-model.number="selectedYear" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
-                                      <option v-for="y in 10" :key="y" :value="nowDate.getFullYear() - 5 + y">{{ nowDate.getFullYear() - 5 + y }}</option>
+                                  <select v-model.number="selectedYear" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-7 py-2 text-base md:text-lg font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer transition-colors">
+                                      <option v-for="y in yearOptions" :key="y" :value="y">{{ y }}</option>
                                   </select>
-                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                  <ChevronDown class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
                               </div>
                           </div>
                       </div>
@@ -1135,9 +1192,9 @@ defineExpose({ openMonthById });
                       <!-- Toggle Summary Button -->
                       <button @click="showSummaryStats = !showSummaryStats" class="md:hidden flex items-center justify-center gap-2 w-full px-4 py-2 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors border border-border dark:border-border-dark">
                           <span class="text-sm font-medium text-gray-600 dark:text-gray-300">
-                              {{ showSummaryStats ? 'Hide Summary' : 'Show Summary' }}
+                              {{ showSummaryStats ? $t('finance.hide_summary') : $t('finance.show_summary') }}
                           </span>
-                          <ChevronDown :class="['w-4 h-4 text-gray-500 transition-transform', showSummaryStats ? 'rotate-180' : '']" />
+                          <ChevronDown :class="['w-4 h-4 text-gray-500 dark:text-gray-400 transition-transform', showSummaryStats ? 'rotate-180' : '']" />
                       </button>
                   </div>
                   
@@ -1147,7 +1204,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Income</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.total_income') }}</span>
                           </div>
                           <p class="text-xl font-bold text-green-600 dark:text-green-400">{{ formatCurrency(totalIncome) }}</p>
                       </div>
@@ -1155,7 +1212,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-red-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Total Expense</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.total_expense') }}</span>
                           </div>
                           <p class="text-lg md:text-xl font-bold text-red-600 dark:text-red-400">{{ formatCurrency(totalExpense) }}</p>
                       </div>
@@ -1163,7 +1220,7 @@ defineExpose({ openMonthById });
                       <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-4 shadow-sm flex flex-col justify-center">
                           <div class="flex items-center gap-2 mb-1">
                               <div class="w-2 h-2 rounded-full bg-blue-500"></div>
-                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Monthly Balance</span>
+                              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.monthly_balance') }}</span>
                           </div>
                           <p :class="['text-lg md:text-xl font-bold', balance >= 0 ? 'text-text dark:text-text-dark' : 'text-red-500']">{{ balance > 0 ? '+' : '' }}{{ formatCurrency(balance) }}</p>
                       </div>
@@ -1179,39 +1236,39 @@ defineExpose({ openMonthById });
                   <!-- Search and Filters -->
                   <div class="flex items-center gap-2">
                       <div class="relative flex-1">
-                          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input v-model="searchQuery" type="text" :placeholder="$t('finance.search')" class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-shadow" />
+                          <Search class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400" />
+                          <input v-model="searchQuery" type="text" :placeholder="$t('finance.search')" class="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-gray-900 border border-border dark:border-border-dark rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent transition-shadow" />
                       </div>
                       <div class="relative">
-                          <select v-model="filterType" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer transition-colors">
-                              <option value="all">All</option>
-                              <option value="income">Income</option>
-                              <option value="expense">Expense</option>
-                              <option value="transfer">Transfer</option>
+                          <select v-model="filterType" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent cursor-pointer transition-colors">
+                              <option value="all">{{ $t('finance.all') }}</option>
+                              <option value="income">{{ $t('finance.income') }}</option>
+                              <option value="expense">{{ $t('finance.expense') }}</option>
+                              <option value="transfer">{{ $t('finance.transfer') }}</option>
                           </select>
-                          <ChevronDown class="w-4 h-4 text-gray-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <ChevronDown class="w-4 h-4 text-gray-500 dark:text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                       
                       <div class="relative">
-                          <select v-model="filterAccount" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[150px] truncate cursor-pointer transition-colors">
+                          <select v-model="filterAccount" class="appearance-none bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 border-none rounded-xl pl-3 pr-8 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent max-w-[150px] truncate cursor-pointer transition-colors">
                               <option value="all">{{ $t('finance.all_accounts') }}</option>
                               <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                           </select>
-                          <ChevronDown class="w-4 h-4 text-gray-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <ChevronDown class="w-4 h-4 text-gray-500 dark:text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                       </div>
                   </div>
               </div>
               
               <div class="flex-1 overflow-y-auto relative hidden-scrollbar bg-gray-50/30 dark:bg-gray-900/10">
-                  <div v-if="filteredTransactions.length === 0" class="h-full flex flex-col items-center justify-center text-gray-400 p-6 text-center">
+                  <div v-if="filteredTransactions.length === 0" class="h-full flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 p-6 text-center">
                       <div class="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-3">
                           <Search v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'" class="w-8 h-8 opacity-50" />
                           <Wallet v-else class="w-8 h-8 opacity-50" />
                       </div>
-                      <p v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'">No transactions found matching the filters.</p>
+                      <p v-if="searchQuery || filterType !== 'all' || filterAccount !== 'all'">{{ $t('finance.no_tx_filters') }}</p>
                       <template v-else>
-                          <p>No transactions this month.</p>
-                          <button @click="openAddTx" class="mt-4 text-blue-500 hover:underline text-sm">{{ $t('finance.add_tx_now') }}</button>
+                          <p>{{ $t('finance.no_tx_month') }}</p>
+                          <button @click="openAddTx" class="mt-4 text-accent dark:text-accent-dark hover:underline text-sm">{{ $t('finance.add_tx_now') }}</button>
                       </template>
                   </div>
                   
@@ -1228,7 +1285,7 @@ defineExpose({ openMonthById });
                           
                           <!-- Transactions in Group -->
                           <div class="flex flex-col px-2 py-1">
-                              <div v-for="tx in group.transactions" :key="tx.id" class="group flex items-center gap-4 p-3 mx-2 my-1 rounded-xl bg-white dark:bg-surface-dark border border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:shadow-sm transition-all cursor-pointer relative" @click="openEditTx(tx)">
+                              <div v-for="tx in group.transactions" :key="tx.id" class="group flex items-center gap-4 p-3 mx-2 my-1 rounded-xl bg-white dark:bg-surface-dark border border-transparent hover:border-gray-200 dark:hover:border-gray-700 hover:shadow-sm transition-all cursor-pointer relative focus-visible:outline-2 focus-visible:outline-accent" tabindex="0" role="button" @click="openEditTx(tx)" @keydown.enter.self="openEditTx(tx)" @keydown.space.self.prevent="openEditTx(tx)">
                                   
                                   <div :class="['w-10 h-10 rounded-full flex items-center justify-center shrink-0', tx.type === 'income' ? 'bg-green-100 dark:bg-green-900/30 text-green-500' : tx.type === 'expense' ? 'bg-red-100 dark:bg-red-900/30 text-red-500' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-500']">
                                       <TrendingUp v-if="tx.type === 'income'" class="w-5 h-5" />
@@ -1237,21 +1294,21 @@ defineExpose({ openMonthById });
                                   </div>
                                   
                                   <div class="flex-1 min-w-0">
-                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? 'Internal Transfer' : displayCategory(tx.category) }}</p>
+                                      <p class="font-semibold text-text dark:text-text-dark truncate">{{ tx.type === 'transfer' ? $t('finance.internal_transfer') : displayCategory(tx.category) }}</p>
                                       <button
                                           v-if="tx.receipt"
                                           @click.stop="openReceipt(tx.receipt)"
-                                          class="p-1 rounded text-gray-400 hover:text-blue-500 transition-colors shrink-0"
+                                          class="p-1 rounded text-gray-500 dark:text-gray-400 hover:text-accent transition-colors shrink-0"
                                           :aria-label="$t('finance.receipt_open')"
                                           :title="$t('finance.receipt_open')"
                                       >
                                           <Paperclip class="w-3.5 h-3.5" />
                                       </button>
-                                      <div class="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
+                                      <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-0.5">
                                           <span>{{ new Date(tx.date).getHours().toString().padStart(2, '0') }}:{{ new Date(tx.date).getMinutes().toString().padStart(2, '0') }}</span>
                                           <span>•</span>
                                           <span class="truncate">{{ tx.type === 'transfer' && tx.toAccountId ? getAccountName(tx.accountId) + ' ➡️ ' + getAccountName(tx.toAccountId) : getAccountName(tx.accountId) }}</span>
-                                          <span v-if="tx.personId" @click.stop="goToPerson(tx.personId)" class="px-1.5 py-0.5 bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 rounded text-[10px] font-medium hover:bg-blue-200 dark:hover:bg-blue-900/50 transition-colors ml-1">@{{ getPersonName(tx.personId) }}</span>
+                                          <span v-if="tx.personId" @click.stop="goToPerson(tx.personId)" class="px-1.5 py-0.5 bg-accent/10 text-accent dark:text-accent-dark rounded text-xs font-medium hover:bg-accent/20 transition-colors ml-1">@{{ getPersonName(tx.personId) }}</span>
                                           <span v-if="tx.note" class="truncate">• {{ tx.note }}</span>
                                       </div>
                                   </div>
@@ -1260,14 +1317,14 @@ defineExpose({ openMonthById });
                                       <p :class="['font-bold', tx.type === 'income' ? 'text-green-500' : tx.type === 'expense' ? 'text-text dark:text-text-dark' : 'text-blue-500']">
                                           {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ formatCurrency(tx.amount) }}
                                       </p>
-                                      <p v-if="tx.originalCurrency && tx.originalCurrency !== currentCurrency" class="text-xs text-gray-400 mt-0.5 font-medium">
+                                      <p v-if="tx.originalCurrency && tx.originalCurrency !== currentCurrency" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 font-medium">
                                           {{ tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : '' }}{{ formatMinorForInput(tx.originalAmount ?? 0, tx.originalCurrency) }} {{ tx.originalCurrency }}
                                       </p>
                                   </div>
                                   
                                   <!-- Action Buttons overlay -->
-                                  <div class="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                      <button @click.stop="deleteTransaction(tx.id)" class="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" :title="$t('finance.delete_tx')">
+                                  <div class="absolute right-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+                                      <button @click.stop="deleteTransaction(tx.id)" :aria-label="$t('finance.delete_tx')" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-800" :title="$t('finance.delete_tx')">
                                           <Trash2 class="w-4 h-4" />
                                       </button>
                                   </div>
@@ -1281,7 +1338,7 @@ defineExpose({ openMonthById });
           
           <!-- Reports View -->
           <div v-else-if="currentView === 'reports'" class="flex-1 overflow-hidden">
-              <FinanceReports :months="months" :accounts-total="accountsTotal" :categories="[...incomeCategories, ...expenseCategories]" :accounts="accounts" :account-balances="accountBalances" />
+              <FinanceReports :months="visibleMonths" :accounts-total="accountsTotal" :categories="[...incomeCategories, ...expenseCategories]" :accounts="accounts" :account-balances="accountBalances" />
           </div>
 
           <!-- Debts View -->
@@ -1324,11 +1381,6 @@ defineExpose({ openMonthById });
           </div>
       </div>
 
-      <!-- Mobile FAB -->
-      <button v-if="isMobile && !needsOnboarding && currentView === 'transactions'" @click="openAddTx" class="md:hidden absolute bottom-6 right-6 p-4 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition-colors shadow-lg z-[40]" :title="$t('finance.add_transaction')">
-          <Plus class="w-6 h-6" />
-      </button>
-
       <!-- Modals -->
       <TransactionModal 
           :show="showTxModal"
@@ -1357,6 +1409,10 @@ defineExpose({ openMonthById });
           @close="showImportModal = false"
           @confirm="confirmImport"
       />
+      <UndoToast :show="undo.show.value" :restart-key="undo.key.value"
+          :message="undo.message.value" :undo-label="$t('common.undo')"
+          :seconds="undo.seconds" @undo="undo.undo"
+          @pause="undo.pause" @resume="undo.resume" />
       <AdjustBalanceModal v-if="adjustingAccount" :show="showAdjustModal" :account-id="adjustingAccount.id" :account-name="adjustingAccount.name" :current-balance="adjustingAccount.balance" @close="showAdjustModal = false" @adjust="handleBalanceAdjust" />
   </div>
 </template>

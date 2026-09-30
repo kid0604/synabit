@@ -31,7 +31,7 @@ const emit = defineEmits<{
     >
       <button @click="emit('copy-block-link')" class="flex items-center gap-2">
         <LinkIcon class="w-3.5 h-3.5" />
-        Copy Block Link
+        {{ $t('note.editor.copy_block_link') }}
       </button>
       <button v-if="askSynLabel" @click="emit('ask-syn')" class="flex items-center gap-2">
         <img :src="synAvatar" alt="" class="w-3.5 h-3.5 rounded-full object-cover" />

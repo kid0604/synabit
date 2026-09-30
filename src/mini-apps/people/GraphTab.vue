@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
 import * as d3 from 'd3';
 import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
@@ -75,8 +76,9 @@ const colorMap: Record<string, string> = {
  * old name showing in everybody else's graph. It survives only as a fallback
  * for links written before this, and for a person no longer in the vault.
  */
+const { t } = useI18n();
 const connectionLabel = (conn: { person_id: string; name?: string }): string =>
-    props.allPeople.find(p => p.id === conn.person_id)?.title || conn.name || 'Unknown';
+    props.allPeople.find(p => p.id === conn.person_id)?.title || conn.name || t('people.unknown_person');
 
 const RELATION_LABELS: Record<string, string> = {
     friend: '👫', family: '👨‍👩‍👧', colleague: '💼', partner: '❤️',
@@ -550,18 +552,18 @@ onUnmounted(() => {
                     <span class="text-xs">{{ RELATION_LABELS[conn.relation_type] || '🔗' }}</span>
                     <span class="text-xs font-medium text-gray-700 dark:text-gray-300">{{ connectionLabel(conn) }}</span>
                     <button @click.stop="emit('edit-link', conn.person_id)"
-                        class="p-0.5 opacity-0 group-hover:opacity-100 text-blue-400 hover:text-blue-600 transition-all" :title="$t('people.edit_link')">
+                        class="p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 text-blue-400 hover:text-blue-600 transition-all" :title="$t('people.edit_link')" :aria-label="$t('people.edit_link')">
                         <Edit2 class="w-3 h-3" />
                     </button>
                     <button @click.stop="emit('unlink', conn.person_id)"
-                        class="p-0.5 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-all" :title="$t('people.remove_link')">
+                        class="p-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 text-red-400 hover:text-red-600 transition-all" :title="$t('people.remove_link')" :aria-label="$t('people.remove_link')">
                         <X class="w-3 h-3" />
                     </button>
                 </div>
             </div>
         </div>
 
-        <p v-if="hiddenCount > 0" class="flex-shrink-0 px-1 pb-2 text-[11px] text-gray-400">
+        <p v-if="hiddenCount > 0" class="flex-shrink-0 px-1 pb-2 text-xs text-gray-500 dark:text-gray-400">
             {{ $t('people.graph_trimmed', { count: hiddenCount }) }}
         </p>
 
@@ -577,15 +579,15 @@ onUnmounted(() => {
             </div>
             <p v-if="pathFound && pathFound.length > 1" class="mt-2 text-xs text-gray-600 dark:text-gray-400 flex items-center gap-1 flex-wrap">
                 <template v-for="(step, i) in pathFound" :key="step.person_id">
-                    <span v-if="i > 0" class="text-gray-400">→</span>
+                    <span v-if="i > 0" class="text-gray-500 dark:text-gray-400">→</span>
                     <button @click="() => { const p = allPeople.find(pp => pp.id === step.person_id); if (p) emit('select-person', p); }"
                         class="font-medium hover:text-blue-600 dark:hover:text-blue-400 transition-colors">
                         {{ step.name }}
                     </button>
-                    <span v-if="step.relation_type" class="text-[10px] text-gray-400">({{ step.relation_type }})</span>
+                    <span v-if="step.relation_type" class="text-xs text-gray-500 dark:text-gray-400">({{ step.relation_type }})</span>
                 </template>
             </p>
-            <p v-else-if="pathFound && pathFound.length <= 1 && pathTarget" class="mt-2 text-xs text-gray-500">
+            <p v-else-if="pathFound && pathFound.length <= 1 && pathTarget" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 {{ $t('people.no_route') }}
             </p>
         </div>
@@ -600,8 +602,8 @@ onUnmounted(() => {
                     <Share2 class="w-7 h-7 text-purple-400 dark:text-purple-500" />
                 </div>
                 <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ $t('people.no_connections') }}</h3>
-                <p class="text-xs text-gray-400 dark:text-gray-500 text-center max-w-[200px]">
-                    {{ $t('people.use_the') }} <strong>{{ $t('people.link_person') }}</strong> {{ $t('people.link_desc') }}
+                <p class="text-xs text-gray-500 dark:text-gray-400 text-center max-w-[200px]">
+                    {{ $t('people.no_connections_hint', { button: $t('people.link_person') }) }}
                 </p>
             </div>
 
@@ -615,11 +617,11 @@ onUnmounted(() => {
                 >
                     <Expand v-if="!showSecondDegree" class="w-3.5 h-3.5" />
                     <Shrink v-else class="w-3.5 h-3.5" />
-                    {{ showSecondDegree ? 'Show Less' : 'Show More' }}
+                    {{ showSecondDegree ? $t('people.graph_show_less') : $t('people.graph_show_more') }}
                 </button>
 
                 <!-- Legend -->
-                <div class="flex items-center gap-3 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-[10px] shadow-sm">
+                <div class="flex items-center gap-3 bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md rounded-lg px-3 py-1.5 border border-gray-200 dark:border-gray-700 text-xs shadow-sm">
                     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-500"></span> {{ $t('people.current') }}</span>
                     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-500"></span> {{ $t('people.people') }}</span>
                     <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span> {{ $t('people.notes') }}</span>

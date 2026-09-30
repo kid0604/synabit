@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { AlertCircle, Gift, ChevronRight, CalendarClock, Check, Clock } from 'lucide-vue-next';
 import { useNodeService } from '../../composables/useNodeService';
 import { useKeepInTouch } from './composables/useKeepInTouch';
@@ -63,10 +64,12 @@ const upcomingBirthdays = computed(() => {
 
 const hasReminders = computed(() => overdueContacts.value.length > 0 || upcomingBirthdays.value.length > 0 || dueSoonContacts.value.length > 0);
 
+const { t } = useI18n();
+
 const formatBirthdayLabel = (daysUntil: number) => {
-    if (daysUntil === 0) return 'Today! 🎉';
-    if (daysUntil === 1) return 'Tomorrow';
-    return `in ${daysUntil}d`;
+    if (daysUntil === 0) return `${t('people.countdown_today')} 🎉`;
+    if (daysUntil === 1) return t('people.countdown_tomorrow');
+    return t('people.countdown_in_days', { days: daysUntil });
 };
 </script>
 
@@ -75,7 +78,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
         <!-- Overdue -->
         <div v-if="overdueContacts.length > 0">
             <div class="px-2 mb-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-red-500 flex items-center gap-1">
+                <span class="text-xs font-bold uppercase tracking-wider text-red-500 flex items-center gap-1">
                     <AlertCircle class="w-3 h-3" /> {{ $t('people.overdue_count', { count: overdueContacts.length }) }}
                 </span>
             </div>
@@ -86,18 +89,18 @@ const formatBirthdayLabel = (daysUntil: number) => {
                     <div class="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse"></div>
                     <div class="flex-1 min-w-0">
                         <p class="text-xs font-medium truncate">{{ p.title }}</p>
-                        <p class="text-[10px] text-red-500">{{ $t('people.days_overdue', { days: p.overdueDays }) }}</p>
+                        <p class="text-xs text-red-500">{{ $t('people.days_overdue', { days: p.overdueDays }) }}</p>
                     </div>
                     <ChevronRight class="w-3 h-3 text-red-400 flex-shrink-0" />
                 </button>
                 <!-- The two answers anybody actually has: I have, and not yet. -->
                 <div class="flex items-center gap-1 px-3 pb-2 pt-1.5 pl-8">
                     <button @click="answer(p, 'contacted')"
-                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-green-700 dark:text-green-400 bg-green-100/70 dark:bg-green-900/25 hover:bg-green-200/70 dark:hover:bg-green-900/50 transition-colors">
+                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium text-green-700 dark:text-green-400 bg-green-100/70 dark:bg-green-900/25 hover:bg-green-200/70 dark:hover:bg-green-900/50 transition-colors">
                         <Check class="w-2.5 h-2.5" /> {{ $t('people.ive_been_in_touch') }}
                     </button>
                     <button @click="answer(p, 'snooze')"
-                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-700/60 transition-colors">
+                        class="flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-200/70 dark:hover:bg-gray-700/60 transition-colors">
                         <Clock class="w-2.5 h-2.5" /> {{ $t('people.remind_next_week') }}
                     </button>
                 </div>
@@ -107,7 +110,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
         <!-- Due Soon -->
         <div v-if="dueSoonContacts.length > 0">
             <div class="px-2 mb-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
+                <span class="text-xs font-bold uppercase tracking-wider text-yellow-600 dark:text-yellow-400 flex items-center gap-1">
                     <CalendarClock class="w-3 h-3" /> {{ $t('people.due_soon_count', { count: dueSoonContacts.length }) }}
                 </span>
             </div>
@@ -119,7 +122,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
                 <div class="w-2 h-2 rounded-full bg-yellow-500 flex-shrink-0"></div>
                 <div class="flex-1 min-w-0">
                     <p class="text-xs font-medium truncate">{{ p.title }}</p>
-                    <p class="text-[10px] text-yellow-600 dark:text-yellow-400">{{ $t('people.days_left', { days: p.daysLeft }) }}</p>
+                    <p class="text-xs text-yellow-600 dark:text-yellow-400">{{ $t('people.days_left', { days: p.daysLeft }) }}</p>
                 </div>
             </button>
         </div>
@@ -127,7 +130,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
         <!-- Upcoming Birthdays -->
         <div v-if="upcomingBirthdays.length > 0">
             <div class="px-2 mb-1">
-                <span class="text-[10px] font-bold uppercase tracking-wider text-pink-500 flex items-center gap-1">
+                <span class="text-xs font-bold uppercase tracking-wider text-pink-500 flex items-center gap-1">
                     <Gift class="w-3 h-3" /> {{ $t('people.birthdays') }}
                 </span>
             </div>
@@ -140,7 +143,7 @@ const formatBirthdayLabel = (daysUntil: number) => {
                 <div class="flex-1 min-w-0">
                     <p class="text-xs font-medium truncate">{{ p.title }}</p>
                 </div>
-                <span class="text-[10px] font-bold" :class="p.daysUntil === 0 ? 'text-pink-600' : 'text-pink-400'">{{ formatBirthdayLabel(p.daysUntil) }}</span>
+                <span class="text-xs font-bold" :class="p.daysUntil === 0 ? 'text-pink-600' : 'text-pink-400'">{{ formatBirthdayLabel(p.daysUntil) }}</span>
             </button>
         </div>
     </div>

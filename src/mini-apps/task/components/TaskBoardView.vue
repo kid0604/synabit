@@ -55,19 +55,19 @@ const onCardClick = (task: TaskMetadata) => {
 <template>
   <div class="flex gap-6 flex-1 mt-6 pb-8 overflow-x-auto min-h-0 items-stretch">
       <div v-for="col in columns" :key="col.id" 
-           class="flex-1 min-w-[280px] flex flex-col bg-gray-50/50 dark:bg-[#161616] rounded-2xl p-4 border border-[#e6e6e6] dark:border-[#2c2c2c]"
+           class="flex-1 min-w-[280px] flex flex-col bg-gray-50/50 dark:bg-[#161616] rounded-2xl p-4 border border-border dark:border-border-dark"
            @dragover.prevent 
            @drop="emit('drop', $event, col.id)"
       >
           <div class="flex items-center justify-between mb-4 px-1" :class="col.class">
-              <h3 class="text-xs font-bold text-gray-500 pt-3 flex items-center">
+              <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 pt-3 flex items-center">
                   {{ col.name }} 
                   <span class="ml-2 px-2 py-0.5 rounded-full transition-colors" 
-                        :class="(col.id === 'in_progress' && tasksByStatus[col.id].length > wipLimit) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'bg-gray-200 dark:bg-[#2a2a2a] text-gray-600 dark:text-gray-300'">
+                        :class="(col.id === 'in_progress' && tasksByStatus[col.id].length > wipLimit) ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400 font-bold' : 'bg-gray-200 dark:bg-surface-hover-dark text-gray-600 dark:text-gray-300'">
                       {{ tasksByStatus[col.id].length }}
                   </span>
               </h3>
-              <button @click="emit('show-quick-add', col.id)" class="text-gray-400 hover:text-black dark:hover:text-white pt-3" :aria-label="$t('task.a11y_add_task_to_column')"><Plus class="w-4 h-4"/></button>
+              <button @click="emit('show-quick-add', col.id)" class="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white pt-3" :aria-label="$t('task.a11y_add_task_to_column')"><Plus class="w-4 h-4"/></button>
           </div>
           <div class="flex-1 overflow-y-auto space-y-3 pb-4 column-content">
               <div v-for="task in tasksByStatus[col.id]" :key="task.id"
@@ -76,7 +76,7 @@ const onCardClick = (task: TaskMetadata) => {
                    @click="onCardClick(task)"
                    :data-task-id="task.id"
                    class="task-card p-4 rounded-xl border hover:shadow-md transition-shadow cursor-grab active:cursor-grabbing group relative"
-                   :class="isOverdue(task) ? 'border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10' : 'bg-white dark:bg-[#1e1e1e] border-[#e6e6e6] dark:border-[#2c2c2c]'"
+                   :class="isOverdue(task) ? 'border-red-300 dark:border-red-900 bg-red-50/50 dark:bg-red-900/10' : 'bg-white dark:bg-surface-dark border-border dark:border-border-dark'"
               >
                  <div class="flex items-start gap-2 mb-3">
                      <input
@@ -84,21 +84,21 @@ const onCardClick = (task: TaskMetadata) => {
                          :checked="isSelected(task.id)"
                          @click.stop="emit('select-one', task.id)"
                          class="mt-0.5 w-4 h-4 shrink-0 rounded border-gray-300 dark:border-gray-600 text-blue-500 focus:ring-blue-500 cursor-pointer transition-opacity"
-                         :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'"
+                         :class="isSelecting ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 pointer-coarse:opacity-100'"
                          :aria-label="$t('task.a11y_select_task')"
                      />
-                     <p class="text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] leading-snug">{{ task.title }}</p>
+                     <p class="text-sm font-medium text-text dark:text-text-dark leading-snug">{{ task.title }}</p>
                  </div>
-                 <div class="flex items-center justify-between mt-auto pt-2 border-t border-gray-50 dark:border-[#2c2c2c]">
+                 <div class="flex items-center justify-between mt-auto pt-2 border-t border-gray-50 dark:border-border-dark">
                      <div class="flex gap-2 items-center flex-wrap">
                          <TaskCardMeta :task="task" compact :progress="progressOf(task)" @open-person="emit('open-person', $event)" />
                      </div>
-                     <DeleteButton :mode="deleteConfirm" compact class="opacity-0 group-hover:opacity-100 transition-opacity" @confirm="emit('delete-task', task)" />
+                     <DeleteButton :mode="deleteConfirm" compact class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" @confirm="emit('delete-task', task)" />
                  </div>
               </div>
               
               <!-- Quick Add Input -->
-              <div v-if="quickAddColumn === col.id" class="mt-2 bg-white dark:bg-[#1e1e1e] p-3 rounded-xl border border-indigo-300 dark:border-indigo-500 shadow-sm animate-in fade-in zoom-in duration-200 shrink-0">
+              <div v-if="quickAddColumn === col.id" class="mt-2 bg-white dark:bg-surface-dark p-3 rounded-xl border border-indigo-300 dark:border-indigo-500 shadow-sm animate-in fade-in zoom-in duration-200 shrink-0">
                   <input :id="'quick-add-input-' + col.id" 
                          type="text" 
                          :value="quickAddTitle"
@@ -107,7 +107,7 @@ const onCardClick = (task: TaskMetadata) => {
                          @keyup.esc="emit('update:quickAddColumn', null)"
                          @blur="!quickAddTitle.trim() ? emit('update:quickAddColumn', null) : null"
                          :placeholder="$t('task.task_title_placeholder')" 
-                         class="w-full bg-transparent text-sm font-medium text-[#1c1c1e] dark:text-[#f4f4f5] outline-none placeholder:font-normal placeholder:text-gray-400"
+                         class="w-full bg-transparent text-sm font-medium text-text dark:text-text-dark outline-none placeholder:font-normal placeholder:text-gray-500 dark:placeholder:text-gray-400"
                   />
               </div>
           </div>

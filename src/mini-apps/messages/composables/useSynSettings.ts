@@ -98,6 +98,19 @@ export interface SynSettings {
    * being accepted.
    */
   memory_reflection: boolean;
+  /**
+   * Whether the app adds its family-safe instruction to every prompt.
+   *
+   * The text is not here and not in `SYN.md`: it is fixed in the backend
+   * (`syn::family_safe`) and appended after the user's own instructions, so
+   * editing `SYN.md` cannot drop it. Turning it off asks for the app-lock PIN
+   * when one is set — see `familySafe.ts`.
+   *
+   * A settings file written before it existed does not carry it, and the
+   * backend reads that as off (`#[serde(default)]`) — as does the merge over
+   * the defaults in `loadSettings`.
+   */
+  family_safe: boolean;
 }
 
 /**
@@ -128,6 +141,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   num_ctx: 8192,
   max_history_messages: 50,
   memory_reflection: true,
+  family_safe: false,
 };
 
 export function useSynSettings(vaultPath: string) {
@@ -295,7 +309,10 @@ export function useSynSettings(vaultPath: string) {
    * second one has its own button.
    */
   const resetToDefaults = () => {
-    settings.value = { ...DEFAULT_SETTINGS };
+    // Family-safe answers are not a preference being reset: they are a
+    // guardrail somebody put on, and the only way off is the switch that asks
+    // for the PIN. Reset keeping it is what stops Reset being the way round.
+    settings.value = { ...DEFAULT_SETTINGS, family_safe: settings.value.family_safe };
   };
 
   return {

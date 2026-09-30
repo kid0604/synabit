@@ -2,9 +2,15 @@
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3';
 import { ref, computed, nextTick, onMounted } from 'vue';
 import katex from 'katex';
+import { useI18n } from 'vue-i18n';
 import 'katex/dist/katex.min.css';
 
 const props = defineProps(nodeViewProps);
+const { t } = useI18n();
+
+/** Text going into `v-html`, so a message that holds `<` stays text. */
+const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 const isEditing = ref(false);
 const inputRef = ref<HTMLInputElement | null>(null);
@@ -27,14 +33,14 @@ const latexContent = computed({
 });
 
 const renderedHtml = computed(() => {
-   if (!latexContent.value) return '<span class="text-gray-400 text-sm">Empty equation</span>';
+   if (!latexContent.value) return `<span class="text-gray-500 dark:text-gray-400 text-sm">${escapeHtml(t('note.editor.equation_empty'))}</span>`;
    try {
       return katex.renderToString(latexContent.value, {
          throwOnError: false,
          displayMode: false // Inline display mode
       });
    } catch (e: any) {
-      return `<span class="text-red-500 text-sm">${e.message}</span>`;
+      return `<span class="text-red-600 dark:text-red-400 text-sm">${escapeHtml(String(e?.message ?? e))}</span>`;
    }
 });
 
@@ -63,7 +69,7 @@ const finishEditing = () => {
     ></span>
     
     <span v-else class="inline-flex items-center gap-1 bg-gray-50 dark:bg-[#1a1a1a] rounded px-2 py-0.5 shadow-sm border border-blue-200 dark:border-blue-900 ring-2 ring-blue-100 dark:ring-blue-900/40" contenteditable="false">
-        <span class="text-gray-400 font-mono text-xs select-none pointer-events-none">$$</span>
+        <span class="text-gray-500 dark:text-gray-400 font-mono text-xs select-none pointer-events-none">$$</span>
         <input 
             ref="inputRef"
             v-model="latexContent"
@@ -73,8 +79,9 @@ const finishEditing = () => {
             class="bg-transparent border-none outline-none font-mono text-sm leading-none text-blue-600 dark:text-blue-400 py-1"
             :style="{ width: Math.max(60, latexContent.length * 8) + 'px' }"
             placeholder="x_1"
+            :aria-label="$t('note.editor.equation_label')"
         />
-        <span class="text-gray-400 font-mono text-xs select-none pointer-events-none">$$</span>
+        <span class="text-gray-500 dark:text-gray-400 font-mono text-xs select-none pointer-events-none">$$</span>
     </span>
   </NodeViewWrapper>
 </template>

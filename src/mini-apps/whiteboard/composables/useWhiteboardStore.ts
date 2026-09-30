@@ -2,6 +2,7 @@ import { ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { emit as tauriEmit } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 import type { WhiteboardMetadata } from '../../../types/ipc';
 import {
   BOARD_SCHEMA_VERSION,
@@ -104,7 +105,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     }
   }
 
-  async function createBoard(title: string = 'Untitled Board') {
+  async function createBoard(title: string = i18n.global.t('whiteboard.untitled_board')) {
     try {
       const data = newBoardData(title);
       const content = JSON.stringify(data, null, 2);
@@ -154,12 +155,12 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       await invoke('update_whiteboard', {
         vaultPath: vaultPath.value,
         path: board.path,
-        title: currentBoardData.value.title || 'Untitled',
+        title: currentBoardData.value.title || i18n.global.t('whiteboard.untitled'),
         tags: currentBoardData.value.tags || [],
         content,
       });
       // Update local meta
-      board.title = currentBoardData.value.title || 'Untitled';
+      board.title = currentBoardData.value.title || i18n.global.t('whiteboard.untitled');
       board.tags = currentBoardData.value.tags || [];
       // Notify embedded previews in notes to reload
       tauriEmit('whiteboard-updated', { path: board.path, id: board.id });
@@ -170,25 +171,32 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     }
   }
 
+  /**
+   * Move a board to the trash. A failed move throws: the caller holds this
+   * behind an undo window, and only a thrown error lets it put the board back
+   * and say so — swallowed here, the board just vanished until the next
+   * rescan brought it back unexplained. Opening another board afterwards is a
+   * refresh, not the delete, so its failure is only logged.
+   */
   async function deleteBoard(boardId: string) {
     const board = boards.value.find(b => b.id === boardId);
     if (!board) return;
-    try {
-      await invoke('delete_whiteboard', {
-        vaultPath: vaultPath.value,
-        path: board.path,
-      });
-      boards.value = boards.value.filter(b => b.id !== boardId);
-      if (currentBoardId.value === boardId) {
-        currentBoardId.value = boards.value[0]?.id || null;
+    await invoke('delete_whiteboard', {
+      vaultPath: vaultPath.value,
+      path: board.path,
+    });
+    boards.value = boards.value.filter(b => b.id !== boardId);
+    if (currentBoardId.value === boardId) {
+      currentBoardId.value = boards.value[0]?.id || null;
+      try {
         if (currentBoardId.value) {
           await loadBoardData(currentBoardId.value);
         } else {
           currentBoardData.value = null;
         }
+      } catch (err) {
+        logger.error('Failed to open a board after deleting one', err as string);
       }
-    } catch (err) {
-      logger.error('Failed to delete whiteboard', err as string);
     }
   }
 

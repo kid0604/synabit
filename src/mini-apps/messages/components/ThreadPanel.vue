@@ -122,12 +122,12 @@ const when = (iso: string) => {
   <div class="flex-1 min-h-0 flex flex-col">
     <div class="shrink-0 px-6 pt-5 pb-3 border-b border-border dark:border-border-dark">
       <h2 class="text-[19px] font-semibold">{{ thread.title }}</h2>
-      <p class="mt-0.5 text-[12px] text-gray-400">
+      <p class="mt-0.5 text-[12px] text-gray-500 dark:text-gray-400">
         {{ t('threads.opened', { date: when(thread.opened) }) }} ·
         {{ t('threads.moved', { date: when(thread.last_moved) }) }} ·
-        <code class="text-[11px]">{{ thread.id }}</code>
+        <code class="text-xs">{{ thread.id }}</code>
       </p>
-      <p v-if="usage" class="mt-0.5 text-[12px]" :class="usage.runs && !usage.wrote_back ? 'text-amber-600 dark:text-amber-500' : 'text-gray-400'">
+      <p v-if="usage" class="mt-0.5 text-[12px]" :class="usage.runs && !usage.wrote_back ? 'text-amber-600 dark:text-amber-500' : 'text-gray-500'">
         {{ t('threads.usage', { runs: usage.runs, wrote: usage.wrote_back }) }}
       </p>
 
@@ -159,7 +159,7 @@ const when = (iso: string) => {
       <input
         :value="thread.waiting_for ?? ''"
         :placeholder="t('threads.waiting_placeholder')"
-        class="mt-3 w-full bg-transparent text-[13px] outline-none placeholder-gray-400 border-b border-transparent focus:border-gray-200 dark:focus:border-gray-700 pb-1"
+        class="mt-3 w-full bg-transparent text-[13px] outline-none placeholder-gray-500 dark:placeholder-gray-400 border-b border-transparent focus:border-gray-200 dark:focus:border-gray-700 pb-1"
         @change="onWaitingFor(($event.target as HTMLInputElement).value)"
       />
     </div>
@@ -180,7 +180,7 @@ const when = (iso: string) => {
             <Loader2 v-if="saving" class="inline w-3.5 h-3.5 animate-spin mr-1" />
             {{ t('threads.save') }}
           </button>
-          <button class="px-3 py-1.5 text-[13px] text-gray-500 cursor-pointer" @click="editing = false">
+          <button class="px-3 py-1.5 text-[13px] text-gray-500 dark:text-gray-400 cursor-pointer" @click="editing = false">
             {{ t('threads.cancel') }}
           </button>
         </div>
@@ -188,10 +188,10 @@ const when = (iso: string) => {
 
       <template v-else>
         <div v-if="rendered" class="prose prose-sm dark:prose-invert max-w-none" v-html="rendered"></div>
-        <p v-else class="text-[13px] text-gray-400">{{ t('threads.body_empty') }}</p>
+        <p v-else class="text-[13px] text-gray-500 dark:text-gray-400">{{ t('threads.body_empty') }}</p>
 
         <button
-          class="mt-5 text-[12px] text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer"
+          class="mt-5 text-[12px] text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 cursor-pointer"
           @click="beginEdit"
         >
           {{ t('threads.edit') }}

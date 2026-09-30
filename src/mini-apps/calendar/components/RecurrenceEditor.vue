@@ -60,8 +60,8 @@ const unitKey = computed(() => {
 });
 
 const labelClass = 'block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5';
-const fieldClass = 'h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200 dark:border-[#444] '
-    + 'rounded-lg px-2 text-sm focus:outline-none focus:border-purple-500 text-black dark:text-white';
+const fieldClass = 'h-[38px] bg-gray-50 dark:bg-surface-hover-dark border border-gray-200 dark:border-[#444] '
+    + 'rounded-lg px-2 text-sm focus:outline-none focus:border-accent text-black dark:text-white';
 </script>
 
 <template>
@@ -94,10 +94,10 @@ const fieldClass = 'h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200
                 <div class="flex gap-1 flex-wrap">
                     <button v-for="code in orderedDays" :key="code" type="button"
                             :aria-pressed="modelValue.byDay.includes(code)"
-                            class="w-9 h-9 rounded-lg text-[11px] font-semibold border transition-colors"
+                            class="w-9 h-9 rounded-lg text-xs font-semibold border transition-colors"
                             :class="modelValue.byDay.includes(code)
-                                ? 'bg-purple-600 border-purple-600 text-white'
-                                : 'bg-gray-50 dark:bg-[#2a2a2a] border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 hover:border-purple-400'"
+                                ? 'bg-accent border-accent text-white'
+                                : 'bg-gray-50 dark:bg-surface-hover-dark border-gray-200 dark:border-[#444] text-gray-600 dark:text-gray-300 hover:border-accent/50'"
                             @click="toggleDay(code)">
                         {{ $t(`calendar.day_${code}`) }}
                     </button>
@@ -127,7 +127,7 @@ const fieldClass = 'h-[38px] bg-gray-50 dark:bg-[#2a2a2a] border border-gray-200
                     </template>
                 </div>
             </div>
-            <p class="text-[11px] text-gray-500 dark:text-gray-400 -mt-1">{{ summary }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 -mt-1">{{ summary }}</p>
         </template>
     </div>
 </template>

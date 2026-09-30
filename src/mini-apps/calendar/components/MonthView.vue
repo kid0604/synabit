@@ -4,6 +4,7 @@ import { CheckSquare } from 'lucide-vue-next';
 import type { EventMetadata, TaskMetadata } from '../types';
 import { dayNamesShort, formatDateString, isSameDay } from '../helpers';
 import { i18n } from '../../../i18n';
+import { showLunar, shortLunar, isNotableLunarDay, fullLunar } from '../lunarDisplay';
 
 const props = defineProps<{
     calendarDays: { date: Date; inMonth: boolean }[];
@@ -89,11 +90,15 @@ const cellLabel = (date: Date) => {
     });
     const events = props.getEventsForDate(dateStr).length;
     const tasks = props.getTasksForDate(dateStr).length;
-    if (!events && !tasks) return written;
+    // The lunar date is read out in full: "15/8" on its own means nothing
+    // to somebody who cannot see which corner of the cell it is in.
+    const lunar = showLunar.value ? fullLunar(date, (k, v) => i18n.global.t(k, v ?? {})) : '';
+    if (!events && !tasks) return lunar ? `${written}, ${lunar}` : written;
 
     // Counted separately and only when there is something to count: "1 events,
     // 0 tasks" is worse than saying nothing.
     const parts = [written];
+    if (lunar) parts.push(lunar);
     // Named values first, plural count second. The other argument order —
     // `t(key, plural, named)` — reads more naturally but is not one of `t`'s
     // signatures: the third parameter there is `TranslateOptions`, so `{ n }`
@@ -106,8 +111,8 @@ const cellLabel = (date: Date) => {
 
 <template>
     <div class="h-full flex flex-col select-none">
-        <div class="grid grid-cols-7 mb-2 flex-shrink-0 border-b border-[#e6e6e6] dark:border-[#333] pb-2 px-1">
-            <div v-for="(day, di) in dayNamesShort()" :key="'d'+di" aria-hidden="true" class="text-center text-xs font-bold uppercase tracking-wider text-[#8b8b8b] dark:text-[#71717a]">
+        <div class="grid grid-cols-7 mb-2 flex-shrink-0 border-b border-border dark:border-[#333] pb-2 px-1">
+            <div v-for="(day, di) in dayNamesShort()" :key="'d'+di" aria-hidden="true" class="text-center text-xs font-bold uppercase tracking-wider text-muted dark:text-muted-dark">
                 {{ day }}
             </div>
         </div>
@@ -125,21 +130,34 @@ const cellLabel = (date: Date) => {
                  @keydown.enter.prevent="emit('click-day', dayObj.date)"
                  @keyup.space.prevent="emit('click-day', dayObj.date)"
                  @focus="active = idx"
-                 class="relative flex flex-col rounded-xl border border-[#ececeb] dark:border-[#2f2f2f] cursor-pointer transition-all duration-200 overflow-hidden group hover:border-[#d4d4d8] dark:hover:border-[#4f4f4f] hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-500 focus-visible:outline-offset-2"
+                 class="relative flex flex-col rounded-xl border border-[#ececeb] dark:border-[#2f2f2f] cursor-pointer transition-all duration-200 overflow-hidden group hover:border-[#d4d4d8] dark:hover:border-[#4f4f4f] hover:shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
                  :class="[
                      dayObj.inMonth ? 'bg-white dark:bg-[#262626]' : 'bg-gray-50/50 dark:bg-[#1f1f1f]',
-                     isSameDay(dayObj.date, selectedDate) ? 'ring-2 ring-purple-500 border-transparent dark:border-transparent' : '',
-                     isSameDay(dayObj.date, new Date()) ? 'bg-gradient-to-br from-purple-50/50 to-transparent dark:from-purple-900/10' : ''
+                     isSameDay(dayObj.date, selectedDate) ? 'ring-2 ring-accent border-transparent dark:border-transparent' : '',
+                     isSameDay(dayObj.date, new Date()) ? 'bg-gradient-to-br from-accent/5 to-transparent dark:from-accent/10' : ''
                  ]"
             >
-                <div class="w-full flex justify-between items-start p-2 pointer-events-none">
+                <div class="w-full flex flex-wrap justify-between items-start gap-x-1 p-2 pointer-events-none">
                     <span class="text-sm font-medium w-6 h-6 flex items-center justify-center rounded-full"
                           :class="[
-                              !dayObj.inMonth ? 'text-gray-400 dark:text-gray-600' : 'text-[#1c1c1e] dark:text-[#f4f4f5]',
-                              isSameDay(dayObj.date, new Date()) ? 'bg-purple-600 text-white dark:text-white' : ''
+                              !dayObj.inMonth ? 'text-gray-600 dark:text-gray-400' : 'text-text dark:text-text-dark',
+                              isSameDay(dayObj.date, new Date()) ? 'bg-accent text-white dark:text-white' : ''
                           ]"
                     >
                         {{ dayObj.date.getDate() }}
+                    </span>
+                    <!-- The lunar day, smaller and in the corner, the way a
+                         Vietnamese wall calendar prints it. The month is shown
+                         where it changes and on the first cell, which would
+                         otherwise start mid-month with no month at all. On a
+                         phone-width cell it wraps under the day instead of
+                         being clipped. -->
+                    <span v-if="showLunar" aria-hidden="true"
+                          class="text-xs leading-6 tabular-nums"
+                          :class="[
+                              isNotableLunarDay(dayObj.date) ? 'text-accent dark:text-accent-dark font-semibold' : 'text-muted dark:text-muted-dark',
+                          ]">
+                        {{ shortLunar(dayObj.date, idx === 0) }}
                     </span>
                 </div>
                 <div class="flex-1 px-1 md:px-2 pb-1 md:pb-2 overflow-y-auto w-full no-scrollbar md:space-y-1">
@@ -151,17 +169,17 @@ const cellLabel = (date: Date) => {
                     <!-- Desktop Text -->
                     <div class="hidden md:flex flex-col gap-1 w-full" v-for="(dayData, idx) in [getMonthViewItems(formatDateString(dayObj.date))]" :key="'ddata-'+dayObj.date.getTime()+'-'+idx">
                         <template v-for="item in dayData.display" :key="item.type + '-' + item.id">
-                            <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95 cursor-pointer" @click.stop="emit('edit-event', item.event, formatDateString(dayObj.date))">
+                            <div v-if="item.type === 'event'" class="w-full text-left truncate px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100/80 text-blue-800 border border-blue-200/50 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-800/30 shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:brightness-95 cursor-pointer" @click.stop="emit('edit-event', item.event, formatDateString(dayObj.date))">
                                 <span v-if="item.event_time" class="opacity-70 mr-0.5">{{ item.event_time }}</span> {{ item.title }}
                             </div>
-                            <div v-else class="w-full text-left truncate px-1.5 py-0.5 rounded text-[10px] font-medium border border-gray-200/80 dark:border-[#3a3a3a]/80 text-gray-700 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#252525] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:bg-gray-50 dark:hover:bg-[#2a2a2a] cursor-pointer hover:brightness-95" :class="item.status === 'done' ? 'opacity-60' : ''" @click.stop="emit('open-task', item.id)">
-                                <CheckSquare class="w-2.5 h-2.5 shrink-0 hover:text-purple-500 transition-colors" :class="item.status === 'done' ? 'text-green-500' : 'text-gray-400'" @click.stop="emit('toggle-task', item)" /> <span :class="item.status === 'done' ? 'line-through' : ''">{{ item.title }}</span>
+                            <div v-else class="w-full text-left truncate px-1.5 py-0.5 rounded text-xs font-medium border border-gray-200/80 dark:border-border-subtle-dark/80 text-gray-700 dark:text-gray-300 flex items-center gap-1 bg-white dark:bg-[#252525] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors hover:bg-gray-50 dark:hover:bg-surface-hover-dark cursor-pointer hover:brightness-95" :class="item.status === 'done' ? 'opacity-60' : ''" @click.stop="emit('open-task', item.id)">
+                                <CheckSquare class="w-2.5 h-2.5 shrink-0 hover:text-accent transition-colors" :class="item.status === 'done' ? 'text-green-500' : 'text-gray-500 dark:text-gray-400'" @click.stop="emit('toggle-task', item)" /> <span :class="item.status === 'done' ? 'line-through' : ''">{{ item.title }}</span>
                             </div>
                         </template>
                         <div v-if="dayData.moreCount > 0" 
-                             class="text-[10px] font-semibold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer px-1 py-0.5 hover:bg-gray-100 dark:hover:bg-[#333] rounded transition-colors w-max" 
+                             class="text-xs font-semibold text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200 cursor-pointer px-1 py-0.5 hover:bg-gray-100 dark:hover:bg-[#333] rounded transition-colors w-max" 
                              @click.stop="emit('click-day', dayObj.date)">
-                            +{{ dayData.moreCount }} more
+                            {{ $t('calendar.n_more', { n: dayData.moreCount }) }}
                         </div>
                     </div>
                 </div>

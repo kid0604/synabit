@@ -76,7 +76,7 @@ const keep = async (query: string) => {
       <!-- The query itself, not a description of it. Somebody who cannot write
            one learns the language by seeing theirs written out. -->
       <code
-        class="min-w-0 flex-grow truncate font-mono text-[11px] text-gray-600 dark:text-gray-300"
+        class="min-w-0 flex-grow truncate font-mono text-xs text-gray-600 dark:text-gray-300"
         :title="query"
         >{{ query }}</code
       >
@@ -84,7 +84,7 @@ const keep = async (query: string) => {
         v-if="!kept.has(query)"
         type="button"
         data-keep-question
-        class="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-300 px-2 py-0.5 text-[10px] font-semibold text-gray-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-[#48484a] dark:text-gray-300"
+        class="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-semibold text-gray-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-[#48484a] dark:text-gray-300"
         @click="keep(query)"
       >
         <BookMarked class="h-3 w-3" /> {{ $t('nexus.lens_keep') }}
@@ -92,7 +92,7 @@ const keep = async (query: string) => {
       <span
         v-else
         data-question-kept
-        class="inline-flex flex-shrink-0 items-center gap-1 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+        class="inline-flex flex-shrink-0 items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400"
       >
         <Check class="h-3 w-3" /> {{ $t('nexus.lens_kept') }}
       </span>

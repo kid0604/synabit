@@ -21,6 +21,7 @@
  */
 
 import type { Component } from 'vue';
+import { i18n } from '../i18n';
 import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, KeyRound, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Zap } from 'lucide-vue-next';
 
 export interface AppEntry {
@@ -32,7 +33,16 @@ export interface AppEntry {
    * one would strand settings already written to a user's disk.
    */
   id: string;
-  /** The English name. Sidebar tooltips and Settings labels use it. */
+  /**
+   * The English name, and the fallback when no translation exists.
+   *
+   * Everything that shows a name goes through `appName()`, which reads
+   * `shell.apps.<id>`. This field once was the only name — the app list was
+   * pulled out of three screens that each hard-coded English, and translating
+   * was left for later rather than bundled into that move. Nothing ever
+   * depended on the name being English: settings, routes and locks all store
+   * the id.
+   */
   name: string;
   /** Lucide icon component, rendered with `<component :is>`. */
   icon: Component;
@@ -88,12 +98,20 @@ export function appById(appId: string): AppEntry | undefined {
 }
 
 /**
- * The display name for an app id, falling back to the id itself.
+ * The display name for an app id, in the interface language, falling back to
+ * the English name and then to the id itself.
  *
- * The fallback is deliberate: this is called with `route.name`, which can be a
- * route that is not an app at all, and showing the raw name beats showing
+ * The id fallback is deliberate: this is called with `route.name`, which can be
+ * a route that is not an app at all, and showing the raw name beats showing
  * nothing in a sentence like "Enter PIN to access …".
+ *
+ * Product names stay as they are in every language — Nexus, QuickCap, Syn,
+ * Things, Safe — the way the rest of the Vietnamese strings already write them;
+ * the plain nouns (Notes, Tasks, Calendar…) are translated.
  */
 export function appName(appId: string): string {
-  return appById(appId)?.name ?? appId;
+  const entry = appById(appId);
+  if (!entry) return appId;
+  const key = `shell.apps.${appId}`;
+  return i18n.global.te(key) ? i18n.global.t(key) : entry.name;
 }

@@ -253,7 +253,7 @@ const trashed = computed(() => props.item.trashed_at !== null);
           <ShieldAlert class="w-4 h-4 mt-0.5 flex-shrink-0 text-warning" />
           <span><strong class="font-medium">{{ t(`safe.health.flag.${f}`) }}.</strong> {{ t(`safe.health.explain.${f}`) }}</span>
         </p>
-        <button class="inline-flex items-center gap-1.5 text-sm text-accent hover:underline" :title="t('safe.health.task_hint')" @click="createTask">
+        <button class="inline-flex items-center gap-1.5 min-h-6 text-sm text-accent hover:underline" :title="t('safe.health.task_hint')" @click="createTask">
           <ListTodo class="w-4 h-4" /> {{ t('safe.health.task') }}
         </button>
       </section>
@@ -269,10 +269,10 @@ const trashed = computed(() => props.item.trashed_at !== null);
             <dd v-else class="text-sm break-words select-text" :class="{ 'whitespace-pre-wrap font-mono': f.kind === 'multiline' }">{{ f.value }}</dd>
           </div>
           <template v-if="!f.empty">
-            <button v-if="f.concealed" class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark" :aria-label="revealed[f.id] !== undefined ? t('safe.detail.hide') : t('safe.detail.reveal')" :title="revealed[f.id] !== undefined ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="toggle(f)">
+            <button v-if="f.concealed" class="btn-icon" :aria-label="revealed[f.id] !== undefined ? t('safe.detail.hide') : t('safe.detail.reveal')" :title="revealed[f.id] !== undefined ? t('safe.detail.hide') : t('safe.detail.reveal')" @click="toggle(f)">
               <EyeOff v-if="revealed[f.id] !== undefined" class="w-4 h-4" /><Eye v-else class="w-4 h-4" />
             </button>
-            <button class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark" :aria-label="t('safe.detail.copy')" :title="t('safe.detail.copy')" @click="copy(f)">
+            <button class="btn-icon" :aria-label="t('safe.detail.copy')" :title="t('safe.detail.copy')" @click="copy(f)">
               <Copy class="w-4 h-4" />
             </button>
           </template>
@@ -289,7 +289,7 @@ const trashed = computed(() => props.item.trashed_at !== null);
           <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="text-accent"
             :stroke-dasharray="62.83" :stroke-dashoffset="62.83 * (1 - code.remaining / code.period)" />
         </svg>
-        <button class="p-1.5 rounded-lg hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark" :aria-label="t('safe.detail.copy')" :title="t('safe.detail.copy')" @click="copyCode">
+        <button class="btn-icon" :aria-label="t('safe.detail.copy')" :title="t('safe.detail.copy')" @click="copyCode">
           <Copy class="w-4 h-4" />
         </button>
       </section>
@@ -297,7 +297,7 @@ const trashed = computed(() => props.item.trashed_at !== null);
 
       <section v-if="item.urls.length" class="space-y-2">
         <h3 class="text-xs font-medium text-text-secondary dark:text-text-secondary-dark">{{ t('safe.detail.websites') }}</h3>
-        <button v-for="u in item.urls" :key="u.url" class="w-full flex items-center gap-2 text-left text-sm text-accent hover:underline" :title="t('safe.detail.open')" @click="open(u.url)">
+        <button v-for="u in item.urls" :key="u.url" class="w-full flex items-center gap-2 min-h-6 text-left text-sm text-accent hover:underline" :title="t('safe.detail.open')" @click="open(u.url)">
           <ExternalLink class="w-3.5 h-3.5 flex-shrink-0" /><span class="truncate">{{ u.url }}</span>
         </button>
       </section>

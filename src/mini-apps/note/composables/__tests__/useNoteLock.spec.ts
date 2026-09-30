@@ -36,4 +36,17 @@ describe('useNoteLock', () => {
     expect(select).toHaveBeenCalledWith('Notes/secret.md');
     expect(openHistory).not.toHaveBeenCalled();
   });
+
+  // The backend refuses to unprotect without the PIN, so the one the lock
+  // screen checked goes along.
+  it('unprotects a note with the PIN the lock screen checked', () => {
+    const appLock = store();
+    const lock = useNoteLock(appLock, vi.fn());
+
+    lock.pendingNoteId.value = 'Notes/secret.md';
+    lock.pendingNoteAction.value = 'unprotect';
+    lock.handleNoteLockUnlocked('123456');
+
+    expect(appLock.toggleProtectedNote).toHaveBeenCalledWith('Notes/secret.md', '123456');
+  });
 });

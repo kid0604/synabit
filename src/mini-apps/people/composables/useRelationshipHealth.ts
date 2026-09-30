@@ -43,11 +43,11 @@ export const FREQUENCY_DAYS: Record<string, number> = {
 const THRESHOLDS = { thriving: 0.5, on_track: 0.85, due_soon: 1.2 } as const;
 
 export const STATUS_CONFIG: Record<HealthStatus, { label: string; color: string; bgColor: string; dotColor: string }> = {
-    thriving:  { label: 'Thriving',    color: 'text-green-600 dark:text-green-400',  bgColor: 'bg-green-100 dark:bg-green-900/20',  dotColor: 'bg-green-500' },
-    on_track:  { label: 'On Track',    color: 'text-blue-600 dark:text-blue-400',    bgColor: 'bg-blue-100 dark:bg-blue-900/20',    dotColor: 'bg-blue-500' },
-    due_soon:  { label: 'Due Soon',    color: 'text-yellow-600 dark:text-yellow-400',bgColor: 'bg-yellow-100 dark:bg-yellow-900/20', dotColor: 'bg-yellow-500' },
-    overdue:   { label: 'Overdue',     color: 'text-red-600 dark:text-red-400',      bgColor: 'bg-red-100 dark:bg-red-900/20',      dotColor: 'bg-red-500' },
-    unknown:   { label: 'Not Tracked', color: 'text-gray-500 dark:text-gray-400',    bgColor: 'bg-gray-100 dark:bg-gray-800',       dotColor: 'bg-gray-400' },
+    thriving:  { label: 'people.thriving', color: 'text-green-600 dark:text-green-400',  bgColor: 'bg-green-100 dark:bg-green-900/20',  dotColor: 'bg-green-500' },
+    on_track:  { label: 'people.on_track', color: 'text-blue-600 dark:text-blue-400',    bgColor: 'bg-blue-100 dark:bg-blue-900/20',    dotColor: 'bg-blue-500' },
+    due_soon:  { label: 'people.due_soon', color: 'text-yellow-600 dark:text-yellow-400',bgColor: 'bg-yellow-100 dark:bg-yellow-900/20', dotColor: 'bg-yellow-500' },
+    overdue:   { label: 'people.overdue',  color: 'text-red-600 dark:text-red-400',      bgColor: 'bg-red-100 dark:bg-red-900/20',      dotColor: 'bg-red-500' },
+    unknown:   { label: 'people.not_tracked', color: 'text-gray-500 dark:text-gray-400',    bgColor: 'bg-gray-100 dark:bg-gray-800',       dotColor: 'bg-gray-400' },
 };
 
 // ─── Pure helpers ───────────────────────────────────────────

@@ -121,18 +121,18 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
       <button
         type="button"
         @click="designing ? (designing = false) : emit('close')"
-        class="p-1.5 -ml-1.5 rounded-md text-gray-500 cursor-pointer
+        class="p-1.5 -ml-1.5 rounded-md text-gray-500 dark:text-gray-400 cursor-pointer
                hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
         :aria-label="t('things.back')"
       >
         <ArrowLeft class="w-4.5 h-4.5" />
       </button>
-      <h1 class="text-base font-semibold text-[#1c1c1e] dark:text-[#f4f4f5]">
+      <h1 class="text-base font-semibold text-text dark:text-text-dark">
         {{ designing ? t('things.new_kind_title') : t('things.manager_title') }}
       </h1>
       <span
         v-if="!designing"
-        class="text-[11px] font-medium px-2 py-0.5 rounded-full
+        class="text-xs font-medium px-2 py-0.5 rounded-full
                bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400"
       >
         {{ kinds.length }}
@@ -150,13 +150,13 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
 
       <template v-else>
         <!-- The vault in one line, before the list of its parts. -->
-        <p class="text-xs text-gray-400 mb-6">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-6">
           {{ t('things.manager_summary', { things: totalThings, loose: totalLoose }) }}
         </p>
 
         <div class="flex items-center gap-2 mb-5">
           <div class="relative flex-1">
-            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
             <input
               v-model="search"
               type="text"
@@ -164,7 +164,7 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
               :placeholder="t('things.manager_search')"
               class="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none
                      bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700
-                     text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400"
+                     text-text dark:text-text-dark placeholder:text-gray-500 dark:placeholder:text-gray-400"
             />
           </div>
           <button
@@ -189,8 +189,7 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
           <button
             type="button"
             @click="designing = true"
-            class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
-                   text-white bg-blue-600 hover:bg-blue-700 cursor-pointer whitespace-nowrap"
+            class="btn-primary"
           >
             <Plus class="w-3.5 h-3.5" />
             {{ t('things.new_kind') }}
@@ -199,8 +198,8 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
 
         <div
           class="grid grid-cols-[1fr_72px_72px_72px_28px] gap-3 px-2 pb-2
-                 border-b border-gray-200 dark:border-[#2c2c2c]
-                 text-[10px] uppercase tracking-wider text-gray-400"
+                 border-b border-gray-200 dark:border-border-dark
+                 text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400"
         >
           <span>{{ t('things.col_kind') }}</span>
           <span class="text-right">{{ t('things.col_things') }}</span>
@@ -226,8 +225,8 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
             @click="emit('open', row.nodeType)"
             class="flex items-center gap-2 min-w-0 text-left cursor-pointer"
           >
-            <component :is="iconForNodeType(row.nodeType)" class="w-4 h-4 text-gray-400 flex-none" />
-            <span class="font-mono text-xs text-[#1c1c1e] dark:text-[#f4f4f5] truncate">
+            <component :is="iconForNodeType(row.nodeType)" class="w-4 h-4 text-gray-500 dark:text-gray-400 flex-none" />
+            <span class="font-mono text-xs text-text dark:text-text-dark truncate">
               {{ row.nodeType }}
             </span>
           </button>
@@ -240,7 +239,7 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
           </span>
           <span
             class="text-right font-mono text-xs tabular-nums"
-            :class="row.loose ? 'text-amber-600 dark:text-amber-400' : 'text-gray-300 dark:text-gray-600'"
+            :class="row.loose ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'"
           >
             {{ row.loose || '—' }}
           </span>
@@ -256,7 +255,7 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
             @click="openMenu(row.nodeType, $event)"
             :title="t('things.row_actions')"
             class="justify-self-end p-1 rounded-md cursor-pointer transition-colors
-                   text-gray-300 dark:text-gray-600 group-hover:text-gray-400
+                   text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-200
                    hover:bg-gray-100 dark:hover:bg-white/10"
           >
             <MoreHorizontal class="w-4 h-4" />
@@ -273,11 +272,11 @@ const totalLoose = computed(() => props.kinds.reduce((n, k) => n + looseKeys(k).
           @close="closeMenu"
         />
 
-        <p v-if="!rows.length" class="py-10 text-center text-xs text-gray-400">
+        <p v-if="!rows.length" class="py-10 text-center text-xs text-gray-500 dark:text-gray-400">
           {{ t('things.manager_nothing') }}
         </p>
 
-        <p class="mt-8 text-[11px] text-gray-400 leading-relaxed max-w-lg">
+        <p class="mt-8 text-xs text-gray-500 dark:text-gray-400 leading-relaxed max-w-lg">
           {{ t('things.manager_note') }}
         </p>
       </template>

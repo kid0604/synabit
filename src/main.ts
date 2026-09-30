@@ -23,6 +23,17 @@ const isQuickEntry = window.location.hash.startsWith("#/quick-entry");
 /** Safe's Quick Access window, for the same reason. */
 const isSafeQuick = window.location.hash.startsWith("#/safe-quick");
 
+/**
+ * Where every toast goes: undo bars and the shell's notices stack here, one
+ * above the other, instead of each fixing itself to the same spot and covering
+ * the last. Made before mount so a toast's `Teleport` always finds it; see
+ * `.app-toasts` in style.css for where it sits.
+ */
+const toasts = document.createElement('div');
+toasts.id = 'app-toasts';
+toasts.className = 'app-toasts';
+document.body.appendChild(toasts);
+
 const app = createApp(isQuickEntry ? QuickEntry : isSafeQuick ? SafeQuick : App);
 app.use(createPinia());
 if (!isQuickEntry && !isSafeQuick) app.use(router);

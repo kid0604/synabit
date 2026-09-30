@@ -1,8 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { nextTick } from 'vue';
-import { mount } from '@vue/test-utils';
+import { config, mount } from '@vue/test-utils';
 import GraphView from '../GraphView.vue';
 import { iconPartsFor } from '../nodeIcons';
+
+// The panel's words are translated; these tests are about the canvas, and
+// find its controls by key.
+config.global.mocks = { ...config.global.mocks, $t: (key: string) => key };
 
 /**
  * The graph draws to a canvas, so what it did is only observable in the calls it
@@ -132,8 +136,8 @@ describe('GraphView', () => {
 
   /** Titles of the nodes drawn in the last frame, with labels forced on. */
   const drawnTitles = async (wrapper: any) => {
-    if (!(toggle(wrapper, 'Show Labels').element as HTMLInputElement).checked) {
-      await toggle(wrapper, 'Show Labels').setValue(true);
+    if (!(toggle(wrapper, 'nexus.graph_labels').element as HTMLInputElement).checked) {
+      await toggle(wrapper, 'nexus.graph_labels').setValue(true);
       await nextTick();
     }
     return last(rec.frames)!.labels.map(l => l.text).sort();
@@ -168,7 +172,7 @@ describe('GraphView', () => {
     const wrapper = await mountGraph();
     const before = last(rec.frames)!;
 
-    await range(wrapper, 'Node size').setValue(2);
+    await range(wrapper, 'nexus.graph_node_size').setValue(2);
     await nextTick();
 
     const after = last(rec.frames)!;
@@ -185,7 +189,7 @@ describe('GraphView', () => {
     const beforeByTitle = new Map(before.circles.map((c, i) => [before.circles[i], c]));
     expect(beforeByTitle.size).toBe(20);
 
-    const tagsToggle = toggle(wrapper, 'Tags');
+    const tagsToggle = toggle(wrapper, 'nexus.graph_tags');
     await tagsToggle.setValue(false);
     await nextTick();
     const withoutTags = last(rec.frames)!;
@@ -266,7 +270,7 @@ describe('GraphView', () => {
     expect(last(rec.frames)!.circles).toHaveLength(1);
     expect(last(rec.frames)!.iconParts).toBe(0);
 
-    await range(wrapper, 'Node size').setValue(3);
+    await range(wrapper, 'nexus.graph_node_size').setValue(3);
     await nextTick();
 
     // Now large enough — and the disc is still painted underneath, so colour
@@ -282,7 +286,7 @@ describe('GraphView', () => {
     const wrapper = mount(GraphView, { props: { graphData: oneNode('whiteboard') } });
     await wait(150);
 
-    await range(wrapper, 'Node size').setValue(3);
+    await range(wrapper, 'nexus.graph_node_size').setValue(3);
     await nextTick();
 
     expect(iconPartsFor('whiteboard')).toBeNull();

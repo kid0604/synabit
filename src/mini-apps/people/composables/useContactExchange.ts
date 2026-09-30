@@ -2,6 +2,7 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
 
 /**
  * Bringing an address book in, and taking one out.
@@ -95,7 +96,7 @@ export function useContactExchange(ns: any, vaultPath: () => string) {
         const onPhone = await isMobile();
         const filters = onPhone
             ? [{
-                name: 'Contacts',
+                name: i18n.global.t('people.file_filter_contacts'),
                 extensions: [
                     'text/vcard', 'text/x-vcard', 'text/directory',
                     'text/csv', 'text/comma-separated-values',
@@ -105,9 +106,9 @@ export function useContactExchange(ns: any, vaultPath: () => string) {
                 ],
             }]
             : [
-                { name: 'Contacts', extensions: ['vcf', 'vcard', 'csv', 'tsv', 'txt'] },
+                { name: i18n.global.t('people.file_filter_contacts'), extensions: ['vcf', 'vcard', 'csv', 'tsv', 'txt'] },
                 { name: 'vCard', extensions: ['vcf', 'vcard'] },
-                { name: 'Spreadsheet', extensions: ['csv', 'tsv'] },
+                { name: i18n.global.t('people.file_filter_spreadsheet'), extensions: ['csv', 'tsv'] },
             ];
 
         const picked = await open({ multiple: false, filters });
@@ -245,7 +246,7 @@ export function useContactExchange(ns: any, vaultPath: () => string) {
                 filters: [
                     format === 'vcard'
                         ? { name: 'vCard', extensions: ['vcf'] }
-                        : { name: 'Spreadsheet', extensions: ['csv'] },
+                        : { name: i18n.global.t('people.file_filter_spreadsheet'), extensions: ['csv'] },
                 ],
             });
             if (!destination) return null;

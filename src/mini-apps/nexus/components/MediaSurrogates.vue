@@ -30,7 +30,7 @@ interface MediaRun { read: number; failed: string[]; remaining: number; skipped:
 const props = defineProps<{ vaultPath: string }>();
 
 const { locale } = useI18n();
-const FIELD = 'w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-800 placeholder:text-gray-400 focus:border-indigo-400 focus:outline-none dark:border-[#3a3a3c] dark:bg-[#1e1e20] dark:text-gray-200';
+const FIELD = 'w-full rounded-md border border-gray-200 bg-white px-2 py-1 text-xs text-gray-800 placeholder:text-gray-500 dark:placeholder:text-gray-400 focus:border-accent focus:outline-none dark:border-border-subtle-dark dark:bg-surface-dark dark:text-gray-200';
 
 const status = ref<MediaStatus | null>(null);
 const draft = ref({ transcripts: false, transcribe_url: '', transcribe_model: '', captions: false, caption_model: '' });
@@ -96,31 +96,31 @@ const run = async () => {
 </script>
 
 <template>
-    <section v-if="status" data-media class="space-y-2 border-t border-gray-100 pt-3 dark:border-[#3a3a3c]">
+    <section v-if="status" data-media class="space-y-2 border-t border-gray-100 pt-3 dark:border-border-subtle-dark">
         <p class="text-xs font-semibold text-gray-900 dark:text-gray-100">{{ $t('nexus.media_title') }}</p>
-        <p class="text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.media_explain') }}</p>
+        <p class="text-xs leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.media_explain') }}</p>
 
-        <p v-if="!status.desktop" data-media-phone class="text-[11px] text-gray-600 dark:text-gray-300">{{ $t('nexus.media_phone') }}</p>
+        <p v-if="!status.desktop" data-media-phone class="text-xs text-gray-600 dark:text-gray-300">{{ $t('nexus.media_phone') }}</p>
 
         <template v-else>
-            <label class="flex items-center gap-2 text-[11px] font-medium text-gray-700 dark:text-gray-300">
+            <label class="flex items-center gap-2 text-xs font-medium text-gray-700 dark:text-gray-300">
                 <input v-model="draft.transcripts" type="checkbox" data-transcripts /> {{ $t('nexus.media_transcripts') }}
             </label>
             <div v-if="draft.transcripts" class="space-y-1 pl-5">
                 <input v-model="draft.transcribe_url" type="url" data-transcribe-url :class="FIELD" :placeholder="$t('nexus.media_transcribe_url')" />
                 <input v-model="draft.transcribe_model" type="text" :class="FIELD" :placeholder="$t('nexus.media_transcribe_model')" />
-                <p class="text-[10px] text-gray-400">{{ $t('nexus.media_transcribe_hint') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.media_transcribe_hint') }}</p>
             </div>
 
-            <label class="flex items-center gap-2 text-[11px] font-medium text-gray-700 dark:text-gray-300">
+            <label class="flex items-center gap-2 text-xs font-medium text-gray-700 dark:text-gray-300">
                 <input v-model="draft.captions" type="checkbox" data-captions :disabled="!status.local_provider" /> {{ $t('nexus.media_captions') }}
             </label>
-            <p v-if="!status.local_provider" data-caption-cloud class="pl-5 text-[10px] text-amber-700 dark:text-amber-400">
+            <p v-if="!status.local_provider" data-caption-cloud class="pl-5 text-xs text-amber-700 dark:text-amber-400">
                 {{ $t('nexus.media_caption_cloud', { provider: status.provider }) }}
             </p>
             <div v-else-if="draft.captions" class="space-y-1 pl-5">
                 <input v-model="draft.caption_model" type="text" :class="FIELD" :placeholder="$t('nexus.media_caption_model')" />
-                <p class="text-[10px] text-gray-400">{{ $t('nexus.media_no_faces') }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.media_no_faces') }}</p>
             </div>
 
             <!-- Named for what it saves, and inert when that is nothing. The
@@ -130,17 +130,17 @@ const run = async () => {
                 type="button"
                 data-media-save
                 :disabled="!changed"
-                class="rounded-md border border-gray-200 px-2.5 py-1 text-[11px] transition-opacity disabled:cursor-default disabled:opacity-40 dark:border-[#3a3a3c]"
+                class="rounded-md border border-gray-200 px-2.5 py-1 text-xs transition-opacity disabled:cursor-default disabled:opacity-40 dark:border-border-subtle-dark"
                 @click="save"
             >{{ $t('nexus.media_save') }}</button>
 
-            <div v-if="status.config.transcripts || status.config.captions" class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-[11px] text-gray-600 dark:bg-[#1e1e20] dark:text-gray-300">
+            <div v-if="status.config.transcripts || status.config.captions" class="space-y-1 rounded-lg bg-gray-50 p-2.5 text-xs text-gray-600 dark:bg-surface-dark dark:text-gray-300">
                 <p class="tabular-nums">{{ $t('nexus.media_pending', { transcripts: status.pending_transcripts, captions: status.pending_captions, done: status.done }) }}</p>
                 <p v-if="status.too_large">{{ $t('nexus.media_too_large', { count: status.too_large }) }}</p>
                 <button
                     type="button"
                     data-media-run
-                    class="flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white disabled:opacity-40"
+                    class="flex items-center gap-1 rounded-md bg-accent px-2.5 py-1 font-semibold text-white disabled:opacity-40"
                     :disabled="busy || status.running || status.pending_transcripts + status.pending_captions === 0"
                     @click="run"
                 >
@@ -151,6 +151,6 @@ const run = async () => {
             </div>
         </template>
 
-        <p v-if="failure" class="text-[11px] text-red-500">{{ failure }}</p>
+        <p v-if="failure" class="text-xs text-red-500">{{ failure }}</p>
     </section>
 </template>

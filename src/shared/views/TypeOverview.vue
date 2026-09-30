@@ -218,7 +218,7 @@ const submitField = () => {
       <button
         type="button"
         @click="emit('back')"
-        class="p-1.5 -ml-1.5 rounded-md text-gray-500 cursor-pointer
+        class="p-1.5 -ml-1.5 rounded-md text-gray-500 dark:text-gray-400 cursor-pointer
                hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
         :aria-label="t('things.back_to_kinds')"
         :title="t('things.back_to_kinds')"
@@ -235,7 +235,7 @@ const submitField = () => {
         @click="openIconPicker"
         :title="t('things.icon_change')"
         class="p-1 -m-1 rounded-md flex-none cursor-pointer transition-colors
-               text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+               text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                hover:bg-gray-100 dark:hover:bg-white/10"
       >
         <component :is="iconForNodeType(nodeType)" class="w-4 h-4" />
@@ -256,17 +256,17 @@ const submitField = () => {
         type="button"
         @click="emit('browse')"
         :title="t('things.browse_hint', { type: nodeType })"
-        class="flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full
+        class="flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full
                cursor-pointer transition-colors tabular-nums
                bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400
-               hover:bg-blue-50 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-300"
+               hover:bg-accent/10 hover:text-accent dark:hover:text-accent-dark"
       >
         {{ count }}
         <ArrowRight class="w-3 h-3" />
       </button>
       <span
         v-else
-        class="text-[11px] font-medium px-2 py-0.5 rounded-full
+        class="text-xs font-medium px-2 py-0.5 rounded-full
                bg-gray-100 dark:bg-white/10 text-gray-500 dark:text-gray-400 tabular-nums"
       >
         0
@@ -318,13 +318,13 @@ const submitField = () => {
         Newly available and unsupported outside Chromium and Safari 26, and it
         is not needed: with the column's own width the sentence fits a line.
       -->
-      <p class="text-xs text-gray-400 dark:text-gray-500 mb-8 leading-relaxed">
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-8 leading-relaxed">
         {{ declared ? t('things.shape_declared') : t('things.type_overview_note') }}
       </p>
 
       <!-- The shape: what a new one of these arrives holding. -->
       <section class="mb-7">
-        <h3 class="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
+        <h3 class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
           {{ t('things.usual_fields') }}
         </h3>
         <!--
@@ -347,13 +347,13 @@ const submitField = () => {
         >
           <div class="grid grid-cols-[minmax(0,1fr)_88px_92px_28px] items-center gap-3 py-2">
             <div class="min-w-0">
-              <div class="text-sm text-[#1c1c1e] dark:text-[#f4f4f5] truncate">
+              <div class="text-sm text-text dark:text-text-dark truncate">
                 {{ humanizeKey(field.key) }}
               </div>
-              <div class="font-mono text-[11px] text-gray-400 truncate">{{ field.key }}</div>
+              <div class="font-mono text-xs text-gray-500 dark:text-gray-400 truncate">{{ field.key }}</div>
             </div>
 
-            <span class="font-mono text-xs text-gray-400 tabular-nums text-right whitespace-nowrap">
+            <span class="font-mono text-xs text-gray-500 dark:text-gray-400 tabular-nums text-right whitespace-nowrap">
               {{ field.count }} / {{ count }}
             </span>
 
@@ -371,7 +371,7 @@ const submitField = () => {
                     seen: t(`things.kind_${disagreement(field.key)}`),
                   })
                 : t('things.kind_change')"
-              class="px-2 py-1 rounded-md text-[11px] whitespace-nowrap cursor-pointer
+              class="px-2 py-1 rounded-md text-xs whitespace-nowrap cursor-pointer
                      transition-colors justify-self-start"
               :class="disagreement(field.key)
                 ? 'bg-amber-50 dark:bg-amber-900/25 text-amber-700 dark:text-amber-400'
@@ -385,7 +385,7 @@ const submitField = () => {
               type="button"
               @click="openMenu(field.key, anchor($event))"
               :title="t('things.row_actions')"
-              class="p-1 rounded-md text-gray-400 cursor-pointer justify-self-end
+              class="p-1 rounded-md text-gray-500 dark:text-gray-400 cursor-pointer justify-self-end
                      hover:bg-gray-100 dark:hover:bg-white/10 transition-colors"
             >
               <MoreHorizontal class="w-4 h-4" />
@@ -401,7 +401,7 @@ const submitField = () => {
           </div>
         </div>
 
-        <p v-if="!shape.length" class="py-2 text-xs text-gray-400">
+        <p v-if="!shape.length" class="py-2 text-xs text-gray-500 dark:text-gray-400">
           {{ t('things.no_shape_yet') }}
         </p>
 
@@ -423,14 +423,13 @@ const submitField = () => {
             @keydown.esc="adding = false; draftKey = ''"
             class="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg font-mono text-xs outline-none
                    bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700
-                   text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300"
+                   text-text dark:text-text-dark placeholder-gray-300"
           />
           <FieldKindPicker v-model="draftKind" />
           <button
             type="button"
             @click="submitField"
-            class="px-2.5 py-1.5 rounded-lg text-xs font-medium text-white bg-blue-600
-                   hover:bg-blue-700 cursor-pointer flex-none"
+            class="btn-primary flex-none"
           >
             {{ t('things.add') }}
           </button>
@@ -439,7 +438,7 @@ const submitField = () => {
           v-else
           type="button"
           @click="startAdding"
-          class="flex items-center gap-1.5 mt-2 px-2 py-1 text-xs text-gray-400
+          class="flex items-center gap-1.5 mt-2 px-2 py-1 text-xs text-gray-500
                  hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
         >
           <Plus class="w-3 h-3" /> {{ t('things.declare_field') }}
@@ -448,7 +447,7 @@ const submitField = () => {
 
       <!-- Everything else on the files. Where a second word for one idea shows. -->
       <section v-if="rest.length" class="mb-7">
-        <h3 class="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
+        <h3 class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
           {{ t('things.also_seen') }}
         </h3>
         <!--
@@ -473,17 +472,17 @@ const submitField = () => {
             <div class="font-mono text-xs text-gray-500 dark:text-gray-400 truncate">
               {{ field.key }}
             </div>
-            <div class="text-[11px] text-gray-400">
+            <div class="text-xs text-gray-500 dark:text-gray-400">
               {{ t('things.share_of_kind', { percent: share(field.count) }) }}
             </div>
           </div>
-          <span class="font-mono text-xs text-gray-400 tabular-nums text-right whitespace-nowrap">
+          <span class="font-mono text-xs text-gray-500 dark:text-gray-400 tabular-nums text-right whitespace-nowrap">
             {{ field.count }} / {{ count }}
           </span>
           <span
             v-if="observedKinds?.[field.key]"
             :title="t('things.kind_from_files')"
-            class="text-[11px] text-gray-400 justify-self-start px-2 py-1 whitespace-nowrap"
+            class="text-xs text-gray-500 dark:text-gray-400 justify-self-start px-2 py-1 whitespace-nowrap"
           >
             {{ t(`things.kind_${observedKinds[field.key]}`) }}
           </span>
@@ -503,8 +502,8 @@ const submitField = () => {
               type="button"
               @click="emit('adopt', field.key)"
               :title="t('things.adopt_into_shape')"
-              class="px-2 py-1 rounded-md text-[11px] whitespace-nowrap cursor-pointer
-                     text-gray-400 dark:text-gray-500 transition-colors
+              class="px-2 py-1 rounded-md text-xs whitespace-nowrap cursor-pointer
+                     text-gray-500 dark:text-gray-400 transition-colors
                      group-hover:text-gray-600 dark:group-hover:text-gray-300
                      hover:bg-gray-100 dark:hover:bg-white/10"
             >
@@ -520,7 +519,7 @@ const submitField = () => {
               type="button"
               @click="emit('rename', field.key, '')"
               :title="t('things.rename_field_hint')"
-              class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] whitespace-nowrap
+              class="flex items-center gap-1 px-2 py-1 rounded-md text-xs whitespace-nowrap
                      cursor-pointer text-amber-700/55 dark:text-amber-400/55 transition-colors
                      group-hover:text-amber-700 dark:group-hover:text-amber-400
                      hover:bg-amber-50 dark:hover:bg-amber-900/25"
@@ -532,7 +531,7 @@ const submitField = () => {
               type="button"
               @click="emit('erase', field.key)"
               :title="t('things.delete_field_hint')"
-              class="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] whitespace-nowrap
+              class="flex items-center gap-1 px-2 py-1 rounded-md text-xs whitespace-nowrap
                      cursor-pointer text-red-600/45 dark:text-red-400/45 transition-colors
                      group-hover:text-red-600 dark:group-hover:text-red-400
                      hover:bg-red-50 dark:hover:bg-red-900/25"
@@ -557,10 +556,10 @@ const submitField = () => {
       />
 
       <section v-if="machinery.length">
-        <h3 class="text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-2">
+        <h3 class="text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
           {{ t('things.app_fields', { count: machinery.length }) }}
         </h3>
-        <p class="text-[11px] text-gray-400 dark:text-gray-500 font-mono leading-relaxed">
+        <p class="text-xs text-gray-500 dark:text-gray-400 font-mono leading-relaxed">
           {{ machinery.map(f => f.key).join(' · ') }}
         </p>
       </section>

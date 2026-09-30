@@ -27,6 +27,7 @@
  */
 import { ref } from 'vue';
 import mermaid from 'mermaid';
+import { i18n } from '../i18n';
 
 export type DiagramTheme = 'dark' | 'default';
 
@@ -114,7 +115,7 @@ export const renderDiagram = (id: string, code: string): Promise<Drawn> => {
       // far the parse got.
       document.getElementById(`d${id}`)?.remove();
       document.getElementById(id)?.remove();
-      return { error: (e as { message?: string })?.message || 'Syntax error in the diagram' };
+      return { error: (e as { message?: string })?.message || i18n.global.t('shell.diagram.syntax_error') };
     }
   });
 

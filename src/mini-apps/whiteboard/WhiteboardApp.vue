@@ -4,6 +4,7 @@ import { VueFlow, useVueFlow, ConnectionMode } from '@vue-flow/core';
 import { Background } from '@vue-flow/background';
 import { Controls } from '@vue-flow/controls';
 import { FileWarning, PenTool } from 'lucide-vue-next';
+import { useI18n } from 'vue-i18n';
 
 // ── Existing Components ─────────────────────────────────────
 import EdgeMenu from './components/EdgeMenu.vue';
@@ -22,7 +23,8 @@ import WhiteboardToolbar from './components/WhiteboardToolbar.vue';
 // ── New Extracted Components ────────────────────────────────
 import WhiteboardSidebar from './components/WhiteboardSidebar.vue';
 import WhiteboardTitleBar from './components/WhiteboardTitleBar.vue';
-import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
 
 // ── Composables ─────────────────────────────────────────────
 import { useWhiteboardStore } from './composables/useWhiteboardStore';
@@ -62,6 +64,7 @@ import '@vue-flow/node-resizer/dist/style.css';
 // ── Props & Services ────────────────────────────────────────
 const props = defineProps<{ vaultPath: string }>();
 
+const { t } = useI18n();
 const bus = useEventBus();
 const vaultPathRef = toRef(props, 'vaultPath');
 const store = useWhiteboardStore(vaultPathRef);
@@ -327,7 +330,7 @@ function handlePaneClick(event: any) {
   } else if (store.activeTool.value === 'mindmap') {
     addNodeToCanvas({
       id: store.generateId('mind'), type: 'mindmap', position: pos,
-      data: { label: 'Central Idea', color: store.getMindmapColor(0), level: 0, editing: true },
+      data: { label: t('whiteboard.central_idea'), color: store.getMindmapColor(0), level: 0, editing: true },
     });
     store.activeTool.value = 'select';
   }
@@ -343,6 +346,11 @@ let lastCanvasPointer: { x: number; y: number } | null = null;
 /** Board coordinates for something the user is adding without a drop point. */
 function placementPoint(): { x: number; y: number } {
   if (lastCanvasPointer) return screenToFlowCoordinate(lastCanvasPointer);
+  return viewportCentre();
+}
+
+/** Board coordinates of the middle of what is on screen. */
+function viewportCentre(): { x: number; y: number } {
   const rect = (document.querySelector('.vue-flow') as HTMLElement | null)?.getBoundingClientRect();
   if (!rect) return { x: 0, y: 0 };
   return screenToFlowCoordinate({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
@@ -392,7 +400,7 @@ async function pickImages() {
   try {
     const chosen = await openFileDialog({
       multiple: true,
-      filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp'] }],
+      filters: [{ name: t('whiteboard.images'), extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'avif', 'bmp'] }],
     });
     const paths = Array.isArray(chosen) ? chosen : chosen ? [chosen] : [];
     if (!paths.length) return;
@@ -464,12 +472,27 @@ function handleDrop(event: DragEvent) {
   const noteTitle = event.dataTransfer.getData('application/synabit-note-title');
   const blockId = event.dataTransfer.getData('application/synabit-block-id');
   if (noteId) {
-    const pos = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
-    addNodeToCanvas({
-      id: store.generateId('note'), type: 'note', position: pos,
-      data: { noteId, noteTitle, blockId: blockId || undefined, width: 280, height: 180 },
-    });
+    addNoteCard(noteId, noteTitle, blockId || undefined, screenToFlowCoordinate({ x: event.clientX, y: event.clientY }));
   }
+}
+
+function addNoteCard(noteId: string, noteTitle: string, blockId: string | undefined, pos: { x: number; y: number }) {
+  addNodeToCanvas({
+    id: store.generateId('note'), type: 'note', position: pos,
+    data: { noteId, noteTitle, blockId, width: 280, height: 180 },
+  });
+}
+
+/**
+ * The sidebar's "Add to board", for anyone who cannot drag: a touch screen,
+ * a keyboard. The card lands in the middle of the view, centred on it rather
+ * than hanging off its top-left corner.
+ */
+function addNoteFromSidebar(note: { id: string; title?: string }) {
+  const centre = viewportCentre();
+  addNoteCard(note.id, note.title || '', undefined, { x: centre.x - 140, y: centre.y - 90 });
+  // On a phone the sidebar covers the board; get out of the way of the result.
+  if (window.matchMedia('(max-width: 767px)').matches && sidebarRef.value) sidebarRef.value.sidebarOpen = false;
 }
 
 // ── Free Drawing ────────────────────────────────────────────
@@ -707,22 +730,59 @@ const sidebarRef = ref<InstanceType<typeof WhiteboardSidebar> | null>(null);
 const whiteboardNotes = ref<any[]>([]);
 
 // ── Deleting a board ────────────────────────────────────────
-// The delete icon sits inside each row in the sidebar and appears on hover,
-// which is about as easy to hit by accident as a control gets. Ask first: a
-// board is hours of work, and the answer to "where did it go" has to be a
-// place rather than an apology.
-const pendingDeleteBoardId = ref<string | null>(null);
-const pendingDeleteBoard = computed(() =>
-  store.boards.value.find((b: any) => b.id === pendingDeleteBoardId.value) || null
+// No question first: the board leaves the sidebar at once and only goes to the
+// vault trash once the undo window closes. Nothing is written inside the
+// window, so Undo is a cancelled timer rather than a restore.
+const undoBoardDelete = useUndoableAction();
+
+/** Boards waiting to go. Hidden here, because a rescan would list them again. */
+const hiddenBoardIds = ref<Set<string>>(new Set());
+const visibleBoards = computed(() =>
+  store.boards.value.filter((b: any) => !hiddenBoardIds.value.has(b.id))
 );
 
-function confirmDeleteBoard() {
-  const id = pendingDeleteBoardId.value;
-  pendingDeleteBoardId.value = null;
-  if (!id) return;
-  if (id === store.currentBoardId.value) cancelPendingSave();
-  forgetViewport(id);
-  store.deleteBoard(id);
+function setBoardHidden(id: string, hidden: boolean) {
+  const next = new Set(hiddenBoardIds.value);
+  if (hidden) next.add(id);
+  else next.delete(id);
+  hiddenBoardIds.value = next;
+}
+
+async function deleteBoard(id: string) {
+  const board = store.boards.value.find((b: any) => b.id === id);
+  if (!board) return;
+  const wasCurrent = id === store.currentBoardId.value;
+
+  if (wasCurrent) {
+    // Whatever was still waiting on the save timer belongs to this board, and
+    // is part of what Undo has to bring back.
+    await flushSave();
+  }
+  setBoardHidden(id, true);
+  if (wasCurrent) {
+    const next = visibleBoards.value[0];
+    if (next) {
+      await store.loadBoardData(next.id);
+    } else {
+      store.currentBoardId.value = null;
+      store.currentBoardData.value = null;
+    }
+  }
+
+  await undoBoardDelete.run(
+    t('common.deleted_item', { name: board.title }),
+    async () => {
+      // The move first: a failure throws to the undo, which puts the board
+      // back and says so, with its remembered viewport still in place.
+      await store.deleteBoard(id);
+      forgetViewport(id);
+      setBoardHidden(id, false);
+    },
+    () => {
+      setBoardHidden(id, false);
+      if (wasCurrent) void switchBoard(id);
+    },
+  );
 }
 
 // ── Lifecycle ───────────────────────────────────────────────
@@ -797,13 +857,14 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
     <!-- Sidebar -->
     <WhiteboardSidebar
       ref="sidebarRef"
-      :boards="store.boards.value"
+      :boards="visibleBoards"
       :currentBoardId="store.currentBoardId.value || ''"
       :currentBoardData="store.currentBoardData.value"
       :notes="whiteboardNotes"
       @switch-board="switchBoard"
       @create-board="store.createBoard()"
-      @delete-board="pendingDeleteBoardId = $event"
+      @delete-board="deleteBoard"
+      @add-note="addNoteFromSidebar"
       @note-drag-start="() => {}"
     />
 
@@ -974,23 +1035,22 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
         <div class="text-center text-muted dark:text-muted-dark">
           <PenTool class="w-12 h-12 mx-auto mb-3 opacity-20" />
           <p class="text-sm mb-3">{{ $t('whiteboard.select_to_start') }}</p>
-          <button @click="store.createBoard()" class="px-4 py-2 rounded-lg bg-accent dark:bg-accent-dark text-white text-sm font-semibold hover:opacity-90 transition-opacity cursor-pointer">
+          <button @click="store.createBoard()" class="btn-primary">
             {{ $t('whiteboard.new_board') }}
           </button>
         </div>
       </div>
     </div>
 
-    <!-- Deleting a board: where it goes, before it goes -->
-    <ConfirmModal
-      :show="!!pendingDeleteBoardId"
-      :title="$t('whiteboard.delete_board_title', { title: pendingDeleteBoard?.title || '' })"
-      :message="$t('whiteboard.delete_board_body')"
-      :confirmText="$t('whiteboard.delete_board_confirm')"
-      :cancelText="$t('whiteboard.delete_board_cancel')"
-      isDestructive
-      @confirm="confirmDeleteBoard"
-      @cancel="pendingDeleteBoardId = null"
+    <UndoToast
+      :show="undoBoardDelete.show.value"
+      :restart-key="undoBoardDelete.key.value"
+      :message="undoBoardDelete.message.value"
+      :undo-label="$t('common.undo')"
+      :seconds="undoBoardDelete.seconds"
+      @undo="undoBoardDelete.undo"
+      @pause="undoBoardDelete.pause"
+      @resume="undoBoardDelete.resume"
     />
   </div>
 </template>
@@ -1051,21 +1111,21 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   align-items: center;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
-  background: rgba(124, 58, 237, 0.1);
+  background: color-mix(in oklab, var(--color-accent) 10%, transparent);
   color: var(--color-accent, #7c3aed);
   cursor: default;
 }
 .dark .wb-tag {
-  background: rgba(167, 139, 250, 0.12);
-  color: #a78bfa;
+  background: color-mix(in oklab, var(--color-accent-dark) 12%, transparent);
+  color: var(--color-accent-dark);
 }
 .wb-tag-input {
   width: 60px;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   border: 1px solid var(--color-accent, #7c3aed);
   background: transparent;
@@ -1094,8 +1154,8 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   color: var(--color-text-secondary-dark, #71717a);
 }
 .dark .wb-tag-add:hover {
-  border-color: #a78bfa;
-  color: #a78bfa;
+  border-color: var(--color-accent-dark);
+  color: var(--color-accent-dark);
 }
 .wb-icon-btn {
   width: 28px;
@@ -1204,7 +1264,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 }
 :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
   stroke: var(--color-accent, #7c3aed) !important;
-  filter: drop-shadow(0 0 3px rgba(124, 58, 237, 0.4));
+  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--color-accent) 40%, transparent));
 }
 :deep(.vue-flow__edge-interaction) {
   stroke-width: 20px;

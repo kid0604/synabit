@@ -37,9 +37,9 @@ const { t } = useI18n();
       role="radio"
       :aria-checked="model === kind"
       @click="model = kind"
-      class="px-2 py-1 rounded-md text-[11px] whitespace-nowrap cursor-pointer transition-colors"
+      class="px-2 py-1 rounded-md text-xs whitespace-nowrap cursor-pointer transition-colors"
       :class="model === kind
-        ? 'bg-white dark:bg-[#2c2c2c] text-[#1c1c1e] dark:text-[#f4f4f5] shadow-sm'
+        ? 'bg-white dark:bg-[#2c2c2c] text-text dark:text-text-dark shadow-sm'
         : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'"
     >
       {{ t(`things.kind_${kind}`) }}

@@ -2,6 +2,8 @@ import { ref, shallowRef } from 'vue';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { i18n } from '../../../i18n';
+import { logger } from '../../../utils/logger';
 
 // Import worker URL from node_modules — Vite resolves this at build time
 import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
@@ -88,7 +90,9 @@ export function usePdfRenderer() {
       totalPages.value = doc.numPages;
       currentPage.value = 1;
     } catch (e: any) {
-      error.value = `Failed to load PDF: ${e.message || e}`;
+      // The reason goes to the log; the reader gets what to do about it.
+      logger.error('Failed to load PDF', e);
+      error.value = i18n.global.t('file.pdf_load_failed');
       pdfDoc.value = null;
       totalPages.value = 0;
     } finally {

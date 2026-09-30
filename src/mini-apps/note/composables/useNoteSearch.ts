@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { NoteItem } from '../helpers';
 import { logger } from '../../../utils/logger';
 import { looseIncludes } from '../../../utils/diacritics';
+import { isTemplatePath } from '../templates/noteTemplates';
 
 export function useNoteSearch(
   notes: Ref<NoteItem[]>,
@@ -77,7 +78,22 @@ export function useNoteSearch(
 
   const allPinnedNotes = computed(() => filteredNotes.value.filter(n => n.pinned));
   const topPinnedNotes = computed(() => allPinnedNotes.value.slice(0, 5));
-  const recentNotes = computed(() => filteredNotes.value.filter(n => !n.pinned).slice(0, 10));
+  /**
+   * The sidebar's "Recent" list, which is also where search results land.
+   *
+   * Templates (notes in `Templates/`) are left out of it while nobody is
+   * searching: they are scaffolding, not something written lately, and
+   * editing one used to push it to the top of the list next to real notes.
+   * A search still finds them — that is how somebody gets back to one to
+   * change it — and the template picker always lists them. A template the
+   * user pinned on purpose stays pinned; that was an explicit ask.
+   */
+  const recentNotes = computed(() => {
+    const searching = searchQuery.value.trim() !== '';
+    return filteredNotes.value
+      .filter(n => !n.pinned && (searching || !isTemplatePath(n.id)))
+      .slice(0, 10);
+  });
 
   // Debounced backend search
   watch(searchQuery, (q) => {

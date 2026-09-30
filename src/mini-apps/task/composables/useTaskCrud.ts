@@ -1,5 +1,4 @@
 import { ref, type Ref, type ComputedRef } from 'vue';
-import { ask } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { type TaskMetadata, getTodayStr, taskProperties, FORM_GOVERNED_KEYS } from '../types';
 
@@ -78,6 +77,8 @@ export function useTaskCrud(
     status: string;
     project_id: string;
     completed_at: string;
+    /** `custom_fields.eisenhower_quadrant`, or empty to let the Matrix derive it. */
+    eisenhower_quadrant: string;
   }>({
     title: '',
     content: '',
@@ -96,7 +97,8 @@ export function useTaskCrud(
     tags: '',
     status: 'todo',
     project_id: '',
-    completed_at: ''
+    completed_at: '',
+    eisenhower_quadrant: ''
   });
   const customFields = ref<{k: string, v: string}[]>([]);
 
@@ -136,7 +138,8 @@ export function useTaskCrud(
       tags: Array.isArray(task.tags) ? task.tags.join(', ') : '',
       status: task.status,
       project_id: task.project_id || '',
-      completed_at: task.completed_at || ''
+      completed_at: task.completed_at || '',
+      eisenhower_quadrant: task.custom_fields?.eisenhower_quadrant || ''
     };
     // Everything the file carries that the form has no control for. Before
     // this the list held every property including `status` and `due_date`,
@@ -240,7 +243,8 @@ export function useTaskCrud(
       tags: '',
       status: 'todo',
       project_id: activeCategory.value.startsWith('project:') ? activeCategory.value.substring(8) : '',
-      completed_at: ''
+      completed_at: '',
+      eisenhower_quadrant: ''
     };
     customFields.value = [];
   };
@@ -332,6 +336,15 @@ export function useTaskCrud(
           updatedCustomFields[key.trim()] = null;
         }
       }
+
+      // The quadrant is governed, so it is named only when the form's picker
+      // changed it — the same key the Matrix drop writes, and `null` when the
+      // user went back to letting the Matrix work it out.
+      const quadrant = editingTaskParams.value.eisenhower_quadrant || '';
+      const previousQuadrant = editingTask.value.custom_fields?.eisenhower_quadrant || '';
+      if (quadrant !== previousQuadrant) {
+        updatedCustomFields.eisenhower_quadrant = quadrant || null;
+      }
       
       const edited = taskProperties({
         custom_fields: updatedCustomFields,
@@ -415,7 +428,11 @@ export function useTaskCrud(
         editingTask.value.comment = editingTaskParams.value.comment;
         editingTask.value.tags = tagArray;
         editingTask.value.project_id = editingTaskParams.value.project_id;
-        editingTask.value.custom_fields = updatedCustomFields;
+        // Carrying the quadrant across: `updatedCustomFields` names it only
+        // when it changed, and the Matrix reads it from here.
+        editingTask.value.custom_fields = { ...updatedCustomFields };
+        if (quadrant) editingTask.value.custom_fields.eisenhower_quadrant = quadrant;
+        else delete editingTask.value.custom_fields.eisenhower_quadrant;
       }
       
       closeEditModal();
@@ -630,6 +647,8 @@ export function useTaskCrud(
     deleteMany,
     undo: undoDelete,
     commit: commitDelete,
+    pause: pauseDelete,
+    resume: resumeDelete,
   } = useTaskDelete({
     tasks,
     ns,
@@ -652,6 +671,22 @@ export function useTaskCrud(
     pendingSubtreeDelete.value = null;
     resolveSubtreeChoice?.(choice);
     resolveSubtreeChoice = null;
+  };
+
+  /** The yes/no the `dialog` setting asks for, in the app's own dialog. */
+  const pendingDeleteConfirm = ref<TaskMetadata | null>(null);
+  let resolveDeleteConfirm: ((yes: boolean) => void) | null = null;
+
+  const askDeleteConfirm = (task: TaskMetadata) =>
+    new Promise<boolean>((resolve) => {
+      pendingDeleteConfirm.value = task;
+      resolveDeleteConfirm = resolve;
+    });
+
+  const answerDeleteConfirm = (yes: boolean) => {
+    pendingDeleteConfirm.value = null;
+    resolveDeleteConfirm?.(yes);
+    resolveDeleteConfirm = null;
   };
 
   /**
@@ -679,19 +714,7 @@ export function useTaskCrud(
     }
 
     if (taskDeleteConfirm.value === 'dialog') {
-      let isConfirmed = false;
-      try {
-        isConfirmed = await ask(t('task.delete_task_body'), {
-          title: t('task.delete_task_title'),
-          kind: 'warning',
-          okLabel: t('task.delete_confirm'),
-          cancelLabel: t('task.delete_cancel'),
-        });
-      } catch (e) {
-        logger.warn("Tauri confirm failed, falling back to window.confirm", e);
-        isConfirmed = window.confirm(t('task.delete_task_title'));
-      }
-      if (!isConfirmed) return;
+      if (!(await askDeleteConfirm(task))) return;
     }
 
     await scheduleDelete([task], [], task.title);
@@ -719,7 +742,8 @@ export function useTaskCrud(
     openEditById,
     toggleTaskStatus, deleteTask,
     pendingSubtreeDelete, answerSubtreeDelete,
-    pendingDelete, undoDelete, commitDelete, deleteMany,
+    pendingDeleteConfirm, answerDeleteConfirm,
+    pendingDelete, undoDelete, commitDelete, pauseDelete, resumeDelete, deleteMany,
     taskDeleteConfirm,
   };
 }

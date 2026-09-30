@@ -51,7 +51,7 @@ defineExpose({ start, cancel });
   <button
     v-if="!naming"
     @click="start"
-    class="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-full border border-gray-200 dark:border-[#2c2c2c] bg-white dark:bg-[#1e1e1e] text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors cursor-pointer shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
+    class="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-full border border-gray-200 dark:border-border-dark bg-white dark:bg-surface-dark text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-black dark:hover:text-white transition-colors cursor-pointer shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
     :aria-label="$t('task.a11y_save_filter')"
   >
     <Bookmark class="w-3.5 h-3.5" /> {{ $t('task.filter_save') }}
@@ -59,29 +59,29 @@ defineExpose({ start, cancel });
 
   <div
     v-else
-    class="shrink-0 flex items-center gap-1 pl-3 pr-1 py-1 rounded-full border border-blue-300 dark:border-blue-800 bg-white dark:bg-[#1e1e1e] shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
+    class="shrink-0 flex items-center gap-1 pl-3 pr-1 py-1 rounded-full border border-accent/40 bg-white dark:bg-surface-dark shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
   >
-    <Bookmark class="w-3.5 h-3.5 shrink-0 text-blue-500" />
+    <Bookmark class="w-3.5 h-3.5 shrink-0 text-accent dark:text-accent-dark" />
     <input
       ref="inputRef"
       v-model="name"
       @keydown.enter.prevent="commit"
       @keydown.escape.prevent="cancel"
       type="text"
-      class="w-40 bg-transparent border-none outline-none text-xs text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400"
+      class="w-40 bg-transparent border-none outline-none text-xs text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400"
       :placeholder="$t('task.filter_name_prompt')"
       :aria-label="$t('task.filter_name_prompt')"
     />
     <button
       @click="commit"
-      class="p-1 rounded-full text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors cursor-pointer"
+      class="p-1 rounded-full text-accent dark:text-accent-dark hover:bg-accent/10 transition-colors cursor-pointer"
       :aria-label="$t('task.filter_save')"
     >
       <Check class="w-3.5 h-3.5" />
     </button>
     <button
       @click="cancel"
-      class="p-1 rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors cursor-pointer"
+      class="p-1 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#2c2c2c] transition-colors cursor-pointer"
       :aria-label="$t('task.delete_cancel')"
     >
       <X class="w-3.5 h-3.5" />

@@ -25,6 +25,10 @@ import { useCalendarExchange } from './composables/useCalendarExchange';
 import { useSubscriptions } from './composables/useSubscriptions';
 import { isSubscribed } from './subscriptions';
 import SubscriptionsPanel from './components/SubscriptionsPanel.vue';
+import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
+import { showAppNotice } from '../../composables/useAppNotice';
 import AgendaView from './components/AgendaView.vue';
 import { useAgenda } from './composables/useAgenda';
 
@@ -42,7 +46,9 @@ const vaultPathRef = toRef(props, 'vaultPath');
 // which is why it could not also own the range.
 const nav = useCalendarNavigation();
 const data = useCalendarData(ns, bus, vaultPathRef, nav.visibleRange);
-const helpers = useCalendarHelpers(data.tasksByDate, data.eventsByDate);
+/** Events deleted on screen and still inside their undo window. */
+const heldEventIds = ref<Set<string>>(new Set());
+const helpers = useCalendarHelpers(data.tasksByDate, data.eventsByDate, heldEventIds);
 
 const selectedTasks = computed(() => helpers.getTasksForDate(nav.selectedDateFormattedStr.value));
 const selectedEvents = computed(() => helpers.getSortedEventsForDate(nav.selectedDateFormattedStr.value));
@@ -54,6 +60,7 @@ const form = useEventForm(
     async (title: string, id: string) => { await relations.loadEventBacklinks(title, id); },
     () => { relations.resetEventBacklinks(); },
     () => { relations.resetCreatingNote(); },
+    heldEventIds,
 );
 
 const relations = useEventRelations(
@@ -73,7 +80,7 @@ const makeTasksFromNotes = async (chosen: number[]) => {
         }
     } catch (e) {
         logger.error('Could not turn those notes into tasks:', e);
-        say(t('calendar.exchange_failed'));
+        say(t('calendar.exchange_failed'), 'error');
     }
 };
 
@@ -86,7 +93,7 @@ const makeTasksFromNotes = async (chosen: number[]) => {
 const handleReschedule = async (ev: EventMetadata, dateStr: string, startAt: string, endAt: string) => {
     await form.rescheduleEvent(ev, dateStr, startAt, endAt);
     if (!form.lastMove.value) return;
-    say(t('calendar.moved', { title: ev.title }), async () => {
+    offerUndo(t('calendar.moved', { title: ev.title }), async () => {
         if (await form.undoMove()) {
             await data.loadEvents();
             say(t('calendar.undone'));
@@ -164,19 +171,27 @@ const blockTask = async (
             eventType: 'created',
         });
         await data.loadEvents();
-        say(t('calendar.blocked_task', { title: task.title }), async () => {
+        offerUndo(t('calendar.blocked_task', { title: task.title }), async () => {
             await ns.deleteNode({ relPath, silent: true });
             await data.loadEvents();
             say(t('calendar.undone'));
         });
     } catch (e) {
         logger.error('Could not schedule that task:', e);
-        say(t('calendar.exchange_failed'));
+        say(t('calendar.exchange_failed'), 'error');
     }
 };
 
 // ── Finding a meeting rather than looking at a week ─────────
 const agenda = useAgenda();
+/** The agenda without the events waiting out an undo, like every other view. */
+const agendaDays = computed(() => {
+    const held = heldEventIds.value;
+    if (!held.size) return agenda.days.value;
+    return agenda.days.value
+        .map(d => ({ ...d, events: d.events.filter(e => !held.has(e.id)) }))
+        .filter(d => d.events.length > 0);
+});
 
 /**
  * The agenda reads the vault for itself, over its own range — a search looks
@@ -206,12 +221,11 @@ const addSubscription = async (url: string, name: string) => {
     try {
         const report = await subs.add(url, name);
         if (!report) return;
-        say(report.error
-            ? report.error
-            : t('calendar.subscribe_added', { name: report.name, n: report.events }));
+        if (report.error) say(report.error, 'error');
+        else say(t('calendar.subscribe_added', { name: report.name, n: report.events }));
     } catch (e) {
         logger.error('Could not subscribe to that calendar:', e);
-        say(t('calendar.subscribe_failed'));
+        say(t('calendar.subscribe_failed'), 'error');
     }
 };
 
@@ -219,12 +233,11 @@ const refreshSubscriptions = async () => {
     try {
         const reports = await subs.refreshAll();
         const failed = reports.filter(r => r.error);
-        say(failed.length
-            ? failed[0].error
-            : t('calendar.subscribe_refreshed', { n: reports.length }));
+        if (failed.length) say(failed[0].error, 'error');
+        else say(t('calendar.subscribe_refreshed', { n: reports.length }));
     } catch (e) {
         logger.error('Could not refresh the subscribed calendars:', e);
-        say(t('calendar.subscribe_failed'));
+        say(t('calendar.subscribe_failed'), 'error');
     }
 };
 
@@ -235,31 +248,25 @@ const sourceOf = (id: string | undefined) =>
 // ── Taking the calendar out, and bringing one in ────────────
 const { t } = useI18n();
 const exchange = useCalendarExchange(ns);
-const notice = ref('');
-/** Shown beside the notice while the last thing done can still be taken back. */
-const undoAction = ref<null | (() => Promise<void>)>(null);
 
-const say = (message: string, undo?: () => Promise<void>) => {
-    notice.value = message;
-    undoAction.value = undo ?? null;
-    setTimeout(() => {
-        if (notice.value !== message) return;
-        notice.value = '';
-        undoAction.value = null;
-    }, undo ? 8000 : 4000);
-};
+/** Something to tell the reader, in the shell's shared notice. */
+const say = (message: string, kind: 'info' | 'error' = 'info') => showAppNotice(message, kind);
 
-const takeItBack = async () => {
-    const undo = undoAction.value;
-    if (!undo) return;
-    notice.value = '';
-    undoAction.value = null;
-    try {
-        await undo();
-    } catch (e) {
-        logger.error('Could not undo that:', e);
-        say(t('calendar.exchange_failed'));
-    }
+/**
+ * The way back from something already written — a drag, a task blocked into
+ * the week. The same toast as a delete's, so there is one undo on screen and
+ * one way it behaves; the difference is only that the work is done up front,
+ * so there is nothing to finish when the window closes and Undo is a second
+ * write rather than a cancelled one.
+ */
+const actionUndo = useUndoableAction();
+const offerUndo = (message: string, takeBack: () => Promise<void>) => {
+    void actionUndo.run(message, () => {}, () => {
+        takeBack().catch((e) => {
+            logger.error('Could not undo that:', e);
+            say(t('calendar.exchange_failed'), 'error');
+        });
+    });
 };
 
 const handleExport = async () => {
@@ -270,7 +277,7 @@ const handleExport = async () => {
         if (count !== null) say(t('calendar.exported_n', { n: count }));
     } catch (e) {
         logger.error('Could not export the calendar:', e);
-        say(t('calendar.exchange_failed'));
+        say(t('calendar.exchange_failed'), 'error');
     }
 };
 
@@ -298,7 +305,7 @@ const handleImport = async () => {
         }
     } catch (e) {
         logger.error('Could not import that calendar:', e);
-        say(t('calendar.exchange_failed'));
+        say(t('calendar.exchange_failed'), 'error');
     }
 };
 
@@ -312,8 +319,8 @@ const handleGoToMonth = (monthIndex: number) => {
 </script>
 
 <template>
-  <div class="h-full flex relative text-[#1c1c1e] dark:text-[#f4f4f5] bg-[#fdfdfc] dark:bg-[#242424]">
-     <div class="flex-1 flex flex-col h-full overflow-hidden px-3 py-3 md:px-6 md:py-4 transition-all duration-300" :class="{ 'md:pr-96': nav.showRightPanel.value }">
+  <div class="h-full flex relative text-text dark:text-text-dark bg-base dark:bg-base-dark">
+     <div class="flex-1 flex flex-col h-full overflow-hidden transition-all duration-300" :class="{ 'md:pr-96': nav.showRightPanel.value }">
 
          <CalendarHeader
              :header-display-string="nav.headerDisplayString.value"
@@ -328,7 +335,7 @@ const handleGoToMonth = (monthIndex: number) => {
              @subscriptions="showSubscriptions = true"
          />
 
-         <div class="flex-1 min-h-0 relative w-full">
+         <div class="flex-1 min-h-0 relative w-full px-3 py-3 md:px-6 md:py-4">
              <MonthView v-show="nav.viewMode.value === 'month'"
                  :calendar-days="nav.calendarDays.value"
                  :selected-date="nav.selectedDate.value"
@@ -361,7 +368,7 @@ const handleGoToMonth = (monthIndex: number) => {
              />
 
              <AgendaView v-if="nav.viewMode.value === 'agenda'"
-                 :days="agenda.days.value"
+                 :days="agendaDays"
                  :loading="agenda.loading.value"
                  :query="agenda.query.value"
                  :person-name="agenda.personName.value"
@@ -471,13 +478,37 @@ const handleGoToMonth = (monthIndex: number) => {
          @refresh="refreshSubscriptions"
      />
 
-     <p v-if="notice" role="status"
-        class="fixed bottom-8 left-1/2 -translate-x-1/2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-5 py-3 rounded-xl shadow-xl z-[100] text-sm font-semibold max-w-md w-max flex items-center gap-3">
-         <span>{{ notice }}</span>
-         <button v-if="undoAction" type="button" @click="takeItBack"
-                 class="shrink-0 underline underline-offset-2 font-bold hover:opacity-80 transition-opacity">
-             {{ $t('calendar.undo') }}
-         </button>
-     </p>
+     <!-- Deleting a note or board linked to an event: that file is not
+          trashed, so this one still asks. -->
+     <ConfirmModal
+         :show="!!relations.pendingRelationDelete.value"
+         :title="$t('calendar.delete_item')"
+         :message="$t('calendar.delete_relation_body', { type: relations.pendingRelationDelete.value?.node_type || '', title: relations.pendingRelationDelete.value?.title || '' })"
+         isDestructive
+         @confirm="relations.answerRelationDelete(true)"
+         @cancel="relations.answerRelationDelete(false)"
+     />
+
+     <UndoToast
+         :show="form.eventUndo.show.value"
+         :restart-key="form.eventUndo.key.value"
+         :message="form.eventUndo.message.value"
+         :undo-label="$t('common.undo')"
+         :seconds="form.eventUndo.seconds"
+         @undo="form.eventUndo.undo"
+         @pause="form.eventUndo.pause"
+         @resume="form.eventUndo.resume"
+     />
+
+     <UndoToast
+         :show="actionUndo.show.value"
+         :restart-key="actionUndo.key.value"
+         :message="actionUndo.message.value"
+         :undo-label="$t('common.undo')"
+         :seconds="actionUndo.seconds"
+         @undo="actionUndo.undo"
+         @pause="actionUndo.pause"
+         @resume="actionUndo.resume"
+     />
   </div>
 </template>

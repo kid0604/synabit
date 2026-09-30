@@ -1,4 +1,4 @@
-import { ref, onUnmounted, type Ref } from 'vue';
+import { ref, onBeforeUnmount, onDeactivated, getCurrentInstance, type Ref } from 'vue';
 import type { TaskMetadata } from '../types';
 import { taskProperties } from '../types';
 import { childrenOf, descendantsOf } from '../subtasks';
@@ -36,8 +36,9 @@ export const UNDO_WINDOW_MS = 7000;
  * because "keep them" and "take them too" is a real question rather than a
  * yes/no.
  *
- * If the app quits inside the window the deletion simply never happened, which
- * is the safe direction to fail in.
+ * If the app is killed inside the window the deletion simply never happened,
+ * which is the safe direction to fail in — but hiding or leaving the app
+ * commits first, so that is rare.
  */
 export function useTaskDelete(params: {
   tasks: Ref<TaskMetadata[]>;
@@ -71,25 +72,48 @@ export function useTaskDelete(params: {
   } | null>(null);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  /** When the running timer fires, so a pause can keep what was left. */
+  let deadline = 0;
+  let remaining = UNDO_WINDOW_MS;
 
   /**
    * Ids the list must pretend are gone.
    *
    * A pending task is still on disk, and `loadTasks` runs on every file-watcher
    * tick — without this the task reappears in the list underneath the toast
-   * offering to undo its deletion.
+   * offering to undo its deletion. An id leaves the set only once its file is
+   * in the trash (or the delete is undone or has failed): cleared any earlier,
+   * a reload landing mid-commit flashes the task back.
    */
   const hiddenIds = new Set<string>();
   const isHidden = (id: string) => hiddenIds.has(id);
 
-  /** Do the work at last. Called by the timer, or early to make way. */
-  const commit = async () => {
-    const held = pending.value;
-    if (!held) return;
-    clearTimeout(timer);
-    pending.value = null;
-    for (const entry of held.removed) hiddenIds.delete(entry.task.id);
+  type Held = NonNullable<typeof pending.value>;
 
+  /**
+   * Take the waiting delete off the toast, synchronously. Everything that ends
+   * a wait goes through here before any `await` — see `useUndoableAction`,
+   * where an await between reading and clearing let a third delete be
+   * overwritten by the second and never happen.
+   */
+  const take = (): Held | null => {
+    clearTimeout(timer);
+    timer = undefined;
+    const held = pending.value;
+    pending.value = null;
+    return held;
+  };
+
+  const arm = (ms: number) => {
+    clearTimeout(timer);
+    deadline = Date.now() + ms;
+    timer = setTimeout(() => { void commit(); }, ms);
+  };
+
+  /** The real work for one held delete. */
+  const perform = async (held: Held) => {
+    const written: Reparented[] = [];
+    const trashed = new Set<string>();
     try {
       // Re-parenting first: a kept child pointing at a file that is already
       // gone is the state this is here to avoid, however briefly.
@@ -100,19 +124,48 @@ export function useTaskDelete(params: {
           title: entry.task.title,
           properties: taskProperties(entry.task),
         });
+        written.push(entry);
       }
       // Deepest first — see `descendantsOf`. A run that stops part way leaves
       // a tree with its top attached rather than a scatter of orphans.
       for (const entry of held.removed) {
         await ns.trashNode({ relPath: entry.task.path });
+        trashed.add(entry.task.id);
+        hiddenIds.delete(entry.task.id);
       }
     } catch (e) {
       logger.error('Could not move the tasks to the trash', e);
+      const left = held.removed.filter(entry => !trashed.has(entry.task.id));
+      for (const entry of left) hiddenIds.delete(entry.task.id);
+      // A child re-parented on disk whose old parent survived must point back
+      // at it, or the restored list shows one tree and the files another.
+      const parentStays = new Set(left.map(entry => entry.task.id));
+      const undoParent = held.reparented.filter(entry => parentStays.has(entry.from));
+      for (const entry of undoParent) entry.task.parent_id = entry.from;
+      for (const entry of written.filter(w => parentStays.has(w.from))) {
+        try {
+          await ns.writeNode({
+            relPath: entry.task.path,
+            nodeType: 'task',
+            title: entry.task.title,
+            properties: taskProperties(entry.task),
+          });
+        } catch (err) {
+          logger.error('Could not put a subtask back under its parent', err);
+        }
+      }
       // They left the list when the delete was requested, so a silent failure
-      // here reads as success until the next restart brings them back.
-      restore(held.removed, held.reparented);
-      onFailed(held.removed.length);
+      // here reads as success until the next restart brings them back. Only
+      // what is still on disk comes back.
+      restore(left, []);
+      onFailed(left.length);
     }
+  };
+
+  /** Do the work at last. Called by the timer, or early to make way. */
+  const commit = async () => {
+    const held = take();
+    if (held) await perform(held);
   };
 
   const restore = (removed: Removed[], reparented: Reparented[]) => {
@@ -143,10 +196,6 @@ export function useTaskDelete(params: {
   ) => {
     if (!toRemove.length) return;
 
-    // One operation at a time. A second delete finishes the first rather than
-    // queueing, so the toast never offers to bring back something else.
-    if (pending.value) await commit();
-
     const removed: Removed[] = [];
     for (const task of toRemove) {
       const index = tasks.value.findIndex(t => t.id === task.id);
@@ -160,15 +209,19 @@ export function useTaskDelete(params: {
     const goneIds = new Set(removed.map(entry => entry.task.id));
     tasks.value = tasks.value.filter(t => !goneIds.has(t.id));
 
+    // One operation at a time. A second delete finishes the first rather than
+    // queueing, so the toast never offers to bring back something else. The
+    // first is taken synchronously; its write is awaited only afterwards.
+    const previous = take();
     pending.value = { removed, reparented: reparent, label };
-    timer = setTimeout(() => { void commit(); }, UNDO_WINDOW_MS);
+    remaining = UNDO_WINDOW_MS;
+    arm(UNDO_WINDOW_MS);
+    if (previous) await perform(previous);
   };
 
   const undo = () => {
-    const held = pending.value;
+    const held = take();
     if (!held) return;
-    clearTimeout(timer);
-    pending.value = null;
     for (const entry of held.removed) hiddenIds.delete(entry.task.id);
     restore(held.removed, held.reparented);
   };
@@ -216,9 +269,34 @@ export function useTaskDelete(params: {
     await scheduleDelete(ordered, [], label);
   };
 
-  // Leaving the app is not taking the delete back. The work has to happen, and
-  // it has to happen before this composable stops existing to do it.
-  onUnmounted(() => { void commit(); });
+  /** Hold the countdown while the pointer or focus is on the toast (WCAG 2.2.1). */
+  const pause = () => {
+    if (!pending.value || timer === undefined) return;
+    remaining = Math.max(0, deadline - Date.now());
+    clearTimeout(timer);
+    timer = undefined;
+  };
 
-  return { pending, isHidden, scheduleDelete, deleteTaskTree, deleteMany, undo, commit };
+  const resume = () => {
+    if (pending.value && timer === undefined) arm(remaining);
+  };
+
+  // Leaving the app is not taking the delete back. The work has to happen, and
+  // it has to happen before this composable stops existing to do it — or can
+  // no longer be seen: the apps live in a `<keep-alive>`, so switching app
+  // deactivates rather than unmounts, and Android kills a hidden app without
+  // warning, `visibilitychange` being the last moment JavaScript is given.
+  const onHidden = () => {
+    if (document.visibilityState === 'hidden') void commit();
+  };
+  if (getCurrentInstance()) {
+    document.addEventListener('visibilitychange', onHidden);
+    onDeactivated(() => { void commit(); });
+    onBeforeUnmount(() => {
+      document.removeEventListener('visibilitychange', onHidden);
+      void commit();
+    });
+  }
+
+  return { pending, isHidden, scheduleDelete, deleteTaskTree, deleteMany, undo, commit, pause, resume };
 }

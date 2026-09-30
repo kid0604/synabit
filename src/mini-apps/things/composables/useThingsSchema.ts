@@ -2,6 +2,8 @@ import { ref } from 'vue';
 import { useNodeService } from '../../../composables/useNodeService';
 import { folderForType } from '../../../shared/nodeRoutes';
 import { logger } from '../../../utils/logger';
+import { i18n } from '../../../i18n';
+import { showAppNotice } from '../../../composables/useAppNotice';
 import { asFieldKind, type FieldKind } from '../../../shared/fieldValue';
 import { iconNamed, setChosenIcons } from '../../../shared/views/nodeTypeIcon';
 
@@ -157,10 +159,18 @@ export function useThingsSchema() {
         content: '',
         ...(existing ? {} : { eventType: 'created' as const }),
       });
-      await load();
     } catch (e) {
+      // Said here, once, for every caller — and thrown on, so a caller with
+      // more to do after it (a template's icon, a rename's cleanup) stops.
+      // It used to be swallowed, and a template whose fields failed went on
+      // to write its icon into a kind file with nothing else in it.
       logger.error('[Things] Could not save the schema', e);
+      showAppNotice(i18n.global.t('things.schema_save_failed'), 'error');
+      throw e;
     }
+    // After the write, outside its catch: `load` reports its own failures,
+    // and a reload that fails is not the save failing.
+    await load();
   };
 
   /**
@@ -197,6 +207,7 @@ export function useThingsSchema() {
       await load();
     } catch (e) {
       logger.error('[Things] Could not save the icon', e);
+      showAppNotice(i18n.global.t('things.icon_save_failed'), 'error');
     }
   };
 

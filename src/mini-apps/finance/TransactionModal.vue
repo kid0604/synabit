@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, watch, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { X, RefreshCw, Plus, Check, Trash2, Paperclip } from 'lucide-vue-next';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { open as openFileDialog } from '@tauri-apps/plugin-dialog';
+import AppDialog from '../../shared/components/AppDialog.vue';
 import type { Transaction, TransactionType, FinanceAccount, Category } from './types';
 import { FINANCE_RECURRENCES, type RecurringRule } from './recurring';
 import { COMMON_CURRENCIES, allCurrencies, allowRateLookup, convertMinor, currentCurrency, fetchExchangeRate, formatAmountInput, formatCurrency, formatMinorForInput, parseAmountInput } from './currency';
+
+const { t } = useI18n();
 
 const props = defineProps<{
   show: boolean;
@@ -102,7 +106,7 @@ const attachReceipt = async () => {
     try {
         const picked = await openFileDialog({
             multiple: false,
-            filters: [{ name: 'Image', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'pdf'] }],
+            filters: [{ name: t('finance.receipt_filter'), extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'gif', 'pdf'] }],
         });
         const sourcePath = Array.isArray(picked) ? picked[0] : picked;
         if (!sourcePath) return;
@@ -411,7 +415,7 @@ const filteredPeople = computed(() => {
 });
 
 const getPersonName = (id: string) => {
-    return props.people?.find(p => p.id === id)?.title || 'No person';
+    return props.people?.find(p => p.id === id)?.title || t('finance.no_person');
 };
 
 const openPersonDropdown = () => {
@@ -428,15 +432,14 @@ const closePersonDropdown = () => {
 </script>
 
 <template>
-  <div v-if="show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/70 backdrop-blur-sm" @click.self="emit('close')">
-    <div class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+  <AppDialog :show="show" labelledby="finance-tx-title" @close="emit('close')">
       
       <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-border dark:border-border-dark">
-        <h3 class="font-bold text-lg text-text dark:text-text-dark">
-            {{ transaction ? 'Edit Transaction' : 'New Transaction' }}
+        <h3 id="finance-tx-title" class="font-bold text-lg text-text dark:text-text-dark">
+            {{ transaction ? $t('finance.edit_transaction') : $t('finance.new_transaction') }}
         </h3>
-        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" aria-label="More Options">
+        <button @click="emit('close')" class="p-1 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="$t('finance.close')" :title="$t('finance.close')">
             <X class="w-5 h-5" />
         </button>
       </div>
@@ -447,28 +450,28 @@ const closePersonDropdown = () => {
         <!-- Type Segmented Control -->
         <div class="flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
             <button @click="type = 'expense'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', type === 'expense' ? 'bg-white dark:bg-gray-700 text-red-500 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700']">
-                Expense
+                {{ $t('finance.expense') }}
             </button>
             <button @click="type = 'income'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', type === 'income' ? 'bg-white dark:bg-gray-700 text-green-500 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700']">
-                Income
+                {{ $t('finance.income') }}
             </button>
             <button @click="type = 'transfer'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', type === 'transfer' ? 'bg-white dark:bg-gray-700 text-blue-500 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700']">
-                Transfer
+                {{ $t('finance.transfer') }}
             </button>
         </div>
 
         <!-- Amount -->
         <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Amount <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.must_be_gt_0') }}</span></label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.amount') }} <span v-if="showErrors && calculatedBaseAmount <= 0" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.must_be_gt_0') }}</span></label>
             <div class="flex gap-2">
                 <div :class="['relative rounded-xl transition-all flex-1', showErrors && calculatedBaseAmount <= 0 ? 'ring-2 ring-red-500' : '']">
-                    <input type="text" inputmode="decimal" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all pr-4" placeholder="0" />
+                    <input type="text" inputmode="decimal" :value="amount" @input="handleAmountInput" class="w-full bg-transparent border border-border dark:border-border-dark rounded-xl px-4 py-3 text-2xl font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent transition-all pr-4" placeholder="0" />
                 </div>
-                <select v-model="inputCurrency" class="bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none min-w-[80px] text-center cursor-pointer">
-                    <optgroup label="Common">
+                <select v-model="inputCurrency" class="bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-3 font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent appearance-none min-w-[80px] text-center cursor-pointer">
+                    <optgroup :label="$t('finance.currency_common')">
                         <option v-for="c in CURRENCIES.common" :key="c" :value="c">{{ c }}</option>
                     </optgroup>
-                    <optgroup label="All">
+                    <optgroup :label="$t('finance.all')">
                         <option v-for="c in CURRENCIES.rest" :key="c" :value="c">{{ c }}</option>
                     </optgroup>
                 </select>
@@ -477,11 +480,11 @@ const closePersonDropdown = () => {
             <!-- Exchange Rate UI -->
             <div v-if="inputCurrency !== currentCurrency" class="mt-3 p-3 bg-blue-50 dark:bg-blue-900/10 rounded-xl border border-blue-100 dark:border-blue-900/30 flex flex-col gap-2">
                 <div class="flex items-center justify-between">
-                    <span class="text-xs font-semibold text-blue-600 dark:text-blue-400">Exchange Rate ({{ inputCurrency }} &rarr; {{ currentCurrency }})</span>
-                    <span v-if="isFetchingRate" class="text-xs text-blue-500 animate-pulse flex items-center gap-1"><RefreshCw class="w-3 h-3 animate-spin" /> Fetching...</span>
+                    <span class="text-xs font-semibold text-blue-600 dark:text-blue-400">{{ $t('finance.exchange_rate') }} ({{ inputCurrency }} &rarr; {{ currentCurrency }})</span>
+                    <span v-if="isFetchingRate" class="text-xs text-blue-500 animate-pulse flex items-center gap-1"><RefreshCw class="w-3 h-3 animate-spin" /> {{ $t('finance.fetching') }}</span>
                 </div>
                 <div class="flex gap-2 items-center">
-                    <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.custom_rate')" :disabled="isFetchingRate" />
+                    <input type="text" inputmode="decimal" :value="exchangeRateStr" @input="handleRateInput" class="w-full bg-white dark:bg-gray-900 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 text-sm font-bold text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.custom_rate')" :disabled="isFetchingRate" />
                     <span class="text-sm font-bold text-blue-700 dark:text-blue-300 whitespace-nowrap">
                         ≈ {{ formatCurrency(calculatedBaseAmount) }}
                     </span>
@@ -489,7 +492,7 @@ const closePersonDropdown = () => {
                 <!-- Why nothing was looked up. Said here rather than left as an
                      empty field the user has to guess the meaning of. -->
                 <p v-if="!allowRateLookup && !exchangeRate" class="text-xs text-blue-600/80 dark:text-blue-400/80">
-                    Enter today's rate. Synabit does not look rates up online unless you turn that on in Finance settings.
+                    {{ $t('finance.rate_manual_hint') }}
                 </p>
             </div>
         </div>
@@ -500,19 +503,19 @@ const closePersonDropdown = () => {
                 <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.category') }}</label>
                 <div class="flex items-center gap-2">
                     <template v-if="!isAddingCategory">
-                        <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
+                        <select v-model="category" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent appearance-none">
                             <option v-for="cat in availableCategories" :key="cat.id" :value="cat.id">{{ cat.name }}</option>
                         </select>
-                        <button @click="isAddingCategory = true" class="p-2.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-xl transition-colors shrink-0 border border-border dark:border-border-dark bg-gray-50 dark:bg-gray-800" title="Add new category">
+                        <button @click="isAddingCategory = true" class="p-2.5 text-gray-500 dark:text-gray-400 hover:text-accent hover:bg-accent/10 rounded-xl transition-colors shrink-0 border border-border dark:border-border-dark bg-gray-50 dark:bg-gray-800" :title="$t('finance.add_new_category')" :aria-label="$t('finance.add_new_category')">
                             <Plus class="w-4 h-4" />
                         </button>
                     </template>
                     <template v-else>
-                        <input type="text" v-model="newCategoryName" @keyup.enter="saveNewCategory" class="w-full bg-white dark:bg-gray-900 border border-blue-300 dark:border-blue-700 rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.type_new_category')" autofocus />
-                        <button @click="saveNewCategory" class="p-2.5 text-white bg-blue-500 hover:bg-blue-600 rounded-xl transition-colors shrink-0" title="Save category">
+                        <input type="text" v-model="newCategoryName" @keyup.enter="saveNewCategory" class="w-full bg-white dark:bg-gray-900 border border-accent/40 rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.type_new_category')" autofocus />
+                        <button @click="saveNewCategory" class="btn-primary w-9 px-0 shrink-0" :title="$t('finance.save_category')" :aria-label="$t('finance.save_category')">
                             <Check class="w-4 h-4" />
                         </button>
-                        <button @click="isAddingCategory = false; newCategoryName = ''" class="p-2.5 text-gray-500 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-colors shrink-0" title="Cancel">
+                        <button @click="isAddingCategory = false; newCategoryName = ''" class="p-2.5 text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl transition-colors shrink-0" :title="$t('finance.cancel')" :aria-label="$t('finance.cancel')">
                             <X class="w-4 h-4" />
                         </button>
                     </template>
@@ -521,16 +524,16 @@ const closePersonDropdown = () => {
             
             <!-- From Account -->
             <div>
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ type === 'transfer' ? 'From Account' : 'Account' }} <span v-if="showErrors && !accountId" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.required') }}</span></label>
-                <select v-model="accountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none', showErrors && !accountId ? 'border-red-500' : 'border-border dark:border-border-dark']">
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ type === 'transfer' ? $t('finance.from_account') : $t('finance.account') }} <span v-if="showErrors && !accountId" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.required') }}</span></label>
+                <select v-model="accountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent appearance-none', showErrors && !accountId ? 'border-red-500' : 'border-border dark:border-border-dark']">
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                 </select>
             </div>
             
             <!-- To Account (Only for Transfer) -->
             <div v-if="type === 'transfer'">
-                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">To Account <span v-if="showErrors && (!toAccountId || accountId === toAccountId)" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.invalid') }}</span></label>
-                <select v-model="toAccountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none', showErrors && (!toAccountId || accountId === toAccountId) ? 'border-red-500' : 'border-border dark:border-border-dark']">
+                <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.to_account') }} <span v-if="showErrors && (!toAccountId || accountId === toAccountId)" class="text-red-500 normal-case font-normal ml-1">{{ $t('finance.invalid') }}</span></label>
+                <select v-model="toAccountId" :class="['w-full bg-gray-50 dark:bg-gray-800 border rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent appearance-none', showErrors && (!toAccountId || accountId === toAccountId) ? 'border-red-500' : 'border-border dark:border-border-dark']">
                     <option v-for="acc in accounts" :key="acc.id" :value="acc.id">{{ acc.name }}</option>
                 </select>
             </div>
@@ -539,14 +542,14 @@ const closePersonDropdown = () => {
         <!-- Date -->
         <div>
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.date') }}</label>
-            <input type="datetime-local" v-model="date" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <input type="datetime-local" v-model="date" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
 
         <!-- How often. `none` saves one transaction; anything else saves a
              rule that keeps making them. -->
         <div>
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.repeats') }}</label>
-            <select v-model="recurrence" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <select v-model="recurrence" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent">
                 <option value="none">{{ $t('finance.repeats_none') }}</option>
                 <option v-for="r in FINANCE_RECURRENCES" :key="r" :value="r">{{ $t(`finance.repeats_${r}`) }}</option>
             </select>
@@ -554,14 +557,14 @@ const closePersonDropdown = () => {
             <div v-if="repeats" class="mt-2 flex flex-col gap-2">
                 <p class="text-xs text-blue-600 dark:text-blue-400">{{ $t('finance.repeats_hint') }}</p>
                 <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('finance.repeats_until') }}</label>
-                <input type="date" v-model="endDate" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="date" v-model="endDate" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
             </div>
         </div>
 
         <!-- Note -->
         <div>
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.note') }}</label>
-            <input type="text" v-model="note" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="$t('finance.tx_details_ph')" />
+            <input type="text" v-model="note" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="$t('finance.tx_details_ph')" />
         </div>
 
         <!-- The receipt. Copied into the vault so it travels with the ledger,
@@ -573,7 +576,7 @@ const closePersonDropdown = () => {
                 v-if="!receipt"
                 @click="attachReceipt"
                 :disabled="attaching"
-                class="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-border dark:border-border-dark text-sm text-gray-500 dark:text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors disabled:opacity-50"
+                class="flex items-center gap-2 w-full px-3 py-2.5 rounded-xl border border-dashed border-border dark:border-border-dark text-sm text-gray-500 dark:text-gray-400 hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
                 <Paperclip class="w-4 h-4" />
                 {{ attaching ? $t('finance.receipt_attaching') : $t('finance.receipt_attach') }}
@@ -586,11 +589,11 @@ const closePersonDropdown = () => {
                     :alt="$t('finance.receipt')"
                     class="w-12 h-12 rounded-lg object-cover shrink-0 bg-white dark:bg-gray-900"
                 />
-                <div v-else class="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center bg-white dark:bg-gray-900 text-gray-400">
+                <div v-else class="w-12 h-12 rounded-lg shrink-0 flex items-center justify-center bg-white dark:bg-gray-900 text-gray-500 dark:text-gray-400">
                     <Paperclip class="w-5 h-5" />
                 </div>
-                <span class="text-xs text-gray-500 truncate flex-1">{{ receiptName }}</span>
-                <button @click="removeReceipt" class="p-2 rounded-lg text-gray-400 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0" :aria-label="$t('finance.receipt_remove')">
+                <span class="text-xs text-gray-500 dark:text-gray-400 truncate flex-1">{{ receiptName }}</span>
+                <button @click="removeReceipt" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-red-500 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors shrink-0" :aria-label="$t('finance.receipt_remove')" :title="$t('finance.receipt_remove')">
                     <Trash2 class="w-4 h-4" />
                 </button>
             </div>
@@ -599,7 +602,7 @@ const closePersonDropdown = () => {
         <!-- Project Link (Only for Expense) -->
         <div v-if="type === 'expense' && projects && projects.length > 0">
             <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">{{ $t('finance.link_project') }}</label>
-            <select v-model="projectId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none">
+            <select v-model="projectId" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent appearance-none">
                 <option value="">{{ $t('finance.no_project') }}</option>
                 <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.title }}</option>
             </select>
@@ -614,28 +617,28 @@ const closePersonDropdown = () => {
                     v-model="personSearch" 
                     @focus="openPersonDropdown"
                     @blur="closePersonDropdown"
-                    class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                    :placeholder="personId ? getPersonName(personId) : 'Search person...'" 
+                    class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" 
+                    :placeholder="personId ? getPersonName(personId) : $t('finance.search_person')" 
                 />
-                <X v-if="personId" @click="personId = ''; personSearch = ''" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 cursor-pointer hover:text-red-500 transition-colors" />
+                <X v-if="personId" @click="personId = ''; personSearch = ''" class="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-gray-400 cursor-pointer hover:text-red-500 transition-colors" />
                 
                 <div v-if="isPersonDropdownOpen" class="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl shadow-lg max-h-48 overflow-y-auto hidden-scrollbar py-1">
                     <div 
-                        class="px-3 py-2 text-sm text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer transition-colors"
+                        class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer transition-colors"
                         @click="personId = ''; personSearch = ''; isPersonDropdownOpen = false"
                     >
-                        No person
+                        {{ $t('finance.no_person') }}
                     </div>
                     <div 
                         v-for="p in filteredPeople" 
                         :key="p.id" 
-                        class="px-3 py-2 text-sm text-text dark:text-text-dark hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer transition-colors"
+                        class="px-3 py-2 text-sm text-text dark:text-text-dark hover:bg-accent/10 cursor-pointer transition-colors"
                         @click="personId = p.id; personSearch = ''; isPersonDropdownOpen = false"
                     >
                         {{ p.title }}
                     </div>
-                    <div v-if="filteredPeople.length === 0" class="px-3 py-2 text-sm text-gray-400 italic">
-                        No matching people
+                    <div v-if="filteredPeople.length === 0" class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 italic">
+                        {{ $t('finance.no_matching_people') }}
                     </div>
                 </div>
             </div>
@@ -648,19 +651,18 @@ const closePersonDropdown = () => {
         <div>
             <button v-if="transaction" @click="emit('delete', transaction.id)" class="px-3 py-2 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-1">
                 <Trash2 class="w-4 h-4" />
-                Delete
+                {{ $t('finance.delete') }}
             </button>
         </div>
         <div class="flex gap-3">
             <button @click="emit('close')" class="px-4 py-2 rounded-xl text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                Cancel
+                {{ $t('finance.cancel') }}
             </button>
-            <button @click="save" class="px-5 py-2 rounded-xl text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm transition-colors">
-                Save Transaction
+            <button @click="save" class="btn-primary">
+                {{ $t('finance.save_tx') }}
             </button>
         </div>
       </div>
 
-    </div>
-  </div>
+  </AppDialog>
 </template>

@@ -144,7 +144,7 @@ const write = async () => {
         >
             <!-- Said once, at the top, because the whole complaint was that
                  nothing here told you what you were making. -->
-            <p data-is-an-event class="rounded-lg bg-indigo-50 px-2.5 py-2 text-[11px] leading-relaxed text-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200">
+            <p data-is-an-event class="rounded-lg bg-indigo-50 px-2.5 py-2 text-xs leading-relaxed text-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200">
                 {{ $t('nexus.compose_is_an_event') }}
             </p>
 
@@ -169,32 +169,32 @@ const write = async () => {
                         <Sparkles class="h-3.5 w-3.5" />
                     </button>
                 </div>
-                <p class="mt-1 text-[11px] text-gray-400">{{ $t('nexus.compose_ask', { model }) }}</p>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_ask', { model }) }}</p>
             </div>
-            <p v-else data-no-model class="text-[11px] text-gray-500 dark:text-gray-400">
+            <p v-else data-no-model class="text-xs text-gray-500 dark:text-gray-400">
                 {{ $t('nexus.compose_no_model') }}
             </p>
 
             <p v-if="note" data-note class="text-xs text-amber-600 dark:text-amber-400">{{ note }}</p>
 
-            <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_title') }}</label>
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_field_title') }}</label>
             <input v-model="form.title" data-field-title type="text" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
 
             <div class="flex gap-2">
                 <div class="flex-1">
-                    <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_from') }}</label>
+                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_field_from') }}</label>
                     <input v-model="form.from" data-field-from type="date" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
                 </div>
                 <div class="flex-1">
-                    <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_to') }}</label>
+                    <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_field_to') }}</label>
                     <input v-model="form.to" data-field-to type="date" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
                 </div>
             </div>
 
-            <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_people') }}</label>
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_field_people') }}</label>
             <input v-model="form.people" data-field-people type="text" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
 
-            <label class="block text-[11px] font-semibold uppercase tracking-wide text-gray-500">{{ $t('nexus.compose_field_where') }}</label>
+            <label class="block text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ $t('nexus.compose_field_where') }}</label>
             <input v-model="form.place" data-field-where type="text" class="w-full rounded-lg border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-sm dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
 
             <p v-if="saved" data-saved class="text-xs text-green-600 dark:text-green-400">{{ $t('nexus.compose_saved', { title: saved }) }}</p>
@@ -203,7 +203,7 @@ const write = async () => {
             <button
                 type="button"
                 data-write
-                class="w-full rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:opacity-40 dark:bg-white dark:text-gray-900"
+                class="btn-primary w-full"
                 :disabled="!ready || saving"
                 @click="write"
             >

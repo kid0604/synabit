@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { Shield, Delete } from 'lucide-vue-next';
-import { useAppLockStore } from '../../stores/useAppLockStore';
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
+import { Shield, Delete, Copy } from 'lucide-vue-next';
+import { useAppLockStore, pinErrorKey, type ResetChallenge } from '../../stores/useAppLockStore';
+import { useI18n } from 'vue-i18n';
+
+const { t } = useI18n();
 
 const props = withDefaults(defineProps<{
   title: string;
@@ -11,7 +14,12 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{
-  (e: 'unlocked'): void;
+  /**
+   * The PIN checked out. It comes along for a caller whose action the backend
+   * guards as well (`remove_app_lock`, `set_family_safe`) and wants it again;
+   * callers that only needed the check can ignore it.
+   */
+  (e: 'unlocked', pin: string): void;
   (e: 'cancelled'): void;
 }>();
 
@@ -84,17 +92,18 @@ async function verify() {
   errorMessage.value = '';
 
   try {
-    const result = await store.verifyPin(pin.value.join(''));
+    const entered = pin.value.join('');
+    const result = await store.verifyPin(entered);
     if (result.success) {
-      emit('unlocked');
+      emit('unlocked', entered);
     } else {
       remainingAttempts.value = result.remaining_attempts;
 
       if (result.locked_until) {
         startLockoutCountdown(result.locked_until);
-        errorMessage.value = 'Too many attempts. Please wait.';
+        errorMessage.value = t('shell.lock.too_many');
       } else {
-        errorMessage.value = `Wrong PIN. ${result.remaining_attempts} attempt${result.remaining_attempts !== 1 ? 's' : ''} remaining.`;
+        errorMessage.value = t('shell.lock.wrong_pin', { count: result.remaining_attempts }, result.remaining_attempts);
       }
 
       // Shake animation
@@ -105,15 +114,76 @@ async function verify() {
 
       pin.value = [];
     }
-  } catch (e) {
-    errorMessage.value = 'Verification failed. Try again.';
+  } catch {
+    errorMessage.value = t('shell.lock.verify_failed');
     pin.value = [];
   } finally {
     isVerifying.value = false;
   }
 }
 
+// ── Forgot PIN ──
+//
+// The PIN locks the app window, not the files, so forgetting it loses
+// nothing but the way in. A reset that asked only the app could be used by
+// anybody at the app — including whoever a family-safe PIN was set for — so
+// the backend asks for proof of reaching this computer's app-data folder
+// through the operating system instead: a folder with a one-time name, made
+// by hand. See `src-tauri/src/commands/app_lock.rs`.
+const showForgot = ref(false);
+const challenge = ref<ResetChallenge | null>(null);
+const resetUnavailable = ref(false);
+const resetError = ref('');
+const isResetting = ref(false);
+
+async function openForgot() {
+  showForgot.value = true;
+  resetError.value = '';
+  try {
+    challenge.value = await store.beginReset();
+  } catch (e) {
+    // A phone, where the folder cannot be reached; or the folder could not be
+    // made. Either way the explanation still stands on its own.
+    challenge.value = null;
+    resetUnavailable.value = true;
+    if (!pinErrorKey(e)) resetError.value = t('shell.lock.reset_failed');
+  }
+}
+
+async function copyFolder() {
+  if (!challenge.value) return;
+  try {
+    await navigator.clipboard.writeText(challenge.value.folder);
+  } catch {
+    // The path is on screen and selectable; copying is a convenience.
+  }
+}
+
+async function finishReset() {
+  if (isResetting.value) return;
+  isResetting.value = true;
+  resetError.value = '';
+  try {
+    await store.finishReset();
+    // Every lock screen shown because a PIN is set is gone with it. One shown
+    // for a pending action (a settings change) is closed without doing that
+    // action: it can be done again now, deliberately. Vue drops the event if
+    // this screen was already removed.
+    await nextTick();
+    emit('cancelled');
+  } catch (e) {
+    const key = pinErrorKey(e);
+    resetError.value = t(key ?? 'shell.lock.reset_failed');
+  } finally {
+    isResetting.value = false;
+  }
+}
+
 function onKeyDown(e: KeyboardEvent) {
+  if (showForgot.value) {
+    if (e.key === 'Escape') showForgot.value = false;
+    return;
+  }
   if (e.key >= '0' && e.key <= '9') {
     addDigit(e.key);
   } else if (e.key === 'Backspace') {
@@ -145,9 +215,11 @@ const numPadKeys = [
 <template>
   <Teleport to="body">
     <Transition appear name="lockscreen">
-      <div v-show="true" class="fixed inset-0 z-[9999] flex items-center justify-center select-none lock-backdrop">
-        <!-- Gradient background layer -->
-        <div class="absolute inset-0 bg-gradient-to-br from-[#fdfdfc] via-[#f0eff5] to-[#e8e6f0] dark:from-[#1a1a2e] dark:via-[#16162a] dark:to-[#0f0f1a]"></div>
+      <!-- Above everything, raised dialogs (10000) included: a lock that a
+           dialog can sit on top of is not a lock. -->
+      <div v-show="true" class="fixed inset-0 z-[20000] flex items-center justify-center select-none lock-backdrop">
+        <!-- Background layer -->
+        <div class="absolute inset-0 bg-base dark:bg-base-dark"></div>
 
         <!-- Subtle pattern overlay -->
         <div class="absolute inset-0 opacity-[0.03] dark:opacity-[0.05]"
@@ -158,16 +230,16 @@ const numPadKeys = [
         <div class="relative z-10 flex flex-col items-center w-full max-w-[340px] px-8 py-10">
 
           <!-- App Icon -->
-          <div class="w-20 h-20 rounded-[22px] bg-gradient-to-br from-[#7c3aed] to-[#a78bfa] dark:from-[#a78bfa] dark:to-[#7c3aed] flex items-center justify-center shadow-lg shadow-purple-500/20 dark:shadow-purple-400/10 mb-6">
+          <div class="w-20 h-20 rounded-[22px] bg-accent flex items-center justify-center shadow-lg shadow-accent/20 mb-6">
             <Shield class="w-10 h-10 text-white" :stroke-width="1.5" />
           </div>
 
           <!-- Title -->
-          <h1 class="text-[17px] font-semibold text-[#1c1c1e] dark:text-[#f4f4f5] mb-1 text-center">
+          <h1 class="text-[17px] font-semibold text-text dark:text-text-dark mb-1 text-center">
             {{ title }}
           </h1>
-          <p class="text-[13px] text-[#8b8b8b] dark:text-[#71717a] mb-8 text-center">
-            Enter your 6-digit PIN
+          <p class="text-[13px] text-muted dark:text-muted-dark mb-8 text-center">
+            {{ $t('shell.lock.enter_pin') }}
           </p>
 
           <!-- PIN Dots -->
@@ -181,7 +253,7 @@ const numPadKeys = [
               class="w-3.5 h-3.5 rounded-full border-2 transition-all duration-200 ease-out"
               :class="[
                 i <= pin.length
-                  ? 'bg-[#7c3aed] dark:bg-[#a78bfa] border-[#7c3aed] dark:border-[#a78bfa] scale-110'
+                  ? 'bg-accent dark:bg-accent-dark border-accent dark:border-accent-dark scale-110'
                   : 'bg-transparent border-[#d4d4d8] dark:border-[#3f3f46]',
                 errorMessage && pin.length === 0 ? 'border-red-400 dark:border-red-500' : ''
               ]"
@@ -190,7 +262,7 @@ const numPadKeys = [
 
           <!-- Error Message -->
           <Transition name="fade">
-            <p v-if="errorMessage && !isLockedOut" class="text-[12px] text-red-500 dark:text-red-400 font-medium mb-4 text-center min-h-[18px]">
+            <p v-if="errorMessage && !isLockedOut" role="alert" class="text-[12px] text-red-500 dark:text-red-400 font-medium mb-4 text-center min-h-[18px]">
               {{ errorMessage }}
             </p>
           </Transition>
@@ -200,14 +272,14 @@ const numPadKeys = [
             <div v-if="isLockedOut" class="flex flex-col items-center mb-4">
               <div class="px-4 py-2 rounded-xl bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800/40">
                 <p class="text-[12px] text-red-600 dark:text-red-400 font-semibold text-center">
-                  Locked out · Try again in {{ formattedCountdown }}
+                  {{ $t('shell.lock.locked_out', { time: formattedCountdown }) }}
                 </p>
               </div>
             </div>
           </Transition>
 
           <!-- Number Pad -->
-          <div class="grid grid-cols-3 gap-3 w-full max-w-[260px]">
+          <div v-if="!showForgot" class="grid grid-cols-3 gap-3 w-full max-w-[260px]">
             <template v-for="(row, ri) in numPadKeys" :key="ri">
               <template v-for="key in row" :key="key">
                 <!-- Backspace -->
@@ -216,7 +288,7 @@ const numPadKeys = [
                   @click="removeDigit"
                   :disabled="isLockedOut || isVerifying || pin.length === 0"
                   class="numpad-btn numpad-action"
-                 aria-label="Remove Digit">
+                 :aria-label="$t('shell.lock.remove_digit')">
                   <Delete class="w-5 h-5" />
                 </button>
 
@@ -239,18 +311,77 @@ const numPadKeys = [
           <!-- Verifying indicator -->
           <Transition name="fade">
             <div v-if="isVerifying" class="mt-6 flex items-center gap-2">
-              <div class="w-4 h-4 border-2 border-[#7c3aed] dark:border-[#a78bfa] border-t-transparent rounded-full animate-spin"></div>
-              <span class="text-[12px] text-[#8b8b8b] dark:text-[#71717a]">Verifying…</span>
+              <div class="w-4 h-4 border-2 border-accent dark:border-accent-dark border-t-transparent rounded-full animate-spin"></div>
+              <span class="text-[12px] text-muted dark:text-muted-dark">{{ $t('shell.lock.verifying') }}</span>
             </div>
           </Transition>
+
+          <!-- Forgot PIN: what the PIN does and does not guard, and the reset. -->
+          <button
+            v-if="!showForgot"
+            type="button"
+            class="mt-6 text-[13px] text-accent dark:text-accent-dark hover:underline"
+            @click="openForgot"
+          >
+            {{ $t('shell.lock.forgot') }}
+          </button>
+          <div v-else class="w-full max-w-[300px] text-left select-text">
+            <p class="text-[13px] text-text dark:text-text-dark leading-relaxed mb-3">
+              {{ $t('shell.lock.forgot_hint') }}
+            </p>
+            <template v-if="challenge">
+              <p class="text-xs text-[#6b6b6b] dark:text-[#8b8b93] leading-relaxed mb-1">
+                {{ $t('shell.lock.reset_steps') }}
+              </p>
+              <code data-reset-name class="block break-all text-xs px-2 py-1.5 mb-2 rounded-lg bg-black/5 dark:bg-white/5 text-text dark:text-text-dark">{{ challenge.name }}</code>
+              <p class="text-xs text-[#6b6b6b] dark:text-[#8b8b93] leading-relaxed mb-1">
+                {{ $t('shell.lock.reset_where') }}
+              </p>
+              <div class="flex items-start gap-2 mb-2">
+                <code data-reset-folder class="flex-1 min-w-0 break-all text-xs px-2 py-1.5 rounded-lg bg-black/5 dark:bg-white/5 text-text dark:text-text-dark">{{ challenge.folder }}</code>
+                <button
+                  type="button"
+                  class="btn-icon shrink-0"
+                  :aria-label="$t('shell.lock.copy_folder')"
+                  :title="$t('shell.lock.copy_folder')"
+                  @click="copyFolder"
+                >
+                  <Copy class="w-4 h-4" />
+                </button>
+              </div>
+              <p class="text-xs text-[#6b6b6b] dark:text-[#8b8b93] leading-relaxed mb-3">
+                {{ $t('shell.lock.reset_warning') }}
+              </p>
+            </template>
+            <p v-else-if="resetUnavailable" class="text-xs text-[#6b6b6b] dark:text-[#8b8b93] leading-relaxed mb-3">
+              {{ $t('shell.lock.reset_not_here') }}
+            </p>
+            <p v-if="resetError" role="alert" class="text-[12px] text-red-500 dark:text-red-400 font-medium mb-3">
+              {{ resetError }}
+            </p>
+            <div class="flex gap-2 justify-end">
+              <button type="button" class="btn-secondary" @click="showForgot = false">
+                {{ $t('shell.common.back') }}
+              </button>
+              <button
+                v-if="challenge"
+                type="button"
+                class="btn-primary"
+                :disabled="isResetting"
+                @click="finishReset"
+              >
+                {{ $t('shell.lock.reset_pin') }}
+              </button>
+            </div>
+          </div>
 
           <!-- Cancel button -->
           <button
             v-if="props.cancellable"
             @click="emit('cancelled')"
-            class="mt-6 px-6 py-2 text-[13px] text-[#8b8b8b] dark:text-[#71717a] hover:text-[#1c1c1e] dark:hover:text-[#f4f4f5] hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors"
+            class="mt-6 px-6 py-2 text-[13px] text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark hover:bg-black/5 dark:hover:bg-white/5 rounded-lg transition-colors"
           >
-            Cancel
+            {{ $t('shell.common.cancel') }}
           </button>
         </div>
       </div>

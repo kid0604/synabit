@@ -27,6 +27,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { FileText, FilePlus, CheckSquare, Search, CornerDownLeft, Calendar, User, Wallet } from 'lucide-vue-next';
 
 import { logger } from '../../utils/logger';
+import AppDialog from '../../shared/components/AppDialog.vue';
 
 export type PromoteTarget =
   | { kind: 'new-note' }
@@ -183,20 +184,27 @@ const choose = (index: number) => {
   });
 };
 
+/**
+ * Back out one step rather than closing outright: the note picker is a place
+ * you can arrive at by mistake. Escape reaches this from inside the dialog,
+ * which keeps it from the dialog's own close-on-Escape.
+ */
+const backOut = () => {
+  if (step.value !== 'destinations') {
+    step.value = 'destinations';
+    query.value = '';
+    highlighted.value = 0;
+    void focusInput();
+  } else {
+    emit('close');
+  }
+};
+
 const onKeydown = (event: KeyboardEvent) => {
   switch (event.key) {
     case 'Escape':
       event.preventDefault();
-      // Back out one step rather than closing outright: the note picker is a
-      // place you can arrive at by mistake.
-      if (step.value !== 'destinations') {
-        step.value = 'destinations';
-        query.value = '';
-        highlighted.value = 0;
-        void focusInput();
-      } else {
-        emit('close');
-      }
+      backOut();
       return;
     case 'ArrowDown':
       event.preventDefault();
@@ -227,21 +235,23 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div
-    class="fixed inset-0 z-[130] flex items-start justify-center p-4 pt-[12vh] bg-black/40 dark:bg-black/60 backdrop-blur-sm"
-    @click="emit('close')"
+  <!-- Elevated: it is also opened from inside a cap's full view. -->
+  <AppDialog
+    :show="true"
+    :aria-label="$t('quickcap.promote')"
+    :initial-focus="() => inputRef"
+    elevated
+    panel-class="!overflow-hidden"
+    @close="emit('close')"
   >
-    <div
-      class="w-full max-w-lg rounded-2xl bg-white dark:bg-[#1e1e1e] border border-[#e6e6e6] dark:border-[#2c2c2c] shadow-xl overflow-hidden flex flex-col"
-      @click.stop
-    >
-      <div class="flex items-center gap-3 px-4 py-3 border-b border-[#e6e6e6] dark:border-[#2c2c2c]">
-        <Search class="w-4 h-4 text-gray-400 shrink-0" />
+    <div class="flex flex-col" @keydown.esc.stop.prevent="backOut">
+      <div class="flex items-center gap-3 px-4 py-3 border-b border-border dark:border-border-dark">
+        <Search class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
         <input
           ref="inputRef"
           v-model="query"
           type="text"
-          class="flex-1 bg-transparent outline-none text-[15px] text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-400"
+          class="flex-1 bg-transparent outline-none text-[15px] text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400"
           :placeholder="step === 'destinations' ? $t('quickcap.promote_placeholder') : step === 'pick-person' ? $t('quickcap.promote_find_person') : $t('quickcap.promote_find_note')"
         />
       </div>
@@ -254,14 +264,14 @@ onUnmounted(() => {
             @click="choose(index)"
             @mouseenter="highlighted = index"
             class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors cursor-pointer"
-            :class="highlighted === index ? 'bg-gray-100 dark:bg-[#2a2a2a]' : ''"
+            :class="highlighted === index ? 'bg-gray-100 dark:bg-surface-hover-dark' : ''"
           >
-            <component :is="destination.icon" class="w-4 h-4 text-gray-500 shrink-0" />
+            <component :is="destination.icon" class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
             <span class="flex-1 min-w-0">
-              <span class="block text-[14px] text-[#1c1c1e] dark:text-[#f4f4f5]">{{ $t(`quickcap.${destination.label}`) }}</span>
-              <span class="block text-[11px] text-gray-400 dark:text-gray-500">{{ $t(`quickcap.${destination.hint}`) }}</span>
+              <span class="block text-[14px] text-text dark:text-text-dark">{{ $t(`quickcap.${destination.label}`) }}</span>
+              <span class="block text-xs text-gray-500 dark:text-gray-400">{{ $t(`quickcap.${destination.hint}`) }}</span>
             </span>
-            <CornerDownLeft v-if="highlighted === index" class="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <CornerDownLeft v-if="highlighted === index" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 shrink-0" />
           </button>
         </template>
 
@@ -272,14 +282,14 @@ onUnmounted(() => {
             @click="choose(index)"
             @mouseenter="highlighted = index"
             class="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors cursor-pointer"
-            :class="highlighted === index ? 'bg-gray-100 dark:bg-[#2a2a2a]' : ''"
+            :class="highlighted === index ? 'bg-gray-100 dark:bg-surface-hover-dark' : ''"
           >
-            <component :is="step === 'pick-person' ? User : FileText" class="w-4 h-4 text-gray-500 shrink-0" />
-            <span class="flex-1 min-w-0 truncate text-[14px] text-[#1c1c1e] dark:text-[#f4f4f5]">{{ hit.title }}</span>
-            <CornerDownLeft v-if="highlighted === index" class="w-3.5 h-3.5 text-gray-400 shrink-0" />
+            <component :is="step === 'pick-person' ? User : FileText" class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
+            <span class="flex-1 min-w-0 truncate text-[14px] text-text dark:text-text-dark">{{ hit.title }}</span>
+            <CornerDownLeft v-if="highlighted === index" class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 shrink-0" />
           </button>
 
-          <p v-if="!isSearching && visibleHits.length === 0" class="px-4 py-6 text-center text-[13px] text-gray-400">
+          <p v-if="!isSearching && visibleHits.length === 0" class="px-4 py-6 text-center text-[13px] text-gray-500 dark:text-gray-400">
             {{ step === 'pick-person'
                 ? $t('quickcap.promote_no_people')
                 : query.trim() ? $t('quickcap.promote_no_notes') : $t('quickcap.promote_find_note') }}
@@ -287,9 +297,9 @@ onUnmounted(() => {
         </template>
       </div>
 
-      <div class="px-4 py-2 border-t border-[#e6e6e6] dark:border-[#2c2c2c] text-[11px] text-gray-400 dark:text-gray-500 select-none">
+      <div class="px-4 py-2 border-t border-border dark:border-border-dark text-xs text-gray-500 dark:text-gray-400 select-none">
         {{ $t('quickcap.promote_hint') }}
       </div>
     </div>
-  </div>
+  </AppDialog>
 </template>

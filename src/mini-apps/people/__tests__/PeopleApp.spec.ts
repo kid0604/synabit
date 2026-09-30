@@ -133,9 +133,23 @@ describe('PeopleApp', () => {
     await (wrapper.vm as any).deletePerson(people[2]); // Binh
     await flushPromises();
 
-    expect(vi.mocked(dialog.ask)).toHaveBeenCalledOnce();
+    // No question, and nothing written until the undo window closes.
+    expect(vi.mocked(dialog.ask)).not.toHaveBeenCalled();
+    expect(callsTo('delete_node_file')).toEqual([]);
+    expect((wrapper.vm as any).people.map((p: any) => p.id)).not.toContain('People/binh.md');
 
-    // An held the other end of the link; it has to go before the node does.
+    await (wrapper.vm as any).personUndo.commit();
+    await flushPromises();
+
+    // The person goes to the trash first — the step most likely to fail,
+    // and the one the tidying up after it depends on.
+    const order = vi.mocked(core.invoke).mock.calls
+      .map(([c]) => c)
+      .filter(c => c === 'trash_node_file' || c === 'write_node_file' || c === 'delete_node_file');
+    expect(order[0]).toBe('trash_node_file');
+    expect(callsTo('trash_node_file').map(a => a.relPath)).toEqual(['People/binh.md']);
+
+    // An held the other end of the link.
     const writes = callsTo('write_node_file');
     expect(writes).toHaveLength(1);
     expect(writes[0].relPath).toBe('People/an.md');
@@ -146,8 +160,26 @@ describe('PeopleApp', () => {
     // clear it, so a deleted person's birthday came round every year forever.
     expect(callsTo('delete_node_file').map(a => a.relPath)).toEqual([
       'Events/birthday-people-binh.md',
-      'People/binh.md',
     ]);
+    wrapper.unmount();
+  });
+
+  it('touches nobody else, and puts them back whole, when the trash fails', async () => {
+    const base = vi.mocked(core.invoke).getMockImplementation()!;
+    vi.mocked(core.invoke).mockImplementation((cmd: string, args?: any) =>
+      cmd === 'trash_node_file' ? Promise.reject(new Error('disk full')) : base(cmd, args));
+    const wrapper = mountApp();
+    await flushPromises();
+
+    await (wrapper.vm as any).deletePerson(people[2]);
+    await (wrapper.vm as any).personUndo.commit();
+    await flushPromises();
+
+    // Links and birthday were left alone, so the person who came back still
+    // has both.
+    expect(callsTo('write_node_file')).toEqual([]);
+    expect(callsTo('delete_node_file')).toEqual([]);
+    expect((wrapper.vm as any).people.map((p: any) => p.id)).toContain('People/binh.md');
     wrapper.unmount();
   });
 
@@ -161,14 +193,17 @@ describe('PeopleApp', () => {
     wrapper.unmount();
   });
 
-  it('deletes nothing when the confirmation is declined', async () => {
-    vi.mocked(dialog.ask).mockResolvedValueOnce(false);
+  it('deletes nothing, and puts them back, when Undo is pressed', async () => {
     const wrapper = mountApp();
     await flushPromises();
 
     await (wrapper.vm as any).deletePerson(people[2]);
     await flushPromises();
+    (wrapper.vm as any).personUndo.undo();
+    await (wrapper.vm as any).personUndo.commit();
+    await flushPromises();
 
+    expect((wrapper.vm as any).people.map((p: any) => p.id)).toContain('People/binh.md');
     expect(callsTo('delete_node_file')).toEqual([]);
     expect(callsTo('write_node_file')).toEqual([]);
     wrapper.unmount();
@@ -179,9 +214,9 @@ describe('PeopleApp', () => {
     await flushPromises();
 
     await (wrapper.vm as any).deletePerson(people[0]);
+    await (wrapper.vm as any).personUndo.commit();
     await flushPromises();
 
-    expect(vi.mocked(dialog.ask)).not.toHaveBeenCalled();
     expect(callsTo('delete_node_file')).toEqual([]);
     wrapper.unmount();
   });

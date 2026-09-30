@@ -216,14 +216,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
     <div ref="containerRef" class="image-container" :class="{ 'is-resizing': isResizing }">
       <!-- Toolbar -->
       <div v-if="selected" class="image-toolbar w-max flex items-center gap-1 p-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-lg shadow-lg">
-        <button @mousedown.stop.prevent="align = 'left'" @touchstart.stop.prevent="align = 'left'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'left' }" title="Align Left"><AlignLeft class="w-4 h-4"/></button>
-        <button @mousedown.stop.prevent="align = 'center'" @touchstart.stop.prevent="align = 'center'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'center' }" title="Align Center"><AlignCenter class="w-4 h-4"/></button>
-        <button @mousedown.stop.prevent="align = 'right'" @touchstart.stop.prevent="align = 'right'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'right' }" title="Align Right"><AlignRight class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="align = 'left'" @touchstart.stop.prevent="align = 'left'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'left' }" :title="$t('note.editor.align_left')"><AlignLeft class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="align = 'center'" @touchstart.stop.prevent="align = 'center'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'center' }" :title="$t('note.editor.align_center')"><AlignCenter class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="align = 'right'" @touchstart.stop.prevent="align = 'right'" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :class="{ 'bg-accent/10 text-accent dark:text-accent-dark': align === 'right' }" :title="$t('note.editor.align_right')"><AlignRight class="w-4 h-4"/></button>
         <div class="w-[1px] h-4 bg-border dark:bg-border-dark mx-1"></div>
-        <button @mousedown.stop.prevent="rotate(-90)" @touchstart.stop.prevent="rotate(-90)" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" title="Rotate Left"><RotateCcw class="w-4 h-4"/></button>
-        <button @mousedown.stop.prevent="rotate(90)" @touchstart.stop.prevent="rotate(90)" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" title="Rotate Right"><RotateCw class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="rotate(-90)" @touchstart.stop.prevent="rotate(-90)" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :title="$t('note.editor.image.rotate_left')"><RotateCcw class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="rotate(90)" @touchstart.stop.prevent="rotate(90)" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors" :title="$t('note.editor.image.rotate_right')"><RotateCw class="w-4 h-4"/></button>
         <div class="w-[1px] h-4 bg-border dark:bg-border-dark mx-1"></div>
-        <button @mousedown.stop.prevent="deleteNode" @touchstart.stop.prevent="deleteNode" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark transition-colors text-danger hover:bg-danger/10" title="Delete"><Trash2 class="w-4 h-4"/></button>
+        <button @mousedown.stop.prevent="deleteNode" @touchstart.stop.prevent="deleteNode" class="p-1.5 rounded text-text-secondary dark:text-text-secondary-dark transition-colors text-danger hover:bg-danger/10" :title="$t('note.delete')"><Trash2 class="w-4 h-4"/></button>
       </div>
 
       <!-- Bounding Box -->
@@ -264,7 +264,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
               @mousedown.stop.prevent="openLightbox"
               @touchstart.stop.prevent="openLightbox"
               class="absolute top-2 right-2 p-1.5 bg-black/50 hover:bg-black/80 text-white rounded-full backdrop-blur-sm transition-colors pointer-events-auto"
-              title="Expand Image"
+              :title="$t('note.editor.image.expand')"
             >
               <Maximize2 class="w-4 h-4" />
             </button>
@@ -285,7 +285,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
         v-if="selected || caption"
         v-model="caption"
         type="text"
-        placeholder="Add a caption..."
+        :placeholder="$t('note.editor.image.caption_placeholder')"
         class="caption-input select-text cursor-text mt-2 text-sm text-center bg-transparent border-none outline-none text-text-secondary dark:text-text-secondary-dark placeholder-muted dark:placeholder-muted-dark w-full max-w-sm transition-opacity"
         :class="{ 'opacity-50': !selected && !caption }"
         @keydown.stop
@@ -303,7 +303,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
         <button 
           @click.stop="closeLightbox" 
           class="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all z-50"
-         aria-label="Close Lightbox">
+         :aria-label="$t('note.editor.image.close_viewer')">
           <X class="w-6 h-6" />
         </button>
 

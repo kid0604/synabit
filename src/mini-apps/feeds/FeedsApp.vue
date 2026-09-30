@@ -3,12 +3,13 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { usePlatform } from '../../composables/usePlatform';
-import { Rss, RefreshCw, Plus, PanelLeft, Settings, Filter, X } from 'lucide-vue-next';
+import { Rss, RefreshCw, Plus, Settings, Filter, X } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
-import { ask } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import NavButtons from '../../shared/components/NavButtons.vue';
+import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
+import { showAppNotice } from '../../composables/useAppNotice';
 
 import FeedsSidebar from './components/FeedsSidebar.vue';
 import ArticleList from './components/ArticleList.vue';
@@ -117,6 +118,16 @@ const startResize = (panel: 'sidebar' | 'articleList', e: MouseEvent) => {
   document.addEventListener('mouseup', onMouseUp);
 };
 
+// The same edges from the keyboard: each handle is a focusable `separator`,
+// the ARIA pattern for a window splitter, and the arrow keys move it.
+const nudgeResize = (panel: 'sidebar' | 'articleList', by: number) => {
+  if (panel === 'sidebar') {
+    sidebarWidth.value = Math.max(180, Math.min(400, sidebarWidth.value + by));
+  } else {
+    articleListWidth.value = Math.max(280, Math.min(600, articleListWidth.value + by));
+  }
+};
+
 // The feeds the current selection covers. `undefined` means every feed;
 // a category resolves to its members here, where the category-to-feed
 // mapping actually lives.
@@ -152,7 +163,8 @@ const loadData = async () => {
       feedService.getUnreadCounts(),
       feedService.getViewCounts(),
     ]);
-    sources.value = s;
+    // A feed waiting out its undo window is gone as far as the screen knows.
+    sources.value = s.filter(src => !pendingRemovalIds.value.has(src.id));
     categories.value = c;
     const firstLoad = !configLoaded.value;
     config.value = cfg;
@@ -173,7 +185,8 @@ const loadData = async () => {
 const loadArticles = async () => {
   try {
     if (searchQuery.value) {
-      articles.value = await feedService.searchArticles(searchQuery.value, scopedSourceIds.value);
+      articles.value = (await feedService.searchArticles(searchQuery.value, scopedSourceIds.value))
+        .filter(a => !pendingRemovalIds.value.has(a.feedSourceId));
       // Search answers in one batch; there is no second page to ask for.
       hasMore.value = false;
     } else {
@@ -183,7 +196,7 @@ const loadArticles = async () => {
       // the top by something happening in the background.
       const loaded = Math.max(PAGE_SIZE, articles.value.length);
       const page = await feedService.getArticles({ ...currentFilter.value, limit: loaded });
-      articles.value = page;
+      articles.value = page.filter(a => !pendingRemovalIds.value.has(a.feedSourceId));
       hasMore.value = page.length === loaded;
     }
   } catch (e) {
@@ -328,11 +341,32 @@ const markReadWithUndo = async (sourceIds: string[] | undefined) => {
   if (changed.length === 0) return;
 
   pendingMarkRead.value = { ids: changed };
+  armMarkRead(UNDO_SECONDS * 1000);
+};
+
+/** When the running timer ends the undo, so a pause can keep what was left. */
+let markReadDeadline = 0;
+let markReadRemaining = 0;
+
+function armMarkRead(ms: number) {
   if (markReadTimer) clearTimeout(markReadTimer);
+  markReadDeadline = Date.now() + ms;
   markReadTimer = setTimeout(() => {
     pendingMarkRead.value = null;
     markReadTimer = null;
-  }, UNDO_SECONDS * 1000);
+  }, ms);
+}
+
+/** Hold the undo while the pointer or focus is on its toast (WCAG 2.2.1). */
+const pauseMarkRead = () => {
+  if (!pendingMarkRead.value || !markReadTimer) return;
+  markReadRemaining = Math.max(0, markReadDeadline - Date.now());
+  clearTimeout(markReadTimer);
+  markReadTimer = null;
+};
+
+const resumeMarkRead = () => {
+  if (pendingMarkRead.value && !markReadTimer) armMarkRead(markReadRemaining);
 };
 
 const undoMarkRead = async () => {
@@ -416,14 +450,64 @@ const handleFeedAdded = async () => {
   await loadData();
 };
 
+/**
+ * Unsubscribing, held back for a few seconds rather than asked about.
+ *
+ * The feed leaves the sidebar (and its articles the list) at once; the real
+ * removal happens when the undo window closes. Until then `loadData` keeps it
+ * hidden, so a sync or a vault event in the meantime does not bring it back.
+ */
+/**
+ * A set, not one id: a removal committing while the next one is already
+ * waiting must not stop the lists hiding the second — a single id cleared by
+ * the first commit's `finally` let a reload put the second feed back under
+ * its own toast.
+ */
+const pendingRemovalIds = ref<Set<string>>(new Set());
+const setRemovalPending = (id: string, on: boolean) => {
+  const next = new Set(pendingRemovalIds.value);
+  if (on) next.add(id);
+  else next.delete(id);
+  pendingRemovalIds.value = next;
+};
+const removal = useUndoableAction({
+  onError: (e) => {
+    logger.error('Failed to remove feed', e);
+    showAppNotice(t('feeds.remove_failed'), 'error');
+  },
+});
+
 const handleRemoveSource = async (sourceId: string) => {
   const source = sources.value.find(s => s.id === sourceId);
   const name = source?.title || sourceId;
-  const yes = await ask(`${t('feeds.confirm_remove_source')}\n\n${name}`, { title: t('feeds.remove_source'), kind: 'warning' });
-  if (!yes) return;
-  await feedService.removeSource(sourceId);
-  if (selectedSourceId.value === sourceId) selectedSourceId.value = null;
-  await loadData();
+  setRemovalPending(sourceId, true);
+  sources.value = sources.value.filter(s => s.id !== sourceId);
+  articles.value = articles.value.filter(a => a.feedSourceId !== sourceId);
+  if (selectedArticle.value?.feedSourceId === sourceId) selectedArticle.value = null;
+  if (selectedSourceId.value === sourceId) handleSelectSource(null);
+
+  // Starting another removal commits the one before; `run` takes care of it.
+  await removal.run(
+    t('feeds.source_removed', { name }),
+    async () => {
+      try {
+        await feedService.removeSource(sourceId);
+      } finally {
+        setRemovalPending(sourceId, false);
+      }
+      // The feed is gone; a reload that fails must not report the removal as
+      // failed and put the feed back on screen.
+      try {
+        await loadData();
+      } catch (e) {
+        logger.error('Reload after removing a feed failed', e);
+      }
+    },
+    () => {
+      setRemovalPending(sourceId, false);
+      void loadData();
+    },
+  );
 };
 
 const handleRenameSource = async (sourceId: string, newTitle: string) => {
@@ -717,50 +801,67 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
   <div class="flex-1 flex flex-col h-full bg-base dark:bg-base-dark overflow-hidden relative">
     <!-- Loading -->
     <div v-if="loading && sources.length === 0" class="absolute inset-0 flex items-center justify-center z-[100] bg-base/50 dark:bg-base-dark/50">
-      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+      <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-accent"></div>
     </div>
 
-    <!-- Topbar -->
-    <div class="flex items-center justify-between p-4 md:p-6 shrink-0 border-b border-border dark:border-border-dark md:border-none">
-      <div class="flex items-center gap-2 md:gap-3">
-        <NavButtons />
-        <button @click="isSidebarOpen = !isSidebarOpen" class="md:hidden p-2 -ml-2 rounded-xl text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" :aria-label="t('feeds.a11y_toggle_sidebar')">
-            <PanelLeft class="w-6 h-6" />
+    <AppHeader
+      :title="t('feeds.title')"
+      :subtitle="t('feeds.subtitle')"
+      :icon="Rss"
+      :sidebar-label="t('feeds.a11y_toggle_sidebar')"
+      :primary-label="t('feeds.add_feed')"
+      :primary-icon="Plus"
+      @open-sidebar="isSidebarOpen = !isSidebarOpen"
+      @primary="showAddFeedModal = true"
+    >
+      <template #actions>
+        <button type="button" class="btn-icon disabled:opacity-50" :disabled="refreshing" :aria-label="t('feeds.refresh_all')" :title="t('feeds.refresh_all')" @click="handleRefresh">
+          <RefreshCw class="w-5 h-5" :class="{ 'animate-spin': refreshing }" aria-hidden="true" />
         </button>
-        <h1 class="text-xl md:text-2xl font-bold flex items-center gap-2">
-          <Rss class="w-5 h-5 md:w-6 md:h-6 text-orange-500" />
-          {{ t('feeds.title') }}
-        </h1>
-        <p class="hidden md:block text-sm text-gray-500 dark:text-gray-400 ml-2">{{ t('feeds.subtitle') }}</p>
-      </div>
-      <div class="flex items-center gap-2 md:gap-3">
-        <button @click="handleRefresh" :disabled="refreshing" class="p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50" :title="t('feeds.refresh_all')">
-          <RefreshCw class="w-5 h-5" :class="{ 'animate-spin': refreshing }" />
+        <button type="button" class="btn-icon" :aria-label="t('feeds.rules')" :title="t('feeds.rules')" @click="showRulesModal = true">
+          <Filter class="w-5 h-5" aria-hidden="true" />
         </button>
-        <button @click="showRulesModal = true" class="p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm" :title="t('feeds.rules')">
-          <Filter class="w-5 h-5" />
+        <button type="button" class="btn-icon" :aria-label="t('feeds.settings')" :title="t('feeds.settings')" @click="showSettingsModal = true">
+          <Settings class="w-5 h-5" aria-hidden="true" />
         </button>
-        <button @click="showSettingsModal = true" class="p-2.5 rounded-xl bg-surface dark:bg-surface-dark border border-border dark:border-border-dark text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shadow-sm" :title="t('feeds.settings')">
-          <Settings class="w-5 h-5" />
-        </button>
-        <button @click="showAddFeedModal = true" class="hidden md:flex items-center gap-2 px-4 py-2.5 rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-colors shadow-sm font-medium">
-          <Plus class="w-5 h-5" />
-          <span>{{ t('feeds.add_feed') }}</span>
-        </button>
-      </div>
-    </div>
+      </template>
+    </AppHeader>
 
     <!-- Main Content -->
     <div class="flex-1 flex gap-0 overflow-hidden">
       <template v-if="!useMobileLayout">
         <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :view-counts="viewCounts" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @rename-source="handleRenameSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" @toggle-full-text="handleToggleFullText" @set-scrape-container="handleSetScrapeContainer" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: sidebarWidth + 'px' }" />
-        <div class="resize-handle" @mousedown="startResize('sidebar', $event)"><div class="resize-line"></div></div>
-        <ArticleList :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" :has-more="hasMore" :loading-more="loadingMore" :sort-order="config.sortOrder" :mark-read-on-scroll="config.markReadOnScroll" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="handleViewModeChange" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" @load-more="loadMoreArticles" @update:sort-order="handleSortChange" @mark-read="handleMarkArticleRead" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: articleListWidth + 'px' }" />
-        <div class="resize-handle" @mousedown="startResize('articleList', $event)"><div class="resize-line"></div></div>
+        <div
+          class="resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          tabindex="0"
+          :aria-label="t('feeds.resize_sidebar')"
+          :aria-valuenow="sidebarWidth"
+          :aria-valuemin="180"
+          :aria-valuemax="400"
+          @mousedown="startResize('sidebar', $event)"
+          @keydown.left.prevent="nudgeResize('sidebar', -24)"
+          @keydown.right.prevent="nudgeResize('sidebar', 24)"
+        ><div class="resize-line"></div></div>
+        <ArticleList :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" :has-more="hasMore" :loading-more="loadingMore" :sort-order="config.sortOrder" :mark-read-on-scroll="config.markReadOnScroll" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="handleViewModeChange" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" @load-more="loadMoreArticles" @update:sort-order="handleSortChange" @mark-read="handleMarkArticleRead" @add-feed="showAddFeedModal = true" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: articleListWidth + 'px' }" />
+        <div
+          class="resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          tabindex="0"
+          :aria-label="t('feeds.resize_article_list')"
+          :aria-valuenow="articleListWidth"
+          :aria-valuemin="280"
+          :aria-valuemax="600"
+          @mousedown="startResize('articleList', $event)"
+          @keydown.left.prevent="nudgeResize('articleList', -24)"
+          @keydown.right.prevent="nudgeResize('articleList', 24)"
+        ><div class="resize-line"></div></div>
         <ArticleReader :article="selectedArticle" :config="config" :sources="sources" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" @highlights-to-note="handleHighlightsToNote" class="flex-1 min-w-0" />
       </template>
       <template v-else>
-        <ArticleList v-if="mobilePanel === 'list'" :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" :has-more="hasMore" :loading-more="loadingMore" :sort-order="config.sortOrder" :mark-read-on-scroll="config.markReadOnScroll" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="handleViewModeChange" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" @load-more="loadMoreArticles" @update:sort-order="handleSortChange" @mark-read="handleMarkArticleRead" class="flex-1" />
+        <ArticleList v-if="mobilePanel === 'list'" :articles="articles" :selected-article="selectedArticle" :sources="sources" :search-query="searchQuery" :current-view="currentView" :refreshing="refreshing" :view-mode="viewMode" :has-more="hasMore" :loading-more="loadingMore" :sort-order="config.sortOrder" :mark-read-on-scroll="config.markReadOnScroll" @select-article="handleSelectArticle" @update:search-query="handleSearchUpdate" @update:view-mode="handleViewModeChange" @mark-all-read="handleMarkAllRead" @refresh="handleRefresh" @load-more="loadMoreArticles" @update:sort-order="handleSortChange" @mark-read="handleMarkArticleRead" @add-feed="showAddFeedModal = true" class="flex-1" />
         <ArticleReader v-else :article="selectedArticle" :config="config" :sources="sources" :show-back-button="true" @back="handleMobileBack" @toggle-star="handleToggleStar" @toggle-read-later="handleToggleReadLater" @clip-to-note="handleClipToNote" @quick-capture="handleQuickCapture" @create-task="handleCreateTask" @article-updated="handleArticleUpdated" @highlights-to-note="handleHighlightsToNote" class="flex-1" />
       
         <!-- Mobile Sidebar Drawer -->
@@ -768,8 +869,8 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
             <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="isSidebarOpen = false"></div>
             <div class="relative w-[280px] bg-base dark:bg-base-dark flex flex-col shadow-2xl h-full border-r border-border dark:border-border-dark" @click.stop>
                <div class="flex items-center justify-between p-4 shrink-0 border-b border-border dark:border-border-dark">
-                    <span class="font-bold text-lg text-text dark:text-text-dark">Feeds Menu</span>
-                    <button @click="isSidebarOpen = false" class="p-2 -mr-2 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" :aria-label="t('feeds.a11y_close')">
+                    <span class="font-bold text-lg text-text dark:text-text-dark">{{ t('feeds.menu_title') }}</span>
+                    <button @click="isSidebarOpen = false" class="btn-icon -mr-2" :aria-label="t('feeds.a11y_close')" :title="t('feeds.a11y_close')">
                         <X class="w-5 h-5" />
                     </button>
                </div>
@@ -794,15 +895,23 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
             </div>
         </div>
 
-        <!-- FAB for Mobile -->
-        <button v-if="!isSidebarOpen && mobilePanel === 'list'" @click="showAddFeedModal = true" class="md:hidden absolute bottom-6 right-6 w-14 h-14 rounded-full bg-orange-500 text-white flex items-center justify-center shadow-xl hover:bg-orange-600 transition-colors z-40" :aria-label="t('feeds.a11y_add_feed')">
-            <Plus class="w-6 h-6" />
-        </button>
       </template>
     </div>
 
     <AddFeedModal v-if="showAddFeedModal" :categories="categories" @close="showAddFeedModal = false" @added="handleFeedAdded" />
     <ImportExportModal v-if="showImportExportModal" @close="showImportExportModal = false" @imported="handleImported" />
+
+    <!-- The few seconds in which an unsubscribe can still be taken back -->
+    <UndoToast
+      :show="removal.show.value"
+      :restart-key="removal.key.value"
+      :message="removal.message.value"
+      :undo-label="t('common.undo')"
+      :seconds="removal.seconds"
+      @undo="removal.undo"
+      @pause="removal.pause"
+      @resume="removal.resume"
+    />
 
     <!-- The few seconds in which a bulk mark-read can still be taken back -->
     <UndoToast
@@ -812,6 +921,8 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
       :undoLabel="t('feeds.undo')"
       :seconds="UNDO_SECONDS"
       @undo="undoMarkRead"
+      @pause="pauseMarkRead"
+      @resume="resumeMarkRead"
     />
 
     <FeedErrorToast :errors="refreshErrors" @dismiss="refreshErrors = []" />
@@ -837,6 +948,7 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
 <style scoped>
 .resize-handle {
   width: 4px;
+  outline: none;
   position: relative;
   cursor: col-resize;
   flex-shrink: 0;
@@ -846,8 +958,27 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
   justify-content: center;
 }
 
+/*
+  The line stays 4px; what can be grabbed does not. An invisible strip either
+  side makes the target 12px, and 24px on a touch screen, without moving the
+  panes apart.
+*/
+.resize-handle::before {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  inset-inline: -4px;
+}
+
+@media (pointer: coarse) {
+  .resize-handle::before {
+    inset-inline: -10px;
+  }
+}
+
 .resize-handle:hover .resize-line,
-.resize-handle:active .resize-line {
+.resize-handle:active .resize-line,
+.resize-handle:focus-visible .resize-line {
   opacity: 1;
 }
 
@@ -855,7 +986,7 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
   width: 2px;
   height: 100%;
   border-radius: 1px;
-  background-color: var(--color-orange-500, #f97316);
+  background-color: var(--color-accent);
   opacity: 0;
   transition: opacity 0.15s ease;
 }

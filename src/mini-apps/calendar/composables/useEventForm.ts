@@ -1,12 +1,13 @@
 import { ref, computed, watch } from 'vue';
-import type { ComputedRef } from 'vue';
+import type { ComputedRef, Ref } from 'vue';
 import type { EventMetadata, EventFormData } from '../types';
 import { minuteOptions, formatDateString, parseTags, shiftDateString, daysBetween } from '../helpers';
 import { defaultRecurrence, ruleOf, isSeries, endingOn, recurrenceProperties } from '../rrule';
 import { localTimeZone } from '../timezone';
 import { isSubscribed } from '../subscriptions';
 import { i18n } from '../../../i18n';
-import { ask } from '@tauri-apps/plugin-dialog';
+import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { showAppNotice } from '../../../composables/useAppNotice';
 import { logger } from '../../../utils/logger';
 
 export function useEventForm(
@@ -16,6 +17,11 @@ export function useEventForm(
     loadEventBacklinks: (title: string, id: string) => Promise<void>,
     resetEventBacklinks: () => void,
     resetCreatingNote: () => void,
+    /**
+     * Events deleted on screen but not yet on disk, which the views leave out.
+     * Owned by the caller because the lookups that read it are built first.
+     */
+    heldEventIds: Ref<Set<string>> = ref(new Set()),
 ) {
     const showEventForm = ref(false);
     const eventForm = ref<EventFormData>({
@@ -558,6 +564,21 @@ export function useEventForm(
     };
 
     // --- Delete ---
+    /**
+     * A one-off event goes at once and is written away only when the undo
+     * window closes; see `useUndoableAction`. A series still asks, because
+     * "this one, these and later, or all of them" is a real question.
+     */
+    // No `onError`: a delete that fails brings the event back and the shared
+    // "Couldn't delete" notice says so. Logging alone told nobody.
+    const eventUndo = useUndoableAction();
+
+    const setHeld = (id: string, held: boolean) => {
+        const next = new Set(heldEventIds.value);
+        if (held) next.add(id); else next.delete(id);
+        heldEventIds.value = next;
+    };
+
     const deleteEvent = async (ev: EventMetadata, dateStr: string) => {
         // Somebody else's calendar. Removing the subscription is how it goes.
         if (isSubscribed(ev)) return;
@@ -568,62 +589,75 @@ export function useEventForm(
             pendingEventAction.value = ev;
             showScopeModal.value = true;
         } else {
-            const isConfirmed = await ask(i18n.global.t('calendar.delete_event_body'), {
-                title: i18n.global.t('calendar.delete_event_title', { title: ev.title }),
-                kind: 'warning',
-                okLabel: i18n.global.t('calendar.delete'),
-                cancelLabel: i18n.global.t('calendar.cancel'),
-            });
-            if (isConfirmed) {
-                await deleteEventActual(ev, dateStr, 'all');
-            }
+            setHeld(ev.id, true);
+            await eventUndo.run(
+                i18n.global.t('common.deleted_item', { name: ev.title || i18n.global.t('calendar.untitled_event') }),
+                async () => {
+                    try {
+                        await deleteEventActual(ev, dateStr, 'all');
+                    } finally {
+                        // After the reload, so the event is not drawn again in
+                        // between; and if the delete failed, it comes back.
+                        setHeld(ev.id, false);
+                    }
+                },
+                () => setHeld(ev.id, false),
+            );
         }
     };
 
+    /**
+     * Throws when the write fails, so the undo that called it can put the
+     * event back and say so. It used to swallow every error, which left the
+     * event gone from the screen and still in the vault. A reload that fails
+     * after the write is only logged: the delete did happen.
+     */
     const deleteEventActual = async (ev: EventMetadata, dateStr: string, scope: 'this' | 'following' | 'all') => {
-        try {
-            if (scope === 'all') {
-                const rootId = ev.series_id || ev.id;
-                const familyEvents: EventMetadata[] = await ns.getEventSeries(rootId);
-                for (const famEv of familyEvents) {
-                    if (famEv.id !== ev.id) {
-                        await ns.deleteNode({ relPath: famEv.id, silent: true });
-                    }
+        if (scope === 'all') {
+            const rootId = ev.series_id || ev.id;
+            const familyEvents: EventMetadata[] = await ns.getEventSeries(rootId);
+            for (const famEv of familyEvents) {
+                if (famEv.id !== ev.id) {
+                    await ns.deleteNode({ relPath: famEv.id, silent: true });
                 }
-                await ns.deleteNode({ relPath: ev.id });
-            } else {
-                const parentProps = {
-                    is_all_day: ev.is_all_day,
-                    start_at: ev.start_at,
-                    end_at: ev.end_at,
-                    location: ev.location,
-                    tags: ev.tags,
-                    ...recurrenceProperties(ruleOf(ev)),
-                    exceptions: [...(ev.exceptions || [])],
-                    relations: [...(ev.relations || [])],
-                    series_id: ev.series_id
-                };
-                
-                if (scope === 'this') {
-                    if (!parentProps.exceptions.includes(dateStr)) {
-                        parentProps.exceptions.push(dateStr);
-                    }
-                } else if (scope === 'following') {
-                    Object.assign(parentProps, recurrenceProperties(
-                        endingOn(ruleOf(ev), shiftDateString(dateStr, -1)),
-                    ));
-                }
-                
-                await ns.writeNode({
-                    relPath: ev.id,
-                    title: ev.title,
-                    nodeType: 'event',
-                    properties: parentProps,
-                    content: ev.content,
-                });
             }
+            await ns.deleteNode({ relPath: ev.id });
+        } else {
+            const parentProps = {
+                is_all_day: ev.is_all_day,
+                start_at: ev.start_at,
+                end_at: ev.end_at,
+                location: ev.location,
+                tags: ev.tags,
+                ...recurrenceProperties(ruleOf(ev)),
+                exceptions: [...(ev.exceptions || [])],
+                relations: [...(ev.relations || [])],
+                series_id: ev.series_id
+            };
+            
+            if (scope === 'this') {
+                if (!parentProps.exceptions.includes(dateStr)) {
+                    parentProps.exceptions.push(dateStr);
+                }
+            } else if (scope === 'following') {
+                Object.assign(parentProps, recurrenceProperties(
+                    endingOn(ruleOf(ev), shiftDateString(dateStr, -1)),
+                ));
+            }
+            
+            await ns.writeNode({
+                relPath: ev.id,
+                title: ev.title,
+                nodeType: 'event',
+                properties: parentProps,
+                content: ev.content,
+            });
+        }
+        try {
             await loadData();
-        } catch(e) { logger.error("Failed to delete event:", e); }
+        } catch (e) {
+            logger.error('Deleted the event but could not reload the calendar:', e);
+        }
     };
 
     const handleDeleteFromForm = () => {
@@ -645,7 +679,13 @@ export function useEventForm(
             eventForm.value._editScope = scopeSelection.value as any;
             return submitEventActual();
         }
-        return deleteEventActual(pendingEventAction.value!, targetOccurrenceDate.value, scopeSelection.value);
+        return deleteEventActual(pendingEventAction.value!, targetOccurrenceDate.value, scopeSelection.value)
+            .catch((e) => {
+                // Asked and answered, so there is no undo to put it back:
+                // nothing was hidden, and the reader only needs telling.
+                logger.error('Failed to delete event:', e);
+                showAppNotice(i18n.global.t('common.delete_failed'), 'error');
+            });
     };
 
     return {
@@ -658,5 +698,6 @@ export function useEventForm(
         openAddEventModal, openEditEventModal, closeEventForm, rescheduleEvent,
         lastMove, undoMove,
         submitEvent, deleteEvent, handleDeleteFromForm, confirmScopeAction,
+        heldEventIds, eventUndo,
     };
 }

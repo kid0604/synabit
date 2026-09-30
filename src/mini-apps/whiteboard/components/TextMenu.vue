@@ -46,27 +46,27 @@ watch(() => props.nodeId, () => {
 });
 
 const COLORS = [
-  { value: '#1e1e1e', label: 'Black' },
-  { value: '#7c3aed', label: 'Purple' },
-  { value: '#3b82f6', label: 'Blue' },
-  { value: '#10b981', label: 'Green' },
-  { value: '#f59e0b', label: 'Amber' },
-  { value: '#ef4444', label: 'Red' },
-  { value: '#ec4899', label: 'Pink' },
-  { value: '#06b6d4', label: 'Cyan' },
-  { value: '#6b7280', label: 'Gray' },
+  { value: '#1e1e1e', labelKey: 'whiteboard.colors.black' },
+  { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
+  { value: '#3b82f6', labelKey: 'whiteboard.colors.blue' },
+  { value: '#10b981', labelKey: 'whiteboard.colors.green' },
+  { value: '#f59e0b', labelKey: 'whiteboard.colors.amber' },
+  { value: '#ef4444', labelKey: 'whiteboard.colors.red' },
+  { value: '#ec4899', labelKey: 'whiteboard.colors.pink' },
+  { value: '#06b6d4', labelKey: 'whiteboard.colors.cyan' },
+  { value: '#6b7280', labelKey: 'whiteboard.colors.gray' },
 ];
 
 const BG_COLORS = [
-  { value: '', label: 'None' },
-  { value: '#fef3c7', label: 'Yellow' },
-  { value: '#dbeafe', label: 'Blue' },
-  { value: '#d1fae5', label: 'Green' },
-  { value: '#fce7f3', label: 'Pink' },
-  { value: '#ede9fe', label: 'Purple' },
-  { value: '#e0f2fe', label: 'Cyan' },
-  { value: '#f3f4f6', label: 'Gray' },
-  { value: '#fef2f2', label: 'Red' },
+  { value: '', labelKey: 'whiteboard.colors.none' },
+  { value: '#fef3c7', labelKey: 'whiteboard.colors.yellow' },
+  { value: '#dbeafe', labelKey: 'whiteboard.colors.blue' },
+  { value: '#d1fae5', labelKey: 'whiteboard.colors.green' },
+  { value: '#fce7f3', labelKey: 'whiteboard.colors.pink' },
+  { value: '#ede9fe', labelKey: 'whiteboard.colors.purple' },
+  { value: '#e0f2fe', labelKey: 'whiteboard.colors.cyan' },
+  { value: '#f3f4f6', labelKey: 'whiteboard.colors.gray' },
+  { value: '#fef2f2', labelKey: 'whiteboard.colors.red' },
 ];
 
 const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
@@ -106,12 +106,12 @@ function setAlign(a: string) {
   <div class="sp-panel" @mousedown.stop @click.stop>
     <!-- Header -->
     <div class="sp-header">
-      <span class="sp-title">Text</span>
+      <span class="sp-title">{{ $t('whiteboard.text') }}</span>
       <div class="sp-header-actions">
-        <button @click="$emit('delete', nodeId)" class="sp-icon-btn sp-delete-btn" title="Delete">
+        <button @click="$emit('delete', nodeId)" class="sp-icon-btn sp-delete-btn" :title="$t('whiteboard.delete')" :aria-label="$t('whiteboard.delete')">
           <Trash2 :size="14" />
         </button>
-        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')">
+        <button @click="$emit('close')" class="sp-icon-btn" :title="$t('whiteboard.close')" :aria-label="$t('whiteboard.close')">
           <X :size="14" />
         </button>
       </div>
@@ -120,7 +120,7 @@ function setAlign(a: string) {
     <div class="sp-body">
       <!-- Font Size -->
       <div class="sp-section">
-        <span class="sp-label">Size</span>
+        <span class="sp-label">{{ $t('whiteboard.size') }}</span>
         <div class="sp-font-row">
           <button
             v-for="s in FONT_SIZES"
@@ -133,7 +133,7 @@ function setAlign(a: string) {
 
       <!-- Style: Bold / Italic -->
       <div class="sp-section">
-        <span class="sp-label">Style</span>
+        <span class="sp-label">{{ $t('whiteboard.style') }}</span>
         <div class="sp-row" style="gap: 4px">
           <button
             @click="toggleBold"
@@ -176,7 +176,7 @@ function setAlign(a: string) {
 
       <!-- Text Color -->
       <div class="sp-section">
-        <span class="sp-label">Color</span>
+        <span class="sp-label">{{ $t('whiteboard.color') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in COLORS"
@@ -184,14 +184,14 @@ function setAlign(a: string) {
             @click="setColor(c.value)"
             :class="['sp-swatch', textColor === c.value && 'active']"
             :style="{ '--sw-color': c.value }"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Background Color -->
       <div class="sp-section">
-        <span class="sp-label">Background</span>
+        <span class="sp-label">{{ $t('whiteboard.background') }}</span>
         <div class="sp-color-grid">
           <button
             v-for="c in BG_COLORS"
@@ -199,27 +199,29 @@ function setAlign(a: string) {
             @click="setBgColor(c.value)"
             :class="['sp-swatch', bgColor === c.value && 'active', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="c.label"
+            :title="$t(c.labelKey)"
           />
         </div>
       </div>
 
       <!-- Opacity -->
       <div class="sp-section">
-        <span class="sp-label">Opacity <span class="sp-value">{{ opacity }}%</span></span>
+        <span class="sp-label">{{ $t('whiteboard.opacity') }} <span class="sp-value">{{ opacity }}%</span></span>
         <input
           type="range" min="10" max="100" step="5"
           v-model.number="opacity" @input="emitUpdate"
+          :aria-label="$t('whiteboard.opacity')"
           class="sp-slider"
         />
       </div>
 
       <!-- Width -->
       <div class="sp-section">
-        <span class="sp-label">Width <span class="sp-value">{{ nodeWidth }}px</span></span>
+        <span class="sp-label">{{ $t('whiteboard.width') }} <span class="sp-value">{{ nodeWidth }}px</span></span>
         <input
           type="range" min="80" max="600" step="10"
           v-model.number="nodeWidth" @input="emitUpdate"
+          :aria-label="$t('whiteboard.width')"
           class="sp-slider"
         />
       </div>
@@ -281,7 +283,7 @@ function setAlign(a: string) {
 .sp-body:hover { scrollbar-color: var(--color-border, #d4d4d8) transparent; }
 .sp-section { margin-bottom: 10px; }
 .sp-label {
-  display: block; font-size: 10px; font-weight: 600; text-transform: uppercase;
+  display: block; font-size: 12px; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.05em; color: var(--color-text-secondary, #71717a);
   margin-bottom: 4px; padding-left: 1px;
 }
@@ -295,7 +297,7 @@ function setAlign(a: string) {
   background: var(--sw-color); cursor: pointer; transition: all 0.15s; position: relative;
 }
 .sp-swatch:hover { transform: scale(1.15); }
-.sp-swatch.active { border-color: var(--color-accent, #7c3aed); box-shadow: 0 0 0 2px rgba(124,58,237,0.25); }
+.sp-swatch.active { border-color: var(--color-accent, #7c3aed); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 25%, transparent); }
 .sp-swatch-none {
   background: var(--color-surface-hover, #f4f4f5) !important;
 }
@@ -311,7 +313,7 @@ function setAlign(a: string) {
   min-width: 28px; height: 24px; padding: 0 4px;
   display: flex; align-items: center; justify-content: center;
   border-radius: 6px; border: 1.5px solid var(--color-border, #e4e4e7);
-  background: transparent; font-size: 10px; font-weight: 600;
+  background: transparent; font-size: 12px; font-weight: 600;
   color: var(--color-text-secondary, #71717a); cursor: pointer; transition: all 0.15s;
 }
 .dark .sp-font-chip { border-color: var(--color-border-dark, #3f3f46); color: var(--color-text-secondary-dark, #a1a1aa); }

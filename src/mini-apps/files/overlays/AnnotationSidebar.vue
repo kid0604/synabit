@@ -57,7 +57,7 @@ const colorMap: Record<string, string> = {
 </script>
 
 <template>
-  <div class="w-72 xl:w-80 flex-shrink-0 bg-white/90 dark:bg-[#1e1e1e]/90 backdrop-blur-xl border-l border-gray-200/50 dark:border-white/5 flex flex-col">
+  <div class="w-72 xl:w-80 flex-shrink-0 bg-white/90 dark:bg-surface-dark/90 backdrop-blur-xl border-l border-gray-200/50 dark:border-white/5 flex flex-col">
     <!-- Header -->
     <div class="h-12 px-4 flex items-center justify-between border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
       <h3 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('file.annotations') }}</h3>
@@ -73,10 +73,10 @@ const colorMap: Record<string, string> = {
     <div v-if="annotations.length === 0" class="flex-1 flex items-center justify-center p-6">
       <div class="text-center">
         <div class="w-12 h-12 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center mx-auto mb-3">
-          <FileText class="w-5 h-5 text-gray-300 dark:text-gray-600" />
+          <FileText class="w-5 h-5 text-gray-500 dark:text-gray-400" aria-hidden="true" />
         </div>
-        <p class="text-xs text-gray-400 dark:text-gray-500">{{ $t('file.no_annotations') }}</p>
-        <p class="text-[10px] text-gray-300 dark:text-gray-600 mt-1">{{ $t('file.start_annotating') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('file.no_annotations') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t('file.start_annotating') }}</p>
       </div>
     </div>
 
@@ -85,7 +85,7 @@ const colorMap: Record<string, string> = {
       <div v-for="[page, anns] in groupedAnnotations" :key="page" class="border-b border-gray-100 dark:border-white/5 last:border-b-0">
         <!-- Page header -->
         <div class="px-4 py-2 bg-gray-50/50 dark:bg-black/20 sticky top-0 z-10">
-          <span class="text-[10px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Page {{ page }}</span>
+          <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('file.page_n', { page }) }}</span>
         </div>
         <!-- Annotations for page -->
         <div class="divide-y divide-gray-50 dark:divide-white/[0.03]">
@@ -101,21 +101,22 @@ const colorMap: Record<string, string> = {
                   "{{ ann.text.substring(0, 120) }}{{ ann.text.length > 120 ? '…' : '' }}"
                 </p>
                 <!-- Note preview -->
-                <p v-if="ann.content" class="text-[10px] text-gray-400 dark:text-gray-500 mt-1 line-clamp-1">
+                <p v-if="ann.content" class="text-xs text-gray-500 dark:text-gray-400 mt-1 line-clamp-1">
                   📝 {{ ann.content }}
                 </p>
               </div>
               <!-- Delete button -->
               <button
                 @click.stop="requestDelete(ann.id)"
-                class="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-surface dark:hover:bg-surface-dark text-red-500 transition-all focus:opacity-100 cursor-pointer"
+                class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 p-1.5 rounded-md hover:bg-surface dark:hover:bg-surface-dark text-red-500 transition-all focus:opacity-100 cursor-pointer"
                 :title="$t('file.delete_highlight')"
+                :aria-label="$t('file.delete_highlight')"
               >
                 <Trash2 class="w-3.5 h-3.5" />
               </button>
             </div>
             <!-- Annotation note -->
-            <p v-if="ann.content" class="text-[11px] mt-2 text-text dark:text-text-dark bg-surface-hover/30 dark:bg-surface-hover-dark/30 p-2 rounded leading-relaxed border-l-2"
+            <p v-if="ann.content" class="text-xs mt-2 text-text dark:text-text-dark bg-surface-hover/30 dark:bg-surface-hover-dark/30 p-2 rounded leading-relaxed border-l-2"
                :style="{ borderLeftColor: colorMap[ann.color] || colorMap.yellow }">
               {{ ann.content }}
             </p>
@@ -126,14 +127,14 @@ const colorMap: Record<string, string> = {
 
     <!-- Footer: count -->
     <div v-if="annotations.length > 0" class="px-4 py-2 border-t border-gray-200/50 dark:border-white/5 flex-shrink-0">
-      <span class="text-[10px] text-gray-400">{{ annotations.length }} annotation{{ annotations.length > 1 ? 's' : '' }}</span>
+      <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('file.annotation_count', { count: annotations.length }, annotations.length) }}</span>
     </div>
 
     <ConfirmModal
       :show="showConfirmDelete"
       :title="$t('file.delete_highlight')"
-      message="Are you sure you want to delete this highlight? This action cannot be undone."
-      confirm-text="Delete"
+      :message="$t('file.delete_highlight_body')"
+      :confirm-text="$t('file.delete')"
       :is-destructive="true"
       @confirm="executeDelete"
       @cancel="showConfirmDelete = false; itemToDelete = null"

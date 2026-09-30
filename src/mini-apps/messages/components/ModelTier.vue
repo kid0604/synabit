@@ -61,7 +61,7 @@ watch(
   <template v-if="capability">
     <span
       v-if="compact"
-      class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium"
+      class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium"
       :class="capability.hosted
         ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-300'
         : 'bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'"

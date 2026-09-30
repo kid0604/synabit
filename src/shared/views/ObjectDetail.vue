@@ -207,7 +207,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
 
 <template>
   <div class="h-full flex flex-col min-h-0 bg-white dark:bg-[#141416]">
-    <div v-if="loading" class="flex-1 flex items-center justify-center text-gray-400">
+    <div v-if="loading" class="flex-1 flex items-center justify-center text-gray-500 dark:text-gray-400">
       <Loader2 class="w-5 h-5 animate-spin" />
     </div>
 
@@ -239,13 +239,13 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             class="flex items-center gap-2 -mx-1.5 px-1.5 py-0.5 rounded-md cursor-pointer
                    hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
           >
-            <component :is="iconForNodeType(nodeType)" class="w-4 h-4 text-gray-400" />
+            <component :is="iconForNodeType(nodeType)" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
             <span class="text-xs font-mono text-gray-500 dark:text-gray-400">{{ nodeType }}</span>
-            <ChevronDown class="w-3 h-3 text-gray-400" />
+            <ChevronDown class="w-3 h-3 text-gray-500 dark:text-gray-400" />
           </button>
           <template v-else>
-            <component :is="iconForNodeType(nodeType)" class="w-4 h-4 text-gray-400" />
-            <span class="text-xs font-mono text-gray-400 dark:text-gray-500">{{ nodeType }}</span>
+            <component :is="iconForNodeType(nodeType)" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
+            <span class="text-xs font-mono text-gray-500 dark:text-gray-400">{{ nodeType }}</span>
           </template>
         </div>
 
@@ -257,7 +257,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
           @blur="emit('save')"
           @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
           class="w-full bg-transparent border-0 outline-none text-3xl font-bold tracking-tight
-                 text-[#1c1c1e] dark:text-[#f4f4f5] placeholder-gray-300 dark:placeholder-gray-600 mb-6"
+                 text-text dark:text-text-dark placeholder-gray-300 dark:placeholder-gray-600 mb-6"
         />
 
         <!-- ── Properties ─────────────────────────────────── -->
@@ -273,12 +273,12 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
           type="button"
           @click="collapsed = !collapsed"
           class="flex items-center gap-1.5 mb-2 -ml-1 px-1 py-0.5 rounded
-                 text-[11px] uppercase tracking-wider cursor-pointer
-                 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                 text-xs uppercase tracking-wider cursor-pointer
+                 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
         >
           <ChevronRight class="w-3 h-3 transition-transform" :class="collapsed ? '' : 'rotate-90'" />
           {{ t('things.properties') }}
-          <span v-if="collapsed && rows.length" class="text-gray-300 dark:text-gray-600">
+          <span v-if="collapsed && rows.length" class="text-gray-500 dark:text-gray-400">
             {{ rows.length }}
           </span>
         </button>
@@ -289,7 +289,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             :key="row.key"
             class="flex items-start gap-3 text-sm"
           >
-            <span class="w-[130px] flex-none pt-1 text-gray-400 dark:text-gray-500 font-mono text-xs truncate">
+            <span class="w-[130px] flex-none pt-1 text-gray-500 dark:text-gray-400 font-mono text-xs truncate">
               {{ row.key }}
             </span>
             <span class="flex-1 min-w-0 pt-1 text-gray-500 dark:text-gray-400">{{ row.value }}</span>
@@ -329,7 +329,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
               :title="field.key"
               @click="startRenaming(index)"
               class="w-[130px] flex-none px-2 py-1 pt-1 text-left rounded truncate
-                     text-xs text-gray-400 dark:text-gray-500 cursor-text
+                     text-xs text-gray-500 dark:text-gray-400 cursor-text
                      hover:bg-gray-50 dark:hover:bg-white/5 transition-colors"
             >
               {{ humanizeKey(field.key) }}
@@ -344,9 +344,10 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             <button
               type="button"
               @click="emit('removeField', index)"
-              class="p-1 mt-1 rounded text-gray-300 hover:text-red-500 transition-colors cursor-pointer
-                     opacity-0 group-hover:opacity-100 focus:opacity-100"
+              class="p-1 mt-1 rounded text-gray-500 dark:text-gray-400 hover:text-red-500 transition-colors cursor-pointer
+                     opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 pointer-coarse:opacity-100"
               :aria-label="t('things.remove_field')"
+              :title="t('things.remove_field')"
             >
               <X class="w-3.5 h-3.5" />
             </button>
@@ -360,7 +361,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             v-if="hiddenCount > 0"
             type="button"
             @click="expanded = true"
-            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-400
+            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-500
                    hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           >
             <ChevronRight class="w-3 h-3" />
@@ -370,7 +371,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             v-else-if="expanded && rows.length > SHOWN"
             type="button"
             @click="expanded = false"
-            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-400
+            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-500
                    hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           >
             <ChevronRight class="w-3 h-3 -rotate-90" />
@@ -380,7 +381,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
           <button
             type="button"
             @click="addField($event)"
-            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-400
+            class="flex items-center gap-1.5 mt-1 px-2 py-1 text-xs text-gray-500
                    hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           >
             <Plus class="w-3 h-3" /> {{ t('things.add_field') }}
@@ -395,7 +396,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
             <button
               type="button"
               @click="showAppFields = !showAppFields"
-              class="flex items-center gap-1 px-2 py-1 text-xs text-gray-400
+              class="flex items-center gap-1 px-2 py-1 text-xs text-gray-500
                      hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
             >
               <ChevronRight
@@ -409,7 +410,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
               <div v-for="field in appFields" :key="field.key" class="flex items-start gap-3">
                 <span
                   :title="field.key"
-                  class="w-[130px] flex-none pt-1 text-xs text-gray-400 dark:text-gray-500 truncate"
+                  class="w-[130px] flex-none pt-1 text-xs text-gray-500 dark:text-gray-400 truncate"
                 >
                   {{ humanizeKey(field.key) }}
                 </span>
@@ -440,10 +441,10 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
                    text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700
                    hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
           >
-            <ExternalLink class="w-3.5 h-3.5 text-gray-400" />
+            <ExternalLink class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
             {{ t('things.open_in', { app: authoredIn }) }}
           </button>
-          <p class="mt-2 text-[11px] text-gray-400 leading-relaxed max-w-sm">
+          <p class="mt-2 text-xs text-gray-500 dark:text-gray-400 leading-relaxed max-w-sm">
             {{ t('things.not_text_here') }}
           </p>
         </div>
@@ -474,7 +475,7 @@ defineExpose({ focusTitle: () => titleInput.value?.focus(), focusValue });
 
     <div
       v-if="saving"
-      class="flex-shrink-0 px-8 py-1.5 text-[11px] text-gray-400 border-t border-gray-100 dark:border-[#232326]"
+      class="flex-shrink-0 px-8 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-t border-gray-100 dark:border-[#232326]"
     >
       {{ t('things.saving') }}
     </div>

@@ -187,8 +187,8 @@ const letGo = async () => {
         class="rounded-xl border border-gray-200 bg-white p-3 shadow-sm dark:border-[#3a3a3c] dark:bg-[#1e1e20]"
         @keydown.esc="emit('close')"
     >
-        <p v-if="reading" class="text-[11px] text-gray-400">{{ $t('nexus.moment_reading') }}</p>
-        <p v-if="failure" data-moment-failed class="text-[11px] text-red-500">{{ failure }}</p>
+        <p v-if="reading" class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.moment_reading') }}</p>
+        <p v-if="failure" data-moment-failed class="text-xs text-red-500">{{ failure }}</p>
 
         <div v-if="form && moment" class="space-y-2">
             <div class="flex items-start justify-between gap-2">
@@ -197,69 +197,69 @@ const letGo = async () => {
                     data-moment-title
                     rows="2"
                     :aria-label="$t('nexus.extract_field_title')"
-                    class="min-w-0 flex-grow resize-none rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-900 outline-none focus:border-indigo-500 dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
+                    class="min-w-0 flex-grow resize-none rounded-md border border-gray-200 bg-white px-1.5 py-1 text-[13px] font-semibold text-gray-900 outline-none focus:border-accent dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
                 />
                 <button
                     type="button"
                     data-moment-close
                     :aria-label="$t('nexus.moment_close')"
-                    class="flex-shrink-0 px-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                    class="flex-shrink-0 px-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                     @click="emit('close')"
                 >×</button>
             </div>
 
             <div class="flex flex-wrap gap-1">
-                <input v-model="form.from" data-moment-from type="date" :aria-label="$t('nexus.extract_field_from')" class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <input v-model="form.to" data-moment-to type="date" :aria-label="$t('nexus.extract_field_to')" class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <input v-model="form.time" data-moment-time type="text" placeholder="14:00" :aria-label="$t('nexus.extract_field_time')" class="h-6 w-16 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.from" data-moment-from type="date" :aria-label="$t('nexus.extract_field_from')" class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.to" data-moment-to type="date" :aria-label="$t('nexus.extract_field_to')" class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.time" data-moment-time type="text" placeholder="14:00" :aria-label="$t('nexus.extract_field_time')" class="h-6 w-16 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
             </div>
 
             <div class="flex flex-wrap items-center gap-1" data-moment-people>
                 <span
                     v-for="(person, at) in form.people"
                     :key="`${person.name}-${at}`"
-                    class="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-[#2c2c2e]"
+                    class="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-[#2c2c2e]"
                 >
                     {{ person.name }}
                     <select
                         v-if="!person.id"
                         data-moment-assign
                         :aria-label="$t('nexus.extract_assign')"
-                        class="max-w-24 bg-transparent text-[10px] text-indigo-600 dark:text-indigo-400"
+                        class="max-w-24 bg-transparent text-xs text-accent dark:text-accent-dark"
                         @change="assign(at, ($event.target as HTMLSelectElement).value)"
                     >
                         <option value="">{{ $t('nexus.extract_assign') }}</option>
                         <option v-for="known in moment.known_people" :key="known.id" :value="known.id">{{ known.title }}</option>
                     </select>
-                    <button type="button" class="text-gray-400 hover:text-red-500" @click="form.people.splice(at, 1)">×</button>
+                    <button type="button" class="text-gray-500 dark:text-gray-400 hover:text-red-500" @click="form.people.splice(at, 1)">×</button>
                 </span>
                 <input
                     v-model="adding"
                     data-moment-add-person
                     type="text"
                     :placeholder="$t('nexus.extract_add_person')"
-                    class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
+                    class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
                     @keydown.enter.prevent="addPerson()"
                 />
             </div>
 
             <div class="flex flex-wrap gap-1">
-                <input v-model="form.place" data-moment-where type="text" :placeholder="$t('nexus.extract_field_where')" :aria-label="$t('nexus.extract_field_where')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <select v-model="form.category" data-moment-category :aria-label="$t('nexus.extract_field_category')" class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100">
+                <input v-model="form.place" data-moment-where type="text" :placeholder="$t('nexus.extract_field_where')" :aria-label="$t('nexus.extract_field_where')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <select v-model="form.category" data-moment-category :aria-label="$t('nexus.extract_field_category')" class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100">
                     <option v-for="kind in kinds" :key="kind" :value="kind">{{ kindName(kind) }}</option>
                 </select>
             </div>
 
             <div class="flex flex-wrap gap-1">
-                <input v-model="form.amount" data-moment-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <input v-model="form.unit" data-moment-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <input v-model="form.about" data-moment-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.amount" data-moment-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.unit" data-moment-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                <input v-model="form.about" data-moment-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
             </div>
 
             <!-- Where it came from: readable, and not editable. The words are
                  what makes it answerable to the note. -->
-            <p v-if="moment.quote" data-moment-quote class="text-[11px] italic text-gray-500 dark:text-gray-400">“{{ moment.quote }}”</p>
-            <p v-if="moment.source_node" class="text-[10px] text-gray-400">
+            <p v-if="moment.quote" data-moment-quote class="text-xs italic text-gray-500 dark:text-gray-400">“{{ moment.quote }}”</p>
+            <p v-if="moment.source_node" class="text-xs text-gray-500 dark:text-gray-400">
                 <button
                     type="button"
                     data-moment-source
@@ -267,13 +267,13 @@ const letGo = async () => {
                     @click="emit('open', moment.source_node, moment.quote ?? '')"
                 >{{ $t('nexus.moment_from', { title: moment.source_node.split('/').pop() }) }}</button>
             </p>
-            <p v-else class="text-[10px] text-gray-400">{{ $t('nexus.moment_by_hand') }}</p>
+            <p v-else class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.moment_by_hand') }}</p>
 
             <div class="flex items-center gap-2 pt-0.5">
                 <button
                     type="button"
                     data-moment-save
-                    class="flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+                    class="btn-primary"
                     :disabled="saving || !form.title.trim()"
                     @click="save()"
                 >
@@ -283,16 +283,16 @@ const letGo = async () => {
                 <!-- Letting it go is two presses: it is a decision being undone,
                      and the file goes to the trash rather than away. -->
                 <template v-if="askingToDelete">
-                    <span class="text-[11px] text-gray-500 dark:text-gray-400">{{ $t('nexus.moment_delete_sure') }}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.moment_delete_sure') }}</span>
                     <button
                         type="button"
                         data-moment-delete-yes
-                        class="rounded-md bg-red-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-red-700"
+                        class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-red-700"
                         @click="letGo()"
                     >{{ $t('nexus.moment_delete_yes') }}</button>
                     <button
                         type="button"
-                        class="text-[11px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                        class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                         @click="askingToDelete = false"
                     >{{ $t('nexus.moment_delete_no') }}</button>
                 </template>
@@ -300,7 +300,7 @@ const letGo = async () => {
                     v-else
                     type="button"
                     data-moment-delete
-                    class="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-gray-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
+                    class="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
                     @click="askingToDelete = true"
                 ><Trash2 class="h-3 w-3" /> {{ $t('nexus.moment_delete') }}</button>
             </div>

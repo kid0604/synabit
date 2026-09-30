@@ -105,11 +105,11 @@ bus.on('node:deleted', runSoon);
       <span>{{ error }}</span>
     </div>
 
-    <div v-else-if="running && !result" class="flex items-center gap-2 p-3 text-[12px] text-gray-400">
+    <div v-else-if="running && !result" class="flex items-center gap-2 p-3 text-[12px] text-gray-500 dark:text-gray-400">
       <Loader2 class="w-3.5 h-3.5 animate-spin" /> {{ t('note.query_running') }}
     </div>
 
-    <div v-else-if="result && result.rows.length === 0" class="p-3 text-[12px] text-gray-400">
+    <div v-else-if="result && result.rows.length === 0" class="p-3 text-[12px] text-gray-500 dark:text-gray-400">
       {{ t('note.query_no_match') }}
     </div>
 

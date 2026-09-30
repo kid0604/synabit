@@ -20,11 +20,11 @@ const openInNative = async () => {
 <template>
   <div class="flex-1 flex flex-col items-center justify-center gap-6 bg-gray-50 dark:bg-[#1a1a1a]">
     <div class="w-24 h-24 rounded-2xl bg-gray-200/80 dark:bg-white/5 flex items-center justify-center">
-      <FileQuestion class="w-12 h-12 text-gray-400 dark:text-gray-500" />
+      <FileQuestion class="w-12 h-12 text-gray-500 dark:text-gray-400" />
     </div>
     <div class="text-center space-y-1">
       <p class="text-base font-semibold text-gray-700 dark:text-gray-300">{{ filename }}</p>
-      <p class="text-xs text-gray-400">{{ $t('file.no_viewer', { ext: extension }) }}</p>
+      <p class="text-xs text-gray-500 dark:text-gray-400">{{ $t('file.no_viewer', { ext: extension }) }}</p>
     </div>
     <button
       @click="openInNative"

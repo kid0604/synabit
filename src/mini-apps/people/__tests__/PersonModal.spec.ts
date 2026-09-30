@@ -50,7 +50,9 @@ const mountModal = (person: any) =>
     props: { vaultPath: '/mock/vault', person },
     global: {
       plugins: [createTestingPinia({ createSpy: vi.fn })],
-      mocks: { $t: (key: string) => key }
+      mocks: { $t: (key: string) => key },
+      // The dialog teleports to <body>; kept inline so its buttons can be found.
+      stubs: { teleport: true }
     }
   });
 
@@ -62,7 +64,7 @@ const lastWrite = () => {
 };
 
 const save = async (wrapper: any) => {
-  const button = wrapper.findAll('button').find((b: any) => b.text().includes('Save Person'));
+  const button = wrapper.findAll('button').find((b: any) => b.text().includes('people.save_person'));
   expect(button).toBeTruthy();
   await button!.trigger('click');
   await new Promise((r) => setTimeout(r, 0));

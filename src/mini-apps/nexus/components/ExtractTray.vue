@@ -16,7 +16,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
-import { Check, Pencil, X, Loader2 } from 'lucide-vue-next';
+import { Check, Pencil, X } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 import { errorText } from '../../../shared/errorText';
@@ -436,23 +436,23 @@ const details = (p: Proposal) =>
 
 <template>
     <div v-if="status" data-extract-tray class="space-y-4">
-        <p data-is-an-event class="rounded-lg bg-indigo-50 px-3 py-2.5 text-[13px] font-medium leading-relaxed text-indigo-900 dark:bg-indigo-950/50 dark:text-indigo-200">
+        <p data-is-an-event class="rounded-lg bg-accent/10 px-3 py-2.5 text-[13px] font-medium leading-relaxed text-text dark:bg-accent/15 dark:text-text-dark">
             {{ $t('nexus.extract_is_an_event') }}
         </p>
         <p class="text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_explain') }}</p>
 
-            <p v-if="failure" class="text-[11px] text-red-500">{{ failure }}</p>
+            <p v-if="failure" class="text-xs text-red-500">{{ failure }}</p>
 
             <template v-if="status.proposals.length">
-                <p data-shortcuts class="text-[10px] text-gray-400">{{ $t('nexus.extract_shortcuts') }}</p>
+                <p data-shortcuts class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_shortcuts') }}</p>
                 <section v-for="group in byDay" :key="group.day" data-day class="space-y-2">
                     <div class="flex items-center justify-between gap-2">
-                        <h3 class="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{{ group.day }}</h3>
+                        <h3 class="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ group.day }}</h3>
                         <button
                             v-if="group.proposals.some(p => !isAChange(p) && !p.stale)"
                             type="button"
                             data-keep-day
-                            class="rounded-md px-2 py-0.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                            class="rounded-md px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
                             @click="keepDay(group.day)"
                         >{{ $t('nexus.extract_keep_day', { count: group.proposals.filter(p => !isAChange(p) && !p.stale).length }) }}</button>
                     </div>
@@ -464,43 +464,43 @@ const details = (p: Proposal) =>
                             :data-selected="selected === p.id ? 'yes' : undefined"
                             :class="[
                                 'space-y-1 rounded-lg border p-2.5',
-                                selected === p.id ? 'border-indigo-400 dark:border-indigo-500' : 'border-gray-200 dark:border-[#3a3a3c]',
+                                selected === p.id ? 'border-accent dark:border-accent-dark' : 'border-gray-200 dark:border-border-subtle-dark',
                             ]"
                             @click="selected = p.id"
                         >
                             <!-- A change to a moment already kept (§15): what it
                                  says now, and what the note says now. -->
                             <template v-if="isAChange(p)">
-                                <p data-change class="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                                <p data-change class="text-xs font-semibold text-amber-700 dark:text-amber-400">
                                     {{ p.verdict === 'gone' ? $t('nexus.extract_note_gone') : p.verdict === 'retracted' ? $t('nexus.extract_words_gone') : $t('nexus.extract_source_changed') }}
                                 </p>
                                 <p class="text-xs font-semibold text-gray-900 dark:text-gray-100">{{ keptMoment(p)?.title ?? p.title }}</p>
-                                <ul v-if="diff(p).length" data-diff class="space-y-0.5 text-[11px] text-gray-600 dark:text-gray-300">
+                                <ul v-if="diff(p).length" data-diff class="space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
                                     <li v-for="row in diff(p)" :key="row.field">
-                                        <span class="text-gray-400">{{ row.field }}:</span>
+                                        <span class="text-gray-500 dark:text-gray-400">{{ row.field }}:</span>
                                         <span class="line-through decoration-gray-400">{{ row.before || '—' }}</span>
                                         →
                                         <span class="font-medium">{{ row.after || '—' }}</span>
                                     </li>
                                 </ul>
-                                <p v-if="keptMoment(p)?.hand.length" data-hand class="text-[10px] text-gray-400">
+                                <p v-if="keptMoment(p)?.hand.length" data-hand class="text-xs text-gray-500 dark:text-gray-400">
                                     {{ $t('nexus.extract_hand', { fields: keptMoment(p)!.hand.map(f => $t(`nexus.extract_field_${f}`)).join(', ') }) }}
                                 </p>
-                                <p v-if="p.quote" class="text-[11px] italic text-gray-500 dark:text-gray-400">“{{ readable(p.quote) }}”</p>
+                                <p v-if="p.quote" class="text-xs italic text-gray-500 dark:text-gray-400">“{{ readable(p.quote) }}”</p>
                                 <div class="flex gap-2 pt-0.5">
                                     <template v-if="p.verdict === 'changed'">
-                                        <button type="button" data-accept class="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-emerald-700" @click="review(p, true)">
+                                        <button type="button" data-accept class="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700" @click="review(p, true)">
                                             <Check class="h-3 w-3" /> {{ $t('nexus.extract_apply') }}
                                         </button>
-                                        <button type="button" data-decline class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]" @click="review(p, false)">
+                                        <button type="button" data-decline class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]" @click="review(p, false)">
                                             {{ $t('nexus.extract_leave_as_is') }}
                                         </button>
                                     </template>
                                     <template v-else>
-                                        <button type="button" data-decline class="flex items-center gap-1 rounded-md bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-700 hover:bg-gray-200 dark:bg-[#3a3a3c] dark:text-gray-200" @click="review(p, false)">
+                                        <button type="button" data-decline class="flex items-center gap-1 rounded-md bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700 hover:bg-gray-200 dark:bg-[#3a3a3c] dark:text-gray-200" @click="review(p, false)">
                                             {{ $t('nexus.extract_keep_moment') }}
                                         </button>
-                                        <button type="button" data-accept class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" @click="review(p, true)">
+                                        <button type="button" data-accept class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20" @click="review(p, true)">
                                             <X class="h-3 w-3" /> {{ $t('nexus.extract_drop_moment') }}
                                         </button>
                                     </template>
@@ -517,20 +517,20 @@ const details = (p: Proposal) =>
                                         data-proposal-title
                                         rows="2"
                                         :aria-label="$t('nexus.extract_field_title')"
-                                        class="w-full resize-none rounded-md border border-indigo-300 bg-white px-1.5 py-1 text-xs font-semibold text-gray-900 outline-none focus:border-indigo-500 dark:border-indigo-700 dark:bg-[#1c1c1e] dark:text-gray-100"
+                                        class="w-full resize-none rounded-md border border-accent/40 bg-white px-1.5 py-1 text-xs font-semibold text-gray-900 outline-none focus:border-accent dark:border-accent-dark/40 dark:bg-[#1c1c1e] dark:text-gray-100"
                                         @keydown.enter.prevent="review(p, true)"
                                         @keydown.esc="stopEditing()"
                                     />
                                     <div class="flex flex-wrap gap-1">
-                                        <input v-model="form.from" data-field-from type="date" :aria-label="$t('nexus.extract_field_from')" class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                                        <input v-model="form.to" data-field-to type="date" :aria-label="$t('nexus.extract_field_to')" class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                                        <input v-model="form.time" data-field-time type="text" placeholder="14:00" :aria-label="$t('nexus.extract_field_time')" class="h-6 w-16 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.from" data-field-from type="date" :aria-label="$t('nexus.extract_field_from')" class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.to" data-field-to type="date" :aria-label="$t('nexus.extract_field_to')" class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.time" data-field-time type="text" placeholder="14:00" :aria-label="$t('nexus.extract_field_time')" class="h-6 w-16 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
                                     </div>
                                     <div class="flex flex-wrap items-center gap-1" data-field-people>
                                         <span
                                             v-for="(person, at) in form.people"
                                             :key="`${person.name}-${at}`"
-                                            class="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-[11px] dark:bg-[#2c2c2e]"
+                                            class="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-[#2c2c2e]"
                                         >
                                             {{ person.name }}
                                             <!-- A name that matched nobody: saying who
@@ -539,31 +539,31 @@ const details = (p: Proposal) =>
                                                 v-if="!person.id"
                                                 :aria-label="$t('nexus.extract_assign')"
                                                 data-assign
-                                                class="max-w-24 bg-transparent text-[10px] text-indigo-600 dark:text-indigo-400"
+                                                class="max-w-24 bg-transparent text-xs text-accent dark:text-accent-dark"
                                                 @change="assign(at, ($event.target as HTMLSelectElement).value)"
                                             >
                                                 <option value="">{{ $t('nexus.extract_assign') }}</option>
                                                 <option v-for="known in status.people" :key="known.id" :value="known.id">{{ known.title }}</option>
                                             </select>
-                                            <button type="button" class="text-gray-400 hover:text-red-500" @click="form.people.splice(at, 1)">×</button>
+                                            <button type="button" class="text-gray-500 dark:text-gray-400 hover:text-red-500" @click="form.people.splice(at, 1)">×</button>
                                         </span>
                                         <input
                                             v-model="adding"
                                             data-add-person
                                             type="text"
                                             :placeholder="$t('nexus.extract_add_person')"
-                                            class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
+                                            class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100"
                                             @keydown.enter.prevent="addPerson()"
                                         />
                                     </div>
                                     <div class="flex flex-wrap gap-1">
-                                        <input v-model="form.place" data-field-where type="text" :placeholder="$t('nexus.extract_field_where')" :aria-label="$t('nexus.extract_field_where')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.place" data-field-where type="text" :placeholder="$t('nexus.extract_field_where')" :aria-label="$t('nexus.extract_field_where')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
                                         <select
                                             v-if="!addingKind"
                                             v-model="form.category"
                                             data-field-category
                                             :aria-label="$t('nexus.extract_field_category')"
-                                            class="h-6 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100"
+                                            class="h-6 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100"
                                             @change="($event.target as HTMLSelectElement).value === '__new' && (addingKind = true)"
                                         >
                                             <option v-for="kind in kinds" :key="kind" :value="kind">{{ kindName(kind) }}</option>
@@ -578,16 +578,16 @@ const details = (p: Proposal) =>
                                             type="text"
                                             :placeholder="$t('nexus.extract_new_kind')"
                                             :aria-label="$t('nexus.extract_new_kind')"
-                                            class="h-6 w-28 rounded border border-indigo-300 bg-white px-1 text-[11px] dark:border-indigo-700 dark:bg-[#1c1c1e] dark:text-gray-100"
+                                            class="h-6 w-28 rounded border border-accent/40 bg-white px-1 text-xs dark:border-accent-dark/40 dark:bg-[#1c1c1e] dark:text-gray-100"
                                             @keydown.enter.prevent="addKind()"
                                             @keydown.esc="addingKind = false"
                                             @blur="addKind()"
                                         />
                                     </div>
                                     <div class="flex flex-wrap gap-1">
-                                        <input v-model="form.amount" data-field-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                                        <input v-model="form.unit" data-field-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                                        <input v-model="form.about" data-field-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-[11px] dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.amount" data-field-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.unit" data-field-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        <input v-model="form.about" data-field-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
                                     </div>
                                 </div>
 
@@ -599,17 +599,17 @@ const details = (p: Proposal) =>
                                         <span
                                             v-if="p.date_basis === 'inferred'"
                                             data-day-guessed
-                                            class="flex-shrink-0 rounded bg-gray-100 px-1 text-[10px] text-gray-500 dark:bg-[#2c2c2e] dark:text-gray-400"
+                                            class="flex-shrink-0 rounded bg-gray-100 px-1 text-xs text-gray-500 dark:bg-[#2c2c2e] dark:text-gray-400"
                                         >{{ $t('nexus.extract_day_guessed') }}</span>
                                     </div>
-                                    <p class="text-[11px] tabular-nums text-gray-600 dark:text-gray-300">
+                                    <p class="text-xs tabular-nums text-gray-600 dark:text-gray-300">
                                         {{ [when(p), p.time].filter(Boolean).join(' ') }}<template v-if="who(p)"> · {{ who(p) }}</template>
                                     </p>
-                                    <p v-if="details(p)" data-proposal-details class="text-[11px] text-gray-500 dark:text-gray-400">{{ details(p) }}</p>
+                                    <p v-if="details(p)" data-proposal-details class="text-xs text-gray-500 dark:text-gray-400">{{ details(p) }}</p>
                                 </template>
 
-                                <p class="text-[11px] italic text-gray-500 dark:text-gray-400">“{{ readable(p.quote) }}”</p>
-                                <p class="text-[10px] text-gray-400">
+                                <p class="text-xs italic text-gray-500 dark:text-gray-400">“{{ readable(p.quote) }}”</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">
                                     <!-- The note it came from is a button now. It used to
                                          be this sentence and nothing else, so an old
                                          proposal could only be trusted or thrown away. -->
@@ -625,13 +625,13 @@ const details = (p: Proposal) =>
 
                                 <!-- The note itself, with the line this was read from
                                      marked in it. -->
-                                <div v-if="openedSource(p.id)" data-source class="rounded-md border border-gray-200 bg-gray-50 p-2 dark:border-[#3a3a3c] dark:bg-[#1e1e20]">
-                                    <p v-if="readingSource(p.id)" class="text-[10px] text-gray-400">{{ $t('nexus.extract_source_reading') }}</p>
-                                    <p v-else-if="lockedSource(p.id)" data-source-locked class="text-[11px] italic text-gray-400">
+                                <div v-if="openedSource(p.id)" data-source class="rounded-md border border-gray-200 bg-gray-50 p-2 dark:border-border-subtle-dark dark:bg-surface-dark">
+                                    <p v-if="readingSource(p.id)" class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_source_reading') }}</p>
+                                    <p v-else-if="lockedSource(p.id)" data-source-locked class="text-xs italic text-gray-500 dark:text-gray-400">
                                         {{ $t('nexus.extract_source_locked') }}
                                     </p>
                                     <template v-else-if="shownSource(p.id)">
-                                        <p class="max-h-48 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-gray-700 dark:text-gray-300">
+                                        <p class="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-gray-700 dark:text-gray-300">
                                             <span
                                                 v-for="(part, i) in around(p, sourceText(p.id))"
                                                 :key="i"
@@ -644,7 +644,7 @@ const details = (p: Proposal) =>
                                         <button
                                             type="button"
                                             data-open-source
-                                            class="mt-1.5 text-[10px] font-semibold text-indigo-600 underline decoration-dotted underline-offset-2 dark:text-indigo-400"
+                                            class="mt-1.5 text-xs font-semibold text-accent underline decoration-dotted underline-offset-2 dark:text-accent-dark"
                                             @click="emit('open', p.node_id, p.node_type, p.quote)"
                                         >{{ $t('nexus.extract_source_open') }}</button>
                                     </template>
@@ -653,7 +653,7 @@ const details = (p: Proposal) =>
                                     <button
                                         type="button"
                                         data-accept
-                                        class="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
+                                        class="flex items-center gap-1 rounded-md bg-emerald-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-40"
                                         :disabled="p.stale"
                                         :title="p.stale ? $t('nexus.extract_stale_keep') : undefined"
                                         @click="review(p, true)"
@@ -663,13 +663,13 @@ const details = (p: Proposal) =>
                                         v-if="editing !== p.id"
                                         type="button"
                                         data-edit
-                                        class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+                                        class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
                                         @click="startEditing(p)"
                                     ><Pencil class="h-3 w-3" /> {{ $t('nexus.extract_edit') }}</button>
                                     <button
                                         type="button"
                                         data-decline
-                                        class="flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] text-gray-500 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
+                                        class="flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#3a3a3c]"
                                         @click="review(p, false)"
                                     ><X class="h-3 w-3" /> {{ $t('nexus.extract_decline') }}</button>
                                 </div>
@@ -682,13 +682,13 @@ const details = (p: Proposal) =>
                  thing to do is in the settings, so say where they are rather
                  than leaving somebody to find them. -->
             <div v-else data-nothing-waiting class="space-y-2">
-                <p class="text-[13px] text-gray-400">
+                <p class="text-[13px] text-gray-500 dark:text-gray-400">
                     {{ status.config.enabled ? t('nexus.extract_none') : t('nexus.extract_off_here') }}
                 </p>
                 <button
                     type="button"
                     data-open-settings
-                    class="rounded-md border border-gray-200 px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:bg-gray-50 dark:border-[#3a3a3c] dark:text-gray-200 dark:hover:bg-[#2c2c2e]"
+                    class="rounded-md border border-gray-200 px-2.5 py-1 text-[12px] font-medium text-gray-700 hover:bg-gray-50 dark:border-border-subtle-dark dark:text-gray-200 dark:hover:bg-surface-hover-dark"
                     @click="emit('settings')"
                 >{{ t('nexus.extract_open_settings') }}</button>
             </div>

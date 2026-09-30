@@ -21,10 +21,10 @@ const emit = defineEmits<{
 }>();
 
 const colors: { value: PdfAnnotation['color']; label: string; bg: string; ring: string }[] = [
-  { value: 'yellow', label: 'Yellow', bg: 'bg-yellow-300', ring: 'ring-yellow-400' },
-  { value: 'green', label: 'Green', bg: 'bg-green-400', ring: 'ring-green-500' },
-  { value: 'blue', label: 'Blue', bg: 'bg-blue-400', ring: 'ring-blue-500' },
-  { value: 'pink', label: 'Pink', bg: 'bg-pink-400', ring: 'ring-pink-500' },
+  { value: 'yellow', label: 'file.label_yellow', bg: 'bg-yellow-300', ring: 'ring-yellow-400' },
+  { value: 'green', label: 'file.label_green', bg: 'bg-green-400', ring: 'ring-green-500' },
+  { value: 'blue', label: 'file.label_blue', bg: 'bg-blue-400', ring: 'ring-blue-500' },
+  { value: 'pink', label: 'file.label_pink', bg: 'bg-pink-400', ring: 'ring-pink-500' },
 ];
 
 const selectedColor = ref<PdfAnnotation['color']>('yellow');
@@ -124,7 +124,7 @@ const executeDelete = () => {
           <!-- Header -->
           <div class="flex items-center justify-between mb-2">
             <span class="text-xs font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">
-              {{ mode === 'create' ? 'Highlight' : 'Edit Highlight' }}
+              {{ mode === 'create' ? $t('file.highlight') : $t('file.edit_highlight') }}
             </span>
             <button @click="emit('close')" class="p-1 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-muted dark:text-muted-dark cursor-pointer" :aria-label="$t('file.close_panel')">
               <X class="w-3.5 h-3.5" />
@@ -151,7 +151,7 @@ const executeDelete = () => {
                 c.bg,
                 selectedColor === c.value ? `ring-2 ${c.ring} ring-offset-2 ring-offset-surface dark:ring-offset-surface-dark scale-110` : 'hover:scale-105'
               ]"
-              :title="c.label"
+              :title="$t(c.label)"
             />
             <div class="flex-1" />
             <button
@@ -202,7 +202,7 @@ const executeDelete = () => {
               @click="handleSave"
               class="px-4 py-1.5 rounded-md text-xs font-medium bg-primary dark:bg-white text-white dark:text-black hover:opacity-90 transition-opacity cursor-pointer"
             >
-              {{ mode === 'create' ? 'Save' : 'Update' }}
+              {{ mode === 'create' ? $t('file.save') : $t('file.update') }}
             </button>
           </div>
         </div>
@@ -212,8 +212,8 @@ const executeDelete = () => {
     <ConfirmModal
       :show="showConfirmDelete"
       :title="$t('file.delete_highlight')"
-      message="Are you sure you want to delete this highlight? This action cannot be undone."
-      confirm-text="Delete"
+      :message="$t('file.delete_highlight_body')"
+      :confirm-text="$t('file.delete')"
       :is-destructive="true"
       @confirm="executeDelete"
       @cancel="showConfirmDelete = false"

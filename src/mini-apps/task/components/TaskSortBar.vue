@@ -27,8 +27,8 @@ const emit = defineEmits<{
  * The search input's own classes, so the two line up by construction rather
  * than by two numbers that agree today.
  */
-const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:border-[#2c2c2c] '
-  + 'rounded-full leading-5 bg-white dark:bg-[#1e1e1e] text-[#1c1c1e] dark:text-[#f4f4f5] '
+const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:border-border-dark '
+  + 'rounded-full leading-5 bg-white dark:bg-surface-dark text-text dark:text-text-dark '
   + 'focus:outline-none focus:ring-2 focus:ring-black/5 dark:focus:ring-white/10 sm:text-sm '
   + 'transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)] cursor-pointer';
 </script>
@@ -37,7 +37,7 @@ const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:
   <div class="flex items-center gap-2">
     <!-- Sort -->
     <div class="relative group">
-      <ArrowUpDown class="absolute inset-y-0 left-3 my-auto h-3.5 w-3.5 text-gray-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+      <ArrowUpDown class="absolute inset-y-0 left-3 my-auto h-3.5 w-3.5 text-gray-500 dark:text-gray-400 group-focus-within:text-accent transition-colors pointer-events-none" />
       <select
         :value="sort"
         @change="emit('update:sort', ($event.target as HTMLSelectElement).value as SortMode)"
@@ -46,12 +46,12 @@ const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:
       >
         <option v-for="mode in SORT_MODES" :key="mode" :value="mode">{{ $t('task.sort_' + mode) }}</option>
       </select>
-      <ChevronDown class="absolute inset-y-0 right-3 my-auto h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+      <ChevronDown class="absolute inset-y-0 right-3 my-auto h-3.5 w-3.5 text-gray-500 dark:text-gray-400 pointer-events-none" />
     </div>
 
     <!-- Group -->
     <div class="relative group">
-      <Rows3 class="absolute inset-y-0 left-3 my-auto h-3.5 w-3.5 text-gray-400 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+      <Rows3 class="absolute inset-y-0 left-3 my-auto h-3.5 w-3.5 text-gray-500 dark:text-gray-400 group-focus-within:text-accent transition-colors pointer-events-none" />
       <select
         :value="group"
         @change="emit('update:group', ($event.target as HTMLSelectElement).value as GroupMode)"
@@ -60,7 +60,7 @@ const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:
       >
         <option v-for="mode in GROUP_MODES" :key="mode" :value="mode">{{ $t('task.group_' + mode) }}</option>
       </select>
-      <ChevronDown class="absolute inset-y-0 right-3 my-auto h-3.5 w-3.5 text-gray-400 pointer-events-none" />
+      <ChevronDown class="absolute inset-y-0 right-3 my-auto h-3.5 w-3.5 text-gray-500 dark:text-gray-400 pointer-events-none" />
     </div>
 
     <!--
@@ -69,7 +69,7 @@ const PILL = 'appearance-none w-full pl-9 pr-8 py-2 border border-gray-200 dark:
     -->
     <button
       @click="emit('show-shortcuts')"
-      class="hidden md:flex shrink-0 items-center justify-center w-9 h-9 rounded-full border border-gray-200 dark:border-[#2c2c2c] bg-white dark:bg-[#1e1e1e] text-gray-400 hover:text-black dark:hover:text-white transition-colors cursor-pointer shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
+      class="hidden md:flex shrink-0 items-center justify-center w-9 h-9 rounded-full border border-gray-200 dark:border-border-dark bg-white dark:bg-surface-dark text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white transition-colors cursor-pointer shadow-[0_2px_8px_rgba(0,0,0,0.02)]"
       :aria-label="$t('task.a11y_open_shortcuts')"
       :title="$t('task.shortcuts') + ' (?)'"
     >

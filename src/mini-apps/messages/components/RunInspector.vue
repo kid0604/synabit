@@ -513,7 +513,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               class="px-3 py-1 text-xs font-medium rounded-md transition-colors"
               :class="tab === option
                 ? 'bg-white dark:bg-gray-700 text-text dark:text-text-dark shadow-sm'
-                : 'text-gray-500 hover:text-text dark:hover:text-text-dark'"
+                : 'text-gray-500 dark:text-gray-400 hover:text-text dark:hover:text-text-dark'"
               @click="showTab(option)"
             >
               {{ t(`syn.inspector_tab_${option}`) }}
@@ -522,7 +522,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         </div>
         <div class="flex items-center gap-1">
           <button
-            class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
             :title="t('syn.refresh')"
             @click="tab === 'runs' ? loadRuns() : tab === 'tools' ? loadTools() : tab === 'memory' ? loadMemories() : tab === 'skills' ? loadSkills() : tab === 'permissions' ? loadAudit() : tab === 'numbers' ? statsView?.load() : showPrompt(previewQuestion)"
           >
@@ -530,7 +530,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             <RefreshCw v-else class="w-4 h-4" />
           </button>
           <button
-            class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800"
+            class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
             @click="emit('close')"
           >
             <X class="w-4 h-4" />
@@ -546,7 +546,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
       <div v-if="tab === 'runs'" class="flex-1 flex min-h-0">
         <!-- The list -->
         <div class="w-[280px] shrink-0 border-r border-gray-100 dark:border-gray-800/60 overflow-y-auto">
-          <p v-if="!runs.length && !isLoading" class="p-6 text-sm text-gray-500">
+          <p v-if="!runs.length && !isLoading" class="p-6 text-sm text-gray-500 dark:text-gray-400">
             {{ t('syn.runs_empty') }}
           </p>
           <button
@@ -559,11 +559,11 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           >
             <div class="flex items-center gap-2 mb-1">
               <span class="w-2 h-2 rounded-full shrink-0" :class="stateStyle(run.state)" />
-              <span class="text-[11px] uppercase tracking-wide text-gray-500">{{ stateLabel(run.state) }}</span>
-              <ChevronRight class="w-3 h-3 ml-auto text-gray-400" />
+              <span class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">{{ stateLabel(run.state) }}</span>
+              <ChevronRight class="w-3 h-3 ml-auto text-gray-500 dark:text-gray-400" />
             </div>
             <p class="text-sm text-text dark:text-text-dark line-clamp-2">{{ run.goal }}</p>
-            <p class="mt-1 text-[11px] text-gray-400">
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ when(run.created_at) }} · {{ t('syn.runs_tool_calls', { n: run.tool_calls }) }}
             </p>
           </button>
@@ -571,12 +571,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
         <!-- The transcript -->
         <div class="flex-1 overflow-y-auto">
-          <p v-if="!selected" class="p-6 text-sm text-gray-500">{{ t('syn.runs_pick_one') }}</p>
+          <p v-if="!selected" class="p-6 text-sm text-gray-500 dark:text-gray-400">{{ t('syn.runs_pick_one') }}</p>
 
           <div v-else class="p-6">
             <p class="text-base font-medium text-text dark:text-text-dark">{{ selected.goal }}</p>
 
-            <div class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
+            <div class="mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
               <span class="flex items-center gap-1.5">
                 <span class="w-2 h-2 rounded-full" :class="stateStyle(selected.state)" />
                 {{ stateLabel(selected.state) }}
@@ -632,20 +632,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                   <component
                     :is="step.ok === false ? AlertTriangle : stepIcon(step.kind)"
                     class="w-3.5 h-3.5 shrink-0"
-                    :class="step.ok === false ? 'text-red-500' : 'text-gray-400'"
+                    :class="step.ok === false ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'"
                   />
                   <span class="font-medium text-text dark:text-text-dark">
                     {{ step.tool ?? t(`syn.run_step_${step.kind}`) }}
                   </span>
-                  <span class="text-gray-400">{{ t('syn.run_round_n', { n: step.iteration + 1 }) }}</span>
-                  <span class="ml-auto text-gray-400">{{ duration(step.ms) }}</span>
+                  <span class="text-gray-500 dark:text-gray-400">{{ t('syn.run_round_n', { n: step.iteration + 1 }) }}</span>
+                  <span class="ml-auto text-gray-500 dark:text-gray-400">{{ duration(step.ms) }}</span>
                 </div>
 
                 <details v-if="prettyArgs(step.args)" class="mt-2">
-                  <summary class="text-[11px] text-gray-500 cursor-pointer select-none">
+                  <summary class="text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
                     {{ t('syn.run_arguments') }}
                   </summary>
-                  <pre class="mt-1 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/60 text-[11px]
+                  <pre class="mt-1 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/60 text-xs
                               text-gray-600 dark:text-gray-300 overflow-x-auto">{{ prettyArgs(step.args) }}</pre>
                 </details>
 
@@ -660,18 +660,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 -->
                 <pre
                   v-if="step.preview"
-                  class="mt-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/60 text-[11px]
+                  class="mt-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-900/60 text-xs
                          text-gray-600 dark:text-gray-300 max-h-56 overflow-auto whitespace-pre-wrap"
                 >{{ whole[step.index] ?? step.preview }}</pre>
                 <button
                   v-if="step.preview.length >= PREVIEW_CAP && whole[step.index] === undefined"
-                  class="mt-1 text-[11px] text-violet-500 hover:underline cursor-pointer"
+                  class="mt-1 text-xs text-violet-500 hover:underline cursor-pointer"
                   @click="showWhole(step.index)"
                 >
                   {{ t('syn.run_show_whole') }}
                 </button>
 
-                <p v-if="reversalText(step.reversal)" class="mt-2 text-[11px] text-gray-400">
+                <p v-if="reversalText(step.reversal)" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                   {{ t('syn.run_undo') }}: {{ reversalText(step.reversal) }}
                 </p>
               </li>
@@ -686,12 +686,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
            day and was read in one place in the whole codebase, to validate
            recipe step names; nothing ever showed it to anybody. -->
       <div v-else-if="tab === 'tools'" class="flex-1 overflow-y-auto p-6">
-        <p class="text-sm text-gray-500">{{ t('syn.tools_explainer') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.tools_explainer') }}</p>
         <!-- The count, and what it costs. The second number is the one a
              switch moves, and it is the same figure the Prompt tab shows
              against its budget — `ToolCard.chars` is measured by the same
              `serde_json` call, so the parts add up to that whole. -->
-        <p class="mt-1 text-[11px] text-gray-400">
+        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           {{ t('syn.tools_count', { n: tools.length }) }} ·
           {{ t('syn.tools_cost', { chars: toolChars, tokens: Math.round(toolChars / 4) }) }}
         </p>
@@ -703,7 +703,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               :class="group.label ? 'text-text dark:text-text-dark' : 'text-amber-600 dark:text-amber-500'"
             >
               {{ group.label ? t(group.label.key, group.label.values) : t('syn.tools_unclassified') }}
-              <span class="ml-1.5 text-[11px] font-normal text-gray-400">{{ group.tools.length }}</span>
+              <span class="ml-1.5 text-xs font-normal text-gray-500 dark:text-gray-400">{{ group.tools.length }}</span>
             </h3>
 
             <!-- The switch, on the group and not on the tool.
@@ -729,7 +729,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               :aria-label="t(group.on ? 'syn.tools_switch_off' : 'syn.tools_switch_on')"
               :disabled="switching === group.key"
               class="ml-auto relative w-9 h-5 shrink-0 rounded-full transition-colors disabled:opacity-50"
-              :class="group.on ? 'bg-violet-500' : 'bg-gray-300 dark:bg-gray-700'"
+              :class="group.on ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-700'"
               @click="setCapability(group.capability, !group.on, group.key)"
             >
               <span
@@ -743,10 +743,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                switch. Reading the vault is the one worth spelling out: turning
                it off leaves Syn answering from the conversation alone, which is
                a thing some people want and nobody should discover by accident. -->
-          <p class="mb-2 text-[11px] text-gray-400 leading-relaxed max-w-prose">
+          <p class="mb-2 text-xs text-gray-500 dark:text-gray-400 leading-relaxed max-w-prose">
             <template v-if="group.on">
               {{ t('syn.tools_group_cost', { chars: group.chars, tokens: Math.round(group.chars / 4) }) }}
-              <span v-if="group.never" class="text-gray-400">
+              <span v-if="group.never" class="text-gray-500 dark:text-gray-400">
                 · {{ t('syn.tools_group_never', { n: group.never }) }}
               </span>
             </template>
@@ -767,7 +767,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 @click="toggleTool(tool.name)"
               >
                 <ChevronRight
-                  class="w-3.5 h-3.5 mt-1 shrink-0 text-gray-400 transition-transform"
+                  class="w-3.5 h-3.5 mt-1 shrink-0 text-gray-500 dark:text-gray-400 transition-transform"
                   :class="openTools.has(tool.name) ? 'rotate-90' : ''"
                 />
                 <span class="min-w-0 flex-1">
@@ -781,12 +781,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                          not decide — `restore_node` is used on the one day
                          somebody needs it, which is why the switch is on the
                          group above and this number is here. -->
-                    <span class="ml-auto shrink-0 text-[11px] text-gray-400">
+                    <span class="ml-auto shrink-0 text-xs text-gray-500 dark:text-gray-400">
                       <template v-if="tool.used">
                         {{ t('syn.tools_used', { n: tool.used }) }}
                         <span v-if="tool.last_used"> · {{ tool.last_used.slice(0, 10) }}</span>
                       </template>
-                      <span v-else class="text-gray-300 dark:text-gray-600">{{ t('syn.tools_used_never') }}</span>
+                      <span v-else class="text-gray-500 dark:text-gray-400">{{ t('syn.tools_used_never') }}</span>
                     </span>
                   </span>
                   <!-- Verbatim, and clamped until asked for: written for the
@@ -808,7 +808,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
               <!-- What puts it back. Derived from the capability in Rust rather
                    than declared twice, so the two can never disagree. -->
-              <p class="mt-2 pl-5 text-[11px] text-gray-400">
+              <p class="mt-2 pl-5 text-xs text-gray-500 dark:text-gray-400">
                 <template v-if="tool.reversal?.kind === 'nothing'">
                   {{ t('syn.tools_undo_nothing') }}
                 </template>
@@ -821,7 +821,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 <!-- Only once the row is open: what it costs every turn. A
                      number on every collapsed row would be twenty-nine numbers
                      nobody asked for. -->
-                <span v-if="openTools.has(tool.name)" class="ml-2 text-gray-300 dark:text-gray-600">
+                <span v-if="openTools.has(tool.name)" class="ml-2 text-gray-500 dark:text-gray-400">
                   · {{ t('syn.tools_cost', { chars: tool.chars, tokens: Math.round(tool.chars / 4) }) }}
                 </span>
               </p>
@@ -829,13 +829,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           </ul>
         </div>
 
-        <p class="mt-6 text-[11px] text-gray-400 leading-relaxed max-w-prose">
+        <p class="mt-6 text-xs text-gray-500 dark:text-gray-400 leading-relaxed max-w-prose">
           {{ t('syn.tools_verbatim') }}
         </p>
       </div>
 
       <div v-else-if="tab === 'skills'" class="flex-1 overflow-y-auto p-6">
-        <p class="text-sm text-gray-500">{{ t('syn.skills_explainer') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.skills_explainer') }}</p>
 
         <div class="mt-4 flex gap-2">
           <input
@@ -857,7 +857,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           </button>
         </div>
 
-        <p v-if="!orderedSkills.length" class="mt-6 text-sm text-gray-500">
+        <p v-if="!orderedSkills.length" class="mt-6 text-sm text-gray-500 dark:text-gray-400">
           {{ t('syn.skills_empty') }}
         </p>
 
@@ -874,15 +874,15 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               highlight === skill.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
             ]"
           >
-            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+            <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ skill.tier }}</span>
               <span
                 v-if="skill.author === 'syn'"
                 class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700
                        dark:bg-amber-950/50 dark:text-amber-400"
               >{{ t('syn.skill_by_syn') }}</span>
-              <span class="text-gray-400">v{{ skill.version }}</span>
-              <span class="ml-auto text-gray-400">
+              <span class="text-gray-500 dark:text-gray-400">v{{ skill.version }}</span>
+              <span class="ml-auto text-gray-500 dark:text-gray-400">
                 {{ usageOf(skill)
                   ? t('syn.skill_used', { n: usageOf(skill)!.runs })
                   : t('syn.skill_never_used') }}
@@ -895,17 +895,17 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                  first skill anybody writes gets edited, saved, and asked for —
                  and never switched on, because nothing at the point of use says
                  that off means invisible rather than merely idle. -->
-            <p v-if="!skill.enabled" class="mt-1 text-[11px] text-gray-500">
+            <p v-if="!skill.enabled" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('syn.skill_is_off') }}
             </p>
             <p
               v-else-if="!skill.description.trim() || !skill.when_to_use.trim()"
-              class="mt-1 text-[11px] text-amber-600"
+              class="mt-1 text-xs text-amber-600"
             >
               {{ t('syn.skill_has_no_summary') }}
             </p>
-            <p v-if="skill.description" class="mt-0.5 text-sm text-gray-500">{{ skill.description }}</p>
-            <p v-if="skill.when_to_use" class="mt-1 text-[11px] text-gray-500 italic">
+            <p v-if="skill.description" class="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{{ skill.description }}</p>
+            <p v-if="skill.when_to_use" class="mt-1 text-xs text-gray-500 dark:text-gray-400 italic">
               {{ t('syn.skill_when') }}: {{ skill.when_to_use }}
             </p>
             <!-- Said here, before it is ever switched on. A recipe that only
@@ -915,21 +915,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               v-if="recipeProblems[skill.id]"
               class="mt-2 rounded-lg bg-red-50 dark:bg-red-950/30 px-3 py-2"
             >
-              <p class="text-[11px] font-medium text-red-700 dark:text-red-300">
+              <p class="text-xs font-medium text-red-700 dark:text-red-300">
                 {{ t('syn.recipe_wont_run') }}
               </p>
               <ul class="mt-1 space-y-0.5">
                 <li
                   v-for="(problem, i) in recipeProblems[skill.id]"
                   :key="i"
-                  class="text-[11px] text-red-700 dark:text-red-300"
+                  class="text-xs text-red-700 dark:text-red-300"
                 >
                   {{ problem }}
                 </li>
               </ul>
             </div>
 
-            <p v-if="skill.tools.length" class="mt-1 text-[11px] text-gray-400">
+            <p v-if="skill.tools.length" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('syn.skill_tools') }}: {{ skill.tools.join(', ') }}
             </p>
 
@@ -940,26 +940,26 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               class="mt-3 rounded-lg border border-amber-200 dark:border-amber-900/60
                      bg-amber-50/50 dark:bg-amber-950/20 p-3"
             >
-              <p class="text-[11px] font-medium text-amber-700 dark:text-amber-400">
+              <p class="text-xs font-medium text-amber-700 dark:text-amber-400">
                 {{ t('syn.skill_revision_title') }}
               </p>
-              <p v-if="skill.revision_because" class="mt-1 text-[11px] text-gray-600 dark:text-gray-400 italic">
+              <p v-if="skill.revision_because" class="mt-1 text-xs text-gray-600 dark:text-gray-400 italic">
                 {{ skill.revision_because }}
               </p>
               <div class="mt-2 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p class="text-[11px] font-medium text-gray-500">{{ t('syn.skill_revision_now') }}</p>
+                  <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('syn.skill_revision_now') }}</p>
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ skill.body }}</p>
                 </div>
                 <div>
-                  <p class="text-[11px] font-medium text-amber-700 dark:text-amber-400">{{ t('syn.skill_revision_proposed') }}</p>
+                  <p class="text-xs font-medium text-amber-700 dark:text-amber-400">{{ t('syn.skill_revision_proposed') }}</p>
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ skill.pending_revision }}</p>
                 </div>
               </div>
               <div class="mt-3 flex gap-2">
                 <button
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-                         bg-violet-600 text-white hover:bg-violet-700"
+                         bg-accent text-white hover:bg-accent/90"
                   @click="decideRevision(skill, true)"
                 >
                   <Check class="w-3 h-3" /> {{ t('syn.skill_revision_accept') }}
@@ -974,23 +974,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               </div>
             </div>
 
-            <p v-if="!mayBeEnabled(skill)" class="mt-2 text-[11px] text-amber-600">
+            <p v-if="!mayBeEnabled(skill)" class="mt-2 text-xs text-amber-600">
               {{ t('syn.skill_needs_trial') }}
             </p>
 
             <!-- Shown, not scored: which answer is better is a judgement about
                  this person's work, and the app has no business making it. -->
             <div v-if="trials[skill.id]" class="mt-3 rounded-lg bg-gray-50 dark:bg-gray-900/60 p-3">
-              <p class="text-[11px] text-gray-500">
+              <p class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('syn.skill_trial_question') }}: {{ trials[skill.id].question }}
               </p>
               <div class="mt-2 grid gap-3 sm:grid-cols-2">
                 <div>
-                  <p class="text-[11px] font-medium text-gray-500">{{ t('syn.skill_trial_without') }}</p>
+                  <p class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('syn.skill_trial_without') }}</p>
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].without }}</p>
                 </div>
                 <div>
-                  <p class="text-[11px] font-medium text-violet-600">{{ t('syn.skill_trial_with') }}</p>
+                  <p class="text-xs font-medium text-violet-600">{{ t('syn.skill_trial_with') }}</p>
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].with }}</p>
                 </div>
               </div>
@@ -1032,7 +1032,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <div class="flex gap-2">
                 <button
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-                         bg-violet-600 text-white hover:bg-violet-700"
+                         bg-accent text-white hover:bg-accent/90"
                   @click="commitEdit(skill)"
                 >
                   <Check class="w-3 h-3" /> {{ t('syn.skill_edit_save') }}
@@ -1049,7 +1049,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
             <pre
               v-else-if="skill.body.trim()"
-              class="mt-3 px-3 py-2 text-[11px] rounded-lg bg-gray-50 dark:bg-gray-900/60
+              class="mt-3 px-3 py-2 text-xs rounded-lg bg-gray-50 dark:bg-gray-900/60
                      text-text dark:text-text-dark whitespace-pre-wrap overflow-x-auto"
             >{{ skill.body.trim() }}</pre>
 
@@ -1065,7 +1065,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <button
                 v-if="!mayBeEnabled(skill)"
                 class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-                       bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50"
+                       bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
                 :disabled="trialling === skill.id"
                 @click="trial(skill)"
               >
@@ -1084,7 +1084,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <button
                 v-if="skill.enabled"
                 class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-                       bg-violet-600 text-white hover:bg-violet-700"
+                       bg-accent text-white hover:bg-accent/90"
                 @click="emit('use', skill.name); emit('close')"
               >
                 <Sparkles class="w-3 h-3" /> {{ t('syn.skill_try') }}
@@ -1096,12 +1096,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
       <!-- ── Permissions ──────────────────────────────────── -->
       <div v-else-if="tab === 'permissions'" class="flex-1 overflow-y-auto p-6">
-        <p class="text-sm text-gray-500">{{ t('syn.permissions_explainer') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.permissions_explainer') }}</p>
 
         <h3 class="mt-6 mb-2 text-sm font-medium text-text dark:text-text-dark">
           {{ t('syn.permissions_granted') }}
         </h3>
-        <p v-if="!orderedGrants.length" class="text-sm text-gray-500">
+        <p v-if="!orderedGrants.length" class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('syn.permissions_none') }}
         </p>
         <ul class="space-y-2">
@@ -1110,7 +1110,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             :key="grant.scope"
             class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
           >
-            <div class="flex items-center gap-2 text-[11px]">
+            <div class="flex items-center gap-2 text-xs">
               <span
                 class="px-1.5 py-0.5 rounded"
                 :class="grant.answer === 'never'
@@ -1118,10 +1118,10 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
               >{{ t(`syn.consent_${grant.answer}`) }}</span>
               <span v-if="hasLapsed(grant)" class="text-amber-600">{{ t('syn.permission_lapsed') }}</span>
-              <span class="ml-auto text-gray-400 font-mono">{{ grant.granted_at.slice(0, 10) }}</span>
+              <span class="ml-auto text-gray-500 dark:text-gray-400 font-mono">{{ grant.granted_at.slice(0, 10) }}</span>
             </div>
             <p class="mt-1.5 text-sm text-text dark:text-text-dark">{{ grant.about }}</p>
-            <p class="mt-0.5 text-[11px] text-gray-400 font-mono">{{ grant.scope }}</p>
+            <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 font-mono">{{ grant.scope }}</p>
             <button
               class="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
                      bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700"
@@ -1135,8 +1135,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         <h3 class="mt-8 mb-1 text-sm font-medium text-text dark:text-text-dark">
           {{ t('syn.audit_title') }}
         </h3>
-        <p class="text-xs text-gray-500 mb-3">{{ t('syn.audit_explainer') }}</p>
-        <p v-if="!auditEntries.length" class="text-sm text-gray-500">
+        <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ t('syn.audit_explainer') }}</p>
+        <p v-if="!auditEntries.length" class="text-sm text-gray-500 dark:text-gray-400">
           {{ t('syn.audit_none') }}
         </p>
         <ul class="space-y-1.5">
@@ -1145,7 +1145,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             :key="`${entry.at}-${i}`"
             class="rounded-lg bg-gray-50 dark:bg-gray-900/60 px-3 py-2"
           >
-            <div class="flex items-center gap-2 text-[11px]">
+            <div class="flex items-center gap-2 text-xs">
               <span
                 class="px-1.5 py-0.5 rounded font-mono"
                 :class="entry.outcome === 'refused'
@@ -1154,12 +1154,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                     ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400'
                     : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
               >{{ t(`syn.audit_${entry.outcome}`) }}</span>
-              <span class="font-mono text-gray-500">{{ entry.tool }}</span>
-              <span class="ml-auto text-gray-400 font-mono">{{ entry.at.slice(0, 16).replace('T', ' ') }}</span>
+              <span class="font-mono text-gray-500 dark:text-gray-400">{{ entry.tool }}</span>
+              <span class="ml-auto text-gray-500 dark:text-gray-400 font-mono">{{ entry.at.slice(0, 16).replace('T', ' ') }}</span>
             </div>
             <p class="mt-1 text-xs text-text dark:text-text-dark">{{ entry.about }}</p>
-            <p v-if="entry.detail" class="mt-0.5 text-[11px] font-mono text-gray-500 break-all">{{ entry.detail }}</p>
-            <p v-if="entry.reversal" class="mt-0.5 text-[11px] text-gray-500 italic">
+            <p v-if="entry.detail" class="mt-0.5 text-xs font-mono text-gray-500 dark:text-gray-400 break-all">{{ entry.detail }}</p>
+            <p v-if="entry.reversal" class="mt-0.5 text-xs text-gray-500 dark:text-gray-400 italic">
               {{ t('syn.audit_undo') }}: {{ entry.reversal }}
             </p>
           </li>
@@ -1168,14 +1168,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
       <!-- ── Memory ───────────────────────────────────────── -->
       <div v-else-if="tab === 'memory'" class="flex-1 overflow-y-auto p-6">
-        <p class="text-sm text-gray-500">{{ t('syn.memory_explainer') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.memory_explainer') }}</p>
 
         <div v-if="budget" class="mt-4">
           <div class="flex items-baseline justify-between text-sm">
             <span class="text-text dark:text-text-dark font-medium">
               {{ t('syn.memory_count', { n: budget.total }) }}
             </span>
-            <span class="text-xs text-gray-400">
+            <span class="text-xs text-gray-500 dark:text-gray-400">
               <span v-if="budget.pinned">{{ t('syn.memory_pinned_count', { n: budget.pinned }) }} · </span>
               {{ t('syn.memory_budget', { used: budget.chars, total: budget.budget_chars }) }}
             </span>
@@ -1185,7 +1185,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                  :class="budget.dropped > 0 ? 'bg-amber-500' : 'bg-violet-500'"
                  :style="{ width: `${memoryUsed}%` }" />
           </div>
-          <p v-if="budget.dropped > 0" class="mt-1 text-[11px] text-amber-600">
+          <p v-if="budget.dropped > 0" class="mt-1 text-xs text-amber-600">
             {{ t('syn.memory_dropped', { n: budget.dropped }) }}
           </p>
         </div>
@@ -1198,7 +1198,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               {{ t('syn.proposals_title', { n: proposals.length }) }}
             </h3>
           </div>
-          <p class="text-xs text-gray-500 mb-3">{{ t('syn.proposals_explainer') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">{{ t('syn.proposals_explainer') }}</p>
 
           <ul class="space-y-2">
             <li
@@ -1207,25 +1207,25 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               class="rounded-xl border border-violet-200 dark:border-violet-900/60
                      bg-violet-50/40 dark:bg-violet-950/20 p-3"
             >
-              <div class="flex items-center gap-2 text-[11px] text-gray-500">
+              <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 <span class="px-1.5 py-0.5 rounded bg-white dark:bg-gray-800">{{ proposal.kind }}</span>
-                <span v-if="proposal.subject" class="text-gray-400">{{ proposal.subject }}</span>
+                <span v-if="proposal.subject" class="text-gray-500 dark:text-gray-400">{{ proposal.subject }}</span>
                 <span
                   v-if="proposal.from_correction"
                   class="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700
                          dark:bg-amber-950/50 dark:text-amber-400"
                 >{{ t('syn.proposal_from_correction') }}</span>
-                <span class="ml-auto text-gray-400">{{ Math.round(proposal.confidence * 100) }}%</span>
+                <span class="ml-auto text-gray-500 dark:text-gray-400">{{ Math.round(proposal.confidence * 100) }}%</span>
               </div>
               <p class="mt-2 text-sm text-text dark:text-text-dark">{{ proposal.body }}</p>
-              <p v-if="proposal.supersedes" class="mt-1 text-[11px] text-gray-500 line-through">
+              <p v-if="proposal.supersedes" class="mt-1 text-xs text-gray-500 dark:text-gray-400 line-through">
                 {{ t('syn.proposal_replaces', { body: proposal.supersedes }) }}
               </p>
-              <p class="mt-1 text-[11px] text-gray-500 italic">{{ proposal.because }}</p>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400 italic">{{ proposal.because }}</p>
               <div class="mt-3 flex gap-2">
                 <button
                   class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-                         bg-violet-600 text-white hover:bg-violet-700"
+                         bg-accent text-white hover:bg-accent/90"
                   @click="accept(proposal)"
                 >
                   <Check class="w-3 h-3" /> {{ t('syn.proposal_accept') }}
@@ -1242,7 +1242,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           </ul>
         </div>
 
-        <p v-if="!memories.length" class="mt-6 text-sm text-gray-500">
+        <p v-if="!memories.length" class="mt-6 text-sm text-gray-500 dark:text-gray-400">
           {{ t('syn.memory_empty') }}
         </p>
 
@@ -1257,21 +1257,21 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               highlight === memory.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
             ]"
           >
-            <div class="flex items-center gap-2 text-[11px] text-gray-500">
+            <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
               <span class="px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800">{{ memory.kind }}</span>
-              <span v-if="memory.subject" class="text-gray-400">{{ memory.subject }}</span>
-              <span class="text-gray-400">{{ confidenceLabel(memory) }}</span>
+              <span v-if="memory.subject" class="text-gray-500 dark:text-gray-400">{{ memory.subject }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ confidenceLabel(memory) }}</span>
               <span v-if="isStale(memory)" class="text-amber-600">{{ t('syn.memory_stale') }}</span>
-              <span class="ml-auto text-gray-400">{{ memory.last_confirmed }}</span>
+              <span class="ml-auto text-gray-500 dark:text-gray-400">{{ memory.last_confirmed }}</span>
             </div>
 
             <p class="mt-2 text-sm text-text dark:text-text-dark whitespace-pre-wrap">{{ memory.body }}</p>
 
-            <p v-if="isStale(memory)" class="mt-2 text-[11px] text-amber-600">
+            <p v-if="isStale(memory)" class="mt-2 text-xs text-amber-600">
               {{ t('syn.memory_review_prompt') }}
             </p>
 
-            <p v-if="memory.source_nodes.length" class="mt-1 text-[11px] text-gray-400">
+            <p v-if="memory.source_nodes.length" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
               {{ t('syn.memory_from') }}: {{ memory.source_nodes.join(', ') }}
             </p>
 
@@ -1316,7 +1316,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 
       <!-- ── Prompt ───────────────────────────────────────── -->
       <div v-else class="flex-1 overflow-y-auto p-6">
-        <p class="text-sm text-gray-500">{{ t('syn.prompt_explainer') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.prompt_explainer') }}</p>
 
         <div class="mt-3 flex gap-2">
           <input
@@ -1327,7 +1327,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             @keydown.enter="showPrompt(previewQuestion)"
           />
           <button
-            class="px-3 py-2 text-sm rounded-lg bg-violet-600 text-white hover:bg-violet-700"
+            class="px-3 py-2 text-sm rounded-lg bg-accent text-white hover:bg-accent/90"
             @click="showPrompt(previewQuestion)"
           >
             {{ t('syn.refresh') }}
@@ -1340,14 +1340,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <span class="text-text dark:text-text-dark font-medium">
                 {{ t('syn.prompt_total', { chars: preview.chars, tokens: preview.est_tokens }) }}
               </span>
-              <span class="text-xs text-gray-400">
+              <span class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('syn.prompt_budget', { chars: preview.budget_chars }) }}
               </span>
             </div>
             <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
               <div class="h-full bg-violet-500 rounded-full" :style="{ width: `${budgetUsed}%` }" />
             </div>
-            <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.prompt_tokens_estimated') }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.prompt_tokens_estimated') }}</p>
           </div>
 
           <!-- The tool declarations, which are not in the prompt text and were
@@ -1364,14 +1364,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                   tokens: preview.tools.est_tokens,
                 }) }}
               </span>
-              <span class="text-xs text-gray-400">
+              <span class="text-xs text-gray-500 dark:text-gray-400">
                 {{ t('syn.prompt_budget', { chars: preview.tools.budget_chars }) }}
               </span>
             </div>
             <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
               <div class="h-full bg-violet-400 rounded-full" :style="{ width: `${toolsUsed}%` }" />
             </div>
-            <p class="mt-1 text-[11px] text-gray-400">{{ t('syn.tools_payload_note') }}</p>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.tools_payload_note') }}</p>
           </div>
 
           <!-- Neither half is the answer on its own. Against Ollama's default
@@ -1383,13 +1383,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           >
             {{ t('syn.prompt_turn_total', { tokens: totalTokens }) }}
           </p>
-          <p v-if="overWindow" class="mt-0.5 text-[11px] text-amber-600 dark:text-amber-500">
+          <p v-if="overWindow" class="mt-0.5 text-xs text-amber-600 dark:text-amber-500">
             {{ t('syn.prompt_over_window', { window: SMALL_WINDOW }) }}
           </p>
 
           <table class="mt-5 w-full text-sm">
             <thead>
-              <tr class="text-left text-xs text-gray-500 border-b border-gray-100 dark:border-gray-800/60">
+              <tr class="text-left text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800/60">
                 <th class="py-2 font-medium">{{ t('syn.prompt_section') }}</th>
                 <th class="py-2 font-medium text-right">{{ t('syn.prompt_chars') }}</th>
                 <th class="py-2 font-medium text-right">{{ t('syn.prompt_est_tokens') }}</th>
@@ -1404,20 +1404,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               >
                 <td class="py-2 text-text dark:text-text-dark">
                   {{ section.label }}
-                  <span v-if="section.dropped" class="ml-2 text-[11px] text-amber-600">
+                  <span v-if="section.dropped" class="ml-2 text-xs text-amber-600">
                     {{ t('syn.prompt_dropped') }}
                   </span>
                 </td>
-                <td class="py-2 text-right text-gray-500 tabular-nums">{{ section.chars }}</td>
-                <td class="py-2 text-right text-gray-500 tabular-nums">{{ section.est_tokens }}</td>
+                <td class="py-2 text-right text-gray-500 dark:text-gray-400 tabular-nums">{{ section.chars }}</td>
+                <td class="py-2 text-right text-gray-500 dark:text-gray-400 tabular-nums">{{ section.est_tokens }}</td>
               </tr>
             </tbody>
           </table>
 
-          <p class="mt-6 mb-2 text-xs font-medium text-gray-500 uppercase tracking-wide">
+          <p class="mt-6 mb-2 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
             {{ t('syn.prompt_verbatim') }}
           </p>
-          <pre class="p-3 rounded-xl bg-gray-50 dark:bg-gray-900/60 text-[11px]
+          <pre class="p-3 rounded-xl bg-gray-50 dark:bg-gray-900/60 text-xs
                       text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ preview.text }}</pre>
         </template>
       </div>

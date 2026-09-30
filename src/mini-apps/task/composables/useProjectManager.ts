@@ -1,14 +1,22 @@
 import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { ask } from '@tauri-apps/plugin-dialog';
 import { type TaskMetadata, formatNumber } from '../types';
 import type { Transaction, FinanceAccount, Category } from '../../finance/types';
 import { DEFAULT_INCOME_CATEGORIES, DEFAULT_EXPENSE_CATEGORIES, DEFAULT_ACCOUNTS } from '../../finance/types';
 import { toCategories } from '../../finance/categories';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
+import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { showAppNotice } from '../../../composables/useAppNotice';
 
 const t = i18n.global.t;
+
+/** Tells the undo's error message an unlink apart from a delete. */
+class UnlinkFailed extends Error {
+  constructor(readonly reason: unknown) {
+    super('Unlinking a resource failed');
+  }
+}
 
 export function useProjectManager(
   activeCategory: Ref<string>,
@@ -92,6 +100,38 @@ export function useProjectManager(
   const linkedResources = ref<any[]>([]);
   let fetchNotesTimeout: any = null;
 
+  // ── Held removals ───────────────────────────────────────────────────
+  /**
+   * Deleting a project and unlinking a resource both happen on screen at once
+   * and on disk only when the undo window closes; see `useUndoableAction`.
+   * These are what the lists must go on pretending is gone meanwhile, because
+   * a file-watcher reload would otherwise put the row straight back under the
+   * toast offering to bring it back.
+   */
+  const undo = useUndoableAction({
+    onError: (e) => {
+      logger.error('A held project change failed', e);
+      showAppNotice(
+        e instanceof UnlinkFailed ? t('task.unlink_failed') : t('common.delete_failed'),
+        'error',
+      );
+    },
+  });
+  /**
+   * Sets, not single ids: deleting project A and then B inside the window
+   * commits A while B is being held, and A's commit finishing must not stop
+   * the lists hiding B — a single variable cleared by A's `finally` did, and
+   * the next reload put B back under its own toast.
+   */
+  const heldProjectIds = new Set<string>();
+  const heldResourceIds = new Set<string>();
+
+  watch(projects, (list) => {
+    if (heldProjectIds.size && list.some(p => heldProjectIds.has(p.id))) {
+      projects.value = list.filter(p => !heldProjectIds.has(p.id));
+    }
+  });
+
   watch(activeProject, (proj, oldProj) => {
     if (proj && proj.id !== oldProj?.id) {
       activeProjectTab.value = 'overview';
@@ -118,7 +158,7 @@ export function useProjectManager(
       // of them typed 'json' and relabel them here, because boards were indexed
       // by two different code paths that did not agree; there is one path now.
       linkedResources.value = edges.filter((n: any) =>
-        ['note', 'whiteboard', 'file'].includes(n.node_type)
+        ['note', 'whiteboard', 'file'].includes(n.node_type) && !heldResourceIds.has(n.id)
       );
     } catch(e) {
       console.error('Failed to get linked resources', e);
@@ -211,32 +251,46 @@ export function useProjectManager(
     }
   };
 
+  /**
+   * To the trash, held for the undo window first. No question beforehand: the
+   * project file goes to the trash and its tasks stay where they are, so there
+   * is nothing here an undo cannot put back.
+   */
   const deleteProject = async () => {
-    if (!activeProject.value) return;
-    let isConfirmed = false;
-    try {
-      isConfirmed = await ask(t('task.delete_project_body'), {
-        title: t('task.delete_project_title'),
-        kind: 'warning',
-        okLabel: t('task.delete_confirm'),
-        cancelLabel: t('task.delete_cancel')
-      });
-    } catch (e) {
-      logger.warn("Tauri confirm failed, falling back to window.confirm", e);
-      isConfirmed = window.confirm(t('task.delete_project_title'));
-    }
-    
-    if (!isConfirmed) return;
-    
-    try {
-      // The trash, not an unlink — see `deleteTask`.
-      await ns.trashNode({ relPath: activeProject.value.path });
-      showProjectEditModal.value = false;
-      activeCategory.value = 'all';
-      await loadTasks();
-    } catch (e) {
-      logger.error("Failed to delete project", e);
-    }
+    const project = activeProject.value;
+    if (!project) return;
+    const index = projects.value.indexOf(project);
+
+    showProjectEditModal.value = false;
+    heldProjectIds.add(project.id);
+    projects.value = projects.value.filter(p => p.id !== project.id);
+    activeCategory.value = 'all';
+
+    await undo.run(
+      t('common.deleted_item', { name: project.title || t('task.untitled_project') }),
+      async () => {
+        try {
+          // The trash, not an unlink — see `deleteTask`.
+          await ns.trashNode({ relPath: project.path });
+        } finally {
+          heldProjectIds.delete(project.id);
+        }
+        // The delete is done; a failed refresh must not report it as failed
+        // and put the project back on screen.
+        try {
+          await loadTasks();
+        } catch (e) {
+          logger.error('Reload after deleting a project failed', e);
+        }
+      },
+      () => {
+        heldProjectIds.delete(project.id);
+        if (!projects.value.some(p => p.id === project.id)) {
+          projects.value.splice(Math.min(index, projects.value.length), 0, project);
+        }
+        activeCategory.value = `project:${project.id}`;
+      },
+    );
   };
 
   const openLinkResourcePicker = async () => {
@@ -343,20 +397,43 @@ export function useProjectManager(
     }
   };
 
+  /**
+   * Taking a note, board or file off the project, held for the undo window
+   * like a delete. The link is worked out now, not at commit, because by then
+   * the user may be looking at a different project.
+   */
   const unlinkResource = async (node: any) => {
     if (!activeProject.value) return;
-    
-    const confirmed = await ask(`"${node.title || 'This resource'}" will no longer be linked to this project.`, {
-      title: 'Unlink resource?',
-      kind: 'warning',
-      okLabel: 'Unlink',
-      cancelLabel: 'Cancel'
-    });
-    if (!confirmed) return;
+    const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
+    const index = linkedResources.value.findIndex(n => n.id === node.id);
 
+    heldResourceIds.add(node.id);
+    linkedResources.value = linkedResources.value.filter(n => n.id !== node.id);
+
+    await undo.run(
+      node.title
+        ? t('task.unlinked_toast', { title: node.title })
+        : t('task.unlinked_toast_untitled'),
+      async () => {
+        try {
+          await commitUnlink(node, projectLink);
+        } catch (e) {
+          throw new UnlinkFailed(e);
+        } finally {
+          heldResourceIds.delete(node.id);
+        }
+      },
+      () => {
+        heldResourceIds.delete(node.id);
+        if (index >= 0 && !linkedResources.value.some(n => n.id === node.id)) {
+          linkedResources.value.splice(Math.min(index, linkedResources.value.length), 0, node);
+        }
+      },
+    );
+  };
+
+  const commitUnlink = async (node: any, projectLink: string) => {
     try {
-      const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
-      
       if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
         const rawContent = await invoke<string>('read_whiteboard', {
           vaultPath: vaultPath.value,
@@ -407,6 +484,8 @@ export function useProjectManager(
       await loadProjectResources();
     } catch (e) {
       logger.error('Failed to unlink resource', e);
+      // Thrown on, so the undo puts the row back rather than leaving it hidden.
+      throw e;
     }
   };
 
@@ -558,6 +637,8 @@ export function useProjectManager(
     showEmbedPicker, allNotesForPicker, isLinkingResource, showAddResourceMenu, showEmptyAddMenu,
     openLinkResourcePicker, createNewResourceNote, createNewResourceWhiteboard,
     unlinkResource, handleEmbedResource,
+    /** The toast for a held project delete or unlink. */
+    projectUndo: undo,
     showTxModal, incomeCategories, expenseCategories, accounts,
     loadFinanceConfig, saveFinanceTransaction,
   };

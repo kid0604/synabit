@@ -42,20 +42,20 @@ const sentence = computed(() => {
     class="rounded-xl border border-amber-300 dark:border-amber-900/70
            bg-amber-50/60 dark:bg-amber-950/25 p-4"
   >
-    <div class="flex items-center gap-2 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+    <div class="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400">
       <ShieldQuestion class="w-3.5 h-3.5" />
       {{ t('syn.consent_title') }}
     </div>
 
     <p class="mt-2 text-sm text-text dark:text-text-dark">{{ sentence }}</p>
-    <p class="mt-1 text-[11px] text-gray-500">
+    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
       {{ t('syn.consent_tool', { tool: ask.tool }) }}
     </p>
 
     <div class="mt-3 flex flex-wrap gap-2">
       <button
         class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-               bg-violet-600 text-white hover:bg-violet-700
+               bg-accent text-white hover:bg-accent/90
                disabled:opacity-50 disabled:cursor-default"
         :disabled="busy"
         @click="emit('answer', 'once')"
@@ -92,11 +92,11 @@ const sentence = computed(() => {
       v-if="error"
       role="alert"
       data-consent-error
-      class="mt-2 text-[11px] text-red-600 dark:text-red-400"
+      class="mt-2 text-xs text-red-600 dark:text-red-400"
     >
       {{ t('syn.consent_failed', { reason: error }) }}
     </p>
 
-    <p class="mt-2 text-[11px] text-gray-500">{{ t('syn.consent_explainer') }}</p>
+    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.consent_explainer') }}</p>
   </div>
 </template>

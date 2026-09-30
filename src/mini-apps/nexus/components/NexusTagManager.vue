@@ -3,7 +3,10 @@ import { ref, onMounted, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { Search, Edit3, Trash2, Tag as TagIcon, ArrowLeft, LayoutGrid, Cloud } from 'lucide-vue-next';
 
-import { confirm } from '@tauri-apps/plugin-dialog';
+import { useI18n } from 'vue-i18n';
+import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
+
+const { t } = useI18n();
 
 const emit = defineEmits<{
   (e: 'back'): void;
@@ -154,18 +157,18 @@ const saveEdit = async (oldName: string) => {
     }
 };
 
-const deleteTag = async (tag: string) => {
-    const confirmed = await confirm(
-        `This will remove the tag from all files. This action cannot be undone.`, 
-        { 
-            title: `Delete tag "#${tag}"?`, 
-            kind: 'warning',
-            okLabel: 'Delete',
-            cancelLabel: 'Cancel'
-        }
-    );
-    if (!confirmed) return;
-    
+/** The tag waiting on the delete question, or null when none is asked. */
+const pendingDelete = ref<string | null>(null);
+
+const deleteTag = (tag: string) => {
+    pendingDelete.value = tag;
+};
+
+const confirmDelete = async () => {
+    const tag = pendingDelete.value;
+    pendingDelete.value = null;
+    if (!tag) return;
+
     try {
         loading.value = true;
         await invoke('delete_tag', {
@@ -185,41 +188,42 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="h-full w-full bg-[#fdfdfc] dark:bg-[#1a1a1c] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+  <div class="h-full w-full bg-base dark:bg-surface-alt-dark flex flex-col animate-in fade-in zoom-in-95 duration-200">
       
       <!-- Header -->
-      <div class="h-auto min-h-[64px] py-3 flex flex-wrap items-center justify-between px-4 sm:px-8 gap-3 border-b border-gray-200 dark:border-[#2c2c2e] bg-white/80 dark:bg-[#242426]/80 backdrop-blur-md flex-shrink-0">
+      <div class="h-auto min-h-[64px] py-3 flex flex-wrap items-center justify-between px-4 sm:px-8 gap-3 border-b border-gray-200 dark:border-border-dark bg-white/80 dark:bg-base-dark/80 backdrop-blur-md flex-shrink-0">
           <div class="flex items-center gap-4">
-              <button @click="emit('back')" class="p-2 -ml-2 text-gray-500 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-[#2c2c2e] rounded-xl transition-all flex items-center gap-1">
+              <button @click="emit('back')" class="p-2 -ml-2 text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white hover:bg-gray-100 dark:hover:bg-surface-hover-dark rounded-xl transition-all flex items-center gap-1">
                   <ArrowLeft class="w-5 h-5" />
                   <span class="text-sm font-semibold tracking-wide">Nexus</span>
               </button>
               
               <div class="h-4 w-px bg-gray-300 dark:bg-[#444]"></div>
               
-              <div class="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+              <div class="flex items-center gap-2 text-accent dark:text-accent-dark">
                   <TagIcon class="w-5 h-5" />
-                  <h1 class="text-sm font-bold tracking-widest uppercase">Tag Manager</h1>
+                  <h1 class="text-sm font-bold tracking-widest uppercase">{{ $t('nexus.tags_title') }}</h1>
               </div>
           </div>
           
           <div class="flex items-center gap-2">
               <div class="hidden sm:flex items-center bg-gray-100 dark:bg-[#1c1c1e] rounded-xl p-1 shadow-inner mr-2">
-                  <button @click="viewMode = 'grid'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'grid' ? 'bg-white dark:bg-[#2c2c2e] text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300']" title="Grid View">
+                  <button @click="viewMode = 'grid'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'grid' ? 'bg-white dark:bg-[#2c2c2e] text-accent dark:text-accent-dark shadow-sm' : 'text-gray-500 hover:text-gray-600 dark:hover:text-gray-300']" :title="$t('nexus.tags_grid')" :aria-label="$t('nexus.tags_grid')" :aria-pressed="viewMode === 'grid'">
                       <LayoutGrid class="w-4 h-4" />
                   </button>
-                  <button @click="viewMode = 'cloud'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'cloud' ? 'bg-white dark:bg-[#2c2c2e] text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300']" title="Word Cloud View">
+                  <button @click="viewMode = 'cloud'" :class="['p-1.5 rounded-lg transition-all', viewMode === 'cloud' ? 'bg-white dark:bg-[#2c2c2e] text-accent dark:text-accent-dark shadow-sm' : 'text-gray-500 hover:text-gray-600 dark:hover:text-gray-300']" :title="$t('nexus.tags_cloud')" :aria-label="$t('nexus.tags_cloud')" :aria-pressed="viewMode === 'cloud'">
                       <Cloud class="w-4 h-4" />
                   </button>
               </div>
               
               <div class="relative w-full sm:w-64 flex-shrink-0">
-                  <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 dark:text-gray-400" />
                   <input 
                       v-model="searchQuery"
                       type="text"
-                      placeholder="Find tags..."
-                      class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-[#1c1c1e] border border-transparent dark:border-[#3a3a3c] focus:border-indigo-500 dark:focus:border-indigo-500 rounded-xl text-sm focus:outline-none transition-all shadow-inner"
+                      :placeholder="$t('nexus.tags_find')"
+                      :aria-label="$t('nexus.tags_find')"
+                      class="w-full pl-9 pr-4 py-2 bg-gray-100 dark:bg-[#1c1c1e] border border-transparent dark:border-border-subtle-dark focus:border-accent rounded-xl text-sm focus:outline-none transition-all shadow-inner"
                   />
               </div>
           </div>
@@ -230,17 +234,17 @@ onMounted(() => {
           <div class="w-full max-w-[1600px] mx-auto">
               
               <div v-if="loading" class="flex justify-center py-20">
-                  <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                  <div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></div>
               </div>
               
-              <div v-else-if="filteredTags.length === 0" class="text-center py-20 text-gray-500">
+              <div v-else-if="filteredTags.length === 0" class="text-center py-20 text-gray-500 dark:text-gray-400">
                   <TagIcon class="w-12 h-12 mx-auto mb-4 opacity-20" />
-                  <p class="font-medium">No tags found.</p>
+                  <p class="font-medium">{{ $t('nexus.tags_none') }}</p>
               </div>
               
               <div v-else-if="viewMode === 'grid'" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4" style="grid-auto-flow: dense; grid-auto-rows: minmax(80px, auto);">
                   <div v-for="tag in filteredTags" :key="tag.name" 
-                       class="group bg-white dark:bg-[#242426] border backdrop-blur-sm rounded-3xl transition-all flex flex-col hover:-translate-y-0.5 hover:shadow-xl hover:z-10 relative overflow-hidden"
+                       class="group bg-white dark:bg-base-dark border backdrop-blur-sm rounded-3xl transition-all flex flex-col hover:-translate-y-0.5 hover:shadow-xl hover:z-10 relative overflow-hidden"
                        :class="[getBoxStyle(tag.count).classes, getGradientClass(tag.name)]">
                       
                       <!-- Background Large Count -->
@@ -259,29 +263,29 @@ onMounted(() => {
                               @keyup.esc="editingTag = null"
                               type="text" 
                               autoFocus
-                              class="w-full px-3 py-1.5 bg-white/50 dark:bg-black/20 border-2 border-indigo-500 rounded-xl text-sm font-semibold focus:outline-none backdrop-blur-md"
-                          aria-label="Tag name" />
+                              class="w-full px-3 py-1.5 bg-white/50 dark:bg-black/20 border-2 border-accent rounded-xl text-sm font-semibold focus:outline-none backdrop-blur-md"
+                          :aria-label="$t('nexus.tags_name')" />
                           <div class="flex gap-2">
-                             <button @click="saveEdit(tag.name)" class="flex-1 py-1.5 bg-indigo-500 text-white rounded-lg text-xs font-bold hover:bg-indigo-600 transition-colors shadow-md">Save</button>
-                             <button @click="editingTag = null" class="py-1.5 px-3 bg-white/50 dark:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-bold hover:bg-white/80 dark:hover:bg-white/20 transition-colors">Cancel</button>
+                             <button @click="saveEdit(tag.name)" class="flex-1 py-1.5 bg-accent text-white rounded-lg text-xs font-bold hover:opacity-90 transition-colors shadow-md">{{ $t('nexus.tags_save') }}</button>
+                             <button @click="editingTag = null" class="py-1.5 px-3 bg-white/50 dark:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-bold hover:bg-white/80 dark:hover:bg-white/20 transition-colors">{{ $t('nexus.tags_cancel') }}</button>
                           </div>
                       </div>
                       
                       <!-- Normal Mode -->
                       <template v-else>
                           <div class="flex items-start justify-between mb-2 z-20 relative">
-                              <div class="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer" @click="emit('search-tag', tag.name)" title="Search this tag">
-                                  <span class="text-indigo-600/50 dark:text-indigo-400/50 font-mono text-lg font-light">#</span>
-                                  <h3 class="font-bold text-gray-800 dark:text-gray-100 truncate hover:text-indigo-600 transition-colors" :class="getBoxStyle(tag.count).titleSize">{{ tag.name }}</h3>
+                              <div class="flex items-center gap-1.5 min-w-0 flex-1 cursor-pointer" @click="emit('search-tag', tag.name)" :title="$t('nexus.tags_search')">
+                                  <span class="text-accent/50 dark:text-accent-dark/50 font-mono text-lg font-light">#</span>
+                                  <h3 class="font-bold text-gray-800 dark:text-gray-100 truncate hover:text-accent transition-colors" :class="getBoxStyle(tag.count).titleSize">{{ tag.name }}</h3>
                               </div>
-                              <span :class="['ml-2 px-2 py-0.5 bg-white/60 dark:bg-black/20 text-gray-600 dark:text-gray-300 text-[11px] font-bold rounded-md flex-shrink-0 border border-white/40 dark:border-white/10 shadow-sm', !getBoxStyle(tag.count).showBadge ? 'sm:hidden' : '']">{{ tag.count }}</span>
+                              <span :class="['ml-2 px-2 py-0.5 bg-white/60 dark:bg-black/20 text-gray-600 dark:text-gray-300 text-xs font-bold rounded-md flex-shrink-0 border border-white/40 dark:border-white/10 shadow-sm', !getBoxStyle(tag.count).showBadge ? 'sm:hidden' : '']">{{ tag.count }}</span>
                           </div>
                           
-                          <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity mt-auto z-20 relative pt-2">
-                              <button @click="startEdit(tag.name)" class="flex-1 py-1.5 text-gray-600 dark:text-gray-300 hover:text-indigo-700 bg-white/40 hover:bg-white/80 dark:bg-black/20 dark:hover:bg-indigo-500/30 rounded-xl transition-all flex items-center justify-center gap-1.5 border border-white/50 dark:border-white/10 hover:shadow-sm">
-                                  <Edit3 class="w-3.5 h-3.5" /> <span class="text-[10px] font-bold uppercase tracking-wider">Rename</span>
+                          <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity mt-auto z-20 relative pt-2">
+                              <button @click="startEdit(tag.name)" class="flex-1 py-1.5 text-gray-600 dark:text-gray-300 hover:text-accent bg-white/40 hover:bg-white/80 dark:bg-black/20 dark:hover:bg-accent/30 rounded-xl transition-all flex items-center justify-center gap-1.5 border border-white/50 dark:border-white/10 hover:shadow-sm">
+                                  <Edit3 class="w-3.5 h-3.5" /> <span class="text-xs font-bold uppercase tracking-wider">{{ $t('nexus.tags_rename') }}</span>
                               </button>
-                              <button @click="deleteTag(tag.name)" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 bg-white/40 hover:bg-red-100 dark:bg-black/20 dark:hover:bg-red-500/30 rounded-xl transition-all border border-white/50 dark:border-white/10 hover:shadow-sm" aria-label="Delete Tag">
+                              <button @click="deleteTag(tag.name)" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-red-600 bg-white/40 hover:bg-red-100 dark:bg-black/20 dark:hover:bg-red-500/30 rounded-xl transition-all border border-white/50 dark:border-white/10 hover:shadow-sm" :aria-label="$t('nexus.tags_delete')" :title="$t('nexus.tags_delete')">
                                   <Trash2 class="w-3.5 h-3.5" />
                               </button>
                           </div>
@@ -299,7 +303,7 @@ onMounted(() => {
                       <span class="font-bold tracking-tight hover:!opacity-100" :class="getTextColorClass(tag.name)" style="line-height: 1.1;">
                           {{ tag.name }}
                       </span>
-                      <span class="text-[10px] font-bold absolute -top-2 -right-3 bg-gray-100 dark:bg-[#2c2c2e] text-gray-500 rounded-full w-5 h-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity border border-gray-200 dark:border-[#3c3c3e] shadow-sm pointer-events-none" style="font-size: 10px;">
+                      <span class="text-xs font-bold absolute -top-2 -right-3 bg-gray-100 dark:bg-[#2c2c2e] text-gray-500 dark:text-gray-400 rounded-full min-w-5 h-5 px-1 flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity border border-gray-200 dark:border-border-subtle-dark shadow-sm pointer-events-none">
                           {{ tag.count }}
                       </span>
                   </div>
@@ -307,5 +311,16 @@ onMounted(() => {
               
           </div>
       </div>
+
+      <ConfirmModal
+          :show="pendingDelete !== null"
+          :title="t('nexus.tags_delete_title', { tag: pendingDelete ?? '' })"
+          :message="t('nexus.tags_delete_message')"
+          :confirm-text="t('nexus.tags_delete')"
+          :cancel-text="t('nexus.tags_cancel')"
+          is-destructive
+          @confirm="confirmDelete"
+          @cancel="pendingDelete = null"
+      />
   </div>
 </template>

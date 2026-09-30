@@ -432,13 +432,13 @@ const handleResetPdf = async () => {
       <div class="flex flex-wrap items-center justify-center gap-1.5 md:gap-2 px-2 md:px-4 py-2 bg-white/80 dark:bg-[#222]/80 backdrop-blur border-b border-gray-200/50 dark:border-white/5 flex-shrink-0">
         <!-- Navigation -->
         <button @click="prevPage" :disabled="renderer.currentPage.value <= 1" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer" :aria-label="$t('file.prev_page')"><ChevronLeft class="w-4 h-4" /></button>
-        <span class="text-xs font-mono text-gray-500 min-w-[50px] md:min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
+        <span class="text-xs font-mono text-gray-500 dark:text-gray-400 min-w-[50px] md:min-w-[60px] text-center">{{ renderer.currentPage.value }} / {{ renderer.totalPages.value }}</span>
         <button @click="nextPage" :disabled="renderer.currentPage.value >= renderer.totalPages.value" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 disabled:opacity-30 cursor-pointer"><ChevronRight class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
         <!-- Zoom -->
         <button @click="zoomOut" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_out')"><ZoomOut class="w-4 h-4" /></button>
-        <span class="text-xs font-mono text-gray-500 w-10 text-center">{{ zoomPercent() }}%</span>
+        <span class="text-xs font-mono text-gray-500 dark:text-gray-400 w-10 text-center">{{ zoomPercent() }}%</span>
         <button @click="zoomIn" class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/10 text-gray-600 dark:text-gray-300 cursor-pointer" :aria-label="$t('file.zoom_in')"><ZoomIn class="w-4 h-4" /></button>
         <div class="hidden md:block w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
 
@@ -488,7 +488,7 @@ const handleResetPdf = async () => {
         </button>
 
         <!-- Sidebar toggle -->
-        <button @click="showSidebar = !showSidebar" :class="showSidebar ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" :title="$t('file.annotation_panel')">
+        <button @click="showSidebar = !showSidebar" :class="showSidebar ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/10'" class="p-1.5 rounded-lg cursor-pointer transition-colors" :title="$t('file.annotation_panel')">
           <PanelRightClose v-if="showSidebar" class="w-4 h-4" />
           <PanelRightOpen v-else class="w-4 h-4" />
         </button>
@@ -498,8 +498,8 @@ const handleResetPdf = async () => {
       <div ref="containerRef" class="pdf-viewer-container pdfViewer flex-1 overflow-auto px-4 py-6" :class="{ 'pdf-dark-mode': darkMode }">
         <div v-if="renderer.isLoading.value" class="flex items-center justify-center h-full">
           <div class="flex flex-col items-center gap-3">
-            <div class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span class="text-sm text-gray-500">{{ $t('file.loading_pdf') }}</span>
+            <div class="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ $t('file.loading_pdf') }}</span>
           </div>
         </div>
         <div v-else-if="renderer.error.value" class="flex items-center justify-center h-full">
@@ -532,7 +532,7 @@ const handleResetPdf = async () => {
               @save="(strokes: any[]) => handleDrawingSave(pageNum, strokes)"
             />
             <!-- Page number -->
-            <div class="absolute bottom-2 right-3 text-[10px] text-gray-400 font-mono select-none pointer-events-none">{{ pageNum }}</div>
+            <div class="absolute bottom-2 right-3 text-xs text-gray-500 dark:text-gray-400 font-mono select-none pointer-events-none">{{ pageNum }}</div>
           </div>
         </div>
       </div>
@@ -572,8 +572,8 @@ const handleResetPdf = async () => {
     <ConfirmModal
       :show="showConfirmReset"
       :title="$t('file.reset_pdf')"
-      message="Are you sure you want to clear all annotations and drawings for this PDF? This action cannot be undone."
-      confirm-text="Clear All"
+      :message="$t('file.reset_pdf_body')"
+      :confirm-text="$t('file.clear_all')"
       :is-destructive="true"
       @confirm="handleResetPdf"
       @cancel="showConfirmReset = false"

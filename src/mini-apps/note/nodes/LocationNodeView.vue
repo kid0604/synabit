@@ -378,29 +378,29 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
       <!-- Bubble toolbar -->
       <Transition name="loc-bubble">
         <div v-if="selected && !editing" class="location-bubble" @mousedown.prevent>
-          <button v-if="!isRoute" @click="startEdit" title="Edit" class="loc-bubble-btn">
+          <button v-if="!isRoute" @click="startEdit" :title="$t('note.editor.location.edit')" class="loc-bubble-btn">
             <Pencil class="w-3.5 h-3.5" />
           </button>
           <div v-if="!isRoute" class="loc-bubble-sep" />
           <!-- Alignment -->
-          <button @click="setAlign('left')" title="Align left" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'left' }">
+          <button @click="setAlign('left')" :title="$t('note.editor.align_left')" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'left' }">
             <AlignLeft class="w-3.5 h-3.5" />
           </button>
-          <button @click="setAlign('center')" title="Align center" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'center' }">
+          <button @click="setAlign('center')" :title="$t('note.editor.align_center')" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'center' }">
             <AlignCenter class="w-3.5 h-3.5" />
           </button>
-          <button @click="setAlign('right')" title="Align right" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'right' }">
+          <button @click="setAlign('right')" :title="$t('note.editor.align_right')" class="loc-bubble-btn" :class="{ 'loc-bubble-active': blockAlign === 'right' }">
             <AlignRight class="w-3.5 h-3.5" />
           </button>
           <div class="loc-bubble-sep" />
-          <button v-if="!isRoute" @click="toggleProvider" :title="`Switch to ${isGoogle ? 'OSM' : 'Google Maps'}`" class="loc-bubble-btn">
+          <button v-if="!isRoute" @click="toggleProvider" :title="$t('note.editor.location.switch_to', { provider: isGoogle ? 'OSM' : 'Google Maps' })" class="loc-bubble-btn">
             <RefreshCw class="w-3.5 h-3.5" />
           </button>
-          <button @click="openExternal" title="Open in browser" class="loc-bubble-btn">
+          <button @click="openExternal" :title="$t('note.editor.location.open_in_browser')" class="loc-bubble-btn">
             <ExternalLink class="w-3.5 h-3.5" />
           </button>
           <div class="loc-bubble-sep" />
-          <button @click="deleteNode" title="Remove" class="loc-bubble-btn loc-bubble-danger">
+          <button @click="deleteNode" :title="$t('note.editor.remove')" class="loc-bubble-btn loc-bubble-danger">
             <Trash2 class="w-3.5 h-3.5" />
           </button>
         </div>
@@ -410,22 +410,22 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
       <Transition name="loc-bubble">
         <div v-if="editing" class="location-edit-panel" @keydown.stop @mousedown.stop>
           <div class="loc-edit-row">
-            <label class="loc-edit-label">Label</label>
-            <input v-model="editLabel" type="text" placeholder="e.g., Hanoi Opera House" class="loc-edit-input" @keydown.enter.stop="saveEdit" />
+            <label class="loc-edit-label">{{ $t('note.editor.location.label') }}</label>
+            <input v-model="editLabel" type="text" :placeholder="$t('note.editor.location.label_placeholder')" class="loc-edit-input" @keydown.enter.stop="saveEdit" />
           </div>
           <div class="loc-edit-row loc-edit-coords">
             <div class="loc-edit-coord">
-              <label class="loc-edit-label">Lat</label>
+              <label class="loc-edit-label">{{ $t('note.editor.location.lat') }}</label>
               <input v-model="editLat" type="text" placeholder="21.0285" class="loc-edit-input" @keydown.enter.stop="saveEdit" />
             </div>
             <div class="loc-edit-coord">
-              <label class="loc-edit-label">Lng</label>
+              <label class="loc-edit-label">{{ $t('note.editor.location.lng') }}</label>
               <input v-model="editLng" type="text" placeholder="105.8542" class="loc-edit-input" @keydown.enter.stop="saveEdit" />
             </div>
           </div>
           <div class="loc-edit-actions">
-            <button @click="cancelEdit" class="loc-edit-cancel"><X class="w-3.5 h-3.5" /> Cancel</button>
-            <button @click="saveEdit" class="loc-edit-save"><Check class="w-3.5 h-3.5" /> Save</button>
+            <button @click="cancelEdit" class="loc-edit-cancel"><X class="w-3.5 h-3.5" /> {{ $t('note.cancel') }}</button>
+            <button @click="saveEdit" class="loc-edit-save"><Check class="w-3.5 h-3.5" /> {{ $t('note.editor.save') }}</button>
           </div>
         </div>
       </Transition>
@@ -434,7 +434,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
       <div class="location-info">
         <div v-if="isRoute" class="location-label" style="gap: 6px;">
           <Navigation class="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
-          <span class="location-name">{{ node.attrs.label || 'Directions' }}</span>
+          <span class="location-name">{{ node.attrs.label || $t('note.editor.location.directions') }}</span>
         </div>
         <div v-else class="location-label">
           <MapPin class="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
@@ -621,7 +621,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
   border-radius: 6px;
   cursor: pointer;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   transition: all 0.12s;
   white-space: nowrap;
@@ -706,7 +706,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
 .loc-edit-coord { flex: 1; display: flex; flex-direction: column; gap: 3px; }
 
 .loc-edit-label {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   color: #9ca3af;
   text-transform: uppercase;
@@ -747,7 +747,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
   padding: 5px 10px;
   border: none;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.12s;
@@ -793,7 +793,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
 .dark .location-name { color: #d4d4d8; }
 
 .location-provider-badge {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
@@ -813,7 +813,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
 
 /* Route info badges */
 .route-info-badge {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;

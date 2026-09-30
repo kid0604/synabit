@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Pin, ExternalLink, Edit2, Trash2, Lock, Unlock, History, EyeOff } from 'lucide-vue-next';
+import { Pin, ExternalLink, Edit2, Trash2, Lock, Unlock, History, LayoutTemplate } from 'lucide-vue-next';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 
 defineProps<{
@@ -14,6 +14,8 @@ const emit = defineEmits<{
   (e: 'rename', id: string): void;
   (e: 'toggle-lock', id: string): void;
   (e: 'history', id: string): void;
+  /** Copy the note into `Templates/`, where the template picker finds it. */
+  (e: 'save-as-template', id: string): void;
   (e: 'delete', id: string): void;
 }>();
 
@@ -39,6 +41,9 @@ const appLockStore = useAppLockStore();
     </template>
     <button @click.stop="emit('history', noteId)" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2">
       <History class="w-3 h-3" /> {{ $t('note.history_title') }}
+    </button>
+    <button @click.stop="emit('save-as-template', noteId)" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center gap-2">
+      <LayoutTemplate class="w-3 h-3" /> {{ $t('note.templates.save_as_template') }}
     </button>
     <button @click.stop="emit('delete', noteId)" class="w-full text-left px-3 py-2 text-xs whitespace-nowrap hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 flex items-center gap-2">
       <Trash2 class="w-3 h-3" /> {{ $t('note.delete') }}

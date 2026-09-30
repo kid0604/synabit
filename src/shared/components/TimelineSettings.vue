@@ -173,7 +173,7 @@ const startAgain = async () => {
 
 <template>
     <div data-timeline-settings class="space-y-4">
-        <p v-if="failure" data-settings-failed class="text-[11px] text-red-500">{{ failure }}</p>
+        <p v-if="failure" data-settings-failed class="text-xs text-red-500">{{ failure }}</p>
         <template v-if="status">
 
         <!-- ── Reading: on or off, and what it sends where ────────────── -->
@@ -199,7 +199,7 @@ const startAgain = async () => {
                 <button
                     type="button"
                     data-enable
-                    class="w-full rounded-lg bg-indigo-600 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-40"
+                    class="btn-primary w-full"
                     :disabled="!status.local && !allowCloud"
                     @click="configure(true)"
                 >{{ $t('nexus.extract_enable') }}</button>
@@ -209,7 +209,7 @@ const startAgain = async () => {
                 <div class="space-y-1.5 rounded-lg bg-gray-50 p-2.5 text-[12px] text-gray-600 dark:bg-[#1e1e20] dark:text-gray-300">
                     <!-- The one line here that costs a walk of the whole
                          vault. Everything above it is already usable. -->
-                    <p v-if="!left" data-left-looking class="flex items-center gap-2 text-gray-400">
+                    <p v-if="!left" data-left-looking class="flex items-center gap-2 text-gray-500 dark:text-gray-400">
                         <Loader2 class="h-3 w-3 animate-spin" />
                         {{ $t('nexus.extract_looking') }}
                     </p>
@@ -223,7 +223,7 @@ const startAgain = async () => {
                         <button
                             type="button"
                             data-run-new
-                            class="flex items-center gap-1 rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white disabled:opacity-40"
+                            class="btn-primary"
                             :disabled="busy || status.running || blocked"
                             @click="run('new')"
                         >
@@ -245,7 +245,7 @@ const startAgain = async () => {
                     </p>
                     <p v-for="file in status.unreadable" :key="file" class="text-red-500">{{ file }}</p>
                 </div>
-                <button type="button" data-disable class="text-[12px] text-gray-400 underline" @click="configure(false)">
+                <button type="button" data-disable class="text-[12px] text-gray-500 dark:text-gray-400 underline" @click="configure(false)">
                     {{ $t('nexus.extract_disable') }}
                 </button>
             </template>
@@ -268,7 +268,7 @@ const startAgain = async () => {
                         type="button"
                         data-drop-kind
                         :aria-label="$t('nexus.extract_drop_kind', { kind: kindName(kind) })"
-                        class="text-gray-400 hover:text-red-500"
+                        class="text-gray-500 dark:text-gray-400 hover:text-red-500"
                         @click="dropKind(kind)"
                     >×</button>
                 </span>
@@ -318,7 +318,7 @@ const startAgain = async () => {
                         <Loader2 v-if="resetting" class="h-3 w-3 animate-spin" />
                         {{ $t('nexus.reset_confirm') }}
                     </button>
-                    <button type="button" class="text-[12px] text-gray-500 hover:text-gray-700 dark:hover:text-gray-300" @click="resetPlan = null">
+                    <button type="button" class="text-[12px] text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300" @click="resetPlan = null">
                         {{ $t('nexus.reset_cancel') }}
                     </button>
                 </div>
@@ -339,7 +339,7 @@ const startAgain = async () => {
         <section v-else data-settings-looking class="space-y-2 rounded-xl border border-gray-200 p-3 dark:border-[#3a3a3c]">
             <h4 class="text-[13px] font-semibold text-gray-800 dark:text-gray-200">{{ $t('nexus.extract_settings') }}</h4>
             <p class="text-[12px] leading-relaxed text-gray-500 dark:text-gray-400">{{ $t('nexus.extract_explain') }}</p>
-            <p class="flex items-center gap-2 text-[12px] text-gray-400">
+            <p class="flex items-center gap-2 text-[12px] text-gray-500 dark:text-gray-400">
                 <Loader2 class="h-3 w-3 animate-spin" />
                 {{ $t('nexus.extract_looking') }}
             </p>

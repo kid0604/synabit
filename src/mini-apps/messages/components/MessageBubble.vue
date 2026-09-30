@@ -903,11 +903,14 @@ const copyContent = async () => {
         <!-- Tool Calls Log (collapsible) -->
         <div v-if="message.role === 'assistant' && message.tool_calls_log?.length" class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50">
           <button
+            type="button"
+            data-syn-looked
+            :aria-expanded="showTools"
             @click="showTools = !showTools"
-            class="flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400 
+            class="flex items-center gap-1.5 min-h-6 -mx-1 px-1 rounded-md text-xs font-medium text-gray-500 dark:text-gray-400
                    hover:text-gray-700 dark:hover:text-gray-300 transition-colors cursor-pointer"
           >
-            <Wrench class="w-3 h-3" />
+            <Wrench class="w-3 h-3" aria-hidden="true" />
             <span>{{ $t('syn.tool_calls_count', { n: message.tool_calls_log.length }, message.tool_calls_log.length) }}</span>
             <ChevronDown v-if="showTools" class="w-3 h-3" />
             <ChevronRight v-else class="w-3 h-3" />
@@ -922,13 +925,14 @@ const copyContent = async () => {
             leave-to-class="max-h-0 opacity-0"
           >
             <div v-if="showTools" class="mt-2 space-y-1 overflow-hidden">
+              <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ $t('syn.what_syn_did') }}</p>
               <div
                 v-for="(tc, i) in message.tool_calls_log"
                 :key="i"
-                class="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-gray-50 dark:bg-gray-800/30 text-[11px]"
+                class="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-gray-50 dark:bg-gray-800/30 text-xs"
               >
                 <span class="text-violet-500 font-mono font-medium shrink-0">{{ tc.tool_name }}</span>
-                <span class="text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
+                <span class="text-gray-500 dark:text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
                 <span v-if="tc.result_preview" class="text-gray-500 dark:text-gray-400 truncate ml-auto">→ {{ tc.result_preview.slice(0, 80) }}</span>
               </div>
             </div>
@@ -946,9 +950,9 @@ const copyContent = async () => {
         <!-- File Media Previews (when search_files found images/videos) -->
         <div v-if="fileMediaPreviews.length" 
              class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50">
-          <div class="flex items-center gap-1.5 mb-2 text-[11px] font-medium text-gray-500 dark:text-gray-400">
+          <div class="flex items-center gap-1.5 mb-2 text-xs font-medium text-gray-500 dark:text-gray-400">
             <ImageIcon class="w-3 h-3" />
-            <span>{{ fileMediaPreviews.length }} file{{ fileMediaPreviews.length > 1 ? 's' : '' }}</span>
+            <span>{{ $t('syn.file_count', { count: fileMediaPreviews.length }, fileMediaPreviews.length) }}</span>
           </div>
           <div class="flex flex-wrap gap-2">
             <div
@@ -987,8 +991,8 @@ const copyContent = async () => {
               </div>
               <!-- Filename overlay -->
               <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent 
-                          rounded-b-lg px-1.5 py-1 opacity-0 group-hover/file:opacity-100 transition-opacity">
-                <span class="text-[9px] text-white truncate block">{{ media.filename }}</span>
+                          rounded-b-lg px-1.5 py-1 opacity-0 group-hover/file:opacity-100 group-focus-within/file:opacity-100 pointer-coarse:opacity-100 transition-opacity">
+                <span class="text-xs text-white truncate block">{{ media.filename }}</span>
               </div>
             </div>
           </div>
@@ -1011,7 +1015,7 @@ const copyContent = async () => {
             <button
               v-if="canApprovePlan"
               type="button"
-              class="px-3 py-1.5 rounded-lg text-xs font-medium bg-violet-600 hover:bg-violet-700 text-white transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
+              class="btn-primary"
               @click="emit('approve-plan')"
             >
               {{ $t('syn.plan_go') }}
@@ -1034,7 +1038,7 @@ const copyContent = async () => {
             v-for="source in message.sources"
             :key="source.id"
             @click="$emit('open-source', source)"
-            class="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] font-medium rounded-md 
+            class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md 
                    bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 
                    hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors cursor-pointer"
           >
@@ -1055,7 +1059,7 @@ const copyContent = async () => {
                   flex items-center gap-0.5 bg-white dark:bg-gray-800 rounded-lg shadow-md border border-gray-100 dark:border-gray-700/50 px-1 py-0.5">
         <button
           @click="copyContent"
-          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           :title="copied ? $t('syn.copied') : $t('syn.copy')"
           :aria-label="copied ? $t('syn.copied') : $t('syn.copy')"
         >
@@ -1065,7 +1069,7 @@ const copyContent = async () => {
         <button
           v-if="message.role === 'assistant'"
           @click="$emit('regenerate')"
-          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
+          class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors cursor-pointer"
           :title="$t('syn.regenerate')"
           :aria-label="$t('syn.regenerate')"
         >
@@ -1078,12 +1082,12 @@ const copyContent = async () => {
         class="flex items-center gap-2 mt-1 px-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity duration-150"
         :class="message.role === 'user' ? 'flex-row-reverse' : ''"
       >
-        <span class="text-[11px] text-gray-400 dark:text-gray-500">
+        <span class="text-xs text-gray-500 dark:text-gray-400">
           {{ formatTime(message.timestamp) }}
         </span>
         <span
           v-if="message.role === 'assistant' && (message.tokens || message.duration_ms)"
-          class="text-[11px] text-gray-400 dark:text-gray-500"
+          class="text-xs text-gray-500 dark:text-gray-400"
         >
           <template v-if="message.tokens">{{ message.tokens }} {{ $t('syn.tokens') }}</template>
           <template v-if="message.tokens && message.duration_ms"> · </template>
@@ -1265,7 +1269,10 @@ const copyContent = async () => {
 }
 
 :deep(.board-actions button) {
-  font-size: 11px;
+  font-size: 12px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
   padding: 0.2rem 0.55rem;
   border-radius: 0.5rem;
   color: #7c3aed;
@@ -1337,7 +1344,10 @@ const copyContent = async () => {
 }
 
 :deep(.mermaid-actions button) {
-  font-size: 11px;
+  font-size: 12px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
   padding: 0.2rem 0.55rem;
   border-radius: 0.4rem;
   color: rgb(109 40 217);
@@ -1438,7 +1448,7 @@ const copyContent = async () => {
 }
 
 :deep(button.cite) {
-  font-size: 0.75em;
+  font-size: max(12px, 0.75em);
   font-weight: 600;
   min-width: 1.4em;
   padding: 0 0.3em;

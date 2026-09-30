@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Target, Plus, TrendingUp, AlertCircle, CheckCircle2, Calendar, ChevronDown, ChevronLeft, ChevronRight, Settings, X } from 'lucide-vue-next';
 import type { Budget, BudgetItem, Category, Transaction } from '../types';
 import BudgetModal from './BudgetModal.vue';
 import { formatCurrency } from '../currency';
 import { categoryName } from '../categories';
 import * as calc from '../calc';
+
+const { locale } = useI18n();
 
 const props = defineProps<{
     budgets: Budget[];
@@ -23,7 +26,11 @@ const emit = defineEmits<{
     (e: 'change-month', month: number, year: number): void;
 }>();
 
-const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// Named in the interface language rather than a fixed English list.
+const monthLabel = computed(() =>
+    new Date(props.selectedYear, props.selectedMonthNum - 1, 1)
+        .toLocaleDateString(locale.value, { month: 'short', year: 'numeric' })
+);
 
 const prevMonth = () => {
     let m = props.selectedMonthNum - 1;
@@ -239,38 +246,38 @@ const resetNewBudgetForm = () => {
             <!-- Budget Dropdown -->
             <div v-if="budgets.length > 0" class="flex items-center gap-2">
                 <div class="relative">
-                    <select v-model="selectedBudgetId" class="appearance-none bg-transparent text-lg font-bold text-text dark:text-text-dark pr-7 pl-1 py-1 focus:outline-none cursor-pointer hover:text-blue-500 transition-colors">
+                    <select v-model="selectedBudgetId" class="appearance-none bg-transparent text-lg font-bold text-text dark:text-text-dark pr-7 pl-1 py-1 focus:outline-none cursor-pointer hover:text-accent transition-colors">
                         <option v-for="b in budgets" :key="b.id" :value="b.id">{{ b.name }}</option>
                     </select>
-                    <ChevronDown class="w-4 h-4 text-gray-400 absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <ChevronDown class="w-4 h-4 text-gray-500 dark:text-gray-400 absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none" />
                 </div>
-                <button @click="openEditBudgetForm" class="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors" title="Edit budget">
+                <button @click="openEditBudgetForm" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-accent hover:bg-accent/10 rounded-lg transition-colors" :title="$t('finance.edit_budget_title')" :aria-label="$t('finance.edit_budget_title')">
                     <Settings class="w-4 h-4" />
                 </button>
             </div>
-            <h2 v-else class="text-lg font-bold text-text dark:text-text-dark">Budgets</h2>
+            <h2 v-else class="text-lg font-bold text-text dark:text-text-dark">{{ $t('finance.budgets') }}</h2>
         </div>
 
         <div class="flex items-center gap-3">
             <!-- Month Picker (for monthly budgets) -->
             <div v-if="selectedBudget && (selectedBudget.type || 'monthly') === 'monthly'" class="flex items-center gap-1 bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-xl px-1 py-1 shadow-sm">
-                <button @click="prevMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="Prev Month">
+                <button @click="prevMonth" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" :aria-label="$t('finance.prev_month')" :title="$t('finance.prev_month')">
                     <ChevronLeft class="w-4 h-4" />
                 </button>
                 <span class="text-sm font-bold text-text dark:text-text-dark px-2 min-w-[100px] text-center">
-                    {{ MONTH_NAMES[selectedMonthNum - 1] }} {{ selectedYear }}
+                    {{ monthLabel }}
                 </span>
-                <button @click="nextMonth" class="p-1.5 text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" aria-label="Next Month">
+                <button @click="nextMonth" class="p-1.5 text-gray-500 dark:text-gray-400 hover:text-text dark:hover:text-text-dark hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors" :aria-label="$t('finance.next_month')" :title="$t('finance.next_month')">
                     <ChevronRight class="w-4 h-4" />
                 </button>
             </div>
 
             <button @click="showNewBudgetForm = true" class="px-3 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors border border-border dark:border-border-dark">
-                New Budget
+                {{ $t('finance.new_budget') }}
             </button>
-            <button v-if="selectedBudget" @click="openAddItem" class="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm">
+            <button v-if="selectedBudget" @click="openAddItem" class="btn-primary">
                 <Plus class="w-4 h-4" />
-                Add Item
+                {{ $t('finance.add_item') }}
             </button>
         </div>
     </div>
@@ -278,46 +285,46 @@ const resetNewBudgetForm = () => {
     <!-- New Budget Form (inline) -->
     <div v-if="showNewBudgetForm" class="bg-surface dark:bg-surface-dark border border-blue-200 dark:border-blue-800 rounded-2xl p-5 shadow-sm shrink-0 space-y-4">
         <div class="flex items-center justify-between">
-            <h3 class="font-bold text-sm text-text dark:text-text-dark">Create New Budget</h3>
-            <button @click="resetNewBudgetForm" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg" aria-label="Reset New Budget Form"><X class="w-4 h-4" /></button>
+            <h3 class="font-bold text-sm text-text dark:text-text-dark">{{ $t('finance.create_new_budget') }}</h3>
+            <button @click="resetNewBudgetForm" class="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-600 rounded-lg" :aria-label="$t('finance.close')" :title="$t('finance.close')"><X class="w-4 h-4" /></button>
         </div>
         <div class="flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
-            <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-white dark:bg-gray-700 text-blue-500 shadow-sm' : 'text-gray-500']">Monthly</button>
-            <button @click="newBudgetType = 'custom'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'custom' ? 'bg-white dark:bg-gray-700 text-purple-500 shadow-sm' : 'text-gray-500']">Custom Period</button>
+            <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500']">{{ $t('finance.monthly') }}</button>
+            <button @click="newBudgetType = 'custom'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'custom' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500']">{{ $t('finance.custom_period') }}</button>
         </div>
-        <input type="text" v-model="newBudgetName" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" :placeholder="newBudgetType === 'monthly' ? $t('finance.monthly_budget_ph') : $t('finance.business_budget_ph')" />
+        <input type="text" v-model="newBudgetName" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" :placeholder="newBudgetType === 'monthly' ? $t('finance.monthly_budget_ph') : $t('finance.business_budget_ph')" />
         <div v-if="newBudgetType === 'custom'" class="flex items-center gap-2">
-            <input type="date" v-model="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <span class="text-gray-400 shrink-0">→</span>
-            <input type="date" v-model="newBudgetEndDate" :min="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <input type="date" v-model="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
+            <span class="text-gray-500 dark:text-gray-400 shrink-0">→</span>
+            <input type="date" v-model="newBudgetEndDate" :min="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
         <div class="flex justify-end gap-2">
             <button @click="resetNewBudgetForm" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">{{ $t('finance.cancel') }}</button>
-            <button @click="createBudget" :disabled="!newBudgetName.trim()" class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 rounded-xl transition-colors shadow-sm">{{ $t('finance.create') }}</button>
+            <button @click="createBudget" :disabled="!newBudgetName.trim()" class="btn-primary">{{ $t('finance.create') }}</button>
         </div>
     </div>
 
     <!-- Edit Budget Form (inline) -->
     <div v-if="showEditBudgetForm && selectedBudget" class="bg-surface dark:bg-surface-dark border border-blue-200 dark:border-blue-800 rounded-2xl p-5 shadow-sm shrink-0 space-y-4">
         <div class="flex items-center justify-between">
-            <h3 class="font-bold text-sm text-text dark:text-text-dark">Edit Budget</h3>
-            <button @click="showEditBudgetForm = false" class="p-1 text-gray-400 hover:text-gray-600 rounded-lg" aria-label="More Options"><X class="w-4 h-4" /></button>
+            <h3 class="font-bold text-sm text-text dark:text-text-dark">{{ $t('finance.edit_budget') }}</h3>
+            <button @click="showEditBudgetForm = false" class="p-1 text-gray-500 dark:text-gray-400 hover:text-gray-600 rounded-lg" :aria-label="$t('finance.close')" :title="$t('finance.close')"><X class="w-4 h-4" /></button>
         </div>
         <div class="flex p-1 bg-gray-100 dark:bg-gray-800 rounded-xl">
-            <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-white dark:bg-gray-700 text-blue-500 shadow-sm' : 'text-gray-500']">Monthly</button>
-            <button @click="newBudgetType = 'custom'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'custom' ? 'bg-white dark:bg-gray-700 text-purple-500 shadow-sm' : 'text-gray-500']">Custom Period</button>
+            <button @click="newBudgetType = 'monthly'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'monthly' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500']">{{ $t('finance.monthly') }}</button>
+            <button @click="newBudgetType = 'custom'" :class="['flex-1 py-1.5 text-sm font-medium rounded-lg transition-colors', newBudgetType === 'custom' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500']">{{ $t('finance.custom_period') }}</button>
         </div>
-        <input type="text" v-model="newBudgetName" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        <input type="text" v-model="newBudgetName" class="w-full bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
         <div v-if="newBudgetType === 'custom'" class="flex items-center gap-2">
-            <input type="date" v-model="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
-            <span class="text-gray-400 shrink-0">→</span>
-            <input type="date" v-model="newBudgetEndDate" :min="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <input type="date" v-model="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
+            <span class="text-gray-500 dark:text-gray-400 shrink-0">→</span>
+            <input type="date" v-model="newBudgetEndDate" :min="newBudgetStartDate" class="flex-1 bg-gray-50 dark:bg-gray-800 border border-border dark:border-border-dark rounded-xl px-3 py-2.5 text-sm text-text dark:text-text-dark focus:outline-none focus:ring-2 focus:ring-accent" />
         </div>
         <div class="flex justify-between">
-            <button @click="deleteBudget" class="px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors">Delete Budget</button>
+            <button @click="deleteBudget" class="px-4 py-2 text-sm font-medium text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors">{{ $t('finance.delete_budget') }}</button>
             <div class="flex gap-2">
                 <button @click="showEditBudgetForm = false" class="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors">{{ $t('finance.cancel') }}</button>
-                <button @click="updateBudget" :disabled="!newBudgetName.trim()" class="px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 disabled:bg-blue-500/50 rounded-xl transition-colors shadow-sm">{{ $t('finance.save') }}</button>
+                <button @click="updateBudget" :disabled="!newBudgetName.trim()" class="btn-primary">{{ $t('finance.save') }}</button>
             </div>
         </div>
     </div>
@@ -325,12 +332,12 @@ const resetNewBudgetForm = () => {
     <!-- Empty State: No budgets at all -->
     <div v-if="budgets.length === 0 && !showNewBudgetForm" class="bg-surface dark:bg-surface-dark border border-border dark:border-border-dark rounded-2xl p-10 shadow-sm text-center flex-1 flex flex-col items-center justify-center">
         <div class="w-14 h-14 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center mb-4">
-            <Target class="w-7 h-7 text-gray-400" />
+            <Target class="w-7 h-7 text-gray-500 dark:text-gray-400" />
         </div>
-        <p class="text-gray-500 dark:text-gray-400 font-medium">No budgets yet</p>
-        <p class="text-sm text-gray-400 dark:text-gray-500 mt-1 mb-4">{{ $t('finance.create_to_track') }}</p>
-        <button @click="showNewBudgetForm = true" class="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-xl text-sm font-medium hover:bg-blue-600 transition-colors shadow-sm">
-            <Plus class="w-4 h-4" /> Create Budget
+        <p class="text-gray-500 dark:text-gray-400 font-medium">{{ $t('finance.no_budgets_yet') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1 mb-4">{{ $t('finance.create_to_track') }}</p>
+        <button @click="showNewBudgetForm = true" class="btn-primary">
+            <Plus class="w-4 h-4" /> {{ $t('finance.create_budget') }}
         </button>
     </div>
 
@@ -342,9 +349,9 @@ const resetNewBudgetForm = () => {
             <div class="flex items-center justify-between">
                 <div>
                     <div class="flex items-center gap-2 mb-1">
-                        <span :class="['px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider',
+                        <span :class="['px-2 py-0.5 rounded-lg text-xs font-bold uppercase tracking-wider',
                             isCustom ? 'bg-purple-100 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' : 'bg-blue-100 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400']">
-                            {{ isCustom ? 'Custom Period' : 'Monthly' }}
+                            {{ isCustom ? $t('finance.custom_period') : $t('finance.monthly') }}
                         </span>
                     </div>
                     <div v-if="isCustom && selectedBudget.startDate && selectedBudget.endDate" class="flex items-center gap-1.5 text-xs text-purple-500 dark:text-purple-400 font-medium mt-1">
@@ -365,7 +372,7 @@ const resetNewBudgetForm = () => {
                         <div class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-1">{{ $t('finance.spent') }}</div>
                         <div class="text-2xl font-bold tracking-tight text-text dark:text-text-dark">
                             {{ formatCurrency(totalSpent) }}
-                            <span class="text-lg font-medium text-gray-400 dark:text-gray-500">/ {{ formatCurrency(totalBudget) }}</span>
+                            <span class="text-lg font-medium text-gray-500 dark:text-gray-400">/ {{ formatCurrency(totalBudget) }}</span>
                         </div>
                     </div>
                 </div>
@@ -378,7 +385,7 @@ const resetNewBudgetForm = () => {
                 </div>
             </div>
             <div v-else class="text-center py-4 text-gray-500 dark:text-gray-400 text-sm">
-                No items in this budget yet. Add an item to start tracking!
+                {{ $t('finance.no_items_in_budget') }}
             </div>
         </div>
 
@@ -406,12 +413,12 @@ const resetNewBudgetForm = () => {
                             <span 
                                 v-for="cat in b.categories" 
                                 :key="cat"
-                                class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700/50"
+                                class="px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 dark:bg-gray-800/50 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700/50"
                             >
                                 {{ categoryName(expenseCategories, cat) }}
                             </span>
-                            <span v-if="b.isOverridden" class="px-2 py-0.5 rounded-md text-[10px] font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
-                                Override
+                            <span v-if="b.isOverridden" class="px-2 py-0.5 rounded-md text-xs font-medium bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-700/50">
+                                {{ $t('finance.override') }}
                             </span>
                         </div>
                     </div>
@@ -431,12 +438,12 @@ const resetNewBudgetForm = () => {
 
                     <div class="flex justify-between items-center mt-1">
                         <div class="text-xs text-gray-500 dark:text-gray-400">
-                            Spent: <span class="font-bold text-text dark:text-text-dark">{{ formatCurrency(b.spent) }}</span>
+                            {{ $t('finance.spent_label') }}: <span class="font-bold text-text dark:text-text-dark">{{ formatCurrency(b.spent) }}</span>
                             <span class="mx-1">/</span>
                             {{ formatCurrency(b.effectiveAmount) }}
                         </div>
                         <div class="text-xs font-medium" :class="b.status === 'danger' ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'">
-                            {{ b.status === 'danger' ? `Overspent by ${formatCurrency(b.spent - b.effectiveAmount)}` : `Remaining ${formatCurrency(b.remaining)}` }}
+                            {{ b.status === 'danger' ? $t('finance.overspent_by', { amount: formatCurrency(b.spent - b.effectiveAmount) }) : $t('finance.remaining_amount', { amount: formatCurrency(b.remaining) }) }}
                         </div>
                     </div>
                 </div>

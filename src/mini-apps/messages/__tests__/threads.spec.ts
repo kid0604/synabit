@@ -888,9 +888,11 @@ describe('the footing labels', () => {
 
     // The explanation has room, so it names both rather than neither — the
     // vault is still where most of them come from.
-    for (const locale of [en, vi]) {
+    // The user-facing words for the vault: "your notes" in English, `kho` in
+    // Vietnamese.
+    for (const [locale, vault] of [[en, 'your notes'], [vi, 'kho']] as const) {
       const why = locale.syn.footing_grounded_why.toLowerCase();
-      expect(why).toContain('vault');
+      expect(why).toContain(vault);
       expect(why, 'and the other place a source can be').toMatch(/web|mạng/);
     }
   });
@@ -898,8 +900,8 @@ describe('the footing labels', () => {
   /** `Inferred` is the one that really is about the vault — retrieval only ever
    *  looks there — so it keeps the word. */
   it('keeps the vault where the vault is the whole point', () => {
-    expect(en.syn.footing_inferred_why.toLowerCase()).toContain('vault');
-    expect(vi.syn.footing_inferred_why.toLowerCase()).toContain('vault');
+    expect(en.syn.footing_inferred_why.toLowerCase()).toContain('your notes');
+    expect(vi.syn.footing_inferred_why.toLowerCase()).toContain('kho');
   });
 
   /** Every mark still has a label and a reason, in both languages. */

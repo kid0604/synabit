@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeAll } from 'vitest';
-import { mount, flushPromises } from '@vue/test-utils';
+import { describe, it, expect, vi } from 'vitest';
+import { mount, flushPromises, config } from '@vue/test-utils';
 import ItemEditor from '../ItemEditor.vue';
 import type { ItemEdit, ItemView, SafeApi } from '../api';
 
@@ -9,15 +9,9 @@ vi.mock('vue-i18n', async (importOriginal) => ({
 }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-beforeAll(() => {
-  // jsdom has `<dialog>` but not the modal half of it.
-  HTMLDialogElement.prototype.showModal ??= function (this: HTMLDialogElement) {
-    this.setAttribute('open', '');
-  };
-  HTMLDialogElement.prototype.close ??= function (this: HTMLDialogElement) {
-    this.removeAttribute('open');
-  };
-});
+// The editor sits in `AppDialog`, which teleports to `body`; rendered in place
+// it can be found through the wrapper like the rest of the component.
+config.global.stubs = { ...config.global.stubs, teleport: true };
 
 const github: ItemView = {
   id: 'aa', kind: 'login', title: 'GitHub',

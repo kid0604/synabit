@@ -11,19 +11,34 @@ import {
   BookOpen as BookOpenIcon,
   Network as MarkmapIcon,
   Table as SearchIcon,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  LayoutTemplate as TemplateIcon
 } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
 import type { GalleryImage } from '../../extensions/ImageGallery';
 import { logger } from '../../../../utils/logger';
+import { i18n } from '../../../../i18n';
 
 export interface SlashCommandItem {
+  /**
+   * English name. Kept alongside the key so `/heading` still finds the item
+   * when the interface is in another language — muscle memory and every
+   * tutorial are in English — and as a stable `v-for` key.
+   */
   title: string;
-  description: string;
+  /** i18n keys, translated where the menu renders. */
+  titleKey: string;
+  descriptionKey: string;
   icon: Component;
   command: (props: { editor: any; range: any }) => void;
+  /**
+   * A power tool: left out of the menu in simple mode. Only the menu — a note
+   * that already holds a query or an equation still renders it, because
+   * simple mode hides and never converts. See `shared/simpleMode.ts`.
+   */
+  advanced?: boolean;
 }
 
 export interface SlashCommandDeps {
@@ -36,15 +51,22 @@ export interface SlashCommandDeps {
   whiteboardPickerModal: { value: any };
   embedPickerModal: { value: boolean };
   pdfModal: { value: { show: boolean } };
+  /**
+   * Offer "Template", and call this when it is chosen. Only Notes passes it:
+   * the picker lists notes, and the other apps that mount this editor (a
+   * task's description, a Things node) have no business growing one.
+   */
+  onTemplate?: () => void;
 }
 
 export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandItem[] {
-  const { vaultPath, videoModal, audioModal, locationModal, routeModal, emojiPicker, whiteboardPickerModal, embedPickerModal, pdfModal } = deps;
+  const { vaultPath, videoModal, audioModal, locationModal, routeModal, emojiPicker, whiteboardPickerModal, embedPickerModal, pdfModal, onTemplate } = deps;
 
-  return [
+  const items: SlashCommandItem[] = [
     {
       title: 'Text',
-      description: 'Plain text paragraph',
+      titleKey: 'note.slash.text.title',
+      descriptionKey: 'note.slash.text.desc',
       icon: Type,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setParagraph().run();
@@ -52,7 +74,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Heading 1',
-      description: 'Large section heading',
+      titleKey: 'note.slash.heading1.title',
+      descriptionKey: 'note.slash.heading1.desc',
       icon: Heading1,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setHeading({ level: 1 }).run();
@@ -60,7 +83,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Heading 2',
-      description: 'Medium section heading',
+      titleKey: 'note.slash.heading2.title',
+      descriptionKey: 'note.slash.heading2.desc',
       icon: Heading2,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setHeading({ level: 2 }).run();
@@ -68,7 +92,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Heading 3',
-      description: 'Small section heading',
+      titleKey: 'note.slash.heading3.title',
+      descriptionKey: 'note.slash.heading3.desc',
       icon: Heading3,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setHeading({ level: 3 }).run();
@@ -76,7 +101,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Bullet List',
-      description: 'Unordered list of items',
+      titleKey: 'note.slash.bullet_list.title',
+      descriptionKey: 'note.slash.bullet_list.desc',
       icon: List,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).toggleBulletList().run();
@@ -84,7 +110,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Numbered List',
-      description: 'Ordered list of items',
+      titleKey: 'note.slash.numbered_list.title',
+      descriptionKey: 'note.slash.numbered_list.desc',
       icon: ListOrdered,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).toggleOrderedList().run();
@@ -92,7 +119,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Task List',
-      description: 'Checkbox task list',
+      titleKey: 'note.slash.task_list.title',
+      descriptionKey: 'note.slash.task_list.desc',
       icon: ListChecks,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).toggleTaskList().run();
@@ -100,7 +128,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Blockquote',
-      description: 'Quoted text block',
+      titleKey: 'note.slash.blockquote.title',
+      descriptionKey: 'note.slash.blockquote.desc',
       icon: Quote,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setBlockquote().run();
@@ -108,7 +137,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Code Block',
-      description: 'Fenced code snippet',
+      advanced: true,
+      titleKey: 'note.slash.code_block.title',
+      descriptionKey: 'note.slash.code_block.desc',
       icon: Code2,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setCodeBlock().run();
@@ -116,7 +147,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Query',
-      description: 'A live table of notes matching a filter',
+      advanced: true,
+      titleKey: 'note.slash.query.title',
+      descriptionKey: 'note.slash.query.desc',
       icon: SearchIcon,
       command: ({ editor, range }: any) => {
         editor
@@ -132,7 +165,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Markmap',
-      description: 'Interactive mindmap from markdown',
+      advanced: true,
+      titleKey: 'note.slash.markmap.title',
+      descriptionKey: 'note.slash.markmap.desc',
       icon: MarkmapIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setCodeBlock({ language: 'markmap' }).run();
@@ -140,7 +175,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Divider',
-      description: 'Horizontal separator line',
+      titleKey: 'note.slash.divider.title',
+      descriptionKey: 'note.slash.divider.desc',
       icon: Minus,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).setHorizontalRule().run();
@@ -148,7 +184,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Image',
-      description: 'Upload an image',
+      titleKey: 'note.slash.image.title',
+      descriptionKey: 'note.slash.image.desc',
       icon: ImageIcon,
       command: async ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -156,7 +193,7 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
           const selectedPath = await open({
             multiple: false,
             filters: [{
-              name: 'Image',
+              name: i18n.global.t('note.editor.filter_images'),
               extensions: ['png', 'jpeg', 'jpg', 'gif', 'webp', 'svg']
             }]
           });
@@ -185,7 +222,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Image Collection',
-      description: 'Upload multiple images into a grid',
+      titleKey: 'note.slash.image_collection.title',
+      descriptionKey: 'note.slash.image_collection.desc',
       icon: Images,
       command: async ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -193,7 +231,7 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
           const selectedPaths = await open({
             multiple: true,
             filters: [{
-              name: 'Image',
+              name: i18n.global.t('note.editor.filter_images'),
               extensions: ['png', 'jpeg', 'jpg', 'gif', 'webp', 'svg']
             }]
           });
@@ -232,7 +270,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Video',
-      description: 'Embed YouTube or local video',
+      titleKey: 'note.slash.video.title',
+      descriptionKey: 'note.slash.video.desc',
       icon: VideoIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -241,7 +280,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Audio',
-      description: 'Embed Spotify, SoundCloud or local audio',
+      titleKey: 'note.slash.audio.title',
+      descriptionKey: 'note.slash.audio.desc',
       icon: MusicIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -250,7 +290,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Table',
-      description: 'Insert a table',
+      titleKey: 'note.slash.table.title',
+      descriptionKey: 'note.slash.table.desc',
       icon: Table2,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range)
@@ -260,7 +301,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Equation',
-      description: 'LaTeX/KaTeX Math formula',
+      advanced: true,
+      titleKey: 'note.slash.equation.title',
+      descriptionKey: 'note.slash.equation.desc',
       icon: Sigma,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).insertContent({ type: 'equation', attrs: { latex: '' } }).run();
@@ -268,7 +311,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Location',
-      description: 'Embed a map location',
+      titleKey: 'note.slash.location.title',
+      descriptionKey: 'note.slash.location.desc',
       icon: MapPinIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -280,7 +324,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Route',
-      description: 'Embed a route/directions map',
+      titleKey: 'note.slash.route.title',
+      descriptionKey: 'note.slash.route.desc',
       icon: NavigationIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -289,7 +334,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Emoji',
-      description: 'Open emoji picker',
+      titleKey: 'note.slash.emoji.title',
+      descriptionKey: 'note.slash.emoji.desc',
       icon: SmileIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -298,7 +344,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Whiteboard',
-      description: 'Embed an existing whiteboard',
+      advanced: true,
+      titleKey: 'note.slash.whiteboard.title',
+      descriptionKey: 'note.slash.whiteboard.desc',
       icon: PenToolIcon,
       command: async ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -315,7 +363,9 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Embed',
-      description: 'Embed content from another note',
+      advanced: true,
+      titleKey: 'note.slash.embed.title',
+      descriptionKey: 'note.slash.embed.desc',
       icon: EmbedIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -324,7 +374,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'PDF',
-      description: 'Embed a PDF document',
+      titleKey: 'note.slash.pdf.title',
+      descriptionKey: 'note.slash.pdf.desc',
       icon: BookOpenIcon,
       command: async ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).run();
@@ -333,7 +384,8 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
     },
     {
       title: 'Toggle list',
-      description: 'Toggles can hide and show content inside',
+      titleKey: 'note.slash.toggle_list.title',
+      descriptionKey: 'note.slash.toggle_list.desc',
       icon: ChevronRightIcon,
       command: ({ editor, range }: any) => {
         // Empty, so the placeholder in `DetailsNodeView.vue` does its job.
@@ -348,4 +400,26 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
       },
     },
   ];
+
+  if (onTemplate) {
+    items.push({
+      // `/template` in English, `/mẫu` in Vietnamese — the translated title
+      // is what the search matches, alongside this one.
+      title: 'Template',
+      titleKey: 'note.slash.template.title',
+      descriptionKey: 'note.slash.template.desc',
+      icon: TemplateIcon,
+      command: ({ editor, range }: any) => {
+        editor.chain().focus().deleteRange(range).run();
+        onTemplate();
+      },
+    });
+  }
+
+  return items;
+}
+
+/** The items a menu should offer, with power tools left out in simple mode. */
+export function visibleSlashItems<T extends { advanced?: boolean }>(items: T[], simpleMode: boolean): T[] {
+  return simpleMode ? items.filter((item) => !item.advanced) : items;
 }

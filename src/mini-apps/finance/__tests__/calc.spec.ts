@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  withoutHidden,
   accountBalances,
   budgetSpent,
   byDateDescending,
@@ -564,5 +565,23 @@ describe('netWorthTrend', () => {
     const quiet = month('Finance/2026-09.json', 2026, 9, []);
     const points = netWorthTrend([august, quiet], 1_000, 'all');
     expect(points[0].value).toBe(points[1].value);
+  });
+});
+
+describe('withoutHidden', () => {
+  const month = (id: string, ids: string[]) => ({ id, node: { properties: { transactions: ids.map(i => ({ id: i, amount: 100 })) } } });
+
+  it('leaves out a transaction waiting on its undo, so Reports stops counting it', () => {
+    const months = [month('m1', ['a', 'b']), month('m2', ['c'])];
+    const shown = withoutHidden(months, new Set(['b']));
+    expect((shown[0].node.properties.transactions as { id: string }[]).map(t => t.id)).toEqual(['a']);
+    // Untouched months are the same objects; the original is not mutated.
+    expect(shown[1]).toBe(months[1]);
+    expect(months[0].node.properties.transactions).toHaveLength(2);
+  });
+
+  it('hands back the same list when nothing is hidden', () => {
+    const months = [month('m1', ['a'])];
+    expect(withoutHidden(months, new Set())).toBe(months);
   });
 });

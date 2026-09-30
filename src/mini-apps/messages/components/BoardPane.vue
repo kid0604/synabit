@@ -181,7 +181,7 @@ onBeforeUnmount(() => {
       </button>
       <button
         type="button"
-        class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer shrink-0"
+        class="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer shrink-0"
         :aria-label="$t('whiteboard.close')"
         @click="emit('close')"
       >

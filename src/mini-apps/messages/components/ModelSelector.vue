@@ -159,11 +159,11 @@ const cancelConfirm = () => {
       </span>
       <span
         v-if="selectedModelInfo?.details?.parameter_size"
-        class="text-xs text-gray-400 dark:text-gray-500"
+        class="text-xs text-gray-500 dark:text-gray-400"
       >
         {{ selectedModelInfo.details.parameter_size }}
       </span>
-      <ChevronDown class="w-3.5 h-3.5 text-gray-400 transition-transform" :class="{ 'rotate-180': isOpen }" />
+      <ChevronDown class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 transition-transform" :class="{ 'rotate-180': isOpen }" />
     </button>
 
     <!-- Dropdown overlay -->
@@ -186,17 +186,17 @@ const cancelConfirm = () => {
              scrollbar is not a way to choose anything. -->
         <div class="p-2 border-b border-border dark:border-border-dark">
           <div class="flex items-center gap-2 px-2">
-            <Search class="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <Search class="w-3.5 h-3.5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
             <input
               ref="search"
               v-model="query"
               type="text"
               :placeholder="$t('syn.model_search')"
               class="flex-1 min-w-0 bg-transparent text-sm text-text dark:text-text-dark
-                     placeholder-gray-400 dark:placeholder-gray-500 outline-none py-1"
+                     placeholder-gray-500 dark:placeholder-gray-400 outline-none py-1"
               @keydown="onKeydown"
             >
-            <span class="text-[11px] text-gray-400 tabular-nums flex-shrink-0">
+            <span class="text-xs text-gray-500 dark:text-gray-400 tabular-nums flex-shrink-0">
               {{ filtered.shown.length }}
             </span>
           </div>
@@ -225,7 +225,7 @@ const cancelConfirm = () => {
                    no size, and `0 MB` under every row reads as a measurement. -->
               <div
                 v-if="sizeLabel(model, formatSize) || model.details?.family"
-                class="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500"
+                class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400"
               >
                 <span v-if="sizeLabel(model, formatSize)">{{ sizeLabel(model, formatSize) }}</span>
                 <span v-if="model.details?.family">{{ model.details.family }}</span>
@@ -236,7 +236,7 @@ const cancelConfirm = () => {
 
           <p
             v-if="!filtered.shown.length"
-            class="px-3 py-6 text-center text-[13px] text-gray-400"
+            class="px-3 py-6 text-center text-[13px] text-gray-500 dark:text-gray-400"
           >
             {{ $t('syn.model_none_match', { query }) }}
           </p>
@@ -249,7 +249,7 @@ const cancelConfirm = () => {
           v-if="filtered.hidden"
           @click="showAll = !showAll"
           class="w-full flex items-center gap-1.5 px-3 py-2 border-t border-border dark:border-border-dark
-                 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
+                 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
                  transition-colors cursor-pointer"
         >
           <EyeOff class="w-3 h-3 flex-shrink-0" />
@@ -264,7 +264,7 @@ const cancelConfirm = () => {
               :style="{ width: (pullProgress || 0) + '%' }"
             />
           </div>
-          <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1 text-center">
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 text-center">
             {{ $t('syn.pulling_model') }} {{ Math.round(pullProgress || 0) }}%
           </p>
         </div>
@@ -275,10 +275,10 @@ const cancelConfirm = () => {
           read as the new attempt having already failed.
         -->
         <div v-else-if="pullError" class="px-3 py-2 border-t border-border dark:border-border-dark">
-          <p class="text-[11px] text-red-500 dark:text-red-400 text-center">
+          <p class="text-xs text-red-500 dark:text-red-400 text-center">
             {{ $t('syn.pull_failed') }}
           </p>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 text-center break-words">
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 text-center break-words">
             {{ pullError }}
           </p>
         </div>
@@ -294,7 +294,7 @@ const cancelConfirm = () => {
             <div class="flex items-center gap-1.5">
               <button
                 @click.stop="confirmPull"
-                class="flex-1 px-2.5 py-1.5 text-xs rounded-lg bg-violet-500 hover:bg-violet-600 text-white font-medium transition-colors cursor-pointer"
+                class="flex-1 px-2.5 py-1.5 text-xs rounded-lg bg-accent hover:bg-accent/90 text-white font-medium transition-colors cursor-pointer"
               >
                 {{ $t('syn.confirm_pull_btn') }}
               </button>
@@ -313,7 +313,7 @@ const cancelConfirm = () => {
               :disabled="pullingModel"
               @keydown.enter="handlePullCustom"
               :placeholder="$t('syn.custom_model_placeholder')"
-              class="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/60 rounded-lg text-text dark:text-text-dark placeholder-gray-400 dark:placeholder-gray-500 outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors disabled:opacity-50"
+              class="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/60 rounded-lg text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors disabled:opacity-50"
               @click.stop
             />
             <button
@@ -321,8 +321,8 @@ const cancelConfirm = () => {
               :disabled="!customModelName.trim() || pullingModel"
               class="p-1.5 rounded-lg transition-all cursor-pointer flex-shrink-0"
               :class="customModelName.trim() && !pullingModel
-                ? 'bg-violet-500 hover:bg-violet-600 text-white'
-                : 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed'"
+                ? 'bg-accent hover:bg-accent/90 text-white'
+                : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 cursor-not-allowed'"
               :aria-label="$t('syn.pull_custom_model')"
               :title="$t('syn.pull_custom_model')">
               <Download class="w-3.5 h-3.5" />

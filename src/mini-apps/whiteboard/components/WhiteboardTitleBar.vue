@@ -57,9 +57,9 @@ function removeBoardTag(tag: string) {
 
 <template>
   <!-- Title bar -->
-  <div class="wb-title-bar bg-white/85 dark:bg-[#1e1e1e]/85 backdrop-blur-md border-b border-border dark:border-border-dark">
+  <div class="wb-title-bar bg-white/85 dark:bg-surface-dark/85 backdrop-blur-md border-b border-border dark:border-border-dark">
     <div class="flex items-center gap-2 min-w-0 flex-1">
-      <button @click="$emit('open-sidebar')" class="md:hidden p-1.5 -ml-2 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark transition-colors" aria-label="Open Sidebar">
+      <button @click="$emit('open-sidebar')" class="md:hidden p-1.5 -ml-2 rounded-md hover:bg-surface-hover dark:hover:bg-surface-hover-dark text-text-secondary dark:text-text-secondary-dark transition-colors" :aria-label="$t('whiteboard.open_sidebar')">
         <PanelLeft class="w-4.5 h-4.5" />
       </button>
       <NavButtons />
@@ -69,6 +69,7 @@ function removeBoardTag(tag: string) {
         @blur="finishEditTitle"
         @keydown.enter="finishEditTitle"
         class="text-sm font-bold bg-transparent border-b border-accent dark:border-accent-dark outline-none text-text dark:text-text-dark"
+        :aria-label="$t('whiteboard.board_title')"
         autofocus
       />
       <h1
@@ -80,21 +81,21 @@ function removeBoardTag(tag: string) {
       </h1>
     </div>
     <div class="flex items-center gap-1">
-      <span v-if="isSaving" class="text-[10px] text-muted dark:text-muted-dark font-medium px-2">{{ $t('whiteboard.saving') }}</span>
+      <span v-if="isSaving" class="text-xs text-muted dark:text-muted-dark font-medium px-2">{{ $t('whiteboard.saving') }}</span>
     </div>
   </div>
 
   <!-- Tags row -->
-  <div v-if="boardData.tags?.length" class="wb-tags-bar bg-white/85 dark:bg-[#1e1e1e]/85 backdrop-blur-md border-b border-border dark:border-border-dark">
+  <div v-if="boardData.tags?.length" class="wb-tags-bar bg-white/85 dark:bg-surface-dark/85 backdrop-blur-md border-b border-border dark:border-border-dark">
     <Tag class="w-3.5 h-3.5 text-muted dark:text-muted-dark opacity-70" />
     <div class="flex items-center gap-1 flex-wrap min-w-0">
       <span
         v-for="tag in boardData.tags"
         :key="tag"
-        class="wb-tag group bg-accent/10 text-accent dark:bg-[#a78bfa]/15 dark:text-[#a78bfa]"
+        class="wb-tag group bg-accent/10 text-accent dark:bg-accent-dark/15 dark:text-accent-dark"
       >
         #{{ tag }}
-        <button @click.stop="removeBoardTag(tag)" class="ml-0.5 opacity-0 group-hover:opacity-100 hover:text-danger transition-opacity" aria-label="Remove Board Tag">
+        <button @click.stop="removeBoardTag(tag)" class="ml-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:text-danger transition-opacity" :aria-label="$t('whiteboard.remove_tag', { tag })">
           <X class="w-2.5 h-2.5" />
         </button>
       </span>
@@ -109,7 +110,7 @@ function removeBoardTag(tag: string) {
         class="wb-tag-input"
         autofocus
       />
-      <button v-if="!isAddingTag" @click="isAddingTag = true" class="wb-tag-add border-border text-text-secondary hover:border-accent hover:text-accent dark:border-[#3f3f46] dark:text-[#71717a] dark:hover:border-[#a78bfa] dark:hover:text-[#a78bfa]" aria-label="Add Tag" :title="$t('whiteboard.add_tag')">
+      <button v-if="!isAddingTag" @click="isAddingTag = true" class="wb-tag-add border-border text-text-secondary hover:border-accent hover:text-accent dark:border-[#3f3f46] dark:text-muted-dark dark:hover:border-accent-dark dark:hover:text-accent-dark" :aria-label="$t('whiteboard.add_tag')" :title="$t('whiteboard.add_tag')">
         <Plus class="w-3 h-3" />
       </button>
     </div>
@@ -154,7 +155,7 @@ function removeBoardTag(tag: string) {
   align-items: center;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   cursor: default;
 }
@@ -162,7 +163,7 @@ function removeBoardTag(tag: string) {
   width: 60px;
   padding: 1px 6px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   border: 1px solid var(--color-accent, #7c3aed);
   background: transparent;

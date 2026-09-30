@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, toRef } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Heart, Calendar, Globe, ExternalLink, Gift, Sparkles, Bell } from 'lucide-vue-next';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
@@ -7,6 +8,7 @@ import { daysUntilAnnual } from './composables/anniversaries';
 import { relationshipLabel } from './composables/relationships';
 import BriefCard from './BriefCard.vue';
 import SynNarrative from './SynNarrative.vue';
+import { detailLabel } from './detailLabels';
 
 const emit = defineEmits(['open-node']);
 
@@ -14,6 +16,8 @@ const props = defineProps<{
     person: any;
     vaultPath?: string;
 }>();
+
+const { t, locale } = useI18n();
 
 const personRef = toRef(props, 'person');
 const { health } = useRelationshipHealth(personRef);
@@ -38,7 +42,7 @@ const socialItems = computed(() => {
     for (const d of details) {
         if (d.type === 'url') {
             const key = d.label.toLowerCase();
-            items.push({ label: d.label, url: d.value, color: colorMap[key] || 'text-blue-500' });
+            items.push({ label: detailLabel(d.label, t), url: d.value, color: colorMap[key] || 'text-blue-500' });
         }
     }
     // Legacy fallback
@@ -47,7 +51,7 @@ const socialItems = computed(() => {
         if (s.linkedin) items.push({ label: 'LinkedIn', url: s.linkedin, color: colorMap.linkedin });
         if (s.twitter) items.push({ label: 'Twitter / X', url: s.twitter, color: colorMap.twitter });
         if (s.github) items.push({ label: 'GitHub', url: s.github, color: colorMap.github });
-        if (s.website) items.push({ label: 'Website', url: s.website, color: colorMap.website });
+        if (s.website) items.push({ label: t('people.website'), url: s.website, color: colorMap.website });
     }
     return items;
 });
@@ -66,7 +70,7 @@ const upcomingDates = computed(() => {
     const bday = props.person?.properties?.birthday;
     if (bday) {
         const daysUntil = daysUntilAnnual(bday, now);
-        dates.push({ label: '🎂 Birthday', date: bday, daysUntil, isUpcoming: daysUntil !== null && daysUntil >= 0 && daysUntil <= 30 });
+        dates.push({ label: `🎂 ${t('people.birthday')}`, date: bday, daysUntil, isUpcoming: daysUntil !== null && daysUntil >= 0 && daysUntil <= 30 });
     }
 
     // Important dates
@@ -92,14 +96,14 @@ const hasUpcomingDates = computed(() => upcomingDates.value.length > 0);
 
 const formatDate = (dateStr: string) => {
     if (!dateStr) return '';
-    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return new Date(dateStr).toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
 const formatCountdown = (days: number | null) => {
     if (days === null) return '';
-    if (days === 0) return 'Today!';
-    if (days === 1) return 'Tomorrow';
-    return `in ${days}d`;
+    if (days === 0) return t('people.countdown_today');
+    if (days === 1) return t('people.countdown_tomorrow');
+    return t('people.countdown_in_days', { days });
 };
 
 const openLink = async (url: string) => {
@@ -134,7 +138,7 @@ const hasOverviewContent = computed(() => {
                 <!-- Large Progress Ring -->
                 <div class="relative w-20 h-20 flex-shrink-0">
                     <svg class="w-20 h-20 -rotate-90" viewBox="0 0 36 36">
-                        <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-200 dark:text-gray-700" />
+                        <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-200 dark:text-gray-400" />
                         <circle cx="18" cy="18" r="15.5" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"
                             :class="health.color"
                             :stroke-dasharray="`${health.percent * 0.975} 100`"
@@ -142,25 +146,25 @@ const hasOverviewContent = computed(() => {
                     </svg>
                     <div class="absolute inset-0 flex flex-col items-center justify-center">
                         <span class="text-lg font-bold" :class="health.color">{{ health.percent }}</span>
-                        <span class="text-[8px] text-gray-400 uppercase tracking-wider">{{ $t('people.score') }}</span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('people.score') }}</span>
                     </div>
                 </div>
 
                 <div class="flex-1 min-w-0">
-                    <h3 class="text-lg font-bold mb-1" :class="health.color">{{ health.label }}</h3>
+                    <h3 class="text-lg font-bold mb-1" :class="health.color">{{ $t(health.label) }}</h3>
                     <div class="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
                         <div v-if="health.daysSinceContact !== null">
-                            <span class="text-gray-400">{{ $t('people.last_contact') }}</span>
+                            <span class="text-gray-500 dark:text-gray-400">{{ $t('people.last_contact') }}</span>
                             <span class="ml-1 font-medium" :class="health.color">{{ $t('people.days_ago', { days: health.daysSinceContact }) }}</span>
                         </div>
                         <div v-if="health.nextContactDue !== null">
-                            <span class="text-gray-400">{{ $t('people.next_due') }}</span>
+                            <span class="text-gray-500 dark:text-gray-400">{{ $t('people.next_due') }}</span>
                             <span class="ml-1 font-medium" :class="health.nextContactDue <= 0 ? 'text-red-500' : ''">
-                                {{ health.nextContactDue > 0 ? `in ${health.nextContactDue}d` : `${Math.abs(health.nextContactDue)}d overdue` }}
+                                {{ health.nextContactDue > 0 ? $t('people.countdown_in_days', { days: health.nextContactDue }) : $t('people.days_overdue', { days: Math.abs(health.nextContactDue) }) }}
                             </span>
                         </div>
                         <div v-if="health.interactionCount > 0">
-                            <span class="text-gray-400">{{ $t('people.interactions_label') }}</span>
+                            <span class="text-gray-500 dark:text-gray-400">{{ $t('people.interactions_label') }}</span>
                             <span class="ml-1 font-medium">{{ health.interactionCount }}</span>
                         </div>
 
@@ -179,9 +183,9 @@ const hasOverviewContent = computed(() => {
 
         <!-- Empty state -->
         <div v-if="!hasOverviewContent" class="text-center py-10 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-dashed border-gray-300 dark:border-gray-700">
-            <Sparkles class="w-10 h-10 mx-auto mb-3 text-gray-300 dark:text-gray-600" />
+            <Sparkles class="w-10 h-10 mx-auto mb-3 text-gray-500 dark:text-gray-400" aria-hidden="true" />
             <p class="text-gray-500 dark:text-gray-400 font-medium">{{ $t('people.no_details') }}</p>
-            <p class="text-xs text-gray-400 mt-1">{{ $t('people.edit_to_add') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ $t('people.edit_to_add') }}</p>
         </div>
 
         <!-- How We Met -->
@@ -201,7 +205,7 @@ const hasOverviewContent = computed(() => {
                 <button v-for="item in socialItems" :key="item.label" @click="openLink(item.url)"
                     class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-sm">
                     <span :class="item.color" class="font-medium">{{ item.label }}</span>
-                    <ExternalLink class="w-3 h-3 text-gray-400 ml-auto" />
+                    <ExternalLink class="w-3 h-3 text-gray-500 dark:text-gray-400 ml-auto" />
                 </button>
             </div>
         </div>
@@ -242,8 +246,8 @@ const hasOverviewContent = computed(() => {
                         {{ g.direction === 'given' ? '→' : '←' }}
                     </span>
                     <span class="flex-1 text-gray-700 dark:text-gray-300">{{ g.description }}</span>
-                    <span v-if="g.occasion" class="text-xs text-gray-400 italic">{{ g.occasion }}</span>
-                    <span class="text-xs text-gray-400">{{ formatDate(g.date) }}</span>
+                    <span v-if="g.occasion" class="text-xs text-gray-500 dark:text-gray-400 italic">{{ g.occasion }}</span>
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatDate(g.date) }}</span>
                 </div>
             </div>
         </div>

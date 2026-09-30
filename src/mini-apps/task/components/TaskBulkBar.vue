@@ -25,19 +25,19 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="sticky top-0 z-20 flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900/50 backdrop-blur">
-    <span class="text-xs font-semibold text-blue-700 dark:text-blue-300 mr-1">
+  <div class="sticky top-0 z-20 flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl bg-accent/10 border border-accent/20 backdrop-blur">
+    <span class="text-xs font-semibold text-accent dark:text-accent-dark mr-1">
       {{ $t('task.selected_count', { count: selected.length }) }}
     </span>
 
     <button
       @click="emit('toggle-all')"
-      class="text-xs font-medium px-2 py-1 rounded-md text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
+      class="text-xs font-medium px-2 py-1 rounded-md text-accent dark:text-accent-dark hover:bg-accent/15 transition-colors cursor-pointer"
     >
       {{ allVisibleSelected ? $t('task.select_none') : $t('task.select_all') }}
     </button>
 
-    <div class="h-4 w-px bg-blue-200 dark:bg-blue-900" />
+    <div class="h-4 w-px bg-accent/30" />
 
     <button
       @click="emit('complete')"
@@ -85,7 +85,7 @@ const emit = defineEmits<{
 
     <button
       @click="emit('clear')"
-      class="ml-auto p-1 rounded-md text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors cursor-pointer"
+      class="ml-auto p-1 rounded-md text-accent dark:text-accent-dark hover:bg-accent/15 transition-colors cursor-pointer"
       :aria-label="$t('task.select_none')"
     >
       <X class="w-4 h-4" />

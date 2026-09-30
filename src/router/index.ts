@@ -1,6 +1,8 @@
 import { createRouter, createWebHashHistory, RouteRecordRaw } from 'vue-router';
-import { appInPlatformScope } from '../shared/platformScope';
-import { BUILT_IN_APPS } from '../shared/appRegistry';
+import { BUILT_IN_APPS, appById } from '../shared/appRegistry';
+import { redirectTarget } from '../shared/appAccess';
+import { useAppStore } from '../stores/useAppStore';
+import { simpleModePass } from '../shared/simpleMode';
 
 /**
  * One route per mini-app, generated from the registry.
@@ -37,7 +39,7 @@ const router = createRouter({
 });
 
 /**
- * Keep the platform's scope closed.
+ * Keep the platform's scope closed, and simple mode's.
  *
  * Hiding an app from the navigation is not the same as it being absent. Routes
  * stay reachable by deep link, by a restored session, and by `defaultApp` when
@@ -45,15 +47,28 @@ const router = createRouter({
  * on their phone. Any of those would drop them into a screen built for a mouse
  * with no way back that makes sense.
  *
+ * Simple mode closes the same door for the same reason: a link into Whiteboard
+ * would open an app whose sidebar button is gone, with no way to find it again.
+ * Its home is Notes rather than Nexus, because Nexus is one of the apps it
+ * hides. The rule itself lives in `shared/appAccess.ts`.
+ *
  * Redirecting rather than refusing: the destination does not exist here, so the
  * honest answer is the one screen that always does.
+ *
+ * The store is read inside the guard, not at module load: Pinia is installed
+ * before the router in `main.ts`, but this file is imported before either.
  */
 router.beforeEach((to) => {
-  const name = to.name as string | undefined;
-  if (name && !appInPlatformScope(name)) {
-    return { name: 'nexus' };
-  }
-  return true;
+  // "Open it anyway" lasts until the user goes somewhere else.
+  if (simpleModePass.value && to.name !== simpleModePass.value) simpleModePass.value = null;
+  const target = redirectTarget(
+    to.name as string | undefined,
+    useAppStore().simpleMode,
+    (name) => appById(name) !== undefined,
+    undefined,
+    simpleModePass.value,
+  );
+  return target ? { name: target } : true;
 });
 
 export default router;

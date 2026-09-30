@@ -25,6 +25,12 @@ const error = ref('');
 /** Another device changed the password, or the Secret Key, since this one last opened the Safe. */
 const changedElsewhere = ref(false);
 const passwordInput = ref<HTMLInputElement | null>(null);
+/** Read from the last key pressed in the password field; said only after a wrong password. */
+const capsLock = ref(false);
+function readCapsLock(e: KeyboardEvent) {
+  // A synthetic event can arrive without the method in some WebViews.
+  if (typeof e.getModifierState === 'function') capsLock.value = e.getModifierState('CapsLock');
+}
 
 // `autofocus` only works for what is in the page when it loads; this screen
 // comes and goes with every lock.
@@ -70,6 +76,8 @@ async function unlock(previous = false) {
           autocomplete="off" spellcheck="false" autocapitalize="off"
           class="w-full px-3 py-2.5 rounded-lg bg-surface dark:bg-surface-dark border border-border dark:border-border-dark focus:outline-none focus:ring-2 focus:ring-accent"
           ref="passwordInput"
+          @keydown="readCapsLock"
+          @keyup="readCapsLock"
         />
       </label>
 
@@ -85,6 +93,7 @@ async function unlock(previous = false) {
       </label>
 
       <p v-if="error" class="text-sm text-danger text-center" role="alert">{{ error }}</p>
+      <p v-if="error && capsLock" class="text-xs text-text-secondary dark:text-text-secondary-dark text-center">{{ t('safe.unlock.caps_lock') }}</p>
       <div v-if="changedElsewhere" class="p-3 rounded-lg bg-surface dark:bg-surface-dark text-xs space-y-2">
         <p class="text-text-secondary dark:text-text-secondary-dark">{{ t('safe.unlock.changed_elsewhere') }}</p>
         <div class="flex flex-wrap gap-2">
@@ -101,6 +110,18 @@ async function unlock(previous = false) {
         <Loader2 v-if="busy" class="w-4 h-4 animate-spin" />
         {{ busy ? t('safe.unlock.unlocking') : t('safe.unlock.submit') }}
       </button>
+
+      <!-- Said before it is needed, and truthfully: the password is never
+           stored, and the Emergency Kit's words are the other half of the key,
+           not a way around the password. The kit has a box for writing the
+           password by hand, which is the only place it might be written down. -->
+      <details class="text-xs text-text-secondary dark:text-text-secondary-dark">
+        <summary class="cursor-pointer text-center hover:underline">{{ t('safe.unlock.forgot') }}</summary>
+        <div class="mt-2 p-3 rounded-lg bg-surface dark:bg-surface-dark space-y-2">
+          <p>{{ t('safe.unlock.forgot_body') }}</p>
+          <p>{{ t('safe.unlock.forgot_kit') }}</p>
+        </div>
+      </details>
     </form>
   </div>
 </template>

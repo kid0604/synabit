@@ -64,28 +64,28 @@ const emit = defineEmits<{
         <button
           @click="editor.chain().focus().toggleBold().run()"
           :class="{ 'is-active': editor.isActive('bold') }"
-          title="Bold"
+          :title="$t('note.editor.bold')"
         >
           <BoldIcon class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().toggleItalic().run()"
           :class="{ 'is-active': editor.isActive('italic') }"
-          title="Italic"
+          :title="$t('note.editor.italic')"
         >
           <ItalicIcon class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().toggleUnderline().run()"
           :class="{ 'is-active': editor.isActive('underline') }"
-          title="Underline"
+          :title="$t('note.editor.underline')"
         >
           <UnderlineIcon class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().toggleStrike().run()"
           :class="{ 'is-active': editor.isActive('strike') }"
-          title="Strikethrough"
+          :title="$t('note.editor.strikethrough')"
         >
           <StrikeThroughIcon class="w-4 h-4" />
         </button>
@@ -93,14 +93,14 @@ const emit = defineEmits<{
         <button
           @click="editor.chain().focus().toggleHighlight().run()"
           :class="{ 'is-active': editor.isActive('highlight') }"
-          title="Highlight"
+          :title="$t('note.editor.highlight')"
         >
           <Highlighter class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().toggleCode().run()"
           :class="{ 'is-active': editor.isActive('code') }"
-          title="Inline Code"
+          :title="$t('note.editor.inline_code')"
         >
           <Code class="w-4 h-4" />
         </button>
@@ -108,7 +108,7 @@ const emit = defineEmits<{
         <button
           @click="emit('set-link')"
           :class="{ 'is-active': editor.isActive('link') }"
-          title="Link"
+          :title="$t('note.link_title')"
         >
           <LinkIcon class="w-4 h-4" />
         </button>
@@ -116,34 +116,34 @@ const emit = defineEmits<{
         <button
           @click="editor.chain().focus().setTextAlign('left').run()"
           :class="{ 'is-active': editor.isActive({ textAlign: 'left' }) }"
-          title="Align Left"
+          :title="$t('note.editor.align_left')"
         >
           <AlignLeft class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().setTextAlign('center').run()"
           :class="{ 'is-active': editor.isActive({ textAlign: 'center' }) }"
-          title="Align Center"
+          :title="$t('note.editor.align_center')"
         >
           <AlignCenter class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().setTextAlign('right').run()"
           :class="{ 'is-active': editor.isActive({ textAlign: 'right' }) }"
-          title="Align Right"
+          :title="$t('note.editor.align_right')"
         >
           <AlignRight class="w-4 h-4" />
         </button>
         <button
           @click="editor.chain().focus().setTextAlign('justify').run()"
           :class="{ 'is-active': editor.isActive({ textAlign: 'justify' }) }"
-          title="Align Justify"
+          :title="$t('note.editor.align_justify')"
         >
           <AlignJustify class="w-4 h-4" />
         </button>
         <div class="bubble-divider" />
         <label
-          title="Text Color"
+          :title="$t('note.editor.text_color')"
           class="relative flex items-center justify-center p-1.5 rounded-sm hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer text-slate-700 dark:text-slate-300 transition-colors tooltip-wrapper"
         >
           <Palette class="w-4 h-4" />

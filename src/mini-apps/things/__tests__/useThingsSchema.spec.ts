@@ -118,6 +118,17 @@ describe('the shape somebody set for a kind', () => {
     });
   });
 
+  /**
+   * A save that failed used to be swallowed, and a template went on to write
+   * its icon into a kind file holding nothing else. The caller has to know.
+   */
+  it('lets a failed save reach the caller', async () => {
+    const schema = await load([]);
+    writeNode.mockRejectedValueOnce(new Error('read-only vault'));
+
+    await expect(schema.save('animal', [{ key: 'species', kind: 'text' }])).rejects.toThrow('read-only vault');
+  });
+
   it('writes a new shape into its own file, named after the kind', async () => {
     const schema = await load([]);
 
