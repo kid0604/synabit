@@ -951,6 +951,10 @@ pub fn run() {
             commands::app_lock::change_app_lock,
             commands::app_lock::get_app_lock_config,
             commands::app_lock::update_app_lock_config,
+            commands::app_lock::get_family_safe,
+            commands::app_lock::set_family_safe,
+            commands::app_lock::app_lock_reset_begin,
+            commands::app_lock::app_lock_reset_finish,
             // Safe
             commands::safe::safe_status,
             commands::safe::safe_create,

@@ -257,7 +257,7 @@ pub const SAYINGS: &[(&str, &str)] = &[
     ),
     (
         "needs_the_vault",
-        "reading the notes' own words needs the vault, and this question was asked somewhere there is none",
+        "reading the notes' own words needs your Synabit folder, and this question was asked somewhere there is none",
     ),
     (
         "would_spend",

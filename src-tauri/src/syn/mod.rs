@@ -14,6 +14,7 @@ pub mod engine;
 pub mod focus;
 pub mod gate;
 pub mod footing;
+pub mod family_safe;
 pub mod instructions;
 pub mod connector;
 pub mod memory;

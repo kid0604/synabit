@@ -86,7 +86,7 @@ pub(crate) async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings)
 /// vault written before the file existed still carries, and is moved into the
 /// file the first time this runs. Two sources for one thing is how they drift,
 /// so this is the only place either is read. See `syn::instructions`.
-fn standing_instructions(vault_path: &str, settings: &SynSettings) -> Option<String> {
+fn standing_instructions(app: &tauri::AppHandle, vault_path: &str, settings: &SynSettings) -> Option<String> {
     if let Some(from_settings) = settings.custom_system_prompt.as_deref() {
         crate::syn::instructions::migrate(vault_path, from_settings);
     }
@@ -96,10 +96,20 @@ fn standing_instructions(vault_path: &str, settings: &SynSettings) -> Option<Str
     if let Some(chosen) = settings.personality.as_deref() {
         crate::syn::instructions::migrate_personality(vault_path, chosen);
     }
-    crate::syn::instructions::load(vault_path)
+    let own = crate::syn::instructions::load(vault_path)
         .or_else(|| settings.custom_system_prompt.clone())
         .as_deref()
-        .and_then(crate::syn::instructions::block)
+        .and_then(crate::syn::instructions::block);
+    // Family-safe answers go on after the user's own text, never inside it:
+    // this is the one place every chat prompt's standing instructions come
+    // from — the app, Telegram, routines, a skill trial and the prompt preview
+    // all pass through here — and appending here is what keeps an edit to
+    // `SYN.md` from quietly dropping it. See `syn::family_safe`.
+    //
+    // Whether it is on is this device's to say, not the vault file's:
+    // `settings.family_safe` only ever carries an old "on" across, once.
+    let on = crate::syn::family_safe::is_on(Some(app), settings.family_safe);
+    crate::syn::family_safe::append(own, on)
 }
 
 pub(crate) fn settings_for(vault_path: &str) -> SynSettings {
@@ -163,10 +173,18 @@ pub async fn syn_narrate_person(
 
     let language = if locale.as_deref().unwrap_or("en").starts_with("vi") { "Vietnamese" } else { "English" };
     let provider = provider_for(&app, &settings).await;
-    let messages = vec![crate::syn::provider::ChatMessage::new(
-        "user",
-        narrative::prompt(&name, &sources, language),
-    )];
+    // This prompt does not go through `standing_instructions`, so family-safe
+    // answers are put on here: the account is shown to whoever opens the
+    // person's page. The records are the household's own, but the wording is
+    // the model's. See `syn::family_safe`.
+    let family_safe = crate::syn::family_safe::is_on(Some(&app), settings.family_safe);
+    let messages: Vec<_> = crate::syn::family_safe::system_message(family_safe)
+        .into_iter()
+        .chain([crate::syn::provider::ChatMessage::new(
+            "user",
+            narrative::prompt(&name, &sources, language),
+        )])
+        .collect();
     let reply = provider
         .chat(crate::syn::provider::ChatRequest {
             model: &model,
@@ -288,15 +306,32 @@ pub async fn syn_has_api_key(
 }
 
 /// Get current Syn settings for the vault.
+///
+/// `family_safe` is this device's, not the file's: see `syn::family_safe`.
 #[tauri::command]
-pub async fn syn_get_settings(vault_path: String) -> Result<SynSettings, AppError> {
-    crate::syn::settings::load_settings(&vault_path)
+pub async fn syn_get_settings(app: tauri::AppHandle, vault_path: String) -> Result<SynSettings, AppError> {
+    let mut settings = crate::syn::settings::load_settings(&vault_path)?;
+    settings.family_safe = crate::syn::family_safe::is_on(Some(&app), settings.family_safe);
+    Ok(settings)
 }
 
 /// Save Syn settings for the vault.
+///
+/// Never changes family-safe answers, either way. The file keeps whatever it
+/// already said — only an old "on" is ever read from it — and switching them
+/// goes through `commands::app_lock::set_family_safe`, which asks for the PIN.
+/// Before this, saving `family_safe: false` here was the way round the PIN.
 #[tauri::command]
 pub async fn syn_save_settings(vault_path: String, settings: SynSettings) -> Result<(), AppError> {
+    let settings = keep_family_safe_as_filed(&vault_path, settings);
     crate::syn::settings::save_settings(&vault_path, &settings)
+}
+
+fn keep_family_safe_as_filed(vault_path: &str, mut settings: SynSettings) -> SynSettings {
+    settings.family_safe = crate::syn::settings::load_settings(vault_path)
+        .map(|on_disk| on_disk.family_safe)
+        .unwrap_or(false);
+    settings
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -773,7 +808,7 @@ fn messages_for(
     gathered: &Gathered,
     history: &[SynMessage],
 ) -> (Vec<SynMessage>, crate::syn::stats::Carried) {
-    let standing = standing_instructions(vault_path, settings);
+    let standing = standing_instructions(app, vault_path, settings);
     // What is on screen includes the browsing pane, and the front end cannot
     // see it — it is a webview of the operating system's, beside the app rather
     // than inside it. Filled in here, where the app handle is.
@@ -1874,7 +1909,7 @@ pub async fn syn_skill_trial(
 
     let provider = provider_for(&app, &settings).await;
     let ask = |skills: Option<&str>| {
-        let standing = standing_instructions(&vault_path, &settings);
+        let standing = standing_instructions(&app, &vault_path, &settings);
         let system = PromptPlan::for_chat(ChatPrompt {
             context: "",
             custom: standing.as_deref(),
@@ -2687,6 +2722,7 @@ pub async fn syn_dismiss_proposal(
 /// the failure this command exists to prevent.
 #[tauri::command]
 pub async fn syn_preview_prompt(
+    app: tauri::AppHandle,
     vault_path: String,
     message: Option<String>,
     focus: Option<crate::syn::focus::Focus>,
@@ -2733,7 +2769,7 @@ pub async fn syn_preview_prompt(
         _ => String::new(),
     };
 
-    let standing = standing_instructions(&vault_path, &settings);
+    let standing = standing_instructions(&app, &vault_path, &settings);
     let mut preview: PromptPreview = PromptPlan::for_chat(ChatPrompt {
         context: &context,
         custom: standing.as_deref(),
@@ -3276,5 +3312,39 @@ mod send_steps {
         let said = r#"{"success":true,"id":"SynThreads/This week in Rust.md","type":"syn_thread","title":"This week in Rust","message":"Created syn_thread 'This week in Rust'"}"#;
         assert_eq!(created_id(said).as_deref(), Some("SynThreads/This week in Rust.md"));
         assert_eq!(created_id(r#"{"error":"nope"}"#), None);
+    }
+}
+
+#[cfg(test)]
+mod family_safe_settings {
+    use super::*;
+
+    /// Saving settings is not a way round the PIN, in either direction.
+    #[test]
+    fn saving_settings_never_changes_what_the_file_says_about_family_safe() {
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = dir.path().to_str().expect("utf8");
+
+        let on = SynSettings { family_safe: true, ..Default::default() };
+        crate::syn::settings::save_settings(vault, &on).expect("saved");
+        let tried_off = SynSettings { family_safe: false, temperature: 0.3, ..Default::default() };
+        let kept = keep_family_safe_as_filed(vault, tried_off);
+        assert!(kept.family_safe, "a save switched family-safe off");
+        assert_eq!(kept.temperature, 0.3, "the rest of the save still goes through");
+
+        let off = SynSettings::default();
+        crate::syn::settings::save_settings(vault, &off).expect("saved");
+        let tried_on = SynSettings { family_safe: true, ..Default::default() };
+        assert!(!keep_family_safe_as_filed(vault, tried_on).family_safe);
+    }
+
+    /// The one prompt that skips `standing_instructions` carries it too.
+    #[test]
+    fn narrating_a_person_asks_for_family_safe_answers() {
+        let source = include_str!("syn.rs");
+        let body = source.split("pub async fn syn_narrate_person(").nth(1).expect("exists");
+        let body = body.split("\n}\n").next().expect("body");
+        assert!(body.contains("family_safe::is_on("));
+        assert!(body.contains("family_safe::system_message("));
     }
 }

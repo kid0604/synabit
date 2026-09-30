@@ -495,6 +495,21 @@ pub struct SynSettings {
     /// get it on, like a fresh one.
     #[serde(default = "default_memory_reflection")]
     pub memory_reflection: bool,
+    /// Whether every prompt carries `syn::family_safe::INSTRUCTION`.
+    ///
+    /// A setting rather than a line in `SYN.md`, on purpose: `SYN.md` is the
+    /// user's own text, anybody at the keyboard can edit it, and an instruction
+    /// that lives there can be deleted without anything saying so. This one is
+    /// appended by the app after whatever the file says — see
+    /// `commands::syn::standing_instructions` — so it holds whatever the file
+    /// holds. The settings screen asks for the app-lock PIN before it can be
+    /// switched off, when a PIN is set.
+    ///
+    /// Absent in files written before it existed, and `false` is right for
+    /// those: nobody chose it, and turning it on would change every answer an
+    /// existing user gets.
+    #[serde(default)]
+    pub family_safe: bool,
 
     // Personality
     /// Kept only so an existing settings file still deserialises, and so
@@ -533,6 +548,7 @@ impl Default for SynSettings {
             include_feeds: true,
             graph_expansion_depth: 1,
             memory_reflection: default_memory_reflection(),
+            family_safe: false,
             personality: None,
             custom_system_prompt: None,
         }

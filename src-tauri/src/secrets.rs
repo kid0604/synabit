@@ -38,6 +38,23 @@ pub struct AppSecrets {
     /// silently discard the key for the one being left.
     #[serde(default)]
     pub syn_api_keys: HashMap<String, String>,
+    /// Whether Syn's family-safe answers are on, on this device.
+    ///
+    /// The authoritative copy. It used to be only `SynSettings::family_safe`
+    /// in `{vault}/Syn/settings.json`, where anybody who can edit a file in the
+    /// vault — or any device it syncs to — could switch it off with nothing
+    /// asking for the PIN. Here it sits beside `app_lock_hash`, and
+    /// `commands::app_lock::set_family_safe` will not turn it off without that
+    /// PIN when one is set.
+    ///
+    /// `None` is "never decided on this device": the vault's old flag is read
+    /// once and, if it was on, carried here. See `syn::family_safe::resolve`.
+    ///
+    /// Not a lock against the machine's owner: anybody who can open this OS
+    /// account's keychain (or, on a phone, the app's storage) can change it,
+    /// exactly as they can the PIN hash next to it.
+    #[serde(default)]
+    pub family_safe: Option<bool>,
 }
 
 /// Read one value out of the Android keystore-backed store.
@@ -483,6 +500,19 @@ impl SecretManager {
             secrets.auto_lock_timeout_secs = None;
             secrets.app_lock_active = None;
         })
+    }
+
+    /// This device's family-safe flag: `Ok(None)` when it was never decided
+    /// here, `Err` when the store could not be read at all — which the caller
+    /// must not mistake for "off".
+    pub fn try_family_safe(app_handle: Option<&tauri::AppHandle>) -> Result<Option<bool>, String> {
+        Self::try_load_secrets(app_handle).map(|secrets| secrets.family_safe)
+    }
+
+    /// Record this device's family-safe flag. Callers decide whether they may;
+    /// see `commands::app_lock::set_family_safe`.
+    pub fn set_family_safe(app_handle: Option<&tauri::AppHandle>, on: bool) -> Result<(), String> {
+        Self::update_secrets(app_handle, |secrets| secrets.family_safe = Some(on))
     }
 
     pub fn get_app_lock_config(
