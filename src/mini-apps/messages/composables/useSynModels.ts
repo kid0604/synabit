@@ -12,6 +12,8 @@ export function useSynModels() {
     url: 'http://localhost:11434',
   });
   const selectedModel = ref<string>('');
+  /** The vault's own `default_model`, as last read; what a new conversation starts on. */
+  const defaultModel = ref<string | null>(null);
   const loadingModels = ref(false);
   const pullingModel = ref(false);
   const pullProgress = ref(0);
@@ -48,6 +50,21 @@ export function useSynModels() {
    */
   const isEmbeddingModel = (name: string): boolean =>
     /embedding|embed-|moderation|whisper|tts|dall-e|audio|image/i.test(name);
+
+  const isAvailable = (name: string | null, list: ModelInfo[]) =>
+    !!name && list.some(m => m.name === name);
+
+  /**
+   * Start on the vault's default, for a conversation that has not picked one.
+   *
+   * The picker in the header is shared by every conversation, so without this
+   * a new conversation inherited whatever the last one used — including after
+   * the default had just been changed and saved. Kept as is when the default
+   * is not on offer, rather than emptied.
+   */
+  const selectDefaultModel = () => {
+    if (isAvailable(defaultModel.value, models.value)) selectedModel.value = defaultModel.value as string;
+  };
 
   const fetchModels = async (vaultPath?: string): Promise<ModelInfo[]> => {
     loadingModels.value = true;
@@ -86,18 +103,19 @@ export function useSynModels() {
         selectedModel.value = '';
       }
 
+      // Read every time, not only when nothing is chosen: a default changed
+      // in Settings has to reach the next conversation, and reading it only
+      // to fill an empty selection meant a saved `gpt-6-luna` never did —
+      // every new conversation went on starting on the old one.
+      defaultModel.value = vaultPath
+        ? await invoke<{ default_model: string | null }>('syn_get_settings', { vaultPath })
+            .then(s => s.default_model)
+            .catch(() => defaultModel.value)
+        : null;
+
       if (!selectedModel.value && result.length > 0) {
-        const preferred = vaultPath
-          ? await invoke<{ default_model: string | null }>('syn_get_settings', { vaultPath })
-              .then(s => s.default_model)
-              .catch(() => null)
-          : null;
-
-        const available = (name: string | null) =>
-          !!name && result.some(m => m.name === name);
-
-        selectedModel.value = available(preferred)
-          ? (preferred as string)
+        selectedModel.value = isAvailable(defaultModel.value, result)
+          ? (defaultModel.value as string)
           : (result.find(m => !isEmbeddingModel(m.name)) ?? result[0]).name;
       }
 
@@ -243,6 +261,8 @@ export function useSynModels() {
     models,
     status,
     selectedModel,
+    defaultModel,
+    selectDefaultModel,
     loadingModels,
     pullingModel,
     pullProgress,

@@ -57,7 +57,7 @@ describe('choosing a model when none is set', () => {
     // Order matters and is easy to get backwards: the heuristic is a tie-break,
     // not a filter. Somebody who has chosen a model gets it even if its name
     // happens to match the pattern.
-    expect(source).toMatch(/available\(preferred\)\s*\n?\s*\?/);
+    expect(source).toMatch(/isAvailable\(defaultModel\.value, result\)\s*\n?\s*\?/);
     expect(source.indexOf('syn_get_settings')).toBeLessThan(
       source.indexOf('isEmbeddingModel(m.name)'),
     );
