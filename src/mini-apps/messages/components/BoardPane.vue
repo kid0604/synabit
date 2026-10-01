@@ -158,8 +158,8 @@ onBeforeUnmount(() => {
          stops the pointer events reaching the canvas behind it. -->
     <div
       class="absolute left-0 top-0 bottom-0 w-1 -ml-0.5 z-10 cursor-col-resize
-             hover:bg-violet-400/40"
-      :class="dragging && 'bg-violet-400/60'"
+             hover:bg-accent/40 dark:hover:bg-accent-dark/40"
+      :class="dragging && 'bg-accent/60 dark:bg-accent-dark/60'"
       @pointerdown.prevent="startResize"
     />
 
@@ -173,7 +173,7 @@ onBeforeUnmount(() => {
       <button
         type="button"
         class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium shrink-0
-               text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10 cursor-pointer"
+               text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10 cursor-pointer"
         @click="emit('open')"
       >
         <PenTool class="w-3.5 h-3.5" />

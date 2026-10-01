@@ -9,8 +9,6 @@ import { buildTaskTree, flattenTaskTree, allSubtaskProgress, MAX_SUBTASK_DEPTH }
 import TaskCardMeta from './TaskCardMeta.vue';
 
 const props = defineProps<{
-  /** How much a delete asks first; see `taskDeleteConfirm`. */
-  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasks: TaskMetadata[];
   /**
    * Every task, for counting subtask progress.
@@ -202,7 +200,7 @@ const onRowClick = (event: MouseEvent, task: TaskMetadata) => {
 
           <!-- Actions -->
           <div class="hidden md:flex shrink-0 md:opacity-0 opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity items-center gap-1 ml-4 w-[60px] justify-end">
-              <DeleteButton :mode="deleteConfirm" @confirm="emit('delete-task', row.task)" />
+              <DeleteButton @confirm="emit('delete-task', row.task)" />
           </div>
       </div>
     </template>

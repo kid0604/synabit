@@ -1693,12 +1693,12 @@ mod tests {
             "it is not a tool name either"
         );
         // And the frontend opens it as a page rather than routing it to a
-        // mini-app. `openBeside` is the one door every link goes through — the
-        // pane where there is room for one, the person's own browser where
-        // there is not, which on a phone is always.
+        // mini-app. `followLink` is the one door every clicked link goes
+        // through — the person's own browser by default, the pane beside the
+        // app if they chose that in Settings.
         let source = include_str!("../../../src/mini-apps/messages/MessagesApp.vue");
         assert!(source.contains("source.node_type === WEB_SOURCE"), "the branch exists");
-        assert!(source.contains("openBeside(source.id)"), "and it opens it as a page");
+        assert!(source.contains("followLink(source.id)"), "and it opens it as a page");
     }
 
     // ── search ────────────────────────────────────────────────────

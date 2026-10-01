@@ -715,8 +715,8 @@ function getShapeTransform(node: WBNode): string {
 }
 
 .wb-embed-wrapper.is-selected .wb-embed-container {
-  border-color: #7c3aed;
-  box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.15);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 15%, transparent);
 }
 
 .dark .wb-embed-container {
@@ -725,8 +725,8 @@ function getShapeTransform(node: WBNode): string {
 }
 
 .dark .wb-embed-wrapper.is-selected .wb-embed-container {
-  border-color: #a78bfa;
-  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.15);
+  border-color: var(--color-accent-dark);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-dark) 15%, transparent);
 }
 
 /* Disable user-select during resize */
@@ -809,14 +809,14 @@ function getShapeTransform(node: WBNode): string {
   width: 20px;
   height: 20px;
   border: 2px solid #e5e7eb;
-  border-top-color: #7c3aed;
+  border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: wb-spin 0.8s linear infinite;
 }
 
 .dark .wb-loading-spinner {
   border-color: #333;
-  border-top-color: #a78bfa;
+  border-top-color: var(--color-accent-dark);
 }
 
 @keyframes wb-spin {
@@ -854,7 +854,7 @@ function getShapeTransform(node: WBNode): string {
   height: 40px;
   max-height: 40%;
   border-radius: 2px;
-  background: #7c3aed;
+  background: var(--color-accent);
   opacity: 0.5;
   transition: opacity 0.15s, height 0.15s;
 }
@@ -877,7 +877,7 @@ function getShapeTransform(node: WBNode): string {
   max-width: 30%;
   height: 4px;
   border-radius: 2px;
-  background: #7c3aed;
+  background: var(--color-accent);
   opacity: 0.5;
   transition: opacity 0.15s, width 0.15s;
 }
@@ -889,7 +889,7 @@ function getShapeTransform(node: WBNode): string {
 
 .dark .wb-resize-bar,
 .dark .wb-resize-bar-h {
-  background: #a78bfa;
+  background: var(--color-accent-dark);
 }
 
 /* ═══ Bubble Toolbar ═══ */

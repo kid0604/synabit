@@ -21,6 +21,7 @@ import {
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import { useSynRuns } from '../composables/useSynRuns';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { useSynMemory, isStale, orderMemories } from '../composables/useSynMemory';
 import { useSynSkills, mayBeEnabled } from '../composables/useSynSkills';
 import { useSynAudit, hasLapsed } from '../composables/useSynAudit';
@@ -56,8 +57,17 @@ const route = useRoute();
 
 const {
   runs, selected, preview, isLoading, error,
-  loadRuns, openRun, cancelRun, deleteRun, loadPreview,
+  loadRuns, openRun, cancelRun, deleteRun: reallyDeleteRun, loadPreview,
 } = useSynRuns(() => props.vaultPath);
+
+/**
+ * A run's transcript is removed outright — no Trash — so the question, when
+ * "Ask before deleting" is on, says Undo is not coming either.
+ */
+const deleteRun = async (run: Run) => {
+  if (!(await confirmDelete({ name: run.goal, toTrash: false }))) return;
+  await reallyDeleteRun(run.id);
+};
 
 type Tab = 'runs' | 'prompt' | 'tools' | 'memory' | 'skills' | 'permissions' | 'numbers';
 const tab = ref<Tab>('runs');
@@ -71,8 +81,14 @@ const statsView = ref<InstanceType<typeof SynStats> | null>(null);
 
 const {
   memories, proposals, budget, error: memoryError,
-  load: loadMemories, setPinned, confirm: confirmMemory, forget, accept, dismiss,
+  load: loadMemories, setPinned, confirm: confirmMemory, forget: reallyForget, accept, dismiss,
 } = useSynMemory(() => props.vaultPath);
+
+/** Forgetting is trashing; it asks first only with "Ask before deleting" on. */
+const forget = async (memory: Memory) => {
+  if (!(await confirmDelete({ name: memory.title }))) return;
+  await reallyForget(memory);
+};
 
 const {
   ordered: orderedSkills, error: skillError, trials, trialling, recipeProblems,
@@ -554,7 +570,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             :key="run.id"
             class="w-full text-left px-4 py-3 border-b border-gray-50 dark:border-gray-800/40
                    hover:bg-gray-50 dark:hover:bg-gray-800/40 transition-colors"
-            :class="selected?.id === run.id ? 'bg-violet-50 dark:bg-violet-950/30' : ''"
+            :class="selected?.id === run.id ? 'bg-accent/10 dark:bg-accent-dark/10' : ''"
             @click="openRun(run.id)"
           >
             <div class="flex items-center gap-2 mb-1">
@@ -614,7 +630,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               <button
                 class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg text-red-600
                        hover:bg-red-50 dark:hover:bg-red-950/40"
-                @click="deleteRun(selected.id)"
+                @click="deleteRun(selected)"
               >
                 <Trash2 class="w-3 h-3" /> {{ t('syn.delete') }}
               </button>
@@ -665,7 +681,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 >{{ whole[step.index] ?? step.preview }}</pre>
                 <button
                   v-if="step.preview.length >= PREVIEW_CAP && whole[step.index] === undefined"
-                  class="mt-1 text-xs text-violet-500 hover:underline cursor-pointer"
+                  class="mt-1 text-xs text-accent dark:text-accent-dark hover:underline cursor-pointer"
                   @click="showWhole(step.index)"
                 >
                   {{ t('syn.run_show_whole') }}
@@ -772,7 +788,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                 />
                 <span class="min-w-0 flex-1">
                   <span class="flex items-baseline gap-2">
-                    <code class="text-[13px] font-mono text-violet-600 dark:text-violet-400">{{ tool.name }}</code>
+                    <code class="text-[13px] font-mono text-accent dark:text-accent-dark">{{ tool.name }}</code>
                     <!-- How often Syn has actually reached for it.
 
                          This is what turns a list of twenty-nine claims into
@@ -869,9 +885,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             class="rounded-xl border p-3"
             :class="[
               skill.enabled
-                ? 'border-violet-200 dark:border-violet-900/60'
+                ? 'border-accent/30 dark:border-accent-dark/30'
                 : 'border-gray-100 dark:border-gray-800/60 opacity-70',
-              highlight === skill.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
+              highlight === skill.id ? 'ring-2 ring-accent dark:ring-accent-dark ring-offset-2 dark:ring-offset-[#13141a]' : '',
             ]"
           >
             <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -990,7 +1006,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].without }}</p>
                 </div>
                 <div>
-                  <p class="text-xs font-medium text-violet-600">{{ t('syn.skill_trial_with') }}</p>
+                  <p class="text-xs font-medium text-accent dark:text-accent-dark">{{ t('syn.skill_trial_with') }}</p>
                   <p class="mt-1 text-xs whitespace-pre-wrap text-text dark:text-text-dark">{{ trials[skill.id].with }}</p>
                 </div>
               </div>
@@ -1182,7 +1198,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
           </div>
           <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
             <div class="h-full rounded-full"
-                 :class="budget.dropped > 0 ? 'bg-amber-500' : 'bg-violet-500'"
+                 :class="budget.dropped > 0 ? 'bg-amber-500' : 'bg-accent dark:bg-accent-dark'"
                  :style="{ width: `${memoryUsed}%` }" />
           </div>
           <p v-if="budget.dropped > 0" class="mt-1 text-xs text-amber-600">
@@ -1193,7 +1209,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
         <!-- Waiting on a decision, so it goes above what is already settled. -->
         <div v-if="proposals.length" class="mt-6">
           <div class="flex items-center gap-2 mb-2">
-            <Sparkles class="w-3.5 h-3.5 text-violet-500" />
+            <Sparkles class="w-3.5 h-3.5 text-accent dark:text-accent-dark" />
             <h3 class="text-sm font-medium text-text dark:text-text-dark">
               {{ t('syn.proposals_title', { n: proposals.length }) }}
             </h3>
@@ -1204,8 +1220,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             <li
               v-for="proposal in proposals"
               :key="proposal.id"
-              class="rounded-xl border border-violet-200 dark:border-violet-900/60
-                     bg-violet-50/40 dark:bg-violet-950/20 p-3"
+              class="rounded-xl border border-accent/30 dark:border-accent-dark/30
+                     bg-accent/5 dark:bg-accent-dark/5 p-3"
             >
               <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
                 <span class="px-1.5 py-0.5 rounded bg-white dark:bg-gray-800">{{ proposal.kind }}</span>
@@ -1253,8 +1269,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
             :id="`syn-item-${cssId(memory.id)}`"
             class="rounded-xl border border-gray-100 dark:border-gray-800/60 p-3"
             :class="[
-              memory.pinned ? 'border-violet-200 dark:border-violet-900/60' : '',
-              highlight === memory.id ? 'ring-2 ring-violet-400 ring-offset-2 dark:ring-offset-[#13141a]' : '',
+              memory.pinned ? 'border-accent/30 dark:border-accent-dark/30' : '',
+              highlight === memory.id ? 'ring-2 ring-accent dark:ring-accent-dark ring-offset-2 dark:ring-offset-[#13141a]' : '',
             ]"
           >
             <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -1345,7 +1361,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               </span>
             </div>
             <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-              <div class="h-full bg-violet-500 rounded-full" :style="{ width: `${budgetUsed}%` }" />
+              <div class="h-full bg-accent dark:bg-accent-dark rounded-full" :style="{ width: `${budgetUsed}%` }" />
             </div>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.prompt_tokens_estimated') }}</p>
           </div>
@@ -1369,7 +1385,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
               </span>
             </div>
             <div class="mt-2 h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden">
-              <div class="h-full bg-violet-400 rounded-full" :style="{ width: `${toolsUsed}%` }" />
+              <div class="h-full bg-accent/70 dark:bg-accent-dark/70 rounded-full" :style="{ width: `${toolsUsed}%` }" />
             </div>
             <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.tools_payload_note') }}</p>
           </div>

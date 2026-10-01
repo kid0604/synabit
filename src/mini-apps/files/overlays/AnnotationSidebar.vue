@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { computed } from 'vue';
 import { FileText, Trash2 } from 'lucide-vue-next';
-import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 import type { PdfAnnotation } from '../composables/usePdfAnnotations';
 
 const props = defineProps<{
@@ -15,21 +14,9 @@ const emit = defineEmits<{
   (e: 'export-note'): void;
 }>();
 
-const showConfirmDelete = ref(false);
-const itemToDelete = ref<string | null>(null);
-
-const requestDelete = (id: string) => {
-  itemToDelete.value = id;
-  showConfirmDelete.value = true;
-};
-
-const executeDelete = () => {
-  if (itemToDelete.value) {
-    emit('delete', itemToDelete.value);
-  }
-  showConfirmDelete.value = false;
-  itemToDelete.value = null;
-};
+// No question here: the viewer asks (only with "Ask before deleting" on) and
+// offers Undo, the same as every other delete.
+const requestDelete = (id: string) => emit('delete', id);
 
 // Group annotations by page
 const groupedAnnotations = computed(() => {
@@ -129,15 +116,5 @@ const colorMap: Record<string, string> = {
     <div v-if="annotations.length > 0" class="px-4 py-2 border-t border-gray-200/50 dark:border-white/5 flex-shrink-0">
       <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('file.annotation_count', { count: annotations.length }, annotations.length) }}</span>
     </div>
-
-    <ConfirmModal
-      :show="showConfirmDelete"
-      :title="$t('file.delete_highlight')"
-      :message="$t('file.delete_highlight_body')"
-      :confirm-text="$t('file.delete')"
-      :is-destructive="true"
-      @confirm="executeDelete"
-      @cancel="showConfirmDelete = false; itemToDelete = null"
-    />
   </div>
 </template>

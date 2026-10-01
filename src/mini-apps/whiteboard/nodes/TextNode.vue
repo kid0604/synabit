@@ -60,7 +60,7 @@ function onResizeEnd(event: any) {
       :is-visible="!!selected && !isEditing"
       :min-width="80"
       :min-height="24"
-      color="var(--color-accent, #7c3aed)"
+      color="var(--wb-selection, var(--color-accent))"
       @resize-end="onResizeEnd"
     />
 
@@ -101,7 +101,7 @@ function onResizeEnd(event: any) {
   transition: border-color 0.15s, background-color 0.15s, opacity 0.15s, box-shadow 0.15s;
 }
 .wb-text-node--editing {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 15%, transparent);
 }
 .dark .wb-text-node--editing {

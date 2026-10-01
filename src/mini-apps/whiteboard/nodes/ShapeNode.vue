@@ -155,7 +155,7 @@ function onResizeEnd(event: any) {
       :is-visible="!!selected"
       :min-width="40"
       :min-height="40"
-      color="var(--color-accent, #7c3aed)"
+      color="var(--wb-selection, var(--color-accent))"
       @resize-end="onResizeEnd"
     />
 
@@ -205,7 +205,7 @@ function onResizeEnd(event: any) {
         v-if="selected"
         x="2" y="2" width="96" height="96"
         fill="none"
-        stroke="var(--color-accent, #7c3aed)"
+        style="stroke: var(--wb-selection, var(--color-accent))"
         stroke-width="1.5"
         vector-effect="non-scaling-stroke"
         stroke-dasharray="6 4"
@@ -290,7 +290,7 @@ function onResizeEnd(event: any) {
 .wb-handle {
   width: 10px !important;
   height: 10px !important;
-  background: var(--color-accent, #7c3aed) !important;
+  background: var(--color-accent) !important;
   border: 2px solid white !important;
   border-radius: 50% !important;
   opacity: 0;

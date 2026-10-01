@@ -21,7 +21,7 @@ const emit = defineEmits<{
 <template>
   <AppDialog :show="show" labelledby="note-route-title" size="sm" panel-class="p-5" @close="emit('close')">
     <div class="flex items-center gap-2 mb-4">
-      <NavigationIcon class="w-4 h-4 text-indigo-500" />
+      <NavigationIcon class="w-4 h-4 text-accent dark:text-accent-dark" />
       <h3 id="note-route-title" class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ $t('note.editor.route.title') }}</h3>
     </div>
 

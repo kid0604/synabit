@@ -2,6 +2,9 @@ import { ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../utils/logger';
+import { useAppStore } from '../../stores/useAppStore';
+import { showAppNotice } from '../../composables/useAppNotice';
+import { i18n } from '../../i18n';
 
 /**
  * How much of the window the browsing pane is taking, as a fraction.
@@ -288,6 +291,32 @@ export async function openBeside(url: string): Promise<number> {
   } catch (e) {
     logger.error('[Syn] Could not open that page', e);
     return 0;
+  }
+}
+
+/**
+ * Follow a link the person clicked, where they said links should open.
+ *
+ * "Open links in" (Settings → General) is the computer's own browser by
+ * default: it is the one with their logins, bookmarks and extensions, and
+ * every other app on the machine sends links there. Synabit's pane beside the
+ * app is the other choice — `openBeside`, which still falls back to the
+ * system browser when there is no room for a pane. The same address guard
+ * runs on both roads, in Rust.
+ *
+ * The globe button that opens the pane on purpose does not come through
+ * here; that is asking for the pane, not following a link.
+ */
+export async function followLink(url: string): Promise<void> {
+  if (useAppStore().linkOpenIn === 'pane') {
+    await openBeside(url);
+    return;
+  }
+  try {
+    await invoke('open_link_in_system_browser', { url });
+  } catch (e) {
+    logger.error('[Links] Could not open that link', e);
+    showAppNotice(i18n.global.t('shell.links.open_failed'), 'error');
   }
 }
 

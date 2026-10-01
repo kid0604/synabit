@@ -24,6 +24,7 @@ import {
 import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 
 
 import FinanceReports from './components/FinanceReports.vue';
@@ -676,8 +677,7 @@ const saveTransaction = async (tx: Transaction) => {
  * Delete a transaction, with a few seconds to take it back.
  *
  * It leaves the screen at once and is removed from its month file only when
- * the undo window closes. This used to ask first and warn that it could not
- * be undone; now it can, so it does not ask.
+ * the undo window closes. It asks first only with "Ask before deleting" on.
  */
 const undo = useUndoableAction({
     onError: () => { storageError.value = t('finance.storage_error.tx_delete'); },
@@ -689,7 +689,7 @@ const setHidden = (txId: string, hidden: boolean) => {
     hiddenTxIds.value = next;
 };
 
-const deleteTransaction = (txId: string) => {
+const deleteTransaction = async (txId: string) => {
     // Which month holds it, so the removal goes to the right file.
     const holder = months.value.find(m =>
         ((m.node.properties?.transactions as Transaction[]) || []).some(t => t.id === txId)
@@ -697,6 +697,8 @@ const deleteTransaction = (txId: string) => {
     if (!holder) return;
     const tx = (holder.node.properties.transactions as Transaction[]).find(t => t.id === txId)!;
     const name = `${tx.type === 'transfer' ? t('finance.internal_transfer') : displayCategory(tx.category)} · ${formatCurrency(tx.amount)}`;
+    // Not the Trash: the row is taken out of its month file, so Undo is the way back.
+    if (!(await confirmDelete({ name, toTrash: false }))) return;
 
     showTxModal.value = false;
     setHidden(txId, true);

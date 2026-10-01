@@ -11,6 +11,10 @@ import SelectionAskSyn from '../../../shared/syn/SelectionAskSyn.vue';
 import DrawingOverlay from '../overlays/DrawingOverlay.vue';
 import AnnotationSidebar from '../overlays/AnnotationSidebar.vue';
 import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../../shared/components/UndoToast.vue';
+import { useI18n } from 'vue-i18n';
+import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import {
   ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Moon, Sun,
   Highlighter, PenTool, PanelRightOpen, PanelRightClose,
@@ -37,6 +41,9 @@ const ns = useNodeService();
 const vaultPathRef = ref(props.vaultPath);
 watch(() => props.vaultPath, (v) => { vaultPathRef.value = v; });
 const annotations = usePdfAnnotations(vaultPathRef);
+const { t } = useI18n();
+/** A deleted highlight waiting out its undo window; see `deleteHighlight`. */
+const highlightUndo = useUndoableAction();
 
 const darkMode = ref(false);
 const highlightMode = ref(false);
@@ -46,6 +53,8 @@ const showSidebar = ref(false);
 // ─── Load PDF when filePath changes ──────────────────────────
 watch(() => props.filePath, async (path) => {
   if (path && props.fileId) {
+    // A highlight still waiting on its undo belongs to the previous PDF.
+    await highlightUndo.commit();
     const src = convertFileSrc(path);
     await renderer.loadPdf(src);
     await annotations.loadAnnotations(props.fileId, path);
@@ -316,10 +325,35 @@ const handleUpdateHighlight = async (payload: { color: PdfAnnotation['color']; n
   popupState.value.show = false;
 };
 
+/**
+ * Delete a highlight, with a few seconds to take it back.
+ *
+ * The highlight's file is unlinked, not trashed, so the undo toast is the only
+ * way back: it leaves the page at once and the file goes only when the window
+ * closes. It asks first only with "Ask before deleting" on.
+ */
+const deleteHighlight = async (id: string) => {
+  const ann = annotations.annotations.value.find(a => a.id === id);
+  if (!ann) return;
+  const text = ann.text.trim();
+  const name = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+  if (!(await confirmDelete({ name: name || undefined, toTrash: false }))) return;
+  annotations.annotations.value = annotations.annotations.value.filter(a => a.id !== id);
+  void highlightUndo.run(
+    name ? t('common.deleted_item', { name }) : t('file.delete_highlight'),
+    () => annotations.deleteAnnotation(id),
+    () => {
+      if (!annotations.annotations.value.some(a => a.id === id)) {
+        annotations.annotations.value = [...annotations.annotations.value, ann];
+      }
+    },
+  );
+};
+
 const handleDeleteHighlight = async () => {
-  if (!popupState.value.annotation) return;
-  await annotations.deleteAnnotation(popupState.value.annotation.id);
+  const id = popupState.value.annotation?.id;
   popupState.value.show = false;
+  if (id) await deleteHighlight(id);
 };
 
 // ─── Drawing state ───────────────────────────────────────────
@@ -544,7 +578,7 @@ const handleResetPdf = async () => {
       :annotations="annotations.annotations.value"
       :pdf-title="renderer.pdfTitle.value"
       @go-to="handleGoToAnnotation"
-      @delete="(id: string) => annotations.deleteAnnotation(id)"
+      @delete="deleteHighlight"
       @export-note="exportToNote"
     />
 
@@ -567,6 +601,11 @@ const handleResetPdf = async () => {
       @update="handleUpdateHighlight"
       @delete="handleDeleteHighlight"
     />
+
+    <UndoToast :show="highlightUndo.show.value" :restart-key="highlightUndo.key.value"
+      :message="highlightUndo.message.value" :undo-label="$t('common.undo')"
+      :seconds="highlightUndo.seconds" @undo="highlightUndo.undo"
+      @pause="highlightUndo.pause" @resume="highlightUndo.resume" />
 
     <!-- Reset Confirm Modal -->
     <ConfirmModal

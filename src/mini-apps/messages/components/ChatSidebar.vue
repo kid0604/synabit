@@ -208,7 +208,7 @@ const when = (iso?: string) => {
         <input
           v-model="searchQuery"
           type="text"
-          class="w-full bg-gray-100 dark:bg-[#1a1a1e] text-sm text-text dark:text-text-dark rounded-xl pl-9 pr-4 py-2 outline-none focus:ring-2 focus:ring-violet-500/50 transition-shadow placeholder-gray-500 dark:placeholder-gray-400"
+          class="w-full bg-gray-100 dark:bg-[#1a1a1e] text-sm text-text dark:text-text-dark rounded-xl pl-9 pr-4 py-2 outline-none focus:ring-2 focus:ring-accent/50 dark:focus:ring-accent-dark/50 transition-shadow placeholder-gray-500 dark:placeholder-gray-400"
           :placeholder="t('syn.search_placeholder')"
         />
       </div>
@@ -232,7 +232,7 @@ const when = (iso?: string) => {
             <input
               v-if="isRenaming('thread', thread.id)"
               v-model="renameDraft"
-              class="w-full bg-transparent text-[13px] font-medium outline-none border-b border-violet-400"
+              class="w-full bg-transparent text-[13px] font-medium outline-none border-b border-accent dark:border-accent-dark"
               @click.stop
               @keydown.enter.prevent="commitRename"
               @keydown.esc.prevent="renaming = null"
@@ -388,7 +388,7 @@ const when = (iso?: string) => {
           <input
             v-if="isRenaming('conversation', chat.id)"
             v-model="renameDraft"
-            class="w-full bg-transparent text-[13px] outline-none border-b border-violet-400"
+            class="w-full bg-transparent text-[13px] outline-none border-b border-accent dark:border-accent-dark"
             @click.stop
             @keydown.enter.prevent="commitRename"
             @keydown.esc.prevent="renaming = null"
@@ -426,11 +426,11 @@ const when = (iso?: string) => {
         :aria-label="waiting ? `${t('syn.activity')} — ${t('syn.activity_waiting_badge', { n: waiting })}` : undefined"
         @click="emit('select', { kind: 'activity' })"
       >
-        <Activity class="w-4 h-4 flex-shrink-0" :class="working ? 'text-violet-500 animate-pulse' : 'text-gray-500 dark:text-gray-400'" aria-hidden="true" />
+        <Activity class="w-4 h-4 flex-shrink-0" :class="working ? 'text-accent dark:text-accent-dark animate-pulse' : 'text-gray-500 dark:text-gray-400'" aria-hidden="true" />
         <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.activity') }}</span>
         <span
           v-if="waiting"
-          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-amber-500 text-white text-xs font-bold flex items-center justify-center px-1.5"
+          class="shrink-0 min-w-[20px] h-[20px] rounded-full bg-amber-700 dark:bg-amber-500 text-white dark:text-gray-900 text-xs font-bold flex items-center justify-center px-1.5"
           aria-hidden="true"
         >
           {{ waiting > 99 ? '99+' : waiting }}

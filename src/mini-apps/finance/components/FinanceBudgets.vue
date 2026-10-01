@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Target, Plus, TrendingUp, AlertCircle, CheckCircle2, Calendar, ChevronDown, ChevronLeft, ChevronRight, Settings, X } from 'lucide-vue-next';
 import type { Budget, BudgetItem, Category, Transaction } from '../types';
 import BudgetModal from './BudgetModal.vue';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { formatCurrency } from '../currency';
 import { categoryName } from '../categories';
 import * as calc from '../calc';
@@ -159,7 +160,12 @@ const handleSaveItem = (item: BudgetItem) => {
     showItemModal.value = false;
 };
 
-const handleDeleteItem = (id: string) => {
+// Budgets live in the finance config, not the Trash. They ask only with
+// "Ask before deleting" on.
+const handleDeleteItem = async (id: string) => {
+    if (!selectedBudget.value) return;
+    const item = selectedBudget.value.items.find(i => i.id === id);
+    if (!(await confirmDelete({ name: item?.name, toTrash: false }))) return;
     if (!selectedBudget.value) return;
     const newBudgets = props.budgets.map(b => {
         if (b.id !== selectedBudget.value!.id) return b;
@@ -207,7 +213,9 @@ const updateBudget = () => {
     showEditBudgetForm.value = false;
 };
 
-const deleteBudget = () => {
+const deleteBudget = async () => {
+    if (!selectedBudget.value) return;
+    if (!(await confirmDelete({ name: selectedBudget.value.name, toTrash: false }))) return;
     if (!selectedBudget.value) return;
     const newBudgets = props.budgets.filter(b => b.id !== selectedBudget.value!.id);
     emit('save-budgets', newBudgets);

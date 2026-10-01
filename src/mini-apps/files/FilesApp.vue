@@ -11,6 +11,7 @@ import FilesSidebar from './components/FilesSidebar.vue';
 import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { showAppNotice } from '../../composables/useAppNotice';
 import FilesTabs, { type FileTab } from './components/FilesTabs.vue';
 import FileDetailPanel from './components/FileDetailPanel.vue';
@@ -98,7 +99,7 @@ const selectDupFile = (file: FileMetadata) => {
  *
  * The file leaves the screen at once and reaches the vault's `.trash` only
  * when the undo window closes, so Undo only has to show it again. It
- * used to ask first; asking is for what cannot be taken back, and this can.
+ * asks first only when "Ask before deleting" is on (`confirmDelete`).
  */
 // A failure puts the file back and says so through the shared notice, which
 // shows in every mode — a banner here was out of sight in the duplicate view.
@@ -106,7 +107,8 @@ const undo = useUndoableAction();
 // A reload in the middle of the window would show the file again.
 store.setBeforeReload(() => undo.commit());
 
-const handleDeleteFile = (file: FileMetadata) => {
+const handleDeleteFile = async (file: FileMetadata) => {
+  if (!(await confirmDelete({ name: file.filename }))) return;
   const inDuplicates = mode.value === 'duplicates';
   if (selectedFile.value?.id === file.id) selectedFile.value = null;
   store.hideFile(file);
@@ -141,7 +143,7 @@ const deleteFromMenu = async (file: FileMetadata) => {
     showAppNotice(t('file.in_use_delete_refused', { name: file.filename, count: refs.length }, refs.length), 'error');
     return;
   }
-  handleDeleteFile(file);
+  await handleDeleteFile(file);
 };
 
 // ─── Browse mode ─────────────────────────────────────────────
@@ -977,7 +979,7 @@ onUnmounted(() => {
 
     <UndoToast :show="undo.show.value" :restart-key="undo.key.value"
       :message="undo.message.value" :undo-label="$t('common.undo')"
-      :seconds="undo.seconds" @undo="undo.undo"
+      :seconds="undo.seconds" :hint="$t('common.in_trash_hint')" @undo="undo.undo"
       @pause="undo.pause" @resume="undo.resume" />
   </div>
 </template>

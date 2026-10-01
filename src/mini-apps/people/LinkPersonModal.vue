@@ -115,7 +115,7 @@ const handleLink = () => {
             <!-- Header -->
             <div class="p-5 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between flex-shrink-0">
                 <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+                    <div class="w-9 h-9 rounded-full bg-accent flex items-center justify-center">
                         <UserPlus class="w-4 h-4 text-white" />
                     </div>
                     <div>

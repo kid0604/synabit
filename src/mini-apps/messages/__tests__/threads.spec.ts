@@ -328,25 +328,39 @@ describe('saying how heavy a turn is', () => {
  * that overstates the damage is how people learn to click through warnings.
  */
 describe('asking before removing', () => {
-  it('sends both delete buttons to a question, not to the deletion', () => {
+  it('sends both delete buttons through a gate, not straight to the deletion', () => {
     expect(app, 'threads').toContain('@delete-thread="askDeleteThread"');
     expect(app, 'conversations').toContain('@delete-conversation="askDeleteConversation"');
-    expect(app, 'and the dialog is on screen').toContain('<ConfirmModal');
+    expect(app, 'and the conversation dialog is on screen').toContain('<ConfirmModal');
     expect(app).toContain('is-destructive');
   });
 
   /**
    * The names matter: the two functions that actually remove something are
-   * reachable only from `confirmDelete`, so a future edit that wires a button
+   * reachable only through their gate, so a future edit that wires a button
    * straight to one of them is visible in the diff rather than silent.
    */
   it('keeps the removal itself behind the answer', () => {
-    expect(app).toContain('const confirmDelete');
+    expect(app).toContain('const answerDeleteConversation');
     expect(app).toContain('reallyDeleteConversation');
     expect(app).toContain('reallyDeleteThread');
     expect(app, 'nothing calls the removal from the template').not.toContain(
       '@delete-thread="reallyDeleteThread"'
     );
+  });
+
+  /**
+   * A thread goes to the Trash, so it is an ordinary delete: the shared
+   * "Ask before deleting" question (off by default), then an undo toast that
+   * says it is in the Trash. A conversation has no Trash and keeps its own.
+   */
+  it('treats a thread delete like every other delete in the app', () => {
+    const ask = app.split('const askDeleteThread')[1]?.split('\n};')[0] ?? '';
+    expect(ask).toContain('confirmDelete({ name: thread.title })');
+    expect(ask.indexOf('confirmDelete(')).toBeLessThan(ask.indexOf('holdThread(id, true)'));
+    expect(ask).toContain('threadUndo.run(');
+    expect(app).toContain(':hint="t(\'common.in_trash_hint\')"');
+    expect(app, 'the conversation question stays').toContain('@confirm="answerDeleteConversation"');
   });
 
   /** Escape answers "no", like it does for every other dialog. */
@@ -824,7 +838,7 @@ describe('asking which one', () => {
    */
   it('does not look like the consent card, because it does not mean the same thing', () => {
     expect(choiceCard, 'not the consent amber').not.toContain('border-amber-300');
-    expect(choiceCard).toContain('border-violet-200');
+    expect(choiceCard, 'it wears the accent').toContain('border-accent/30');
     expect(consentCard, 'and consent keeps its own colour').toContain('border-amber-300');
   });
 
@@ -1075,27 +1089,17 @@ describe('answering a consent card', () => {
 describe('citing a page', () => {
   it('opens in a browser, not in the note editor', () => {
     expect(app).toContain('source.node_type === WEB_SOURCE');
-    expect(app).toContain('openBeside(source.id)');
+    expect(app).toContain('followLink(source.id)');
     expect(types).toContain("export const WEB_SOURCE = 'web'");
   });
 
   /**
-   * It used to go to the user's own browser, because checking a citation
-   * inside the app would be reading Syn's copy rather than the source.
-   *
-   * That reasoning was right and its premise has changed. The pane is not
-   * Syn's copy: it is a live browser with its own cookie jar, fetching the
-   * page as the person and showing them the address it is on. And it is the
-   * same door as a link in the answer above the chip, which look identical to
-   * whoever clicks them.
-   *
-   * `openBeside` still reaches their own browser wherever there is no pane to
-   * put a page in — a narrow window, and a phone always. That decision is made
-   * in Rust, because only Rust can tell "there is no room" from "that address
-   * is refused", and those two deserve opposite answers.
+   * A cited page opens where every clicked link opens: the computer's own
+   * browser by default, or the pane beside the app when the person chose it
+   * ("Open links in", Settings → General). The chip and a link in the answer
+   * above it look identical to whoever clicks them, so they go the same way.
    */
-  it('says why the pane is not Syn’s copy'.replace('’', "'"), () => {
-    expect(app).toContain('It is a live browser with its own session');
-    expect(app).toContain('which is what a phone always is');
+  it('goes where every other clicked link goes', () => {
+    expect(app).toContain('where every clicked link opens');
   });
 });

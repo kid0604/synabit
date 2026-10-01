@@ -72,7 +72,7 @@ const sections = [
                   <span class="font-medium">{{ t(`syn.run_state_${run.state}`) }}</span>
                   <span>{{ when(run) }}</span>
                   <span v-if="run.tool_calls">{{ t('syn.tool_calls_count', { n: run.tool_calls }, run.tool_calls) }}</span>
-                  <span v-if="run.trigger === 'schedule'" class="inline-flex items-center gap-0.5 text-violet-600 dark:text-violet-400">
+                  <span v-if="run.trigger === 'schedule'" class="inline-flex items-center gap-0.5 text-accent dark:text-accent-dark">
                     {{ t('syn.activity_from_routine') }}
                   </span>
                   <span v-if="run.surface === 'telegram'" class="inline-flex items-center gap-0.5">
@@ -92,14 +92,14 @@ const sections = [
                 <button
                   v-if="run.conversation_id"
                   type="button"
-                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10 focus-visible:outline-2 focus-visible:outline-violet-500"
+                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10 focus-visible:outline-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark"
                   @click="emit('open-conversation', run.conversation_id)"
                 >
                   <ArrowUpRight class="w-3 h-3" aria-hidden="true" />{{ t('syn.activity_open') }}
                 </button>
                 <button
                   type="button"
-                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-violet-500"
+                  class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark"
                   @click="emit('inspect-run', run.id)"
                 >
                   <FileSearch class="w-3 h-3" aria-hidden="true" />{{ t('syn.activity_details') }}

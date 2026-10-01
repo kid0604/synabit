@@ -57,6 +57,7 @@ import NoteExportModal from '../note/NoteExportModal.vue';
 import { useNoteExport } from '../note/composables/useNoteExport';
 import type { NoteItem } from '../note/helpers';
 import { useThingsRowActions, UNDO_WINDOW_SECONDS } from './composables/useThingsRowActions';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { useThingsLock } from './composables/useThingsLock';
 import { routeForNodeType, nameForNodeType } from '../../shared/nodeRoutes';
 import { appName } from '../../shared/appRegistry';
@@ -131,17 +132,14 @@ const duplicateRow = async (row: QueryRow) => {
 };
 
 /**
- * One question, asked the same way for every removal.
+ * The question in front of a removal that cannot be taken back.
  *
- * Four things in this screen take something away, and only one of them used to
- * ask. The worst of the silent three was not the one anybody noticed: the `×`
- * beside a property really does delete the key from the file, while removing a
- * field from a kind's shape deletes nothing at all — and they looked equally
- * safe, which is to say the dangerous one looked safe.
- *
- * So the message carries the consequence rather than the gesture. "Nothing is
- * deleted from any file" is worth reading once, and a confirmation is the one
- * place somebody is certain to read it.
+ * Deleting a thing or a saved view is an ordinary delete — one press, the
+ * trash behind it, and only the app-wide "Ask before deleting"
+ * (`confirmDelete`) in front of it, as everywhere else. What still asks here
+ * is what no undo covers: the `×` beside a property deletes the key from the
+ * file on the spot, so the message carries the consequence rather than the
+ * gesture, and a confirmation is the one place somebody is certain to read it.
  */
 const confirming = ref<{
   title: string;
@@ -161,16 +159,6 @@ const runConfirmed = async () => {
   await pending?.run();
 };
 
-/**
- * Ask first.
- *
- * The Notes app deletes on the click and offers an undo instead, on the
- * argument that a dialog trains people to click through it. That reasoning
- * holds for a note in the Notes app; it holds less here. This list mixes every
- * type in the vault, the button is a small icon a few pixels from the row's
- * title, and a `book` put back by nobody is far harder to notice missing than
- * a note. So Things asks — and still offers the undo behind it.
- */
 /**
  * Take a field off this node. The only one of the four that deletes a value.
  *
@@ -196,14 +184,11 @@ const askRemoveField = (index: number) => {
   );
 };
 
-const askRemove = (row: QueryRow) => {
+/** A thing to the trash, with the undo toast behind it. */
+const askRemove = async (row: QueryRow) => {
   closeMenu();
-  askThen(
-    t('things.delete_title'),
-    t('things.delete_message', { title: row.title || row.id }),
-    t('things.delete'),
-    () => confirmRemove(row),
-  );
+  if (!(await confirmDelete({ name: row.title || row.id }))) return;
+  await confirmRemove(row);
 };
 
 const confirmRemove = async (row: QueryRow) => {
@@ -998,13 +983,10 @@ const mergeCandidates = computed(() => {
   return [...keys].filter(k => !isAppOwned(activeType.value!, k) && !GOVERNED.has(k));
 });
 
-const askRemoveView = (view: SavedView) => {
-  askThen(
-    t('things.delete_view'),
-    t('things.delete_view_message', { name: view.name }),
-    t('things.delete'),
-    () => saved.remove(view),
-  );
+/** A saved view to the trash; the Trash is the way back. */
+const askRemoveView = async (view: SavedView) => {
+  if (!(await confirmDelete({ name: view.name }))) return;
+  await saved.remove(view);
 };
 
 /** The key somebody proposed merging away, waiting on a target. */
@@ -2240,6 +2222,7 @@ onBeforeUnmount(() => {
       :show="!!rowActions.trashed.value"
       :restart-key="rowActions.trashed.value?.key"
       :message="t('things.deleted', { title: rowActions.trashed.value?.title ?? '' })"
+      :hint="t('common.in_trash_hint')"
       :undo-label="t('things.undo')"
       :seconds="UNDO_WINDOW_SECONDS"
       @undo="undoRemove"

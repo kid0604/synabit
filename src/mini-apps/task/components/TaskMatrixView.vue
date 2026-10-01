@@ -6,8 +6,6 @@ import { type TaskMetadata, getTransferredName } from '../types';
 import { allSubtaskProgress } from '../subtasks';
 
 const props = defineProps<{
-  /** How much a delete asks first; see `taskDeleteConfirm`. */
-  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasksByQuadrant: Record<string, TaskMetadata[]>;
   /** Every task, for counting subtask progress; see `TaskListView`. */
   allTasks?: TaskMetadata[];
@@ -206,7 +204,7 @@ const emptyIcons: Record<string, string> = {
                                   <User class="w-2 h-2"/>{{ getTransferredName(task.transferred_to).substring(0, 6) }}
                               </span>
                           </div>
-                          <DeleteButton :mode="deleteConfirm" compact class="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" @confirm="emit('delete-task', task)" />
+                          <DeleteButton compact class="absolute bottom-1.5 right-1.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-all" @confirm="emit('delete-task', task)" />
                       </div>
                   </div>
                   <div v-if="tasksByQuadrant[quadrant.id].length === 0" class="flex flex-col items-center justify-center h-full py-8">

@@ -186,7 +186,7 @@ describe('useNoteDelete', () => {
     const trashNode = vi.fn(() => new Promise<string>((r) => { finish = r; }));
     const h = harness({ ns: { trashNode } });
     await h.api.deleteNote('Notes/b.md');
-    await vi.advanceTimersByTimeAsync(7_100);
+    await vi.advanceTimersByTimeAsync(10_100);
     expect(trashNode).toHaveBeenCalled();
     expect(h.api.isHidden('Notes/b.md')).toBe(true);
     finish('.trash/Notes/b.md');
@@ -220,7 +220,7 @@ describe('useNoteDelete', () => {
     await vi.advanceTimersByTimeAsync(30_000);
     expect(h.trashNode).not.toHaveBeenCalled();
     h.api.resume();
-    await vi.advanceTimersByTimeAsync(4_100);
+    await vi.advanceTimersByTimeAsync(7_100);
     expect(h.trashNode).toHaveBeenCalledWith({ relPath: 'Notes/b.md' });
   });
 

@@ -15,6 +15,7 @@ import GraphTab from './GraphTab.vue';
 import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { showAppNotice } from '../../composables/useAppNotice';
 import RemindersWidget from './RemindersWidget.vue';
 import LinkPersonModal from './LinkPersonModal.vue';
@@ -392,9 +393,15 @@ const saveSegment = async (draft: Omit<Segment, 'id'>, existingId?: string) => {
     }
 };
 
+/**
+ * A segment is a saved filter; it goes to the Trash like any other file the
+ * user made, and asks only with "Ask before deleting" on.
+ */
 const deleteSegment = async (id: string) => {
+    const name = segments.value.find(s => s.id === id)?.name;
+    if (!(await confirmDelete({ name }))) return;
     try {
-        await ns.deleteNode({ relPath: id });
+        await ns.trashNode({ relPath: id });
         if (activeSegmentId.value === id) activeSegmentId.value = null;
         await fetchSegments();
     } catch (e) {
@@ -787,9 +794,9 @@ const unlinkPerson = async (targetPersonId: string) => {
  * still drew, using the name it had cached, for somebody who had been
  * deleted. Nothing ever cleared those.
  *
- * No question first. The person leaves the list at once and nothing is
- * written until the undo window closes (`useUndoableAction`), so the delete
- * that used to be "permanent, cannot be undone" now can be, for a while.
+ * No question first unless "Ask before deleting" is on (`confirmDelete`).
+ * The person leaves the list at once and nothing is written until the undo
+ * window closes (`useUndoableAction`); after that they are in the Trash.
  */
 // No `onError`: a failure puts the person back and the shared "Couldn't
 // delete" notice says so. Logging alone told nobody.
@@ -799,6 +806,7 @@ const heldPersonIds = new Set<string>();
 
 const deletePerson = async (person: any) => {
     if (!person || person.properties?.is_owner) return;
+    if (!(await confirmDelete({ name: getDisplayName(person) }))) return;
 
     const index = people.value.findIndex(p => p.id === person.id);
     const wasOpen = selectedPerson.value?.id === person.id ? selectedPerson.value : null;
@@ -1114,7 +1122,7 @@ defineExpose({ openPersonById });
                             {{ $t(tab.label) }}
                         </button>
                         <div class="w-full md:w-auto md:ml-auto md:-mb-px flex items-center gap-1 mt-1 md:mt-0 justify-end">
-                            <button @click="showLinkModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-purple-500 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded-lg transition-colors">
+                            <button @click="showLinkModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10 rounded-lg transition-colors">
                                 <UserPlus class="w-3.5 h-3.5" /> {{ $t('people.link_person') }}
                             </button>
                             <button @click="showGiftModal = true" class="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-pink-500 hover:bg-pink-50 dark:hover:bg-pink-900/20 rounded-lg transition-colors">
@@ -1187,6 +1195,7 @@ defineExpose({ openPersonById });
             :message="personUndo.message.value"
             :undo-label="$t('common.undo')"
             :seconds="personUndo.seconds"
+            :hint="$t('common.in_trash_hint')"
             @undo="personUndo.undo"
             @pause="personUndo.pause"
             @resume="personUndo.resume"

@@ -7,6 +7,7 @@ import { localTimeZone } from '../timezone';
 import { isSubscribed } from '../subscriptions';
 import { i18n } from '../../../i18n';
 import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { showAppNotice } from '../../../composables/useAppNotice';
 import { logger } from '../../../utils/logger';
 
@@ -566,8 +567,14 @@ export function useEventForm(
     // --- Delete ---
     /**
      * A one-off event goes at once and is written away only when the undo
-     * window closes; see `useUndoableAction`. A series still asks, because
-     * "this one, these and later, or all of them" is a real question.
+     * window closes; see `useUndoableAction`. It asks first only with "Ask
+     * before deleting" on (`confirmDelete`); the file is unlinked, not
+     * trashed, so the question says Undo is the only way back. A series asks
+     * its own question instead, because "this one, these and later, or all of
+     * them" is a real choice.
+     *
+     * `onGo` runs once the delete is going ahead — the form closes then, and
+     * stays open if the answer was no.
      */
     // No `onError`: a delete that fails brings the event back and the shared
     // "Couldn't delete" notice says so. Logging alone told nobody.
@@ -579,19 +586,23 @@ export function useEventForm(
         heldEventIds.value = next;
     };
 
-    const deleteEvent = async (ev: EventMetadata, dateStr: string) => {
+    const deleteEvent = async (ev: EventMetadata, dateStr: string, onGo?: () => void) => {
         // Somebody else's calendar. Removing the subscription is how it goes.
         if (isSubscribed(ev)) return;
         if (isSeries(ev)) {
+            onGo?.();
             scopeAction.value = 'delete';
             scopeSelection.value = 'this';
             targetOccurrenceDate.value = dateStr;
             pendingEventAction.value = ev;
             showScopeModal.value = true;
         } else {
+            const name = ev.title || i18n.global.t('calendar.untitled_event');
+            if (!(await confirmDelete({ name, toTrash: false }))) return;
+            onGo?.();
             setHeld(ev.id, true);
             await eventUndo.run(
-                i18n.global.t('common.deleted_item', { name: ev.title || i18n.global.t('calendar.untitled_event') }),
+                i18n.global.t('common.deleted_item', { name }),
                 async () => {
                     try {
                         await deleteEventActual(ev, dateStr, 'all');
@@ -660,10 +671,9 @@ export function useEventForm(
         }
     };
 
-    const handleDeleteFromForm = () => {
+    const handleDeleteFromForm = async () => {
         if (eventForm.value._originalEvent) {
-            deleteEvent(eventForm.value._originalEvent, targetOccurrenceDate.value);
-            closeEventForm();
+            await deleteEvent(eventForm.value._originalEvent, targetOccurrenceDate.value, closeEventForm);
         }
     };
 

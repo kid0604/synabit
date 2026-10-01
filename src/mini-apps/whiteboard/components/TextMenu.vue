@@ -297,7 +297,7 @@ function setAlign(a: string) {
   background: var(--sw-color); cursor: pointer; transition: all 0.15s; position: relative;
 }
 .sp-swatch:hover { transform: scale(1.15); }
-.sp-swatch.active { border-color: var(--color-accent, #7c3aed); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 25%, transparent); }
+.sp-swatch.active { border-color: var(--color-accent); box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 25%, transparent); }
 .sp-swatch-none {
   background: var(--color-surface-hover, #f4f4f5) !important;
 }
@@ -317,9 +317,9 @@ function setAlign(a: string) {
   color: var(--color-text-secondary, #71717a); cursor: pointer; transition: all 0.15s;
 }
 .dark .sp-font-chip { border-color: var(--color-border-dark, #3f3f46); color: var(--color-text-secondary-dark, #a1a1aa); }
-.sp-font-chip:hover { border-color: var(--color-accent, #7c3aed); }
+.sp-font-chip:hover { border-color: var(--color-accent); }
 .sp-font-chip.active {
-  background: var(--color-accent, #7c3aed); color: white; border-color: transparent;
+  background: var(--color-accent); color: white; border-color: transparent;
 }
 
 /* ─── Style Buttons ────── */
@@ -331,9 +331,9 @@ function setAlign(a: string) {
   cursor: pointer; transition: all 0.15s;
 }
 .dark .sp-style-btn { border-color: var(--color-border-dark, #3f3f46); color: var(--color-text-secondary-dark, #a1a1aa); }
-.sp-style-btn:hover { border-color: var(--color-accent, #7c3aed); }
+.sp-style-btn:hover { border-color: var(--color-accent); }
 .sp-style-btn.active {
-  background: var(--color-accent, #7c3aed); color: white; border-color: transparent;
+  background: var(--color-accent); color: white; border-color: transparent;
 }
 .sp-style-divider {
   width: 1px; height: 20px; margin: 0 4px;
@@ -350,6 +350,16 @@ function setAlign(a: string) {
 .dark .sp-slider { background: var(--color-border-dark, #3f3f46); }
 .sp-slider::-webkit-slider-thumb {
   -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
-  background: var(--color-accent, #7c3aed); cursor: pointer;
+  background: var(--color-accent); cursor: pointer;
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .sp-swatch.active,
+.dark .sp-font-chip:hover:not(.active),
+.dark .sp-style-btn:hover:not(.active) {
+  border-color: var(--color-accent-dark);
+}
+.dark .sp-swatch.active {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent-dark) 25%, transparent);
 }
 </style>

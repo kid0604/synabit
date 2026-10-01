@@ -14,6 +14,7 @@ import { Copy, ExternalLink, Eye, EyeOff, Link, ListTodo, Pencil, RotateCcw, Shi
 import { useNodeService } from '../../composables/useNodeService';
 import { taskProperties } from '../task/types';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import SynAccess from './SynAccess.vue';
 import type { FieldView, ItemView, SafeApi } from './api';
 import { kindInfo } from './kinds';
@@ -180,7 +181,13 @@ async function favorite() {
   }
 }
 
+/**
+ * Into the Safe's own trash, or back out. Moving it in is an ordinary delete —
+ * Restore undoes it — so it asks only with "Ask before deleting" on; Purge,
+ * which is final, keeps its own question.
+ */
 async function trash(trashed: boolean) {
+  if (trashed && !(await confirmDelete({ name: props.item.title }))) return;
   try {
     await props.api.setTrashed(props.item.id, trashed);
     emit('changed');

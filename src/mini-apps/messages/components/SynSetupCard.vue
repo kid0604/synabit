@@ -92,7 +92,7 @@ const downloadOllama = () => {
       <p class="text-[13px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.setup_missing_ollama') }}</p>
       <ol class="mt-3 space-y-2 text-[13px]">
         <li v-for="step in [1, 2, 3]" :key="step" class="flex gap-2.5">
-          <span class="w-5 h-5 rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400 text-xs font-semibold flex items-center justify-center flex-shrink-0">{{ step }}</span>
+          <span class="w-5 h-5 rounded-full bg-accent/10 dark:bg-accent-dark/10 text-accent dark:text-accent-dark text-xs font-semibold flex items-center justify-center flex-shrink-0">{{ step }}</span>
           <span class="min-w-0">
             <span class="block font-medium text-gray-800 dark:text-gray-200">{{ t(`syn.setup_step${step}_title`) }}</span>
             <span class="block text-gray-500 dark:text-gray-400 break-words">{{ t(`syn.setup_step${step}_desc`) }}</span>
@@ -117,7 +117,7 @@ const downloadOllama = () => {
                   aria-valuemax="100"
                   :aria-label="t('syn.pulling_model')"
                 >
-                  <span class="block h-full bg-violet-500 transition-[width]" :style="{ width: `${pullProgress}%` }" />
+                  <span class="block h-full bg-accent dark:bg-accent-dark transition-[width]" :style="{ width: `${pullProgress}%` }" />
                 </span>
                 <span class="mt-1 block text-xs text-gray-500 dark:text-gray-400">{{ t('syn.setup_pull_percent', { n: Math.round(pullProgress) }) }}</span>
               </span>

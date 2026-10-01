@@ -2,6 +2,7 @@
 import { FolderOpen, FolderSync, X, Plus, Trash2, HardDrive, Camera, Bookmark,
   ImageIcon, Video, Music, Code, FileType, Copy, FilePlus2 } from 'lucide-vue-next';
 import type { useFileStore } from '../composables/useFileStore';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 
 const props = defineProps<{
   store: ReturnType<typeof useFileStore>;
@@ -21,6 +22,12 @@ const catIcon = (t: string) => {
   if (t === 'Code') return Code;
   return FileType;
 };
+
+/** A saved collection is only a filter: it is not trashed, and it asks only with "Ask before deleting" on. */
+async function deleteCollection(saved: { id: string; name: string }) {
+  if (!(await confirmDelete({ name: saved.name, toTrash: false }))) return;
+  await props.store.deleteCollection(saved.id);
+}
 </script>
 
 <template>
@@ -28,7 +35,7 @@ const catIcon = (t: string) => {
        :class="isOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'">
     <div class="p-4 md:p-6 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <button @click="store.syncAllSources" :class="{'animate-spin text-white': store.isScanning.value}" class="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center transition-all cursor-pointer text-white hover:scale-105 active:scale-95 shadow-lg shadow-indigo-500/20" :aria-label="$t('file.sync_all')">
+        <button @click="store.syncAllSources" :class="{'animate-spin text-white': store.isScanning.value}" class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center transition-all cursor-pointer text-white hover:scale-105 active:scale-95 shadow-lg shadow-accent/20" :aria-label="$t('file.sync_all')">
           <FolderSync class="w-4 h-4" />
         </button>
         <h1 class="font-bold text-lg tracking-tight text-gray-900 dark:text-white">{{ $t('file.title') }}</h1>
@@ -126,7 +133,7 @@ const catIcon = (t: string) => {
               class="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm font-medium transition-all cursor-pointer text-left hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400">
               <Bookmark class="w-4 h-4 flex-shrink-0" /> <span class="truncate pr-6">{{ saved.name }}</span>
             </button>
-            <button @click.stop="store.deleteCollection(saved.id)"
+            <button @click.stop="deleteCollection(saved)"
               class="absolute right-2 top-1/2 -translate-y-1/2 md:opacity-0 opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 p-1.5 hover:bg-red-100 dark:hover:bg-red-500/20 text-red-500 rounded-md transition-all cursor-pointer"
               :title="$t('file.delete_collection')">
               <Trash2 class="w-3.5 h-3.5" />

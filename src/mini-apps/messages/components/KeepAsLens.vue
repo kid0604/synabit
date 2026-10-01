@@ -84,7 +84,7 @@ const keep = async (query: string) => {
         v-if="!kept.has(query)"
         type="button"
         data-keep-question
-        class="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-semibold text-gray-600 transition-colors hover:border-indigo-400 hover:text-indigo-600 dark:border-[#48484a] dark:text-gray-300"
+        class="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-semibold text-gray-600 transition-colors hover:border-accent hover:text-accent dark:hover:border-accent-dark dark:hover:text-accent-dark dark:border-[#48484a] dark:text-gray-300"
         @click="keep(query)"
       >
         <BookMarked class="h-3 w-3" /> {{ $t('nexus.lens_keep') }}

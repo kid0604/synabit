@@ -9,16 +9,22 @@ export const useAppStore = defineStore('app', () => {
   const vaultType = ref<'local'>('local');
   const taskArchiveDays = ref<number>(30);
   /**
-   * How much a task delete asks before it happens.
+   * Whether every delete in the app asks first, in one dialog.
    *
-   * `dialog` — a modal, every time. `inline` — the bin turns into a "Delete?"
-   * button that has to be pressed again. `undo` — no question at all; the
-   * toast is the way back.
-   *
-   * All three keep the undo window, so nothing here decides whether a delete
-   * can be taken back, only how loudly it announces itself first.
+   * Off by default: a delete happens at once and the undo toast (and after it
+   * the trash) is the way back, which catches the slips a question asked
+   * every time trains people to click through. On is for people who would
+   * rather be asked — one switch for the whole app, because a setting that
+   * only Tasks obeyed could not be guessed at. The undo is there either way.
+   * See `useConfirmDelete`.
    */
-  const taskDeleteConfirm = ref<'dialog' | 'inline' | 'undo'>('inline');
+  const confirmBeforeDelete = ref(false);
+  /**
+   * Where a clicked link opens: the computer's own browser (the default — it
+   * has the person's logins, bookmarks and extensions) or Synabit's browser
+   * pane beside the app. See `followLink` in shared/syn/pane.ts.
+   */
+  const linkOpenIn = ref<'system' | 'pane'>('system');
   /**
    * How the task list is arranged. Names rather than a shape, so a value from
    * a newer version is ignored by the guard rather than breaking the list.
@@ -115,9 +121,18 @@ export const useAppStore = defineStore('app', () => {
       const listGroup = await storeInstance.get('taskListGroup');
       if (typeof listGroup === 'string') taskListGroup.value = listGroup;
 
-      const delConfirm = await storeInstance.get('taskDeleteConfirm');
-      if (delConfirm === 'dialog' || delConfirm === 'inline' || delConfirm === 'undo') {
-        taskDeleteConfirm.value = delConfirm;
+      const linkPref = await storeInstance.get('linkOpenIn');
+      if (linkPref === 'system' || linkPref === 'pane') linkOpenIn.value = linkPref;
+
+      const askFirst = await storeInstance.get('confirmBeforeDelete');
+      if (typeof askFirst === 'boolean') {
+        confirmBeforeDelete.value = askFirst;
+      } else {
+        // Carried over from the Tasks-only setting it replaces: anyone who
+        // had chosen to be asked (a dialog, or pressing the bin twice) is
+        // still asked, now everywhere.
+        const old = await storeInstance.get('taskDeleteConfirm');
+        confirmBeforeDelete.value = old === 'dialog' || old === 'inline';
       }
       
       const enDaily = await storeInstance.has('enableDailyNotes');
@@ -241,8 +256,11 @@ export const useAppStore = defineStore('app', () => {
       watch(taskArchiveDays, async (v) => {
         if (storeInstance) await storeInstance.set('taskArchiveDays', v);
       });
-      watch(taskDeleteConfirm, async (v) => {
-        if (storeInstance) await storeInstance.set('taskDeleteConfirm', v);
+      watch(linkOpenIn, async (v) => {
+        if (storeInstance) await storeInstance.set('linkOpenIn', v);
+      });
+      watch(confirmBeforeDelete, async (v) => {
+        if (storeInstance) await storeInstance.set('confirmBeforeDelete', v);
       });
       watch(taskListSort, async (v) => {
         if (storeInstance) await storeInstance.set('taskListSort', v);
@@ -367,7 +385,8 @@ export const useAppStore = defineStore('app', () => {
     vaultPath,
     vaultType,
     taskArchiveDays,
-    taskDeleteConfirm,
+    confirmBeforeDelete,
+    linkOpenIn,
     taskListSort,
     taskListGroup,
     enableDailyNotes,

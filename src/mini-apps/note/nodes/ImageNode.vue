@@ -364,7 +364,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
   width: 10px;
   height: 10px;
   background: var(--color-surface, #ffffff);
-  border: 2px solid var(--color-accent, #7c3aed);
+  border: 2px solid var(--color-accent);
   border-radius: 50%;
   z-index: 10;
 }

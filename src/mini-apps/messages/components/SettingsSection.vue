@@ -67,7 +67,7 @@ const onToggle = (event: Event) => {
       class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none list-none rounded-xl
              [&::-webkit-details-marker]:hidden
              hover:bg-gray-50 dark:hover:bg-white/5
-             focus-visible:outline-2 focus-visible:outline-violet-500"
+             focus-visible:outline-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark"
     >
       <ChevronRight
         class="w-4 h-4 shrink-0 text-gray-500 dark:text-gray-400 transition-transform duration-150 group-open:rotate-90"

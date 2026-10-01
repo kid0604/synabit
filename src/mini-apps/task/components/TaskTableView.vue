@@ -6,8 +6,6 @@ import { type TaskMetadata, getPriorityClass, getTransferredName, isLinkedPerson
 import { buildTaskTree, flattenTaskTree, allSubtaskProgress, MAX_SUBTASK_DEPTH } from '../subtasks';
 
 const props = defineProps<{
-  /** How much a delete asks first; see `taskDeleteConfirm`. */
-  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasks: TaskMetadata[];
   /** Every task, for counting subtask progress; see `TaskListView`. */
   allTasks?: TaskMetadata[];
@@ -113,7 +111,7 @@ const onRowClick = (event: MouseEvent, task: TaskMetadata) => {
                      </div>
                  </td>
                  <td class="px-6 py-3">
-                     <DeleteButton :mode="deleteConfirm" compact class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" @confirm="emit('delete-task', row.task)" />
+                     <DeleteButton compact class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" @confirm="emit('delete-task', row.task)" />
                  </td>
              </tr>
          </tbody>

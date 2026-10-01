@@ -347,7 +347,7 @@ function resetRotation(event: MouseEvent) {
      turned is painted outside the box the browser works out it has to
      repaint, which leaves the old ring behind on the canvas as the picture
      moves; a shadow is part of the element's own paint. */
-  box-shadow: 0 0 0 2px var(--color-accent, #7c3aed);
+  box-shadow: 0 0 0 2px var(--wb-selection, var(--color-accent));
 }
 .wb-image-node__img {
   width: 100%;
@@ -376,7 +376,7 @@ function resetRotation(event: MouseEvent) {
   position: absolute;
   width: 10px;
   height: 10px;
-  border: 1px solid var(--color-accent, #7c3aed);
+  border: 1px solid var(--wb-selection, var(--color-accent));
   border-radius: 2px;
   background: var(--color-surface, #fff);
   touch-action: none;
@@ -397,12 +397,18 @@ function resetRotation(event: MouseEvent) {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid var(--color-accent, #7c3aed);
+  border: 1px solid var(--wb-selection, var(--color-accent));
   background: var(--color-surface, #fff);
-  color: var(--color-accent, #7c3aed);
+  color: var(--wb-selection, var(--color-accent));
   cursor: grab;
   touch-action: none;
   z-index: 10;
+}
+/* On the dark canvas the grips take the dark surface, so the pale selection
+   colour they carry stays legible on them. */
+.dark .wb-image-node__grip,
+.dark .wb-image-node__rotate {
+  background: var(--color-surface-dark, #1e1e1e);
 }
 .wb-image-node__rotate:active {
   cursor: grabbing;
@@ -414,7 +420,7 @@ function resetRotation(event: MouseEvent) {
   transform: translateX(-50%);
   padding: 2px 6px;
   border-radius: 4px;
-  background: var(--color-accent, #7c3aed);
+  background: var(--color-accent);
   color: #fff;
   font-size: 12px;
   font-variant-numeric: tabular-nums;

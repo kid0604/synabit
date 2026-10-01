@@ -1095,6 +1095,7 @@ pub fn run() {
             syn_commands::syn_browser_content,
             syn_commands::syn_pane_open,
             syn_commands::syn_open_page,
+            syn_commands::open_link_in_system_browser,
             syn_commands::syn_pane_close,
             syn_commands::syn_pane_page,
             syn_commands::syn_pane_back,

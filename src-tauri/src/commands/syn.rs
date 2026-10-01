@@ -2274,6 +2274,22 @@ pub async fn syn_open_page(app: tauri::AppHandle, url: String) -> Result<f64, Ap
     Ok(0.0)
 }
 
+/// Follow a link in the person's own browser, whatever the pane could do.
+///
+/// For "Open links in: your computer's browser", the default. The same guard
+/// as `syn_open_page` comes first, for the same reason: a link in an answer is
+/// written by a model reading the internet, and the browser it would land in
+/// holds every cookie the person has — so an address on this machine or its
+/// network is refused here too, not handed over.
+#[tauri::command]
+pub async fn open_link_in_system_browser(app: tauri::AppHandle, url: String) -> Result<(), AppError> {
+    crate::syn::browser::guard(&url)?;
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_url(&url, None::<&str>)
+        .map_err(|e| AppError::General(format!("Could not open {url}: {e}")))
+}
+
 /// Open the browsing pane on a page, inside the main window.
 ///
 /// Called from the globe in the left rail and from the address bar above the

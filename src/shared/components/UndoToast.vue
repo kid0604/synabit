@@ -11,6 +11,10 @@
  * stack clears the bottom tab bar. Outside the shell — a test, the quick-entry
  * window — it falls back to its own fixed spot.
  *
+ * It names what went and, when it went to the trash, says so (`hint`): the
+ * toast is the quick way back and the trash the sure one, and people who
+ * missed the toast used to think a delete had left no way back at all.
+ *
  * The countdown pauses while the pointer or keyboard focus is on the toast
  * (WCAG 2.2.1): the caller's `useUndoableAction` does the waiting, so this
  * only says when to hold it, and holds the bar with it.
@@ -28,6 +32,8 @@ defineProps<{
   undoLabel: string;
   /** Seconds the undo stays available, so the bar and the timer agree. */
   seconds: number;
+  /** A second, quieter line — usually `common.in_trash_hint`. */
+  hint?: string;
 }>();
 
 const emit = defineEmits<{
@@ -67,9 +73,12 @@ function hold(on: boolean) {
         @focusin="hold(true)"
         @focusout="hold(false)"
       >
-        <Trash2 class="w-4 h-4 text-muted dark:text-muted-dark shrink-0" aria-hidden="true" />
-        <span class="text-sm text-text dark:text-text-dark truncate min-w-0">
-          {{ message }}
+        <span class="shrink-0 w-8 h-8 rounded-full bg-accent/10 dark:bg-accent-dark/15 text-accent dark:text-accent-dark flex items-center justify-center" aria-hidden="true">
+          <Trash2 class="w-4 h-4" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block text-sm font-medium text-text dark:text-text-dark truncate">{{ message }}</span>
+          <span v-if="hint" class="block text-xs text-gray-500 dark:text-gray-400 truncate">{{ hint }}</span>
         </span>
         <button
           type="button"
@@ -91,7 +100,7 @@ function hold(on: boolean) {
 <style scoped>
 @reference "../../style.css";
 .undo-toast {
-  @apply pointer-events-auto relative flex items-center gap-2.5 pl-3.5 pr-2 py-2 rounded-xl shadow-2xl w-full max-w-[420px] overflow-hidden;
+  @apply pointer-events-auto relative flex items-center gap-3 pl-3 pr-2 py-2.5 rounded-xl shadow-2xl w-full max-w-[440px] overflow-hidden;
   background: rgba(255, 255, 255, 0.97);
   backdrop-filter: blur(16px);
   border: 1px solid rgba(0, 0, 0, 0.06);

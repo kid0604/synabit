@@ -25,6 +25,7 @@ import type { Transaction } from '../finance/types';
 import type { PromoteTarget } from './PromoteModal.vue';
 import { logger } from '../../utils/logger';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { showAppNotice } from '../../composables/useAppNotice';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import AppDialog from '../../shared/components/AppDialog.vue';
@@ -1531,20 +1532,6 @@ useIntersectionObserver(
 );
 
 /**
- * Delete a cap: confirm, then move it to the vault's trash straight away.
- *
- * An earlier version held the deletion in memory for six seconds so an undo
- * toast could cancel it, and touched no files until that window closed. That
- * made undo instant and free of any race with sync — but it also meant a
- * reload inside those six seconds silently undid the delete, because the
- * only record of it was a variable in this component.
- *
- * Once a confirmation dialog is in the way, that trade stops paying. The
- * user has already said yes; an action they confirmed must survive a reload.
- * Recovery still exists and is now the thing the dialog actually promises:
- * the file sits in `.trash/` for thirty days.
- */
-/**
  * Working through the inbox without touching the mouse.
  *
  * Promotion is where a cap stops being fleeting and starts being worth
@@ -1751,13 +1738,20 @@ const insertChecklistItem = async () => {
 
 // ─── Deleting, held back long enough to take it back ───────────────
 //
-// No confirmation dialog. The cap leaves the list at once and the file is
-// only moved to the trash once the undo window closes — nothing on disk
+// One press, like every delete in the app; the only question is the app-wide
+// "Ask before deleting" (`confirmDelete`). The cap leaves the list at once and
+// the file is only moved to the trash once the undo window closes — nothing on disk
 // changes inside it, so Undo is a cancelled timer rather than a race against
 // sync's tombstone. One batch at a time: a second delete commits the first.
 const undoDelete = useUndoableAction();
 
 const deleteCaps = async (caps: NodeMetadata[]) => {
+    if (caps.length === 0) return;
+    const asked = caps.length === 1
+        ? { name: deriveTitle(caps[0].content) }
+        : { count: caps.length };
+    if (!(await confirmDelete(asked))) return;
+
     // Indexes are taken before anything is removed and kept ascending, which is
     // the order they have to be reinserted in to land back on their own rows.
     const held = caps
@@ -2121,6 +2115,7 @@ const deleteCap = (id: string) => {
         :show="undoDelete.show.value"
         :restart-key="undoDelete.key.value"
         :message="undoDelete.message.value"
+        :hint="$t('common.in_trash_hint')"
         :undo-label="$t('common.undo')"
         :seconds="undoDelete.seconds"
         @undo="undoDelete.undo"

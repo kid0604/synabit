@@ -47,7 +47,7 @@ const formatTime = (isoString?: string) => {
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatTime(notification.timestamp) }}</span>
       </div>
       
-      <div class="bg-white dark:bg-surface-dark border border-gray-100 dark:border-border-dark shadow-sm rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group w-full max-w-[80%] hover:border-violet-200 dark:hover:border-violet-500/30 transition-colors">
+      <div class="bg-white dark:bg-surface-dark border border-gray-100 dark:border-border-dark shadow-sm rounded-2xl p-4 flex flex-col gap-3 relative overflow-hidden group w-full max-w-[80%] hover:border-accent/30 dark:hover:border-accent-dark/30 transition-colors">
           
           <div class="flex items-start gap-3">
               <div

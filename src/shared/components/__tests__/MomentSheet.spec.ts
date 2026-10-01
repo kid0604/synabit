@@ -3,6 +3,9 @@ import { mount, flushPromises } from '@vue/test-utils';
 import MomentSheet from '../MomentSheet.vue';
 import type { MomentDetail } from '../MomentSheet.vue';
 import { i18n } from '../../../i18n';
+import { setActivePinia, createPinia } from 'pinia';
+import { useAppStore } from '../../../stores/useAppStore';
+import { pendingDeleteQuestion, answerDeleteQuestion } from '../../../composables/useConfirmDelete';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 const { invoke } = await import('@tauri-apps/api/core');
@@ -87,16 +90,33 @@ describe('A moment already kept', () => {
     expect(lastCall('timeline_moment_write')).toMatchObject({ edits: { people: ['People/nga.md', 'People/duc.md'] } });
   });
 
-  /// Letting a moment go undoes a decision, so it takes two presses — and the
-  /// file goes to the trash, which the Rust side does.
-  it('asks before letting a moment go', async () => {
+  /// Letting a moment go is an ordinary delete: one press, and the file goes
+  /// to the trash, which the Rust side does. Only "Ask before deleting" asks.
+  it('lets a moment go in one press when "Ask before deleting" is off', async () => {
+    setActivePinia(createPinia());
     const wrapper = await open();
     await wrapper.find('[data-moment-delete]').trigger('click');
-    expect(vi.mocked(invoke).mock.calls.some(c => c[0] === 'timeline_moment_delete')).toBe(false);
-    await wrapper.find('[data-moment-delete-yes]').trigger('click');
     await flushPromises();
+    expect(pendingDeleteQuestion.value).toBeNull();
     expect(lastCall('timeline_moment_delete')).toMatchObject({ path: 'Moments/6f3c.md' });
     expect(wrapper.emitted('changed')).toHaveLength(1);
+  });
+
+  it('asks first when "Ask before deleting" is on, and keeps it on no', async () => {
+    setActivePinia(createPinia());
+    useAppStore().confirmBeforeDelete = true;
+    const wrapper = await open();
+    await wrapper.find('[data-moment-delete]').trigger('click');
+    expect(pendingDeleteQuestion.value?.name).toBe('Ăn trưa');
+    answerDeleteQuestion(false);
+    await flushPromises();
+    expect(vi.mocked(invoke).mock.calls.some(c => c[0] === 'timeline_moment_delete')).toBe(false);
+    expect(wrapper.emitted('changed')).toBeUndefined();
+
+    await wrapper.find('[data-moment-delete]').trigger('click');
+    answerDeleteQuestion(true);
+    await flushPromises();
+    expect(lastCall('timeline_moment_delete')).toMatchObject({ path: 'Moments/6f3c.md' });
   });
 
   it('offers the note it was read from, and says when there is none', async () => {

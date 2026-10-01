@@ -44,7 +44,8 @@ const {
   showSettingsModal, settingsTab, showE2eeOnboarding,
   themeMode, appLanguage, uiScale, simpleMode, defaultApp,
   taskArchiveDays,
-  taskDeleteConfirm,
+  confirmBeforeDelete,
+  linkOpenIn,
   enableDailyNotes, noteToolbarVisible, dailyNoteFormat, dailyNoteTag, isValidDailyFormat,
   nestedNumberListStyle, hiddenSidebarApps, codeBlockTabSize,
   codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
@@ -869,6 +870,34 @@ const setupE2ee = () => {
                 <section>
                   <h4 class="text-[13px] font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-3">{{ $t('settings.general.behavior') }}</h4>
                   <div class="bg-[#f8f8f8] dark:bg-surface-dark p-4 rounded-xl border border-border dark:border-border-dark">
+                    <!-- Where clicked links open; see followLink. The pane exists only on a desktop. -->
+                    <div v-if="isDesktop" class="pb-4 mb-4 border-b border-border dark:border-border-dark">
+                      <p id="link-open-in-label" class="text-[13px] font-medium text-text dark:text-text-dark">{{ $t('settings.general.link_open_in') }}</p>
+                      <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-3">{{ $t('settings.general.link_open_in_desc') }}</p>
+                      <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="link-open-in-label">
+                        <button
+                          v-for="where in (['system', 'pane'] as const)"
+                          :key="where"
+                          type="button"
+                          role="radio"
+                          :aria-checked="linkOpenIn === where"
+                          @click="linkOpenIn = where"
+                          :class="['px-4 py-2 rounded-lg text-[13px] font-medium transition-all border', linkOpenIn === where ? 'bg-accent text-white border-transparent shadow-sm' : 'bg-white dark:bg-surface-hover-dark border-border-subtle dark:border-border-subtle-dark text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500']"
+                        >
+                          {{ where === 'system' ? $t('settings.general.link_open_system') : $t('settings.general.link_open_pane') }}
+                        </button>
+                      </div>
+                    </div>
+                    <!-- One switch for every delete in the app; see confirmBeforeDelete. -->
+                    <div class="flex items-center justify-between pb-4 mb-4 border-b border-border dark:border-border-dark">
+                      <div class="pr-4">
+                        <p class="text-[13px] font-medium text-text dark:text-text-dark">{{ $t('settings.general.confirm_before_delete') }}</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ $t('settings.general.confirm_before_delete_desc') }}</p>
+                      </div>
+                      <button @click="confirmBeforeDelete = !confirmBeforeDelete" class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none transition-colors duration-200 ease-in-out" :class="confirmBeforeDelete ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'" :aria-label="$t('settings.general.confirm_before_delete')" role="switch" :aria-checked="confirmBeforeDelete">
+                        <span class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="confirmBeforeDelete ? 'translate-x-2' : '-translate-x-2'"/>
+                      </button>
+                    </div>
                     <div class="flex items-center justify-between">
                       <div>
                         <p class="text-[13px] font-medium text-text dark:text-text-dark">{{ $t('settings.general.startup_app') }}</p>
@@ -1085,22 +1114,6 @@ const setupE2ee = () => {
               
               <!-- === TASKS TAB === -->
               <div v-else-if="settingsTab === 'tasks'" class="space-y-6">
-                <section>
-                  <h4 class="text-[13px] font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-3">{{ $t('settings.tasks.delete_confirm_label') }}</h4>
-                  <div class="bg-[#f8f8f8] dark:bg-surface-dark p-4 rounded-xl border border-border dark:border-border-dark space-y-2">
-                    <label
-                      v-for="option in (['dialog', 'inline', 'undo'] as const)"
-                      :key="option"
-                      class="flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer transition-colors"
-                      :class="taskDeleteConfirm === option ? 'bg-white dark:bg-surface-hover-dark shadow-sm' : 'hover:bg-white/60 dark:hover:bg-[#252525]'"
-                    >
-                      <input type="radio" :value="option" v-model="taskDeleteConfirm" class="w-4 h-4 accent-accent cursor-pointer" />
-                      <span class="text-[13px] text-text dark:text-text-dark">{{ $t('settings.tasks.delete_confirm_' + option) }}</span>
-                    </label>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 px-3 pt-1">{{ $t('settings.tasks.delete_confirm_hint') }}</p>
-                  </div>
-                </section>
-
                 <section>
                   <h4 class="text-[13px] font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-3">{{ $t('settings.tasks.auto_archive') }}</h4>
                   <div class="bg-[#f8f8f8] dark:bg-surface-dark p-4 rounded-xl border border-border dark:border-border-dark">

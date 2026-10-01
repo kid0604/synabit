@@ -329,7 +329,7 @@ function handleDelete() {
   padding: 0;
 }
 .sp-swatch.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 20%, transparent);
 }
 .sp-swatch:hover:not(.active) {
@@ -388,7 +388,7 @@ function handleDelete() {
   background: var(--color-surface-hover-dark, #2a2a2a);
 }
 .sp-chip.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
 }
 .dark .sp-chip.active {
@@ -434,9 +434,9 @@ function handleDelete() {
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .sp-dash-chip.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .sp-dash-chip.active {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -457,7 +457,7 @@ function handleDelete() {
 .sp-value {
   float: right;
   font-weight: 500;
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .sp-slider {
   width: 100%;
@@ -477,7 +477,7 @@ function handleDelete() {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--color-accent, #7c3aed);
+  background: var(--color-accent);
   cursor: pointer;
   border: 2px solid white;
   box-shadow: 0 1px 3px rgba(0,0,0,0.15);
@@ -510,9 +510,9 @@ function handleDelete() {
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .sp-font-chip.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .sp-font-chip.active {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -543,6 +543,21 @@ function handleDelete() {
   color: var(--color-text-dark, #f4f4f5);
 }
 .sp-input:focus {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .sp-swatch.active,
+.dark .sp-chip.active,
+.dark .sp-dash-chip.active,
+.dark .sp-font-chip.active,
+.dark .sp-input:focus {
+  border-color: var(--color-accent-dark);
+}
+.dark .sp-swatch.active {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent-dark) 25%, transparent);
+}
+.dark .sp-value {
+  color: var(--color-accent-dark);
 }
 </style>

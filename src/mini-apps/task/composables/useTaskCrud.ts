@@ -39,6 +39,7 @@ import {
   isValidDuration,
 } from '../validation';
 import { useTaskDelete } from './useTaskDelete';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
 
@@ -53,7 +54,6 @@ export function useTaskCrud(
   activeCategory: Ref<string>,
   activeProject: ComputedRef<any | null>,
   taskArchiveDays: Ref<number>,
-  taskDeleteConfirm: Ref<'dialog' | 'inline' | 'undo'>,
   wipCheck?: { tasksByStatus: ComputedRef<Record<string, TaskMetadata[]>>, WIP_LIMIT: ComputedRef<number> },
 ) {
 
@@ -673,36 +673,16 @@ export function useTaskCrud(
     resolveSubtreeChoice = null;
   };
 
-  /** The yes/no the `dialog` setting asks for, in the app's own dialog. */
-  const pendingDeleteConfirm = ref<TaskMetadata | null>(null);
-  let resolveDeleteConfirm: ((yes: boolean) => void) | null = null;
-
-  const askDeleteConfirm = (task: TaskMetadata) =>
-    new Promise<boolean>((resolve) => {
-      pendingDeleteConfirm.value = task;
-      resolveDeleteConfirm = resolve;
-    });
-
-  const answerDeleteConfirm = (yes: boolean) => {
-    pendingDeleteConfirm.value = null;
-    resolveDeleteConfirm?.(yes);
-    resolveDeleteConfirm = null;
-  };
-
   /**
    * Delete one task.
    *
-   * How much it asks first is the user's setting; see `taskDeleteConfirm`. The
-   * undo window happens either way — the setting decides how loudly the delete
-   * announces itself, not whether it can be taken back.
-   *
-   * `inline` is handled by the views, which turn the bin into a second button
-   * rather than opening anything, so by the time it reaches here the user has
-   * already pressed twice and there is nothing left to ask.
+   * One press, then the undo toast — the same as every other delete in the
+   * app. "Ask before deleting" (`confirmDelete`) puts a yes/no in front of it.
    *
    * A parent with subtasks always asks, whatever the setting says: what
    * happens to the children is a real question and not a yes/no, and no undo
-   * window can stand in for an answer to it.
+   * window can stand in for an answer to it. Having answered that, the user is
+   * not asked a second time.
    */
   const deleteTask = async (task: TaskMetadata) => {
     const descendants = descendantsOf(task, tasks.value);
@@ -713,9 +693,7 @@ export function useTaskCrud(
       return;
     }
 
-    if (taskDeleteConfirm.value === 'dialog') {
-      if (!(await askDeleteConfirm(task))) return;
-    }
+    if (!(await confirmDelete({ name: task.title }))) return;
 
     await scheduleDelete([task], [], task.title);
   };
@@ -742,8 +720,6 @@ export function useTaskCrud(
     openEditById,
     toggleTaskStatus, deleteTask,
     pendingSubtreeDelete, answerSubtreeDelete,
-    pendingDeleteConfirm, answerDeleteConfirm,
     pendingDelete, undoDelete, commitDelete, pauseDelete, resumeDelete, deleteMany,
-    taskDeleteConfirm,
   };
 }

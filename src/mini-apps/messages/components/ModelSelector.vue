@@ -153,7 +153,7 @@ const cancelConfirm = () => {
       @click.stop="open()"
       class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/60 dark:bg-white/5 border border-border dark:border-border-dark hover:bg-white dark:hover:bg-white/10 transition-all cursor-pointer text-sm"
     >
-      <Cpu class="w-3.5 h-3.5 text-violet-500" />
+      <Cpu class="w-3.5 h-3.5 text-accent dark:text-accent-dark" />
       <span class="font-medium text-text dark:text-text-dark max-w-[140px] truncate">
         {{ displayName || $t('syn.select_model') }}
       </span>
@@ -211,13 +211,13 @@ const cancelConfirm = () => {
             @mousemove="cursor = i"
             class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-colors cursor-pointer"
             :class="model.name === modelValue
-              ? 'bg-violet-50 dark:bg-violet-500/10 text-violet-700 dark:text-violet-300'
+              ? 'bg-accent/10 dark:bg-accent-dark/10 text-accent dark:text-accent-dark'
               : i === cursor
                 ? 'bg-gray-100 dark:bg-white/10 text-text dark:text-text-dark'
                 : 'text-text dark:text-text-dark'"
           >
-            <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20 flex items-center justify-center flex-shrink-0">
-              <Cpu class="w-4 h-4 text-violet-500" />
+            <div class="w-8 h-8 rounded-lg bg-accent/10 dark:bg-accent-dark/15 flex items-center justify-center flex-shrink-0">
+              <Cpu class="w-4 h-4 text-accent dark:text-accent-dark" />
             </div>
             <div class="flex-1 min-w-0">
               <div class="font-medium text-sm truncate">{{ model.name }}</div>
@@ -231,7 +231,7 @@ const cancelConfirm = () => {
                 <span v-if="model.details?.family">{{ model.details.family }}</span>
               </div>
             </div>
-            <Check v-if="model.name === modelValue" class="w-4 h-4 text-violet-500 flex-shrink-0" />
+            <Check v-if="model.name === modelValue" class="w-4 h-4 text-accent dark:text-accent-dark flex-shrink-0" />
           </button>
 
           <p
@@ -260,7 +260,7 @@ const cancelConfirm = () => {
         <div v-if="pullingModel" class="px-3 py-2 border-t border-border dark:border-border-dark">
           <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-1.5 overflow-hidden">
             <div
-              class="h-full bg-gradient-to-r from-violet-500 to-purple-600 rounded-full transition-all duration-300"
+              class="h-full bg-accent dark:bg-accent-dark rounded-full transition-all duration-300"
               :style="{ width: (pullProgress || 0) + '%' }"
             />
           </div>
@@ -289,7 +289,7 @@ const cancelConfirm = () => {
           <div v-if="pendingPullName" class="space-y-2">
             <p class="text-xs text-text dark:text-text-dark px-1">
               {{ $t('syn.confirm_pull') }}
-              <span class="font-semibold text-violet-600 dark:text-violet-400">{{ pendingPullName }}</span>
+              <span class="font-semibold text-accent dark:text-accent-dark">{{ pendingPullName }}</span>
             </p>
             <div class="flex items-center gap-1.5">
               <button
@@ -313,7 +313,7 @@ const cancelConfirm = () => {
               :disabled="pullingModel"
               @keydown.enter="handlePullCustom"
               :placeholder="$t('syn.custom_model_placeholder')"
-              class="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/60 rounded-lg text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none focus:border-violet-400 dark:focus:border-violet-500/50 transition-colors disabled:opacity-50"
+              class="flex-1 px-2.5 py-1.5 text-xs bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/60 rounded-lg text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none focus:border-accent dark:focus:border-accent-dark transition-colors disabled:opacity-50"
               @click.stop
             />
             <button

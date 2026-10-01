@@ -12,12 +12,14 @@
  * write new notes, never change or remove. A person should be able to decide
  * whether to trust one from this screen alone.
  */
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { CalendarClock, Play, Pencil, Trash2, ArrowUpRight, Plus, Smartphone, ShieldCheck } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
-import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { blankRoutine, daysInWords, toggleDay, whenInWords, type Routine, type RoutineView } from '../routines';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -94,23 +96,39 @@ const setEnabled = async (routine: RoutineView, enabled: boolean) => {
   }
 };
 
-/** The routine waiting on the delete question, asked in the app's own dialog. */
-const pendingRemove = ref<RoutineView | null>(null);
-
-const remove = (routine: RoutineView) => {
-  pendingRemove.value = routine;
+/**
+ * Delete a routine, with a few seconds to take it back.
+ *
+ * It leaves the list at once and is taken out of the routines file only when
+ * the undo window closes, so Undo only has to show it again. It is not a file,
+ * so there is no Trash; it asks first only with "Ask before deleting" on.
+ */
+const removeUndo = useUndoableAction({ onError: (e) => { error.value = message(e); } });
+/** Routines waiting out their undo window: off the list, still in the file. */
+const held = ref(new Set<string>());
+const shownRoutines = computed(() =>
+  held.value.size ? routines.value.filter(r => !held.value.has(r.id)) : routines.value,
+);
+const hold = (id: string, on: boolean) => {
+  const next = new Set(held.value);
+  if (on) next.add(id); else next.delete(id);
+  held.value = next;
 };
 
-const confirmRemove = async () => {
-  const routine = pendingRemove.value;
-  pendingRemove.value = null;
-  if (!routine) return;
-  try {
-    await invoke('syn_delete_routine', { vaultPath: props.vaultPath, routineId: routine.id });
-    await load();
-  } catch (e) {
-    error.value = message(e);
-  }
+const remove = async (routine: RoutineView) => {
+  if (!(await confirmDelete({ name: routine.name, toTrash: false }))) return;
+  hold(routine.id, true);
+  await removeUndo.run(
+    t('common.deleted_item', { name: routine.name }),
+    async () => {
+      // A failure throws: the undo's error path shows it again and says why.
+      await invoke('syn_delete_routine', { vaultPath: props.vaultPath, routineId: routine.id });
+      routines.value = routines.value.filter(r => r.id !== routine.id);
+      hold(routine.id, false);
+      await load();
+    },
+    () => hold(routine.id, false),
+  );
 };
 
 const runNow = async (routine: RoutineView) => {
@@ -138,7 +156,7 @@ const runNow = async (routine: RoutineView) => {
       <!-- The form: one routine at a time, with the schedule said back. -->
       <form
         v-if="editing"
-        class="rounded-xl border border-violet-200 dark:border-violet-500/30 p-4 space-y-3"
+        class="rounded-xl border border-accent/30 dark:border-accent-dark/30 p-4 space-y-3"
         @submit.prevent="save"
       >
         <label class="block text-sm">
@@ -178,7 +196,7 @@ const runNow = async (routine: RoutineView) => {
                 :key="day"
                 type="button"
                 :aria-pressed="editing.schedule.weekdays.includes(day)"
-                class="w-9 h-8 rounded-lg text-xs font-medium focus-visible:outline-2 focus-visible:outline-violet-500"
+                class="w-9 h-8 rounded-lg text-xs font-medium focus-visible:outline-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark"
                 :class="editing.schedule.weekdays.includes(day)
                   ? 'bg-accent text-white'
                   : 'bg-gray-100 dark:bg-white/5 text-gray-600 dark:text-gray-300'"
@@ -194,7 +212,7 @@ const runNow = async (routine: RoutineView) => {
           {{ t('syn.routine_to_phone') }}
         </label>
         <div class="flex gap-2 pt-1">
-          <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white">
+          <button type="submit" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-accent hover:bg-[color-mix(in_oklab,var(--color-accent)_88%,black)] text-white">
             {{ t('syn.routine_save') }}
           </button>
           <button type="button" class="px-3 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5" @click="editing = null">
@@ -205,7 +223,7 @@ const runNow = async (routine: RoutineView) => {
 
       <!-- Ways to start one. -->
       <div v-else class="flex flex-wrap items-center gap-2">
-        <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-violet-600 hover:bg-violet-700 text-white" @click="startNew()">
+        <button type="button" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-accent hover:bg-[color-mix(in_oklab,var(--color-accent)_88%,black)] text-white" @click="startNew()">
           <Plus class="w-4 h-4" aria-hidden="true" />{{ t('syn.routine_new') }}
         </button>
         <span class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.routine_templates') }}:</span>
@@ -217,17 +235,17 @@ const runNow = async (routine: RoutineView) => {
         </button>
       </div>
 
-      <p v-if="!routines.length && !editing" class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.routines_none') }}</p>
+      <p v-if="!shownRoutines.length && !editing" class="text-sm text-gray-500 dark:text-gray-400">{{ t('syn.routines_none') }}</p>
 
       <ul class="space-y-2">
         <li
-          v-for="routine in routines"
+          v-for="routine in shownRoutines"
           :key="routine.id"
           class="rounded-xl border border-gray-200 dark:border-gray-800/60 px-4 py-3"
           :class="routine.enabled ? '' : 'opacity-60'"
         >
           <div class="flex items-start gap-3">
-            <CalendarClock class="w-4 h-4 mt-0.5 shrink-0 text-violet-500" aria-hidden="true" />
+            <CalendarClock class="w-4 h-4 mt-0.5 shrink-0 text-accent dark:text-accent-dark" aria-hidden="true" />
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-text dark:text-text-dark">{{ routine.name }}</p>
               <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -265,7 +283,7 @@ const runNow = async (routine: RoutineView) => {
             </label>
           </div>
           <div class="mt-2 flex flex-wrap gap-1 pl-7">
-            <button v-if="routine.approved_here" type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10" @click="runNow(routine)">
+            <button v-if="routine.approved_here" type="button" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10" @click="runNow(routine)">
               <Play class="w-3 h-3" aria-hidden="true" />{{ t('syn.routine_run_now') }}
             </button>
             <button
@@ -287,15 +305,9 @@ const runNow = async (routine: RoutineView) => {
       </ul>
     </div>
 
-    <ConfirmModal
-      :show="!!pendingRemove"
-      :title="t('syn.routine_delete_title', { name: pendingRemove?.name ?? '' })"
-      :message="t('syn.routine_delete_body')"
-      :confirm-text="t('syn.delete')"
-      :cancel-text="t('syn.cancel')"
-      is-destructive
-      @confirm="confirmRemove"
-      @cancel="pendingRemove = null"
-    />
+    <UndoToast :show="removeUndo.show.value" :restart-key="removeUndo.key.value"
+      :message="removeUndo.message.value" :undo-label="t('common.undo')"
+      :seconds="removeUndo.seconds" @undo="removeUndo.undo"
+      @pause="removeUndo.pause" @resume="removeUndo.resume" />
   </div>
 </template>

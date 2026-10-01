@@ -3,6 +3,7 @@ import { ref, computed, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../composables/useNodeService';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat, Briefcase, Link2, CalendarHeart, Flower2 } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
@@ -375,9 +376,12 @@ const saveInteraction = async () => {
     }
 };
 
-const deleteInteraction = async (id: string) => {
+/** Into the Trash, not unlinked; asks only with "Ask before deleting" on. */
+const deleteInteraction = async (item: any) => {
+    if (!(await confirmDelete({ name: getTypeLabel(item.type) }))) return;
+    const id = item.id;
     try {
-        await ns.deleteNode({ relPath: id });
+        await ns.trashNode({ relPath: id });
         await loadInteractions();
         emit('updated');
     } catch (e) {
@@ -512,7 +516,7 @@ const handleLinkedClick = (item: any) => {
                             </div>
                             <div class="flex items-center gap-1 flex-shrink-0">
                                 <span class="text-xs text-gray-500 dark:text-gray-400">{{ formatDate(item.date) }}</span>
-                                <button v-if="item.source === 'interaction'" @click.stop="deleteInteraction(item.id)"
+                                <button v-if="item.source === 'interaction'" @click.stop="deleteInteraction(item)"
                                     class="p-1 rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 hover:bg-red-50 dark:hover:bg-red-900/20 text-gray-500 dark:text-gray-400 hover:text-red-500 transition-all" :aria-label="$t('people.delete_interaction')">
                                     <X class="w-3 h-3" />
                                 </button>

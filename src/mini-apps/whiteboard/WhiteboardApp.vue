@@ -25,6 +25,7 @@ import WhiteboardSidebar from './components/WhiteboardSidebar.vue';
 import WhiteboardTitleBar from './components/WhiteboardTitleBar.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 
 // ── Composables ─────────────────────────────────────────────
 import { useWhiteboardStore } from './composables/useWhiteboardStore';
@@ -730,8 +731,9 @@ const sidebarRef = ref<InstanceType<typeof WhiteboardSidebar> | null>(null);
 const whiteboardNotes = ref<any[]>([]);
 
 // ── Deleting a board ────────────────────────────────────────
-// No question first: the board leaves the sidebar at once and only goes to the
-// vault trash once the undo window closes. Nothing is written inside the
+// One press, like every delete in the app; the only question is the app-wide
+// "Ask before deleting" (`confirmDelete`). The board leaves the sidebar at once
+// and only goes to the vault trash once the undo window closes. Nothing is written inside the
 // window, so Undo is a cancelled timer rather than a restore.
 const undoBoardDelete = useUndoableAction();
 
@@ -751,6 +753,7 @@ function setBoardHidden(id: string, hidden: boolean) {
 async function deleteBoard(id: string) {
   const board = store.boards.value.find((b: any) => b.id === id);
   if (!board) return;
+  if (!(await confirmDelete({ name: board.title }))) return;
   const wasCurrent = id === store.currentBoardId.value;
 
   if (wasCurrent) {
@@ -1046,6 +1049,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
       :show="undoBoardDelete.show.value"
       :restart-key="undoBoardDelete.key.value"
       :message="undoBoardDelete.message.value"
+      :hint="$t('common.in_trash_hint')"
       :undo-label="$t('common.undo')"
       :seconds="undoBoardDelete.seconds"
       @undo="undoBoardDelete.undo"
@@ -1114,7 +1118,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   font-size: 12px;
   font-weight: 500;
   background: color-mix(in oklab, var(--color-accent) 10%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
   cursor: default;
 }
 .dark .wb-tag {
@@ -1127,10 +1131,13 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  border: 1px solid var(--color-accent, #7c3aed);
+  border: 1px solid var(--color-accent);
   background: transparent;
   color: inherit;
   outline: none;
+}
+.dark .wb-tag-input {
+  border-color: var(--color-accent-dark);
 }
 .wb-tag-add {
   width: 20px;
@@ -1146,8 +1153,8 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   transition: all 0.15s;
 }
 .wb-tag-add:hover {
-  border-color: var(--color-accent, #7c3aed);
-  color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 .dark .wb-tag-add {
   border-color: var(--color-border-dark, #3f3f46);
@@ -1157,32 +1164,18 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   border-color: var(--color-accent-dark);
   color: var(--color-accent-dark);
 }
-.wb-icon-btn {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary, #52525b);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.dark .wb-icon-btn {
-  color: var(--color-text-secondary-dark, #a1a1aa);
-}
-.wb-icon-btn:hover {
-  background: var(--color-surface-hover, #f5f5f5);
-}
-.dark .wb-icon-btn:hover {
-  background: var(--color-surface-hover-dark, #2a2a2a);
-}
 
 /* Override Vue Flow theme for our design system */
 :deep(.vue-flow) {
   height: 100% !important;
+  /* Selection chrome on the canvas — outlines, resize handles, the selected
+     edge. The accent itself is too dark on the dark canvas (2.7:1), so the
+     dark theme swaps in its paler twin. Nodes read this with the plain
+     accent as fallback. */
+  --wb-selection: var(--color-accent);
+}
+:global(.dark .vue-flow) {
+  --wb-selection: var(--color-accent-dark);
 }
 :deep(.vue-flow__pane) {
   cursor: default;
@@ -1191,7 +1184,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   stroke: var(--color-muted, #8b8b8b);
   stroke-width: 2;
 }
-.dark :deep(.vue-flow__edge-path) {
+:deep(.vue-flow__edge-path:is(.dark *)) {
   stroke: var(--color-muted-dark, #71717a);
 }
 :deep(.vue-flow__controls) {
@@ -1200,7 +1193,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   border: 1px solid var(--color-border, #e6e6e6);
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
-.dark :deep(.vue-flow__controls) {
+:deep(.vue-flow__controls:is(.dark *)) {
   border-color: var(--color-border-dark, #2c2c2c);
 }
 :deep(.vue-flow__controls-button) {
@@ -1208,14 +1201,14 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   border: none;
   color: var(--color-text-secondary, #52525b);
 }
-.dark :deep(.vue-flow__controls-button) {
+:deep(.vue-flow__controls-button:is(.dark *)) {
   background: var(--color-surface-dark, #1e1e1e);
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 :deep(.vue-flow__controls-button:hover) {
   background: var(--color-surface-hover, #f5f5f5);
 }
-.dark :deep(.vue-flow__controls-button:hover) {
+:deep(.vue-flow__controls-button:hover:is(.dark *)) {
   background: var(--color-surface-hover-dark, #2a2a2a);
 }
 @media (max-width: 767px) {
@@ -1263,8 +1256,8 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
   transform: translate(-50%, -50%);
 }
 :deep(.vue-flow__edge.selected .vue-flow__edge-path) {
-  stroke: var(--color-accent, #7c3aed) !important;
-  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--color-accent) 40%, transparent));
+  stroke: var(--wb-selection) !important;
+  filter: drop-shadow(0 0 3px color-mix(in oklab, var(--wb-selection) 40%, transparent));
 }
 :deep(.vue-flow__edge-interaction) {
   stroke-width: 20px;

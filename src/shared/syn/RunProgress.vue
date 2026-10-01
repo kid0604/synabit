@@ -65,21 +65,21 @@ watch(
   <div>
   <section
     v-if="plan.length || counters"
-    class="rounded-xl border border-violet-200/60 dark:border-violet-500/20 bg-violet-50/40 dark:bg-violet-500/5 px-4 py-3 space-y-2"
+    class="rounded-xl border border-accent/20 dark:border-accent-dark/20 bg-accent/5 dark:bg-accent-dark/5 px-4 py-3 space-y-2"
     :aria-label="$t('syn.progress_label')"
   >
     <div v-if="plan.length">
-      <h3 class="text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 mb-1.5">
+      <h3 class="text-xs font-semibold uppercase tracking-wide text-accent dark:text-accent-dark mb-1.5">
         {{ $t('syn.plan_title') }}
       </h3>
       <PlanList :steps="plan" />
     </div>
     <div v-if="counters" class="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-      <span v-if="doing" class="font-medium text-violet-600 dark:text-violet-400">{{ doing }}</span>
+      <span v-if="doing" class="font-medium text-accent dark:text-accent-dark">{{ doing }}</span>
       <span>{{ counters }}</span>
     </div>
-    <div v-if="used !== null" class="h-1 rounded-full bg-violet-100 dark:bg-violet-500/10 overflow-hidden" aria-hidden="true">
-      <div class="h-full bg-violet-400 dark:bg-violet-500 transition-[width] duration-300" :style="{ width: `${used}%` }" />
+    <div v-if="used !== null" class="h-1 rounded-full bg-accent/15 dark:bg-accent-dark/10 overflow-hidden" aria-hidden="true">
+      <div class="h-full bg-accent dark:bg-accent-dark transition-[width] duration-300" :style="{ width: `${used}%` }" />
     </div>
   </section>
   <!-- Outside the section, so the region exists before anything is said into

@@ -903,7 +903,7 @@ onUnmounted(() => {
     background-color: #3f3f46;
 }
 .toggle-checkbox:checked {
-    background-color: #4f46e5;
+    background-color: var(--color-accent);
 }
 .toggle-checkbox::after {
     content: '';
@@ -940,7 +940,7 @@ onUnmounted(() => {
     width: 16px;
     height: 16px;
     border-radius: 50%;
-    background: #4f46e5;
+    background: var(--color-accent);
     cursor: pointer;
     border: 2px solid white;
     box-shadow: 0 1px 3px rgba(0,0,0,0.2);

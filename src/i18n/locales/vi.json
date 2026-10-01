@@ -10,7 +10,13 @@
     "deleted_item": "Đã xoá “{name}”",
     "deleted_count": "Đã xoá {count} mục | Đã xoá {count} mục",
     "delete_failed": "Không xoá được. Chưa có gì thay đổi — hãy thử lại.",
-    "confirm": "Xác nhận"
+    "confirm": "Xác nhận",
+    "delete_question": "Xoá “{name}”?",
+    "delete_question_generic": "Xoá mục này?",
+    "delete_question_body": "Mục sẽ vào Thùng rác và bạn có thể khôi phục trong 30 ngày.",
+    "delete_question_body_no_trash": "Sau khi xoá, bạn vẫn hoàn tác được trong vài giây.",
+    "in_trash_hint": "Vẫn còn trong Thùng rác 30 ngày",
+    "delete_question_count": "Xoá {count} mục?"
   },
   "settings": {
     "title": "Cài đặt",
@@ -110,7 +116,13 @@
       "simple_mode_desc": "Chỉ hiện ghi chú, công việc, lịch, ghi nhanh, danh bạ và tài chính. Không có gì bị xoá — tắt đi là mọi thứ quay lại.",
       "simple_mode_start_note": "Chế độ đơn giản đang bật nên Synabit sẽ mở {app}. Lựa chọn của bạn sẽ quay lại khi bạn tắt chế độ này.",
       "simple_mode_apps_note": "Chế độ đơn giản đang bật nên ở đây chỉ liệt kê các ứng dụng của chế độ này. Các ứng dụng khác vẫn giữ cài đặt cho khi bạn tắt nó.",
-      "syn_heading": "Syn"
+      "syn_heading": "Syn",
+      "confirm_before_delete": "Hỏi lại trước khi xoá",
+      "confirm_before_delete_desc": "Ở mọi nơi trong ứng dụng, hỏi \"Xoá mục này?\" trước khi xoá. Dù bật hay tắt, mục vừa xoá vẫn lấy lại được bằng nút Hoàn tác trong vài giây, và trong Thùng rác 30 ngày.",
+      "link_open_in": "Mở liên kết bằng",
+      "link_open_in_desc": "Nơi mở liên kết khi bạn bấm vào nó trong ghi chú, bài viết hay câu trả lời của Syn.",
+      "link_open_system": "Trình duyệt của máy",
+      "link_open_pane": "Trình duyệt của Synabit, bên cạnh ứng dụng"
     },
     "notes": {
       "features": "Tính năng",
@@ -145,12 +157,7 @@
       "archive_desc_1": "Công việc đánh dấu \"xong\" lâu hơn thời gian này sẽ chuyển vào thư mục",
       "archive_desc_2": ".",
       "after": "Sau",
-      "days": "ngày",
-      "delete_confirm_label": "Xác nhận trước khi xoá task",
-      "delete_confirm_dialog": "Hỏi bằng hộp thoại",
-      "delete_confirm_inline": "Bấm nút thùng rác hai lần",
-      "delete_confirm_undo": "Không hỏi — dùng hoàn tác",
-      "delete_confirm_hint": "Dù chọn kiểu nào, task vừa xoá vẫn lấy lại được trong vài giây. Task có task con thì luôn hỏi phải làm gì với chúng."
+      "days": "ngày"
     },
     "security": {
       "app_lock": "Khóa ứng dụng",
@@ -959,8 +966,6 @@
     "query_placeholder": "Tìm trong bộ sưu tập…",
     "n_results": "{n} kết quả",
     "showing_of": "Đang hiện {shown} trên {total}",
-    "delete_title": "Xoá cái này?",
-    "delete_message": "\"{title}\" sẽ chuyển vào thùng rác. Bạn có thể lấy lại từ đó.",
     "cancel": "Huỷ",
     "app_fields": "{count} trường của app",
     "value_yes": "Có",
@@ -1029,7 +1034,6 @@
     "remove_field_message": "“{field}” và giá trị của nó sẽ bị xoá khỏi tệp của mục này.",
     "drop_field_title": "Bỏ khỏi “Thường có”?",
     "drop_field_message": "“{field}” sẽ thôi được bày ra khi tạo mục {type} mới. Không xoá gì cả — nó chuyển xuống mục “Còn thấy”, và bạn thêm lại được.",
-    "delete_view_message": "Chế độ xem “{name}” sẽ chuyển vào thùng rác. Những thứ nó tìm ra không bị đụng tới.",
     "remove": "Bỏ",
     "merge_only_shape": "Không tệp nào mang “{field}” — chỉ cấu trúc thay đổi.",
     "erase_short": "Xoá…",
@@ -1249,8 +1253,6 @@
     "transferred_to": "Đã chuyển cho: ",
     "tracking_progress": "Theo dõi tiến độ",
     "wip_limit_reached": "Cột “Đang làm” đã đủ {limit} việc, nên việc này được đưa về “Cần làm”.",
-    "delete_task_title": "Xoá việc này?",
-    "delete_task_body": "Việc này sẽ được chuyển vào thùng rác của kho.",
     "delete_project_title": "Xoá dự án này?",
     "delete_project_body": "Dự án sẽ được chuyển vào thùng rác của kho. Các việc thuộc dự án sẽ KHÔNG bị xoá.",
     "delete_confirm": "Xoá",
@@ -1750,7 +1752,6 @@
     "edit_highlight": "Sửa đánh dấu",
     "save": "Lưu",
     "update": "Cập nhật",
-    "delete_highlight_body": "Xoá đánh dấu này? Không thể hoàn tác.",
     "reset_pdf_body": "Xoá toàn bộ đánh dấu và nét vẽ trên PDF này? Không thể hoàn tác.",
     "clear_all": "Xoá hết",
     "load_failed": "Không mở được tệp này. Có thể tệp đã bị di chuyển hoặc xoá — hãy thử đồng bộ lại thư mục.",
@@ -2026,7 +2027,8 @@
       "braceRight": "Ngoặc nhọn phải"
     },
     "add_to_board": "Thêm vào bảng trắng",
-    "add_note_to_board": "Thêm “{title}” vào bảng trắng"
+    "add_note_to_board": "Thêm “{title}” vào bảng trắng",
+    "sidebar_views": "Danh sách bảng hoặc ghi chú"
   },
   "nexus": {
     "extract_explain": "Syn đọc nhật ký, lần gặp, ghi chép về người, ghi nhanh và lịch hẹn của bạn, rồi đề xuất những khoảnh khắc nó tìm thấy. Trước khi bạn giữ, không gì ở đây lọt vào câu trả lời của Syn.",
@@ -2063,9 +2065,6 @@
     "moment_close": "Đóng",
     "moment_save": "Lưu",
     "moment_delete": "Xoá",
-    "moment_delete_sure": "Chuyển khoảnh khắc này vào thùng rác?",
-    "moment_delete_yes": "Xoá",
-    "moment_delete_no": "Thôi",
     "moment_from": "Đọc ra từ {title}",
     "moment_by_hand": "Mày tự ghi, không đọc ra từ note nào",
     "reset_title": "Đập đi xây lại dòng thời gian",
@@ -2906,7 +2905,7 @@
     "quick_capture": "Ghi nhanh",
     "create_task": "Tạo công việc",
     "add_feed_title": "Thêm nguồn tin",
-    "enter_url": "Nhập URL trang web hoặc nguồn tin...",
+    "enter_url": "Tên trang như genk.vn, hoặc địa chỉ nguồn tin",
     "discover": "Khám phá",
     "discovering": "Đang tìm nguồn tin...",
     "discovered_feeds": "Nguồn tin tìm thấy",
@@ -3027,7 +3026,18 @@
     "source_removed": "Đã xoá “{name}”",
     "resize_sidebar": "Đổi độ rộng danh sách nguồn tin",
     "resize_article_list": "Đổi độ rộng danh sách bài viết",
-    "remove_failed": "Không gỡ được nguồn tin nên nó đã trở lại danh sách. Hãy thử lại."
+    "remove_failed": "Không gỡ được nguồn tin nên nó đã trở lại danh sách. Hãy thử lại.",
+    "move_to_category": "Chuyển sang danh mục",
+    "drop_to_uncategorize": "Thả vào đây để bỏ khỏi danh mục",
+    "moved_to": "Đã chuyển “{name}” sang {category}",
+    "moved_out": "Đã bỏ “{name}” khỏi danh mục",
+    "move_failed": "Không chuyển được nguồn tin này. Chưa có gì thay đổi — hãy thử lại.",
+    "error_url_invalid": "Đây không giống một địa chỉ web. Hãy gõ tên trang như genk.vn, hoặc dán địa chỉ đầy đủ.",
+    "error_url_private": "Synabit không lấy tin từ địa chỉ trong máy này hay mạng nội bộ. Hãy dùng địa chỉ công khai của trang.",
+    "error_not_found": "Trang này không tồn tại trên website (404). Kiểm tra lại địa chỉ, hoặc thử chỉ gõ tên trang.",
+    "error_site_refused": "Website từ chối yêu cầu (lỗi {status}). Hãy thử lại sau, hoặc thử trang chủ của website.",
+    "error_too_large": "Trang này quá lớn để đọc như một nguồn tin.",
+    "error_unreachable": "Không kết nối được tới trang này. Kiểm tra địa chỉ và kết nối mạng rồi thử lại."
   },
   "threads": {
     "stats": "{inThread}/{total} lần chạy có thread · {wrote} lần ghi lại",
@@ -3731,8 +3741,6 @@
     "setup_remote_title": "Không kết nối được {provider}",
     "setup_remote_body": "Hãy kiểm tra kết nối mạng, và xem khoá truy cập (API key) trong cài đặt Syn đã đúng chưa.",
     "setup_open_settings": "Mở cài đặt Syn",
-    "routine_delete_title": "Xoá việc định kỳ “{name}”?",
-    "routine_delete_body": "Việc này sẽ không chạy nữa. Hội thoại nó đã viết vẫn được giữ lại.",
     "file_count": "không có tệp nào | 1 tệp | {count} tệp",
     "family_safe": "Trả lời an toàn cho gia đình",
     "family_safe_hint": "Syn dùng lời lẽ phù hợp với trẻ em, từ chối các chủ đề tình dục, bạo lực, tự làm hại bản thân và chất gây nghiện mà gợi ý hỏi một người lớn tin cậy, không hỏi thông tin cá nhân, và khuyến khích kiểm tra lại thông tin. Synabit tự thêm điều này vào mọi yêu cầu, dù hướng dẫn của bạn viết gì. Nó giúp giảm hẳn các câu trả lời không phù hợp, nhưng không loại bỏ hoàn toàn.",
@@ -4369,6 +4377,9 @@
       "upgrade": "Bên kia đang dùng phiên bản Synabit khác. Hãy cập nhật cả hai rồi thử lại.",
       "quota": "Máy chủ đồng bộ đã hết chỗ.",
       "bad_code": "Mã này không dùng được, có thể đã hết hạn. Hãy tạo mã mới rồi thử lại."
+    },
+    "links": {
+      "open_failed": "Không mở được liên kết này."
     }
   }
 }

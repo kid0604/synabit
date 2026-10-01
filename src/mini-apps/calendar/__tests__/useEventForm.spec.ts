@@ -5,6 +5,12 @@ import { indexOccurrencesByDate } from '../helpers';
 import type { EventMetadata } from '../types';
 import type { EventsInRange } from '../../../types/ipc';
 import { appNotices } from '../../../composables/useAppNotice';
+import { setActivePinia, createPinia } from 'pinia';
+import { useAppStore } from '../../../stores/useAppStore';
+import { pendingDeleteQuestion, answerDeleteQuestion } from '../../../composables/useConfirmDelete';
+
+// `confirmDelete` reads "Ask before deleting" from the app store.
+beforeEach(() => setActivePinia(createPinia()));
 
 
 const event = (over: Partial<EventMetadata>): EventMetadata => ({
@@ -300,6 +306,35 @@ describe('an event as it actually arrives from the vault', () => {
         await h.form.eventUndo.commit();
         expect(h.deletes.map(d => d.relPath)).toEqual(['Events/a.md']);
         expect(h.form.heldEventIds.value.size).toBe(0);
+    });
+
+    it('asks nothing when "Ask before deleting" is off', async () => {
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        await h.form.deleteEvent(ev, '2026-03-02');
+        expect(pendingDeleteQuestion.value).toBeNull();
+        expect(h.form.heldEventIds.value.has('Events/a.md')).toBe(true);
+    });
+
+    it('asks first when "Ask before deleting" is on, and leaves the event alone on no', async () => {
+        useAppStore().confirmBeforeDelete = true;
+        const ev = fromTheVault();
+        const h = harness([ev]);
+        const closed = vi.fn();
+        const going = h.form.deleteEvent(ev, '2026-03-02', closed);
+        expect(pendingDeleteQuestion.value).toMatchObject({ name: 'Standup', toTrash: false });
+        answerDeleteQuestion(false);
+        await going;
+        expect(closed).not.toHaveBeenCalled();
+        expect(h.form.heldEventIds.value.has('Events/a.md')).toBe(false);
+        await h.form.eventUndo.commit();
+        expect(h.deletes).toEqual([]);
+
+        const again = h.form.deleteEvent(ev, '2026-03-02', closed);
+        answerDeleteQuestion(true);
+        await again;
+        expect(closed).toHaveBeenCalledOnce();
+        expect(h.form.heldEventIds.value.has('Events/a.md')).toBe(true);
     });
 
     it('puts a deleted event back on Undo and never touches the file', async () => {

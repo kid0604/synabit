@@ -17,7 +17,7 @@ defineProps<{ steps: PlanStep[] }>();
   <ol class="space-y-1 text-sm">
     <li v-for="(step, i) in steps" :key="i" class="flex items-start gap-2">
       <CheckCircle2 v-if="step.status === 'done'" class="w-4 h-4 mt-0.5 shrink-0 text-emerald-500" aria-hidden="true" />
-      <CircleDot v-else-if="step.status === 'doing'" class="w-4 h-4 mt-0.5 shrink-0 text-violet-500" aria-hidden="true" />
+      <CircleDot v-else-if="step.status === 'doing'" class="w-4 h-4 mt-0.5 shrink-0 text-accent dark:text-accent-dark" aria-hidden="true" />
       <Circle v-else class="w-4 h-4 mt-0.5 shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
       <span
         :class="{

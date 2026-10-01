@@ -28,6 +28,7 @@ import SubscriptionsPanel from './components/SubscriptionsPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { showAppNotice } from '../../composables/useAppNotice';
 import AgendaView from './components/AgendaView.vue';
 import { useAgenda } from './composables/useAgenda';
@@ -260,6 +261,17 @@ const say = (message: string, kind: 'info' | 'error' = 'info') => showAppNotice(
  * write rather than a cancelled one.
  */
 const actionUndo = useUndoableAction();
+
+/**
+ * Stop following a calendar. Its events were never in the vault, so nothing
+ * goes to the Trash; adding the link again brings them back. Asks only with
+ * "Ask before deleting" on.
+ */
+const removeSubscription = async (id: string) => {
+    const sub = subs.subscriptions.value.find(s => s.id === id);
+    if (!(await confirmDelete({ name: sub?.name, toTrash: false }))) return;
+    await subs.remove(id);
+};
 const offerUndo = (message: string, takeBack: () => Promise<void>) => {
     void actionUndo.run(message, () => {}, () => {
         takeBack().catch((e) => {
@@ -472,7 +484,7 @@ const handleGoToMonth = (monthIndex: number) => {
          :busy="subs.busy.value"
          @close="showSubscriptions = false"
          @add="addSubscription"
-         @remove="(id: string) => subs.remove(id)"
+         @remove="removeSubscription"
          @toggle="(id: string, on: boolean) => subs.setEnabled(id, on)"
          @toggle-remind="(id: string, on: boolean) => subs.setRemind(id, on)"
          @refresh="refreshSubscriptions"

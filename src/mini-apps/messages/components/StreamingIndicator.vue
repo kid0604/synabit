@@ -24,8 +24,8 @@ defineProps<{
   <div class="flex items-center gap-2 px-4 py-3">
     <!-- Tool calls in progress -->
     <div v-if="toolCalls?.length" class="flex items-center gap-2">
-      <Wrench class="w-4 h-4 text-violet-500 animate-tool-spin" />
-      <span class="text-sm text-violet-500 font-medium">
+      <Wrench class="w-4 h-4 text-accent dark:text-accent-dark animate-tool-spin" />
+      <span class="text-sm text-accent dark:text-accent-dark font-medium">
         {{ toolLabel(t, toolCalls[toolCalls.length - 1].tool_name) }}
       </span>
     </div>
@@ -41,17 +41,17 @@ defineProps<{
       <div
         class="w-2 h-2 rounded-full animate-pulse"
         style="animation-delay: 0ms"
-        :class="'bg-violet-500'"
+        :class="'bg-accent dark:bg-accent-dark'"
       />
       <div
         class="w-2 h-2 rounded-full animate-pulse"
         style="animation-delay: 200ms"
-        :class="'bg-violet-400'"
+        :class="'bg-accent/70 dark:bg-accent-dark/70'"
       />
       <div
         class="w-2 h-2 rounded-full animate-pulse"
         style="animation-delay: 400ms"
-        :class="'bg-violet-300'"
+        :class="'bg-accent/40 dark:bg-accent-dark/40'"
       />
     </div>
     <span class="text-sm text-gray-500 dark:text-gray-400 italic">

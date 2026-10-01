@@ -58,7 +58,7 @@ const appLockStore = useAppLockStore();
       <span class="text-[13px] font-medium text-text dark:text-text-dark truncate">{{ note.title || $t('note.untitled_note') }}</span>
       <!-- A template is a note, but not one to mistake for writing: said so
            beside its name wherever it is listed. -->
-      <span v-if="isTemplatePath(note.id)" class="shrink-0 text-xs px-1.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 font-medium">{{ $t('note.templates.badge') }}</span>
+      <span v-if="isTemplatePath(note.id)" class="shrink-0 text-xs px-1.5 rounded bg-accent/10 text-accent dark:bg-accent-dark/15 dark:text-accent-dark font-medium">{{ $t('note.templates.badge') }}</span>
     </div>
     <div class="flex flex-wrap gap-1" v-if="note.tags.length">
       <span v-for="tag in note.tags" :key="tag" class="text-xs px-1.5 py-0.5 rounded bg-gray-200/60 dark:bg-[#333] text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>

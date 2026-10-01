@@ -7,8 +7,6 @@ import TaskCardMeta from './TaskCardMeta.vue';
 import { allSubtaskProgress } from '../subtasks';
 
 const props = defineProps<{
-  /** How much a delete asks first; see `taskDeleteConfirm`. */
-  deleteConfirm?: 'dialog' | 'inline' | 'undo';
   tasksByStatus: Record<string, TaskMetadata[]>;
   columns: readonly { id: string; name: string; class: string }[];
   wipLimit: number;
@@ -93,12 +91,12 @@ const onCardClick = (task: TaskMetadata) => {
                      <div class="flex gap-2 items-center flex-wrap">
                          <TaskCardMeta :task="task" compact :progress="progressOf(task)" @open-person="emit('open-person', $event)" />
                      </div>
-                     <DeleteButton :mode="deleteConfirm" compact class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" @confirm="emit('delete-task', task)" />
+                     <DeleteButton compact class="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" @confirm="emit('delete-task', task)" />
                  </div>
               </div>
               
               <!-- Quick Add Input -->
-              <div v-if="quickAddColumn === col.id" class="mt-2 bg-white dark:bg-surface-dark p-3 rounded-xl border border-indigo-300 dark:border-indigo-500 shadow-sm animate-in fade-in zoom-in duration-200 shrink-0">
+              <div v-if="quickAddColumn === col.id" class="mt-2 bg-white dark:bg-surface-dark p-3 rounded-xl border border-accent/40 dark:border-accent-dark/60 shadow-sm animate-in fade-in zoom-in duration-200 shrink-0">
                   <input :id="'quick-add-input-' + col.id" 
                          type="text" 
                          :value="quickAddTitle"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, computed } from 'vue';
 import { useSidebarResize } from '../../composables/useSidebarResize';
-import { paneShare, sidebarRoom, openBeside, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
+import { paneShare, sidebarRoom, openBeside, followLink, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
@@ -19,6 +19,9 @@ import BoardPane from './components/BoardPane.vue';
 import { keepAsBoard, type KeptBoard } from './keepAsBoard';
 import ThreadPanel from './components/ThreadPanel.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import UndoToast from '../../shared/components/UndoToast.vue';
+import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import InstructionsPanel from './components/InstructionsPanel.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import RoutinesPanel from './components/RoutinesPanel.vue';
@@ -185,24 +188,16 @@ const { t } = useI18n();
 const ns = useNodeService();
 
 const handleOpenSource = (source: { id: string; title: string; node_type: string }) => {
-  // A page Syn read, not a node.
-  //
-  // It used to go to the user's own browser, on the reasoning that checking a
-  // source inside the app would be reading Syn's copy of it rather than the
-  // source. That reasoning was right and the premise has changed: the pane is
-  // not Syn's copy. It is a live browser with its own session, fetching the
-  // page as the person, showing them the address it is on.
-  //
-  // And it is the same door as every other link now — the chip and a link in
-  // the answer above it look identical to whoever clicks them. `openBeside`
-  // hands the page to their own browser when there is no pane to put it in,
-  // which is what a phone always is.
+  // A page Syn read, not a node. It opens where every clicked link opens —
+  // the computer's browser by default, or the pane beside the app if that is
+  // the person's setting — because the chip and a link in the answer above it
+  // look identical to whoever clicks them. See `followLink`.
   //
   // `web` is not a real node type: nothing in the vault carries it and no
   // scanner will ever see one. It exists so this chip can tell "open my note"
   // from "open that page", which are different acts behind the same control.
   if (source.node_type === WEB_SOURCE) {
-    openBeside(source.id);
+    void followLink(source.id);
     return;
   }
 
@@ -285,6 +280,7 @@ const {
   models,
   status,
   selectedModel,
+  selectDefaultModel,
   pullingModel,
   pullProgress,
   pullError,
@@ -425,6 +421,10 @@ const loadConversation = async (id: string) => {
     const pinned = full.meta.model;
     if (pinned && (models.value.length === 0 || models.value.some(m => m.name === pinned))) {
       selectedModel.value = pinned;
+    } else {
+      // Not used yet, or used a model that is gone: the vault's default, not
+      // whatever the conversation open before this one happened to use.
+      selectDefaultModel();
     }
   } catch (e) {
     logger.error('[Syn] Failed to load conversation', e);
@@ -484,6 +484,7 @@ const createConversation = async (): Promise<string | null> => {
     });
     conversations.value = [conv, ...conversations.value];
     activeMessages.value = [];
+    selectDefaultModel();
     selection.value = { kind: 'conversation', id: conv.id };
     return conv.id;
   } catch (e) {
@@ -722,6 +723,9 @@ const handleSettingsSaved = async () => {
   statusKnown.value = true;
   if (status.value.connected) {
     await fetchModels(props.vaultPath);
+    // A default just saved is the one to use now, unless this conversation
+    // has already been answered by another — that pin is its own choice.
+    if (activeMessages.value.length === 0) selectDefaultModel();
     startHealthCheck(props.vaultPath);
   } else {
     startPolling(props.vaultPath);
@@ -827,7 +831,7 @@ const renameThread = async (id: string, title: string) => {
 };
 
 /**
- * Put a thread in the trash.
+ * Put a thread in the trash — once its undo window has closed.
  *
  * Distinct from closing, and the distinction is the point: **closed** means the
  * work finished, and **deleted** means the thread should not have existed. Only
@@ -840,44 +844,47 @@ const renameThread = async (id: string, title: string) => {
 const reallyDeleteThread = async (id: string) => {
   try {
     await ns.trashNode({ relPath: id });
-    if (selection.value?.kind === 'thread' && selection.value.id === id) selection.value = null;
+  } catch (e) {
+    // Thrown on, so the undo that called this puts the thread back and says so.
+    logger.error('[Syn] Failed to trash the thread', e);
+    throw e;
+  }
+  if (selection.value?.kind === 'thread' && selection.value.id === id) selection.value = null;
+  // The trash is done; a reload that fails is not the delete failing.
+  try {
     await loadThreads();
   } catch (e) {
-    logger.error('[Syn] Failed to trash the thread', e);
+    logger.error('[Syn] Trashed the thread but could not reload the list', e);
   }
 };
 
 /**
- * The question in front of both deletions.
- *
- * # Why it is asked at all
- *
- * Both delete buttons sit inside a row, appear on hover, and are a few pixels
- * from the row itself — so the click that removes a month of conversation looks
- * exactly like the click that opens it. Neither asked anything. The i18n file
- * still carried a `delete_conversation_title` key that nothing rendered, which
- * says the confirmation existed once and was lost in a rewrite.
- *
- * # Why one dialog and not two
- *
- * The two deletions are not equally severe, and the dialog says which is which
- * rather than being two components:
+ * The two deletions are not equally severe, and they do not behave alike.
  *
  * * A **conversation** is `remove_file` in `Syn/`. No trash, no version
- *   history, nothing to undo — so the copy says *for good*, and says what
- *   survives it (the run transcript, which is the record of what Syn actually
- *   did and is worth knowing is not being destroyed here).
- * * A **thread** is `trash_node_file`, like every other node. The copy says
- *   Trash, because a warning that overstates the damage teaches people to click
- *   through warnings.
- *
- * That difference is the whole reason to name the destination in the message:
- * the same red button doing two different things silently is what made this
- * worth fixing.
+ *   history, nothing to undo — so it always asks, and the copy says *for
+ *   good*, and says what survives it (the run transcript, which is the record
+ *   of what Syn actually did and is worth knowing is not being destroyed here).
+ * * A **thread** is `trash_node_file`, like every other node, so it is an
+ *   ordinary delete: it leaves the list at once, goes to the Trash when the
+ *   undo window closes, and asks first only with "Ask before deleting" on —
+ *   the same as a delete anywhere else in the app.
  */
-const pendingDelete = ref<{ kind: 'conversation' | 'thread'; id: string; title: string } | null>(
-  null
+const pendingDelete = ref<{ kind: 'conversation'; id: string; title: string } | null>(null);
+
+// No `onError`: a failure puts the thread back and the shared "Couldn't
+// delete" notice says so.
+const threadUndo = useUndoableAction();
+/** Threads waiting out their undo window: off the list, still on disk. */
+const heldThreadIds = ref(new Set<string>());
+const visibleThreads = computed(() =>
+  heldThreadIds.value.size ? threads.value.filter(th => !heldThreadIds.value.has(th.id)) : threads.value,
 );
+const holdThread = (id: string, held: boolean) => {
+  const next = new Set(heldThreadIds.value);
+  if (held) next.add(id); else next.delete(id);
+  heldThreadIds.value = next;
+};
 
 const askDeleteConversation = (id: string) => {
   const conv = conversations.value.find(c => c.id === id);
@@ -891,20 +898,37 @@ const askDeleteConversation = (id: string) => {
   };
 };
 
-const askDeleteThread = (id: string) => {
+const askDeleteThread = async (id: string) => {
   const thread = threads.value.find(t => t.id === id);
   if (!thread) return;
-  pendingDelete.value = { kind: 'thread', id, title: thread.title };
+  if (!(await confirmDelete({ name: thread.title }))) return;
+  const wasOpen = selection.value?.kind === 'thread' && selection.value.id === id;
+  holdThread(id, true);
+  if (wasOpen) selection.value = null;
+  await threadUndo.run(
+    t('common.deleted_item', { name: thread.title }),
+    async () => {
+      try {
+        await reallyDeleteThread(id);
+      } finally {
+        holdThread(id, false);
+      }
+    },
+    () => {
+      holdThread(id, false);
+      if (wasOpen && !selection.value) selection.value = { kind: 'thread', id };
+    },
+  );
 };
 
-const confirmDelete = async () => {
+/** The conversation question, answered yes. */
+const answerDeleteConversation = async () => {
   const pending = pendingDelete.value;
   if (!pending) return;
   // Cleared first: the dialog is answered the moment it is answered, and a
   // modal that lingers over a slow filesystem invites a second click.
   pendingDelete.value = null;
-  if (pending.kind === 'conversation') await reallyDeleteConversation(pending.id);
-  else await reallyDeleteThread(pending.id);
+  await reallyDeleteConversation(pending.id);
 };
 
 const handleMoveThread = async (state: ThreadState, waitingFor: string | undefined) => {
@@ -1113,7 +1137,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
           @mousedown.stop="sidebar.startDragLeft($event)"
         ></div>
         <ChatSidebar
-            :threads="threads"
+            :threads="visibleThreads"
             :conversations="conversations"
             :selection="selection"
             :unread="unreadNotifications"
@@ -1161,7 +1185,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 </button>
                 
                 <template v-if="selection?.kind === 'conversation'">
-                    <div class="w-8 h-8 rounded-xl overflow-hidden shadow-sm ring-1 ring-violet-500/30 flex-shrink-0 relative">
+                    <div class="w-8 h-8 rounded-xl overflow-hidden shadow-sm ring-1 ring-accent/30 dark:ring-accent-dark/30 flex-shrink-0 relative">
                         <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
                         <div v-if="status.connected" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-surface dark:border-surface-dark"></div>
                     </div>
@@ -1280,7 +1304,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
         <div class="flex-1 flex min-h-0 overflow-hidden relative">
             
             <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-[#15161a]/50 z-10 backdrop-blur-sm">
-                <Loader2 class="w-8 h-8 text-violet-500 animate-spin" />
+                <Loader2 class="w-8 h-8 text-accent dark:text-accent-dark animate-spin" />
             </div>
 
             <!-- Switched off, and saying so where the composer used to be.
@@ -1399,7 +1423,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                         <Zap class="w-8 h-8 text-gray-500 dark:text-gray-400" aria-hidden="true" />
                     </div>
                     <p class="text-sm">{{ t('syn.pick_something') }}</p>
-                    <p v-if="!threads.length" class="mt-3 text-[12px] max-w-sm">{{ t('threads.empty_body') }}</p>
+                    <p v-if="!visibleThreads.length" class="mt-3 text-[12px] max-w-sm">{{ t('threads.empty_body') }}</p>
                 </div>
             </template>
         </div>
@@ -1429,20 +1453,23 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
       @use="trySkill"
     />
 
-    <!-- Asked before anything is removed. The message names where it goes,
-         because a conversation goes nowhere and a thread goes to the Trash. -->
+    <!-- Asked before a conversation is removed: it has no Trash and no undo,
+         so this is a real question, not the "Ask before deleting" one. -->
     <ConfirmModal
       :show="!!pendingDelete"
-      :title="pendingDelete?.kind === 'thread' ? t('syn.delete_thread_title') : t('syn.delete_conversation_title')"
-      :message="pendingDelete?.kind === 'thread'
-        ? t('syn.delete_thread_body', { title: pendingDelete?.title })
-        : t('syn.delete_conversation_body', { title: pendingDelete?.title })"
+      :title="t('syn.delete_conversation_title')"
+      :message="t('syn.delete_conversation_body', { title: pendingDelete?.title })"
       :confirm-text="t('syn.delete')"
       :cancel-text="t('syn.cancel')"
       is-destructive
-      @confirm="confirmDelete"
+      @confirm="answerDeleteConversation"
       @cancel="pendingDelete = null"
     />
+
+    <UndoToast :show="threadUndo.show.value" :restart-key="threadUndo.key.value"
+      :message="threadUndo.message.value" :undo-label="t('common.undo')"
+      :seconds="threadUndo.seconds" :hint="t('common.in_trash_hint')" @undo="threadUndo.undo"
+      @pause="threadUndo.pause" @resume="threadUndo.resume" />
 
   </div>
 </template>

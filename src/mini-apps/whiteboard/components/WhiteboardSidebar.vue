@@ -141,23 +141,54 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
   >
     <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragSidebar"></div>
 
-    <div class="flex items-center justify-between p-3 border-b border-border dark:border-border-dark" data-tauri-drag-region>
-      <div class="flex gap-4">
-        <button @click="sidebarTab = 'boards'" :class="sidebarTab === 'boards' ? 'text-sm font-bold text-text dark:text-text-dark' : 'text-sm font-semibold text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark transition-colors'">{{ $t('whiteboard.boards') }}</button>
-        <button @click="sidebarTab = 'notes'" :class="sidebarTab === 'notes' ? 'text-sm font-bold text-text dark:text-text-dark' : 'text-sm font-semibold text-muted dark:text-muted-dark hover:text-text dark:hover:text-text-dark transition-colors'">{{ $t('whiteboard.notes') }}</button>
+    <!--
+      One 40px row of 32px controls, the same shape as the Notes sidebar:
+      the Boards/Notes switch as one segmented control (it is one choice, not
+      two headings), the primary "New board" button, then the collapse button
+      at the edge it collapses towards. The sidebar opens 260px wide, which
+      fits the switch and the button's "+" but not its words as well; the words
+      come back when the sidebar is dragged wider, and the button keeps its
+      name for screen readers and its tooltip either way.
+    -->
+    <div class="@container h-10 shrink-0 flex items-center gap-2 px-3 border-b border-border dark:border-border-dark" data-tauri-drag-region>
+      <div
+        role="tablist"
+        :aria-label="$t('whiteboard.sidebar_views')"
+        class="inline-flex items-center h-8 p-0.5 rounded-lg bg-surface-hover dark:bg-surface-hover-dark shrink-0"
+        @mousedown.stop
+        @keydown.left.prevent="sidebarTab = 'boards'"
+        @keydown.right.prevent="sidebarTab = 'notes'"
+      >
+        <button
+          v-for="tab in (['boards', 'notes'] as const)"
+          :key="tab"
+          type="button"
+          role="tab"
+          :aria-selected="sidebarTab === tab"
+          :tabindex="sidebarTab === tab ? 0 : -1"
+          class="h-7 px-2.5 rounded-md text-sm font-medium transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent"
+          :class="sidebarTab === tab
+            ? 'bg-surface dark:bg-surface-dark text-text dark:text-text-dark shadow-sm'
+            : 'text-text-secondary dark:text-text-secondary-dark hover:text-text dark:hover:text-text-dark'"
+          @click="sidebarTab = tab"
+        >
+          {{ tab === 'boards' ? $t('whiteboard.boards') : $t('whiteboard.notes') }}
+        </button>
       </div>
-      <div class="flex items-center gap-1" @mousedown.stop>
+      <div class="flex items-center gap-1 ml-auto shrink-0" @mousedown.stop>
         <button
           v-if="sidebarTab === 'boards'"
+          type="button"
           @click="emit('create-board')"
-          class="btn-primary"
+          class="btn-primary !h-8 !px-2 @[21rem]:!px-3"
           :title="$t('whiteboard.new_board')"
+          :aria-label="$t('whiteboard.new_board')"
         >
-          <Plus class="w-4 h-4" />
-          <span>{{ $t('whiteboard.new_board') }}</span>
+          <Plus class="w-4 h-4" aria-hidden="true" />
+          <span class="hidden @[21rem]:inline">{{ $t('whiteboard.new_board') }}</span>
         </button>
-        <button @click="sidebarOpen = false" class="wb-icon-btn" :title="$t('whiteboard.close_sidebar')" :aria-label="$t('whiteboard.close_sidebar')">
-          <PanelLeftClose class="w-4 h-4" />
+        <button type="button" @click="sidebarOpen = false" class="btn-icon !w-8 !h-8" :title="$t('whiteboard.close_sidebar')" :aria-label="$t('whiteboard.close_sidebar')">
+          <PanelLeftClose class="w-4 h-4" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -304,28 +335,6 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-.wb-icon-btn {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary, #52525b);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-:global(.dark) .wb-icon-btn {
-  color: var(--color-text-secondary-dark, #a1a1aa);
-}
-.wb-icon-btn:hover {
-  background: var(--color-surface-hover, #f5f5f5);
-}
-:global(.dark) .wb-icon-btn:hover {
-  background: var(--color-surface-hover-dark, #2a2a2a);
 }
 .wb-add-note {
   flex-shrink: 0;

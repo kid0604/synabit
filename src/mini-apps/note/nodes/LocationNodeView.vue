@@ -222,7 +222,13 @@ const fetchOsrmRoute = async (oLat: number, oLng: number, dLat: number, dLng: nu
     if (data.routes?.[0]) {
       if (routeLine) { leafletMap.removeLayer(routeLine); routeLine = null; }
       routeLine = L.geoJSON(data.routes[0].geometry, {
-        style: { color: '#6366f1', weight: 4, opacity: 0.8 },
+        // Leaflet writes this into an SVG attribute, where var() is not read,
+        // so the accent is resolved here. The tiles are light in both themes.
+        style: {
+          color: getComputedStyle(document.documentElement).getPropertyValue('--color-accent').trim() || '#1a66cc',
+          weight: 4,
+          opacity: 0.8,
+        },
       }).addTo(leafletMap);
       leafletMap.fitBounds(routeLine.getBounds().pad(0.15));
     }
@@ -433,7 +439,7 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
       <!-- Info bar -->
       <div class="location-info">
         <div v-if="isRoute" class="location-label" style="gap: 6px;">
-          <Navigation class="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+          <Navigation class="w-3.5 h-3.5 text-accent dark:text-accent-dark flex-shrink-0" />
           <span class="location-name">{{ node.attrs.label || $t('note.editor.location.directions') }}</span>
         </div>
         <div v-else class="location-label">
@@ -817,13 +823,13 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
-  background: #eef2ff;
-  color: #6366f1;
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
   flex-shrink: 0;
   white-space: nowrap;
 }
 .dark .route-info-badge {
-  background: #1e1b4b;
-  color: #a5b4fc;
+  background: color-mix(in srgb, var(--color-accent-dark) 15%, transparent);
+  color: var(--color-accent-dark);
 }
 </style>

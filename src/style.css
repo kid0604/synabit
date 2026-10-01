@@ -20,7 +20,10 @@
   --color-text-secondary: #52525b;
   --color-text-tertiary: #71717a;
   --color-primary: #000000;
-  --color-accent: #7c3aed;
+  /* Taken from the app icon: its blue (#277fe1) at the depth where white text
+     on it passes AA (5.5:1). The icon runs blue → cyan on navy; the UI keeps
+     one flat colour and leaves the gradient to the icon and splash. */
+  --color-accent: #1a66cc;
 
   /* Dark palette */
   --color-base-dark: #242424;
@@ -33,7 +36,9 @@
   --color-text-dark: #f4f4f5;
   --color-text-secondary-dark: #a1a1aa;
   --color-text-tertiary-dark: #909098;
-  --color-accent-dark: #a78bfa;
+  /* The icon's cyan end, for accent text, links and focus rings on the dark
+     ground (7.5:1). Never a fill under white text — that stays --color-accent. */
+  --color-accent-dark: #3fc3e0;
 
   /* Sidebar */
   --color-sidebar: #fbfbfc;
@@ -114,7 +119,9 @@ body {
 /* Better styling for inline code to look like Notion/Obsidian */
 .prose code {
   background-color: var(--color-surface-hover);
-  color: #eb5757; /* Subtle reddish color */
+  /* Reddish like Notion/Obsidian, deep enough to read on its grey chip:
+     #eb5757 was 3.2:1 there, this is 5.0:1. */
+  color: #c0392b;
   padding: 0.2em 0.4em;
   border-radius: 4px;
   font-weight: 500;

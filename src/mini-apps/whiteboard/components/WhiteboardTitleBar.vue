@@ -165,7 +165,7 @@ function removeBoardTag(tag: string) {
   border-radius: 4px;
   font-size: 12px;
   font-weight: 500;
-  border: 1px solid var(--color-accent, #7c3aed);
+  border: 1px solid var(--color-accent);
   background: transparent;
   color: inherit;
   outline: none;
@@ -182,5 +182,10 @@ function removeBoardTag(tag: string) {
   background: transparent;
   cursor: pointer;
   transition: all 0.15s;
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .wb-tag-input {
+  border-color: var(--color-accent-dark);
 }
 </style>

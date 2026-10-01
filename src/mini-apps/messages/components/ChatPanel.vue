@@ -348,11 +348,11 @@ const handleStop = () => {
     >
       <div
         v-if="isDragging"
-        class="absolute inset-0 z-50 flex items-center justify-center bg-violet-500/10 border-2 border-dashed border-violet-400 rounded-xl backdrop-blur-sm"
+        class="absolute inset-0 z-50 flex items-center justify-center bg-accent/10 border-2 border-dashed border-accent dark:bg-accent-dark/10 dark:border-accent-dark rounded-xl backdrop-blur-sm"
       >
         <div class="text-center">
           <span class="text-4xl">📸</span>
-          <p class="text-sm font-medium text-violet-400 mt-2">{{ t('syn.drop_images') }}</p>
+          <p class="text-sm font-medium text-accent dark:text-accent-dark mt-2">{{ t('syn.drop_images') }}</p>
         </div>
       </div>
     </Transition>
@@ -408,8 +408,8 @@ const handleStop = () => {
           v-else-if="messages.length === 0 && !isStreaming"
           class="flex flex-col items-center justify-center py-20 text-gray-500 dark:text-gray-400"
         >
-          <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/10 to-purple-500/10 dark:from-violet-500/20 dark:to-purple-500/20 flex items-center justify-center mb-4">
-            <Sparkles class="w-7 h-7 text-violet-500/60" />
+          <div class="w-14 h-14 rounded-2xl bg-accent/10 dark:bg-accent-dark/15 flex items-center justify-center mb-4">
+            <Sparkles class="w-7 h-7 text-accent/60 dark:text-accent-dark/60" />
           </div>
           <p class="text-sm">{{ $t('syn.start_conversation') }}</p>
         </div>
@@ -453,7 +453,7 @@ const handleStop = () => {
           class="flex items-start gap-3"
           style="animation: messageIn 0.2s ease-out forwards;"
         >
-          <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-lg shadow-violet-500/20">
+          <div class="w-8 h-8 rounded-xl bg-accent flex items-center justify-center flex-shrink-0 shadow-lg shadow-accent/20">
             <Sparkles class="w-4 h-4 text-white animate-pulse" />
           </div>
           <StreamingIndicator :tool-calls="toolCalls" :tempo="tempo" />
@@ -504,7 +504,7 @@ const handleStop = () => {
       <!-- The same column as the messages, or the composer sits off-centre
            under them. -->
       <div class="max-w-5xl mx-auto">
-        <div class="relative flex flex-col bg-white dark:bg-[#1e1f25] border border-gray-200 dark:border-gray-700/60 rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20 transition-all focus-within:border-violet-400 dark:focus-within:border-violet-500/50 focus-within:shadow-violet-500/10">
+        <div class="relative flex flex-col bg-white dark:bg-[#1e1f25] border border-gray-200 dark:border-gray-700/60 rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20 transition-all focus-within:border-accent dark:focus-within:border-accent-dark focus-within:shadow-accent/10">
 
           <!-- Pending images preview -->
           <div v-if="pendingImages.length" class="flex gap-2 px-3 pt-3 pb-1 overflow-x-auto">
@@ -562,7 +562,7 @@ const handleStop = () => {
                 class="p-2 rounded-xl transition-all cursor-pointer"
                 :class="pendingImages.length >= MAX_IMAGES
                   ? 'text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
+                  : 'text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10'"
                 :title="$t('syn.attach_image')"
               >
                 <ImagePlus class="w-5 h-5" />
@@ -574,10 +574,10 @@ const handleStop = () => {
                 type="button"
                 @click="planFirst = !planFirst"
                 :aria-pressed="planFirst"
-                class="flex items-center gap-1 px-2 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-violet-500"
+                class="flex items-center gap-1 px-2 py-1.5 rounded-xl text-xs font-medium transition-all cursor-pointer focus-visible:outline-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark"
                 :class="planFirst
-                  ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-700 dark:text-violet-300'
-                  : 'text-gray-500 dark:text-gray-400 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10'"
+                  ? 'bg-accent/15 dark:bg-accent-dark/20 text-accent dark:text-accent-dark'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10'"
                 :title="$t('syn.plan_toggle_hint')"
               >
                 <ListChecks class="w-4 h-4" aria-hidden="true" />
@@ -599,7 +599,7 @@ const handleStop = () => {
                 :disabled="!canSend"
                 class="p-2.5 rounded-xl transition-all cursor-pointer shadow-sm"
                 :class="canSend
-                  ? 'bg-gradient-to-r from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 text-white shadow-violet-500/20'
+                  ? 'bg-accent hover:bg-[color-mix(in_oklab,var(--color-accent)_88%,black)] text-white shadow-accent/20'
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 cursor-not-allowed'"
                 :title="$t('syn.send')"
               >

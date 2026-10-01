@@ -204,14 +204,14 @@
 /* Cell selection highlight (prosemirror-tables applies this class) */
 .prose td.selectedCell,
 .prose th.selectedCell {
-  background: rgba(139, 92, 246, 0.12) !important;
-  outline: 2px solid rgba(139, 92, 246, 0.4);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent) !important;
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 40%, transparent);
   outline-offset: -2px;
 }
 .dark .prose td.selectedCell,
 .dark .prose th.selectedCell {
-  background: rgba(139, 92, 246, 0.2) !important;
-  outline: 2px solid rgba(139, 92, 246, 0.5);
+  background: color-mix(in srgb, var(--color-accent-dark) 20%, transparent) !important;
+  outline: 2px solid color-mix(in srgb, var(--color-accent-dark) 50%, transparent);
   outline-offset: -2px;
 }
 

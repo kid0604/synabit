@@ -2,7 +2,7 @@
 import { ref, computed, provide, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import {
   paneShare as synPaneShare, panePage, PANE_BAR, dragPaneTo, openPane, closePane,
-  panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside, SOMEWHERE_TO_START,
+  panePageBack, panePageForward, typedAddress, leavesTheApp, openBeside, followLink, SOMEWHERE_TO_START,
 } from './shared/syn/pane';
 
 /**
@@ -48,7 +48,7 @@ const followExternalLink = (e: MouseEvent) => {
   if (!leavesTheApp(href)) return;
 
   e.preventDefault();
-  openBeside(href);
+  void followLink(href);
 };
 
 const draggingPane = ref(false);
@@ -125,6 +125,7 @@ const LockScreen = defineAsyncComponent(() => import('./shared/components/LockSc
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
 const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
 import AppNotice from './shared/components/AppNotice.vue';
+import DeleteConfirmHost from './shared/components/DeleteConfirmHost.vue';
 const SafeRequestCard = defineAsyncComponent(() => import('./mini-apps/safe/SafeRequestCard.vue'));
 const SshApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/SshApproveCard.vue'));
 const CliApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/CliApproveCard.vue'));
@@ -1768,7 +1769,7 @@ onUnmounted(() => {
 
                 <button v-if="isAppVisible('feeds')" @click="activeTool = 'feeds'" :aria-label="getAppName('feeds')" :aria-current="activeTool === 'feeds' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'feeds' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
                    <Rss class="w-5 h-5" />
-                   <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-500 text-white text-xs font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
+                   <span v-if="feedsUnreadCount > 0" class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-orange-700 text-white text-xs font-bold rounded-full flex items-center justify-center px-1 shadow-sm ring-2 ring-[#f8f9fa] dark:ring-[#1a1a1a]">{{ feedsUnreadCount > 99 ? '99+' : feedsUnreadCount }}</span>
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('feeds') }}</span>
                    <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('feeds') }}</span>
                 </button>
@@ -1879,7 +1880,7 @@ onUnmounted(() => {
                 <button v-if="activeSyncProvider === 'server'" @click="syncConflictCount > 0 ? (showSyncConflicts = true) : syncState.sync()" :disabled="syncState.isSyncing.value" :class="['relative group w-10 h-10 rounded-xl flex items-center justify-center transition-all cursor-pointer', syncState.syncError.value ? 'text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30' : syncConflictCount > 0 ? 'text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-900/30' : 'text-emerald-500 hover:bg-emerald-100 dark:hover:bg-emerald-900/30']" :title="syncState.isSyncing.value ? $t('shell.sync.syncing') : lastSyncedText || $t('shell.sync.server')">
                    <RefreshCw v-if="syncState.isSyncing.value" class="w-5 h-5 animate-spin" />
                    <Server v-else class="w-5 h-5" />
-                   <span v-if="syncConflictCount > 0" class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-xs font-bold leading-4 text-center">{{ syncConflictCount }}</span>
+                   <span v-if="syncConflictCount > 0" class="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-amber-700 text-white text-xs font-bold leading-4 text-center">{{ syncConflictCount }}</span>
                    <span class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ syncState.isSyncing.value ? $t('shell.sync.syncing') : syncState.syncError.value ? $t('shell.sync.error') : syncConflictCount > 0 ? $t('shell.sync.kept_aside', { count: syncConflictCount }, syncConflictCount) : lastSyncedText || $t('settings.general.sync_now') }}</span>
                 </button>
 
@@ -1948,6 +1949,7 @@ onUnmounted(() => {
       <Teleport to="#app-toasts">
         <AppNotice />
       </Teleport>
+      <DeleteConfirmHost />
     </template>
 
     <!-- Syn asking for a secret: the value goes from this card to the Safe, never through Syn. -->

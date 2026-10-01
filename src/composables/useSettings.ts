@@ -44,7 +44,7 @@ export function useSettings() {
   const appStore = useAppStore();
   const appLockStore = useAppLockStore();
   const { 
-    themeMode, appLanguage, uiScale, simpleMode, taskArchiveDays, taskDeleteConfirm, taskListSort, taskListGroup, enableDailyNotes, noteToolbarVisible, dailyNoteFormat, 
+    themeMode, appLanguage, uiScale, simpleMode, taskArchiveDays, confirmBeforeDelete, linkOpenIn, taskListSort, taskListGroup, enableDailyNotes, noteToolbarVisible, dailyNoteFormat, 
     dailyNoteTag, nestedNumberListStyle, codeBlockTabSize, defaultApp, hiddenSidebarApps,
     codeBlockBgColorLight, codeBlockTextColorLight, codeBlockBgColorDark, codeBlockTextColorDark
   } = storeToRefs(appStore);
@@ -157,7 +157,8 @@ export function useSettings() {
     simpleMode,
     applyTheme,
     taskArchiveDays,
-    taskDeleteConfirm,
+    confirmBeforeDelete,
+    linkOpenIn,
     taskListSort,
     taskListGroup,
     enableDailyNotes,

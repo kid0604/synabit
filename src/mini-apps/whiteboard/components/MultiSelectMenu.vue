@@ -240,9 +240,9 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
   color: var(--color-text-dark, #f4f4f5);
 }
 .sp-action-btn:hover {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .sp-action-btn:hover {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -309,5 +309,10 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
 }
 .dark .sp-swatch-none {
   background: var(--color-surface-hover-dark, #2a2a2a);
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .sp-action-btn:hover {
+  border-color: var(--color-accent-dark);
 }
 </style>

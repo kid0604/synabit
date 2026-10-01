@@ -3,7 +3,7 @@ import { i18n } from '../i18n';
 import { showAppNotice } from './useAppNotice';
 
 /** How long an undoable action waits before it is done for real. Matches Notes and Tasks. */
-export const UNDO_WINDOW_MS = 7000;
+export const UNDO_WINDOW_MS = 10000;
 
 /**
  * An action held back long enough to take it back — the shape `useTaskDelete`

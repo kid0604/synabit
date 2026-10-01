@@ -387,9 +387,9 @@ function handleDelete() { emit('delete', props.edgeId); }
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .ep-type-btn.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .ep-type-btn.active {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -423,9 +423,9 @@ function handleDelete() { emit('delete', props.edgeId); }
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .ep-arrow-btn.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .ep-arrow-btn.active {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -452,7 +452,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   padding: 0;
 }
 .ep-swatch.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 20%, transparent);
 }
 .ep-swatch:hover:not(.active) { transform: scale(1.15); }
@@ -497,7 +497,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   background: var(--color-surface-hover-dark, #2a2a2a);
 }
 .ep-chip.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
 }
 .dark .ep-chip.active {
@@ -538,9 +538,9 @@ function handleDelete() { emit('delete', props.edgeId); }
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .ep-dash-chip.active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 8%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .ep-dash-chip.active {
   background: color-mix(in oklab, var(--color-accent) 15%, transparent);
@@ -569,7 +569,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   padding: 0;
 }
 .dark .ep-toggle { background: #3f3f46; }
-.ep-toggle.active { background: var(--color-accent, #7c3aed); }
+.ep-toggle.active { background: var(--color-accent); }
 .ep-toggle-thumb {
   width: 16px;
   height: 16px;
@@ -603,6 +603,19 @@ function handleDelete() { emit('delete', props.edgeId); }
   color: var(--color-text-dark, #f4f4f5);
 }
 .ep-input:focus {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .ep-type-btn.active,
+.dark .ep-arrow-btn.active,
+.dark .ep-swatch.active,
+.dark .ep-chip.active,
+.dark .ep-dash-chip.active,
+.dark .ep-input:focus {
+  border-color: var(--color-accent-dark);
+}
+.dark .ep-swatch.active {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent-dark) 25%, transparent);
 }
 </style>

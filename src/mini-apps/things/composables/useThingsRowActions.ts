@@ -21,7 +21,7 @@ import { showAppNotice } from '../../../composables/useAppNotice';
  * click rather than a trip to the trash panel. The toast's countdown bar reads
  * the same number, so what the bar shows and what the offer does agree.
  */
-export const UNDO_WINDOW_SECONDS = 8;
+export const UNDO_WINDOW_SECONDS = 10;
 
 export function useThingsRowActions(vaultPath: () => string) {
   const ns = useNodeService();

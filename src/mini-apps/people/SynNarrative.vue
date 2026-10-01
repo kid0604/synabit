@@ -98,11 +98,11 @@ const open = (n: number) => {
     <div v-if="!narrative?.withheld" class="rounded-2xl border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5 space-y-3">
         <div class="flex items-center justify-between gap-3">
             <h3 class="flex items-center gap-2 text-sm font-semibold text-gray-700 dark:text-gray-200">
-                <Sparkles class="w-4 h-4 text-violet-500" /> {{ $t('people.narrative_title') }}
+                <Sparkles class="w-4 h-4 text-accent dark:text-accent-dark" /> {{ $t('people.narrative_title') }}
             </h3>
             <button
                 type="button"
-                class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 transition-colors disabled:opacity-50"
+                class="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10 transition-colors disabled:opacity-50"
                 :disabled="busy"
                 @click="tell"
             >
@@ -123,7 +123,7 @@ const open = (n: number) => {
                         :key="n"
                         type="button"
                         data-citation
-                        class="mx-0.5 align-super rounded px-1 text-xs font-semibold tabular-nums text-violet-600 dark:text-violet-400 hover:bg-violet-100 dark:hover:bg-violet-900/30"
+                        class="mx-0.5 align-super rounded px-1 text-xs font-semibold tabular-nums text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/15"
                         :title="sourceOf(n) ? `${sourceOf(n)!.title} · ${sourceOf(n)!.date}` : ''"
                         @click="open(n)"
                     >{{ n }}</button>{{ ' ' }}

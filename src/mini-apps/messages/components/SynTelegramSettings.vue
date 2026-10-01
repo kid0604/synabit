@@ -87,7 +87,7 @@ const primaryButton = 'btn-primary';
           autocomplete="off"
           class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                  text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
-                 focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                 focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                  transition-all"
           :placeholder="t('syn.telegram_token_placeholder')"
           @keydown.enter="connect"
@@ -136,7 +136,7 @@ const primaryButton = 'btn-primary';
             type="checkbox"
             :checked="status.reminders"
             :disabled="busy"
-            class="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+            class="mt-0.5 w-4 h-4 accent-accent cursor-pointer"
             @change="setReminders(($event.target as HTMLInputElement).checked)"
           />
           <span class="min-w-0">

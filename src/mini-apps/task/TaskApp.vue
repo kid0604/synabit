@@ -34,6 +34,8 @@ import ProjectEditModal from './ProjectEditModal.vue';
 import ResourceLinkModal from './ResourceLinkModal.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
+import { confirmDelete } from '../../composables/useConfirmDelete';
+import { UNDO_WINDOW_MS } from './composables/useTaskDelete';
 import TaskBulkBar from './components/TaskBulkBar.vue';
 import TaskSortBar from './components/TaskSortBar.vue';
 import SaveSearchButton from './components/SaveSearchButton.vue';
@@ -49,7 +51,7 @@ const emit = defineEmits(['open-node']);
 const { t: tt } = useI18n();
 
 // ── Services ───────────────────────────────────────────────────────
-const { taskArchiveDays, taskDeleteConfirm } = useSettings();
+const { taskArchiveDays } = useSettings();
 const showShortcuts = ref(false);
 const bus = useEventBus();
 const ns = useNodeService();
@@ -76,7 +78,7 @@ const {
   handleCreateProjectClick, handleProjectSave, deleteProject,
   showEmbedPicker, allNotesForPicker, isLinkingResource, showAddResourceMenu, showEmptyAddMenu,
   openLinkResourcePicker, createNewResourceNote, createNewResourceWhiteboard,
-  unlinkResource, handleEmbedResource, projectUndo,
+  unlinkResource, handleEmbedResource, projectUndo, projectUndoIsDelete,
   showTxModal, incomeCategories, expenseCategories, accounts,
   loadFinanceConfig, saveFinanceTransaction,
 } = useProjectManager(
@@ -106,11 +108,10 @@ const {
   openEditById,
   toggleTaskStatus, deleteTask,
   pendingSubtreeDelete, answerSubtreeDelete,
-  pendingDeleteConfirm, answerDeleteConfirm,
   pendingDelete, undoDelete, pauseDelete, resumeDelete, deleteMany,
 } = useTaskCrud(
   tasks, projects, vaultPathRef, ns, bus,
-  activeCategory, activeProject, taskArchiveDays, taskDeleteConfirm,
+  activeCategory, activeProject, taskArchiveDays,
   { tasksByStatus, WIP_LIMIT },
 );
 
@@ -152,6 +153,7 @@ const {
 const deleteSelected = async () => {
   const chosen = [...selectedTasks.value];
   if (!chosen.length) return;
+  if (!(await confirmDelete({ count: chosen.length }))) return;
   clearSelection();
   await deleteMany(chosen, tt('task.deleted_many_toast', { count: chosen.length }));
 };
@@ -205,6 +207,7 @@ const renameFilterById = async (id: string, name: string) => {
 const deleteFilterById = async (id: string) => {
   const filter = filterById(id);
   if (!filter) return;
+  if (!(await confirmDelete({ name: filter.name }))) return;
   await removeFilter(filter);
   if (activeCategory.value === 'filter:' + id) activeCategory.value = 'today';
 };
@@ -255,7 +258,7 @@ const { focusedId } = useTaskKeyboard(
   computed(() => selectedTasks.value.length > 0),
   // A shortcut firing behind an open modal would act on a task the user cannot
   // see, so every one of them is suspended while something is up.
-  computed(() => !!editingTask.value || !!pendingSubtreeDelete.value || !!pendingDeleteConfirm.value || showProjectEditModal.value || showShortcuts.value),
+  computed(() => !!editingTask.value || !!pendingSubtreeDelete.value || showProjectEditModal.value || showShortcuts.value),
   {
     createTask: openCreateModal,
     openTask: openEditModal,
@@ -464,7 +467,6 @@ watch(() => props.vaultPath, () => {
 
             <TaskListView
               v-if="viewMode === 'list'"
-              :deleteConfirm="taskDeleteConfirm"
               :tasks="sortedCategoryTasks"
               :groups="listGroups"
               :allTasks="tasks"
@@ -480,7 +482,6 @@ watch(() => props.vaultPath, () => {
 
             <!-- BOARD VIEW -->
             <TaskBoardView
-              :deleteConfirm="taskDeleteConfirm"
               :allTasks="tasks"
               :selectedIds="selectedIds"
               @select-one="selectOne"
@@ -503,7 +504,6 @@ watch(() => props.vaultPath, () => {
 
             <!-- TABLE VIEW -->
             <TaskTableView
-              :deleteConfirm="taskDeleteConfirm"
               :allTasks="tasks"
               :selectedIds="selectedIds"
               :focusedId="focusedId"
@@ -519,7 +519,6 @@ watch(() => props.vaultPath, () => {
 
             <!-- MATRIX VIEW -->
             <TaskMatrixView
-              :deleteConfirm="taskDeleteConfirm"
               :allTasks="tasks"
               :selectedIds="selectedIds"
               @select-one="selectOne"
@@ -631,23 +630,12 @@ watch(() => props.vaultPath, () => {
       @cancel="answerSubtreeDelete(null)"
     />
 
-    <!-- The "Ask with a dialog" delete setting -->
-    <ConfirmModal
-      :show="!!pendingDeleteConfirm"
-      :title="$t('task.delete_task_title')"
-      :message="$t('task.delete_task_body')"
-      :confirmText="$t('task.delete_confirm')"
-      :cancelText="$t('task.delete_cancel')"
-      isDestructive
-      @confirm="answerDeleteConfirm(true)"
-      @cancel="answerDeleteConfirm(false)"
-    />
-
     <!-- A deleted project or an unlinked resource, still on screen's terms -->
     <UndoToast
       :show="projectUndo.show.value"
       :restartKey="projectUndo.key.value"
       :message="projectUndo.message.value"
+      :hint="projectUndoIsDelete ? $t('common.in_trash_hint') : undefined"
       :undoLabel="$t('common.undo')"
       :seconds="projectUndo.seconds"
       @undo="projectUndo.undo"
@@ -662,8 +650,9 @@ watch(() => props.vaultPath, () => {
       :message="pendingDelete?.removed.length === 1
         ? $t('task.deleted_toast', { title: pendingDelete.label })
         : $t('task.deleted_many_toast', { count: pendingDelete?.removed.length || 0 })"
+      :hint="$t('common.in_trash_hint')"
       :undoLabel="$t('task.undo')"
-      :seconds="7"
+      :seconds="UNDO_WINDOW_MS / 1000"
       @undo="undoDelete"
       @pause="pauseDelete"
       @resume="resumeDelete"

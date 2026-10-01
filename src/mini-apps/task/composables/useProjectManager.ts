@@ -7,6 +7,7 @@ import { toCategories } from '../../finance/categories';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
 import { useUndoableAction } from '../../../composables/useUndoableAction';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { showAppNotice } from '../../../composables/useAppNotice';
 
 const t = i18n.global.t;
@@ -252,13 +253,22 @@ export function useProjectManager(
   };
 
   /**
-   * To the trash, held for the undo window first. No question beforehand: the
-   * project file goes to the trash and its tasks stay where they are, so there
-   * is nothing here an undo cannot put back.
+   * Whether the held change is a delete (the project went to the trash) rather
+   * than an unlink, so the toast can say the trash still has it.
+   */
+  const heldIsDelete = ref(false);
+
+  /**
+   * To the trash, held for the undo window first. The project file goes to the
+   * trash and its tasks stay where they are, so there is nothing here an undo
+   * cannot put back; the only question is the app-wide "Ask before deleting".
    */
   const deleteProject = async () => {
     const project = activeProject.value;
     if (!project) return;
+    if (!(await confirmDelete({ name: project.title || t('task.untitled_project') }))) return;
+    // The project may have been switched while the question was open.
+    if (activeProject.value?.id !== project.id) return;
     const index = projects.value.indexOf(project);
 
     showProjectEditModal.value = false;
@@ -266,6 +276,7 @@ export function useProjectManager(
     projects.value = projects.value.filter(p => p.id !== project.id);
     activeCategory.value = 'all';
 
+    heldIsDelete.value = true;
     await undo.run(
       t('common.deleted_item', { name: project.title || t('task.untitled_project') }),
       async () => {
@@ -410,6 +421,7 @@ export function useProjectManager(
     heldResourceIds.add(node.id);
     linkedResources.value = linkedResources.value.filter(n => n.id !== node.id);
 
+    heldIsDelete.value = false;
     await undo.run(
       node.title
         ? t('task.unlinked_toast', { title: node.title })
@@ -639,6 +651,8 @@ export function useProjectManager(
     unlinkResource, handleEmbedResource,
     /** The toast for a held project delete or unlink. */
     projectUndo: undo,
+    /** Whether that toast is for a delete, which went to the trash. */
+    projectUndoIsDelete: heldIsDelete,
     showTxModal, incomeCategories, expenseCategories, accounts,
     loadFinanceConfig, saveFinanceTransaction,
   };

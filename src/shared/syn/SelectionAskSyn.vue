@@ -194,7 +194,7 @@ watch(
       v-if="shown && allowed"
       ref="buttonRef"
       type="button"
-      class="syn-selection-ask fixed z-[65] inline-flex items-center gap-1.5 rounded-full border border-black/10 dark:border-white/10 bg-white dark:bg-[#1c1c1e] pl-1 pr-3 text-[12px] font-medium text-gray-700 dark:text-gray-200 shadow-lg hover:bg-gray-50 dark:hover:bg-[#2c2c2e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500 cursor-pointer select-none"
+      class="syn-selection-ask fixed z-[65] inline-flex items-center gap-1.5 rounded-full border border-black/10 dark:border-white/10 bg-white dark:bg-[#1c1c1e] pl-1 pr-3 text-[12px] font-medium text-gray-700 dark:text-gray-200 shadow-lg hover:bg-gray-50 dark:hover:bg-[#2c2c2e] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:focus-visible:outline-accent-dark cursor-pointer select-none"
       :style="{ top: position.top + 'px', left: position.left + 'px' }"
       :title="shortcut ? t('syn.ask_about_selection_hint', { shortcut }) : undefined"
       :aria-label="t('syn.ask_about_selection')"

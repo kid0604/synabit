@@ -2,7 +2,6 @@
 import { ref, watch, nextTick, computed } from 'vue';
 import { onClickOutside } from '@vueuse/core';
 import { X, Trash2, MessageSquare } from 'lucide-vue-next';
-import ConfirmModal from '../../../shared/components/ConfirmModal.vue';
 import type { PdfAnnotation } from '../composables/usePdfAnnotations';
 
 const props = defineProps<{
@@ -33,10 +32,9 @@ const showNote = ref(false);
 const noteInputRef = ref<HTMLTextAreaElement | null>(null);
 const localSelectedText = ref('');
 const popupRef = ref<HTMLElement | null>(null);
-const showConfirmDelete = ref(false);
 
 onClickOutside(popupRef, () => {
-  if (props.show && !showConfirmDelete.value) {
+  if (props.show) {
     emit('close');
   }
 });
@@ -69,7 +67,6 @@ watch(
         noteText.value = '';
         showNote.value = false;
       }
-      showConfirmDelete.value = false;
     }
   },
   { immediate: true }
@@ -98,14 +95,8 @@ const handleColorClick = (color: PdfAnnotation['color']) => {
   }
 };
 
-const requestDelete = () => {
-  showConfirmDelete.value = true;
-};
-
-const executeDelete = () => {
-  emit('delete');
-  showConfirmDelete.value = false;
-};
+// The viewer asks (only with "Ask before deleting" on) and offers Undo.
+const requestDelete = () => emit('delete');
 </script>
 
 <template>
@@ -208,16 +199,6 @@ const executeDelete = () => {
         </div>
       </div>
     </Transition>
-    
-    <ConfirmModal
-      :show="showConfirmDelete"
-      :title="$t('file.delete_highlight')"
-      :message="$t('file.delete_highlight_body')"
-      :confirm-text="$t('file.delete')"
-      :is-destructive="true"
-      @confirm="executeDelete"
-      @cancel="showConfirmDelete = false"
-    />
   </Teleport>
 </template>
 

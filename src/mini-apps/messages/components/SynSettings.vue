@@ -187,7 +187,7 @@ watch(() => props.vaultPath, async () => {
   <div class="flex flex-col min-h-0 h-full">
     <!-- Loading -->
     <div v-if="isLoading" class="flex-1 flex items-center justify-center">
-      <Loader2 class="w-6 h-6 text-violet-500 animate-spin" />
+      <Loader2 class="w-6 h-6 text-accent dark:text-accent-dark animate-spin" />
     </div>
 
     <!-- Settings content -->
@@ -208,7 +208,7 @@ watch(() => props.vaultPath, async () => {
         <input
           type="checkbox"
           v-model="settings.enabled"
-          class="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+          class="mt-0.5 w-4 h-4 accent-accent cursor-pointer"
         />
         <span class="min-w-0">
           <span class="block text-sm font-medium text-text dark:text-text-dark">
@@ -234,7 +234,7 @@ watch(() => props.vaultPath, async () => {
         <input
           type="checkbox"
           v-model="settings.family_safe"
-          class="mt-0.5 w-4 h-4 accent-violet-500 cursor-pointer"
+          class="mt-0.5 w-4 h-4 accent-accent cursor-pointer"
         />
         <span class="min-w-0">
           <span class="block text-sm font-medium text-text dark:text-text-dark">
@@ -267,7 +267,7 @@ watch(() => props.vaultPath, async () => {
               v-model="settings.provider"
               class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none cursor-pointer
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all appearance-none"
             >
               <option value="ollama">{{ t('syn.provider_ollama') }}</option>
@@ -296,7 +296,7 @@ watch(() => props.vaultPath, async () => {
               type="text"
               class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all"
               placeholder="http://localhost:11434"
             />
@@ -317,7 +317,7 @@ watch(() => props.vaultPath, async () => {
                 autocomplete="off"
                 class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                        text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
-                       focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                       focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                        transition-all"
                 placeholder="https://api.openai.com/v1"
               />
@@ -338,7 +338,7 @@ watch(() => props.vaultPath, async () => {
                   autocomplete="off"
                   class="flex-1 min-w-0 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                          text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none
-                         focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                         focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                          transition-all"
                   :placeholder="hasApiKey ? t('syn.api_key_stored') : keyLooksLike"
                 />
@@ -389,7 +389,7 @@ watch(() => props.vaultPath, async () => {
               v-model="settings.default_model"
               class="w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none cursor-pointer
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all appearance-none"
             >
               <option :value="null">{{ t('syn.select_model') }}</option>
@@ -413,7 +413,7 @@ watch(() => props.vaultPath, async () => {
               <label class="text-sm font-medium text-text dark:text-text-dark">
                 {{ t('syn.temperature') }}
               </label>
-              <span class="text-sm font-mono font-semibold text-violet-500">{{ settings.temperature.toFixed(1) }}</span>
+              <span class="text-sm font-mono font-semibold text-accent dark:text-accent-dark">{{ settings.temperature.toFixed(1) }}</span>
             </div>
             <input
               v-model.number="settings.temperature"
@@ -423,7 +423,7 @@ watch(() => props.vaultPath, async () => {
               step="0.1"
               class="w-full h-1.5 rounded-full appearance-none cursor-pointer
                      bg-gray-200 dark:bg-gray-700
-                     accent-violet-500"
+                     accent-accent"
             />
             <div class="flex justify-between text-xs text-gray-500 dark:text-gray-400 mt-1">
               <span>{{ t('syn.temperature_precise') }}</span>
@@ -443,7 +443,7 @@ watch(() => props.vaultPath, async () => {
               max="20"
               class="w-20 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none text-center
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all"
             />
           </div>
@@ -569,7 +569,7 @@ watch(() => props.vaultPath, async () => {
               :placeholder="t('syn.page_budget_hint')"
               class="w-32 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none text-center
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all"
             />
             <p class="mt-1.5 text-xs text-text/50 dark:text-text-dark/50 max-w-md">
@@ -590,7 +590,7 @@ watch(() => props.vaultPath, async () => {
               step="1000"
               class="w-32 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none text-center
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all"
             />
           </div>
@@ -607,7 +607,7 @@ watch(() => props.vaultPath, async () => {
               max="3"
               class="w-20 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                      text-sm text-text dark:text-text-dark outline-none text-center
-                     focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20
+                     focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20
                      transition-all"
             />
           </div>
@@ -653,9 +653,9 @@ watch(() => props.vaultPath, async () => {
         @click="handleSave"
         :disabled="isSaving"
         class="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl
-               bg-gradient-to-r from-violet-500 to-purple-600 text-white font-medium text-sm
-               shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30
-               hover:from-violet-600 hover:to-purple-700
+               bg-accent text-white font-medium text-sm
+               shadow-lg shadow-accent/20 hover:shadow-accent/30
+               hover:bg-[color-mix(in_oklab,var(--color-accent)_88%,black)]
                transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
       >
         <Loader2 v-if="isSaving" class="w-4 h-4 animate-spin" />

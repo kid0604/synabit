@@ -7,6 +7,7 @@ import TiptapEditor from '../TiptapEditor.vue';
 import UndoToast from '../../../shared/components/UndoToast.vue';
 import { useAppLockStore } from '../../../stores/useAppLockStore';
 import { useAppStore } from '../../../stores/useAppStore';
+import { pendingDeleteQuestion, answerDeleteQuestion } from '../../../composables/useConfirmDelete';
 import * as core from '@tauri-apps/api/core';
 import * as dialog from '@tauri-apps/plugin-dialog';
 
@@ -135,6 +136,51 @@ describe('NoteApp.vue', () => {
 
     expect(exposed.notes.length).toBe(1);
     expect(core.invoke).not.toHaveBeenCalledWith('trash_node_file', expect.anything());
+  });
+
+  // "Ask before deleting" on: the shared question comes first, and "no" leaves
+  // the note exactly where it was.
+  it('asks through confirmDelete when the setting is on, and does nothing on no', async () => {
+    const mockSummaries = [{
+      id: 'Notes/note1.md', node_type: 'note', title: 'Test Note 1', preview: 'hello',
+      properties: { tags: [], pinned: false, full_width: false },
+      created_at: '2026-05-01 00:00:00', updated_at: '2026-05-01 00:00:00',
+      timestamp: 1746057600000,
+    }];
+    vi.mocked(core.invoke).mockImplementation((cmd) => {
+      if (cmd === 'get_node_summaries') return Promise.resolve(mockSummaries);
+      if (cmd === 'get_linked_nodes') return Promise.resolve([]);
+      return Promise.resolve();
+    });
+
+    const wrapper = mount(NoteApp, {
+      props: { vaultPath: '/mock/vault' },
+      global: {
+        plugins: [createTestingPinia({
+          createSpy: vi.fn,
+          initialState: { app: { vaultPath: '/mock/vault', confirmBeforeDelete: true } },
+        })],
+        stubs: { TiptapEditor: true, NoteGraph: true, 'lucide-vue-next': true },
+        mocks: { $t: (key: string) => key },
+      },
+    });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const exposed = wrapper.vm as any;
+
+    const no = exposed.deleteNote('Notes/note1.md');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(pendingDeleteQuestion.value?.name).toBe('Test Note 1');
+    answerDeleteQuestion(false);
+    await no;
+    expect(exposed.notes.length).toBe(1);
+    expect(wrapper.findComponent(UndoToast).props('show')).toBe(false);
+
+    const yes = exposed.deleteNote('Notes/note1.md');
+    await new Promise(resolve => setTimeout(resolve, 0));
+    answerDeleteQuestion(true);
+    await yes;
+    expect(exposed.notes.length).toBe(0);
+    expect(wrapper.findComponent(UndoToast).props('show')).toBe(true);
   });
 
   it('takes a deleted note off the list, and never unlinks the file', async () => {

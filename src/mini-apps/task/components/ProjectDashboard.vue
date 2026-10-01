@@ -168,10 +168,10 @@ const emit = defineEmits<{
                    <div class="mb-6">
                       <div class="flex items-center justify-between mb-2">
                           <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ $t('task.project_progress') }}</h3>
-                          <span class="text-xs font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-0.5 rounded-full">{{ projectProgress }}%</span>
+                          <span class="text-xs font-bold text-accent dark:text-accent-dark bg-accent/10 dark:bg-accent-dark/10 px-2 py-0.5 rounded-full">{{ projectProgress }}%</span>
                       </div>
                       <div class="w-full bg-gray-100 dark:bg-gray-800 rounded-full h-2.5 overflow-hidden">
-                          <div class="bg-gradient-to-r from-blue-400 to-indigo-500 h-2.5 rounded-full transition-all duration-500" :style="{ width: projectProgress + '%' }"></div>
+                          <div class="bg-accent dark:bg-accent-dark h-2.5 rounded-full transition-all duration-500" :style="{ width: projectProgress + '%' }"></div>
                       </div>
                   </div>
                   

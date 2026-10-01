@@ -30,10 +30,10 @@ const verb = () =>
 
 <template>
   <div
-    class="rounded-xl border border-violet-200 dark:border-violet-900/60
-           bg-violet-50/50 dark:bg-violet-950/20 p-4"
+    class="rounded-xl border border-accent/30 dark:border-accent-dark/30
+           bg-accent/5 dark:bg-accent-dark/5 p-4"
   >
-    <div class="flex items-center gap-2 text-xs font-medium text-violet-700 dark:text-violet-400">
+    <div class="flex items-center gap-2 text-xs font-medium text-accent dark:text-accent-dark">
       <HelpCircle class="w-3.5 h-3.5" />
       {{ t('syn.choice_title') }}
     </div>
@@ -49,7 +49,7 @@ const verb = () =>
                  border transition-colors cursor-pointer
                  hover:bg-white dark:hover:bg-white/5"
           :class="candidate.id === choice.chose
-            ? 'border-violet-300 dark:border-violet-700 bg-white/70 dark:bg-white/5'
+            ? 'border-accent/50 dark:border-accent-dark/50 bg-white/70 dark:bg-white/5'
             : 'border-transparent'"
           @click="emit('answer', candidate.id)"
         >
@@ -62,7 +62,7 @@ const verb = () =>
           <!-- What Syn was about to do, named rather than silently applied. -->
           <Sparkles
             v-if="candidate.id === choice.chose"
-            class="w-3.5 h-3.5 shrink-0 text-violet-500"
+            class="w-3.5 h-3.5 shrink-0 text-accent dark:text-accent-dark"
             :aria-label="t('syn.choice_syn_picked')"
           />
         </button>

@@ -110,7 +110,7 @@ watch(() => props.vaultPath, load, { immediate: true });
 <template>
   <div class="flex-1 flex flex-col min-h-0">
     <div v-if="isLoading" class="flex-1 flex items-center justify-center">
-      <Loader2 class="w-6 h-6 text-violet-500 animate-spin" />
+      <Loader2 class="w-6 h-6 text-accent dark:text-accent-dark animate-spin" />
     </div>
 
     <template v-else>
@@ -138,8 +138,8 @@ watch(() => props.vaultPath, load, { immediate: true });
                  bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50
                  text-[13px] leading-relaxed font-mono text-text dark:text-text-dark
                  placeholder-gray-500 dark:placeholder-gray-400 outline-none
-                 focus:border-violet-400 dark:focus:border-violet-500/50
-                 focus:ring-1 focus:ring-violet-400/20 transition-all"
+                 focus:border-accent dark:focus:border-accent-dark
+                 focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20 transition-all"
         />
 
         <!-- What Syn actually gets. A silently truncated instruction is one

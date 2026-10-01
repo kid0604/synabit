@@ -434,7 +434,7 @@ function selectDrawSub(sub: DrawSubTool) {
   background: var(--color-surface-hover-dark, #2a2a2a);
 }
 .wb-toolbar-btn--active {
-  background: var(--color-accent, #7c3aed) !important;
+  background: var(--color-accent) !important;
   color: white !important;
 }
 .wb-toolbar-btn:disabled {
@@ -512,12 +512,12 @@ function selectDrawSub(sub: DrawSubTool) {
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .wb-draw-sub-btn:hover {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
 }
 .wb-draw-sub-btn--active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   background: color-mix(in oklab, var(--color-accent) 10%, transparent);
-  color: var(--color-accent, #7c3aed);
+  color: var(--color-accent);
 }
 .dark .wb-draw-sub-btn--active {
   background: color-mix(in oklab, var(--color-accent) 20%, transparent);
@@ -553,7 +553,7 @@ function selectDrawSub(sub: DrawSubTool) {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--color-accent, #7c3aed);
+  background: var(--color-accent);
   cursor: pointer;
 }
 .wb-draw-size-label {
@@ -582,7 +582,7 @@ function selectDrawSub(sub: DrawSubTool) {
   transform: scale(1.2);
 }
 .wb-draw-color-btn--active {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--color-accent);
   box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent) 30%, transparent);
 }
 
@@ -662,7 +662,17 @@ function selectDrawSub(sub: DrawSubTool) {
   color: var(--color-text-secondary-dark, #a1a1aa);
 }
 .wb-shape-grid-btn:hover {
-  background: var(--color-accent, #7c3aed);
+  background: var(--color-accent);
   color: white;
+}
+/* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
+   it there take the paler dark accent. Fills under white text keep the accent. */
+.dark .wb-draw-sub-btn:hover,
+.dark .wb-draw-sub-btn--active,
+.dark .wb-draw-color-btn--active {
+  border-color: var(--color-accent-dark);
+}
+.dark .wb-draw-color-btn--active {
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--color-accent-dark) 30%, transparent);
 }
 </style>

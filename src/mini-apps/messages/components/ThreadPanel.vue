@@ -148,7 +148,7 @@ const when = (iso: string) => {
         </button>
 
         <button
-          class="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-500/10 cursor-pointer"
+          class="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] text-accent dark:text-accent-dark hover:bg-accent/10 dark:hover:bg-accent-dark/10 cursor-pointer"
           @click="emit('ask', thread.id)"
         >
           <Sparkles class="w-3.5 h-3.5" />

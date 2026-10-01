@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, inject, defineAsyncComponent, toRef } from 'vue';
-import { Type, FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, Sun, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download, History, Copy, Trash2, LayoutTemplate } from 'lucide-vue-next';
+import { Type, FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRightClose, Hash, Plus, MoreVertical, Pin, X, ArrowLeft, ArrowRight, CalendarDays, ChevronDown, CaseSensitive, Globe, Calendar, CheckSquare, Monitor, Download, History, Copy, Trash2, LayoutTemplate } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
@@ -43,7 +43,8 @@ import { useNoteSearch } from './composables/useNoteSearch';
 import { useNoteManager } from './composables/useNoteManager';
 import { useNoteBacklinks } from './composables/useNoteBacklinks';
 import { useNoteRename } from './composables/useNoteRename';
-import { useNoteDelete } from './composables/useNoteDelete';
+import { useNoteDelete, UNDO_WINDOW_MS as NOTE_UNDO_WINDOW_MS } from './composables/useNoteDelete';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { useNoteSelection } from './composables/useNoteSelection';
 
 const LockScreenComponent = defineAsyncComponent(() => import('../../shared/components/LockScreen.vue'));
@@ -138,10 +139,9 @@ const backlinks = useNoteBacklinks(notes, currentNoteId, tabs.currentContent, ns
 /**
  * Deleting a note, held back long enough to take it back.
  *
- * The confirmation dialog that used to guard this is gone on purpose. A dialog
- * asks people to be careful beforehand, which mostly teaches them to click
- * through it; an undo lets them be careless and still be fine. Only one of the
- * two has ever saved a note.
+ * One press, then the undo toast, like every delete in the app. The only
+ * question is the app-wide "Ask before deleting" (`confirmDelete`), asked here
+ * before anything leaves the list — `useNoteDelete` itself asks nothing.
  */
 const del = useNoteDelete({
     notes, currentNoteId, recentNoteIds,
@@ -155,8 +155,11 @@ const del = useNoteDelete({
     },
 });
 
-const deleteNote = (id: string) => {
+const deleteNote = async (id: string) => {
     activeContextMenu.value = null;
+    const note = notes.value.find((n) => n.id === id);
+    if (!note) return;
+    if (!(await confirmDelete({ name: note.title || t('note.untitled_note') }))) return;
     return del.deleteNote(id);
 };
 
@@ -212,6 +215,7 @@ const handleManagerRowClick = (id: string, event: MouseEvent) => {
 const deleteSelected = async () => {
     const ids = selection.ids.value;
     if (ids.length === 0) return;
+    if (!(await confirmDelete({ count: ids.length }))) return;
 
     // Cleared before the delete, not after: the rows are gone from the list
     // either way, and a selection still holding their ids would put the
@@ -790,26 +794,37 @@ onMounted(async () => {
     >
       <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="sidebar.startDragLeft($event)"></div>
 
-      <div class="h-10 flex-shrink-0 flex items-center justify-between px-4 border-b border-border dark:border-border-dark" data-tauri-drag-region>
-         <button @click="sidebar.showLeft.value = false" class="md:hidden p-1.5 -ml-1.5 rounded-md hover:bg-gray-200 dark:hover:bg-[#333] text-muted transition-colors" :title="$t('note.close_sidebar')">
-            <X class="w-4 h-4" />
+      <!--
+        Read left to right: which app this is, the secondary way in (today's
+        note), and last the primary action — the same order as AppHeader in
+        the other apps. Every control is 32px so the row sits on one line.
+        The sidebar starts about 300px wide, which fits the title and the
+        split button but not "Today" in words as well; there it keeps its
+        calendar icon, its name for screen readers and its tooltip, and the
+        words come back once the sidebar is dragged wider.
+        "New" and "from a template" are one split button: they are two ways
+        of doing the same thing, and a separate icon beside the primary
+        button made the primary look like it was in the middle of the row.
+      -->
+      <div class="@container h-10 flex-shrink-0 flex items-center gap-2 px-3 border-b border-border dark:border-border-dark" data-tauri-drag-region>
+         <button type="button" @click="sidebar.showLeft.value = false" class="btn-icon !w-8 !h-8 md:hidden -ml-1" :title="$t('note.close_sidebar')" :aria-label="$t('note.close_sidebar')">
+            <X class="w-4 h-4" aria-hidden="true" />
          </button>
-         <div class="flex gap-1 ml-auto" @mousedown.stop>
-           <button v-if="enableDailyNotes" @click="handleOpenDailyNote" class="px-2 py-1.5 flex items-center gap-1.5 rounded-md hover:bg-[#e6e6e6] dark:hover:bg-[#333] text-text-secondary dark:text-text-secondary-dark hover:text-text dark:hover:text-white transition-colors" :title="$t('note.todays_daily_note')">
-             <Sun class="w-3.5 h-3.5" />
-             <span class="text-xs font-medium">{{ $t('note.today') }}</span>
+         <h2 class="text-sm font-semibold text-text dark:text-text-dark whitespace-nowrap shrink-0">{{ $t('shell.apps.note') }}</h2>
+         <div class="flex items-center gap-1.5 ml-auto shrink-0" @mousedown.stop>
+           <button v-if="enableDailyNotes" type="button" @click="handleOpenDailyNote" class="h-8 px-2 flex items-center gap-1.5 rounded-lg text-sm font-medium text-text-secondary dark:text-text-secondary-dark hover:bg-surface-hover dark:hover:bg-surface-hover-dark hover:text-text dark:hover:text-text-dark transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-accent" :title="$t('note.todays_daily_note')" :aria-label="$t('note.todays_daily_note')">
+             <CalendarDays class="w-4 h-4" aria-hidden="true" />
+             <span class="hidden @[22rem]:inline">{{ $t('note.today') }}</span>
            </button>
-           <button @click="handleCreateNewNote" class="btn-primary" :title="$t('note.new_note')">
-             <Plus class="w-3.5 h-3.5" />
-             <span>{{ $t('note.new_note') }}</span>
-           </button>
-           <!--
-             Beside the new note button rather than inside a menu on it: one
-             more click to reach the only thing such a menu would hold.
-           -->
-           <button @click="openTemplatePicker('create')" class="btn-icon !w-8 !h-8" :aria-label="$t('note.templates.new_from_template_ellipsis')" :title="$t('note.templates.new_from_template_ellipsis')">
-             <LayoutTemplate class="w-4 h-4" />
-           </button>
+           <div class="flex items-stretch">
+             <button type="button" @click="handleCreateNewNote" class="btn-primary !h-8 !px-3 !rounded-r-none" :title="$t('note.new_note')">
+               <Plus class="w-4 h-4" aria-hidden="true" />
+               <span>{{ $t('note.new_note') }}</span>
+             </button>
+             <button type="button" @click="openTemplatePicker('create')" class="btn-primary !h-8 !w-7 !px-0 !rounded-l-none border-l border-white/25" :aria-label="$t('note.templates.new_from_template_ellipsis')" :title="$t('note.templates.new_from_template_ellipsis')">
+               <ChevronDown class="w-4 h-4" aria-hidden="true" />
+             </button>
+           </div>
          </div>
       </div>
 
@@ -1106,7 +1121,7 @@ onMounted(async () => {
                                      />
                                   </div>
                                </td>
-                               <td class="py-3 px-4 font-medium text-text dark:text-text-dark max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}<span v-if="isTemplatePath(note.id)" class="ml-2 text-xs px-1.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300 font-medium">{{ $t('note.templates.badge') }}</span></td>
+                               <td class="py-3 px-4 font-medium text-text dark:text-text-dark max-w-[250px] truncate">{{ note.title || $t('note.untitled_note') }}<span v-if="isTemplatePath(note.id)" class="ml-2 text-xs px-1.5 rounded bg-accent/10 text-accent dark:bg-accent-dark/15 dark:text-accent-dark font-medium">{{ $t('note.templates.badge') }}</span></td>
                                <td class="py-3 px-4">
                                   <div class="flex flex-wrap gap-1" v-if="note.tags.length">
                                      <span v-for="tag in note.tags.slice(0, 3)" :key="tag" class="text-xs px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ tag.split('/').pop() }}</span>
@@ -1224,8 +1239,9 @@ onMounted(async () => {
       :show="del.pending.value !== null"
       :restart-key="undoKey"
       :message="undoMessage"
+      :hint="$t('common.in_trash_hint')"
       :undo-label="$t('common.undo')"
-      :seconds="7"
+      :seconds="NOTE_UNDO_WINDOW_MS / 1000"
       @undo="del.undoDelete"
       @pause="del.pause"
       @resume="del.resume"

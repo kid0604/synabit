@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n';
 import { invoke } from '@tauri-apps/api/core';
 import { Copy, X, Trash2, Check, AlertTriangle, Loader2 } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import AppDialog from '../../shared/components/AppDialog.vue';
 
 const props = defineProps<{ vaultPath: string }>();
@@ -58,6 +59,7 @@ const scan = async () => {
 };
 
 const trashCopy = async (group: DuplicateGroup, file: DuplicateFile) => {
+  if (!(await confirmDelete({ name: file.title || file.rel_path }))) return;
   trashing.value = file.rel_path;
   try {
     await invoke('trash_node_file', { vaultPath: props.vaultPath, relPath: file.rel_path });

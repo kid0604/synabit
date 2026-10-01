@@ -598,8 +598,8 @@ onUnmounted(() => {
 
             <!-- Empty state overlay -->
             <div v-if="connections.length === 0 && linkedNodes.length === 0" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-50 dark:bg-[#1a1a1c] z-10">
-                <div class="w-16 h-16 rounded-full bg-gradient-to-br from-purple-100 to-blue-100 dark:from-purple-900/20 dark:to-blue-900/20 flex items-center justify-center mb-4">
-                    <Share2 class="w-7 h-7 text-purple-400 dark:text-purple-500" />
+                <div class="w-16 h-16 rounded-full bg-accent/10 dark:bg-accent-dark/10 flex items-center justify-center mb-4">
+                    <Share2 class="w-7 h-7 text-accent dark:text-accent-dark" />
                 </div>
                 <h3 class="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ $t('people.no_connections') }}</h3>
                 <p class="text-xs text-gray-500 dark:text-gray-400 text-center max-w-[200px]">

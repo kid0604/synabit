@@ -10,7 +10,13 @@
     "deleted_item": "Deleted “{name}”",
     "deleted_count": "Deleted {count} item | Deleted {count} items",
     "delete_failed": "Couldn't delete. Nothing was changed — try again.",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "delete_question": "Delete “{name}”?",
+    "delete_question_generic": "Delete this?",
+    "delete_question_body": "It goes to the Trash, where you can restore it for 30 days.",
+    "delete_question_body_no_trash": "You can still undo it for a few seconds afterwards.",
+    "in_trash_hint": "Still in the Trash for 30 days",
+    "delete_question_count": "Delete {count} items?"
   },
   "settings": {
     "title": "Settings",
@@ -110,7 +116,13 @@
       "simple_mode_desc": "Shows only notes, tasks, calendar, quick capture, people and money. Nothing is deleted — turn it off to get everything back.",
       "simple_mode_start_note": "Simple mode is on, so Synabit opens {app} instead. Your choice comes back when you turn it off.",
       "simple_mode_apps_note": "Simple mode is on, so only its apps are listed here. The others keep their settings for when you turn it off.",
-      "syn_heading": "Syn"
+      "syn_heading": "Syn",
+      "confirm_before_delete": "Ask before deleting",
+      "confirm_before_delete_desc": "Everywhere in the app, ask \"Delete this?\" first. Either way, anything you delete can be brought back with Undo for a few seconds, and from the Trash for 30 days.",
+      "link_open_in": "Open links in",
+      "link_open_in_desc": "Where a link you click in a note, an article or an answer from Syn opens.",
+      "link_open_system": "Your computer's browser",
+      "link_open_pane": "Synabit's browser, beside the app"
     },
     "notes": {
       "features": "Features",
@@ -145,12 +157,7 @@
       "archive_desc_1": "Tasks marked as \"done\" for longer than this period will be moved to the",
       "archive_desc_2": "folder.",
       "after": "After",
-      "days": "days",
-      "delete_confirm_label": "Confirm before deleting a task",
-      "delete_confirm_dialog": "Ask in a dialog",
-      "delete_confirm_inline": "Press the bin twice",
-      "delete_confirm_undo": "Don't ask — undo instead",
-      "delete_confirm_hint": "A deleted task can be brought back for a few seconds either way. A task with subtasks always asks what to do with them."
+      "days": "days"
     },
     "security": {
       "app_lock": "App Lock",
@@ -959,8 +966,6 @@
     "query_placeholder": "Search your things…",
     "n_results": "{n} results",
     "showing_of": "Showing {shown} of {total}",
-    "delete_title": "Delete this?",
-    "delete_message": "\"{title}\" moves to the trash. You can put it back from there.",
     "cancel": "Cancel",
     "app_fields": "{count} app fields",
     "value_yes": "Yes",
@@ -1029,7 +1034,6 @@
     "remove_field_message": "“{field}” and its value are deleted from this item’s file.",
     "drop_field_title": "Remove from “Usually has”?",
     "drop_field_message": "“{field}” stops being offered on new {type} items. Nothing is deleted — it moves down to “Also seen”, and you can add it back.",
-    "delete_view_message": "The saved view “{name}” moves to the trash. The things it found are untouched.",
     "remove": "Remove",
     "merge_only_shape": "No file carries “{field}” — only the structure changes.",
     "erase_short": "Delete…",
@@ -1249,8 +1253,6 @@
     "transferred_to": "Transferred to: ",
     "tracking_progress": "Tracking Progress",
     "wip_limit_reached": "“Doing” already has {limit} tasks, so this one went to “To do”.",
-    "delete_task_title": "Delete this task?",
-    "delete_task_body": "The task will be moved to the trash.",
     "delete_project_title": "Delete this project?",
     "delete_project_body": "The project will be moved to the trash. Tasks under it will NOT be deleted.",
     "delete_confirm": "Delete",
@@ -1750,7 +1752,6 @@
     "edit_highlight": "Edit highlight",
     "save": "Save",
     "update": "Update",
-    "delete_highlight_body": "Delete this highlight? This can't be undone.",
     "reset_pdf_body": "Clear every highlight and drawing on this PDF? This can't be undone.",
     "clear_all": "Clear all",
     "load_failed": "This file could not be opened. It may have been moved or deleted — try syncing the folder again.",
@@ -2026,7 +2027,8 @@
       "braceRight": "Right Brace"
     },
     "add_to_board": "Add to board",
-    "add_note_to_board": "Add “{title}” to the board"
+    "add_note_to_board": "Add “{title}” to the board",
+    "sidebar_views": "Board list or notes"
   },
   "nexus": {
     "extract_explain": "Syn reads your daily notes, meetings, notes about people, quick captures and calendar events, and proposes the moments it finds. Nothing here reaches Syn’s answers until you keep it.",
@@ -2063,9 +2065,6 @@
     "moment_close": "Close",
     "moment_save": "Save",
     "moment_delete": "Delete",
-    "moment_delete_sure": "Move this moment to the trash?",
-    "moment_delete_yes": "Delete",
-    "moment_delete_no": "Keep it",
     "moment_from": "Read from {title}",
     "moment_by_hand": "Written by hand, not read from a note",
     "reset_title": "Start the timeline again",
@@ -2906,7 +2905,7 @@
     "quick_capture": "Quick Capture",
     "create_task": "Create Task",
     "add_feed_title": "Add Feed",
-    "enter_url": "Enter website or feed URL...",
+    "enter_url": "A site like genk.vn, or a feed address",
     "discover": "Discover",
     "discovering": "Discovering feeds...",
     "discovered_feeds": "Discovered Feeds",
@@ -3027,7 +3026,18 @@
     "source_removed": "Removed “{name}”",
     "resize_sidebar": "Resize the feed list",
     "resize_article_list": "Resize the article list",
-    "remove_failed": "Couldn't remove the feed, so it's back in the list. Try again."
+    "remove_failed": "Couldn't remove the feed, so it's back in the list. Try again.",
+    "move_to_category": "Move to category",
+    "drop_to_uncategorize": "Drop here to take it out of its category",
+    "moved_to": "Moved “{name}” to {category}",
+    "moved_out": "“{name}” is no longer in a category",
+    "move_failed": "Couldn't move that feed. Nothing was changed — try again.",
+    "error_url_invalid": "That doesn't look like a web address. Type a site such as genk.vn, or paste its full address.",
+    "error_url_private": "Synabit doesn't fetch addresses on this computer or your home network. Use the site's public address.",
+    "error_not_found": "That page doesn't exist on the site (404). Check the address, or try just the site's name.",
+    "error_site_refused": "The site refused the request (error {status}). Try again later, or try the site's home page.",
+    "error_too_large": "That page is too large to read as a feed.",
+    "error_unreachable": "Couldn't reach that site. Check the address and your internet connection, then try again."
   },
   "threads": {
     "stats": "{inThread} of {total} runs had a thread · {wrote} wrote back",
@@ -3731,8 +3741,6 @@
     "setup_remote_title": "Can’t reach {provider}",
     "setup_remote_body": "Check your internet connection, and that the API key in Syn settings is right.",
     "setup_open_settings": "Open Syn settings",
-    "routine_delete_title": "Delete the routine “{name}”?",
-    "routine_delete_body": "It stops running. The conversation it already wrote stays.",
     "file_count": "no files | 1 file | {count} files",
     "family_safe": "Family-safe answers",
     "family_safe_hint": "Syn keeps its language suitable for children, declines sexual, violent, self-harm and drug topics and points to a trusted adult instead, never asks for personal details, and encourages checking facts. Synabit adds this to every request, whatever your instructions say. It makes unsuitable answers much less likely, not impossible.",
@@ -4369,6 +4377,9 @@
       "upgrade": "The other side runs a different version of Synabit. Update both, then try again.",
       "quota": "There's no more room on the sync server.",
       "bad_code": "That code didn't work. It may have expired — make a new one and try again."
+    },
+    "links": {
+      "open_failed": "Couldn't open that link."
     }
   }
 }

@@ -11,7 +11,7 @@ import { logger } from '../../../utils/logger';
  * not still hanging about after the user has moved on. Matches the Notes app,
  * which is where this approach came from.
  */
-export const UNDO_WINDOW_MS = 7000;
+export const UNDO_WINDOW_MS = 10000;
 
 /**
  * Deleting tasks, with the delete held back long enough to take it back.
@@ -29,12 +29,11 @@ export const UNDO_WINDOW_MS = 7000;
  * and written only at commit, so undo puts the whole operation back rather
  * than most of it.
  *
- * There is no confirmation dialog for an ordinary delete, deliberately. A
- * dialog asks people to be careful beforehand, which trains them to click
- * through it; an undo lets them be careless and still be fine. Only one of
- * those two actually saves anything. A parent with subtasks still asks,
- * because "keep them" and "take them too" is a real question rather than a
- * yes/no.
+ * This composable asks nothing. The one yes/no a delete may have — the
+ * app-wide "Ask before deleting" (`confirmDelete`) — is asked by the caller
+ * before anything is scheduled here, and is off by default: the undo is the
+ * way back. A parent with subtasks still asks, because "keep them" and "take
+ * them too" is a real question rather than a yes/no.
  *
  * If the app is killed inside the window the deletion simply never happened,
  * which is the safe direction to fail in — but hiding or leaving the app

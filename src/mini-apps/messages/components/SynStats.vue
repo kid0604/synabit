@@ -177,7 +177,7 @@ onMounted(load);
                 <td class="py-1.5 text-right tabular-nums text-gray-500 dark:text-gray-400">{{ pct(row.n, period.runs) }}</td>
                 <td class="py-1.5 pl-3">
                   <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden" aria-hidden="true">
-                    <div class="h-full rounded-full bg-violet-400" :style="{ width: `${row.width}%` }" />
+                    <div class="h-full rounded-full bg-accent/70 dark:bg-accent-dark/70" :style="{ width: `${row.width}%` }" />
                   </div>
                 </td>
               </tr>
@@ -266,7 +266,7 @@ onMounted(load);
                 <td class="py-2 text-right tabular-nums text-gray-500 dark:text-gray-400">{{ num(row.runs) }}</td>
                 <td class="py-2 pl-3 pt-3.5">
                   <div class="h-1.5 rounded-full bg-gray-100 dark:bg-gray-800 overflow-hidden" aria-hidden="true">
-                    <div class="h-full rounded-full bg-violet-400" :style="{ width: `${row.width}%` }" />
+                    <div class="h-full rounded-full bg-accent/70 dark:bg-accent-dark/70" :style="{ width: `${row.width}%` }" />
                   </div>
                 </td>
               </tr>

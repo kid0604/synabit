@@ -95,13 +95,13 @@ const selectCategory = (cat: string) => {
           
           <div class="pt-4 pb-1 px-3 flex items-center justify-between group">
               <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.projects') }}</span>
-              <button @click="emit('create-project')" class="text-gray-500 dark:text-gray-400 hover:text-indigo-500 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" :title="$t('task.new_project')">
+              <button @click="emit('create-project')" class="text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100 transition-opacity" :title="$t('task.new_project')">
                   <Plus class="w-3.5 h-3.5"/>
               </button>
           </div>
           <button v-for="proj in projects" :key="proj.id" @click="selectCategory('project:' + proj.id)" class="flex items-center justify-between px-3 py-2 rounded-lg transition-colors cursor-pointer group" :class="activeCategory === 'project:' + proj.id ? 'bg-white dark:bg-[#2c2c2c] text-accent dark:text-accent-dark shadow-sm font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-base-dark'">
               <div class="flex items-center truncate">
-                  <svg class="w-4 h-4 mr-3 shrink-0" :class="activeCategory === 'project:' + proj.id ? 'text-accent dark:text-accent-dark' : 'text-gray-500 group-hover:text-indigo-400'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                  <svg class="w-4 h-4 mr-3 shrink-0" :class="activeCategory === 'project:' + proj.id ? 'text-accent dark:text-accent-dark' : 'text-gray-500 group-hover:text-accent dark:group-hover:text-accent-dark'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                   <span class="truncate">{{ proj.title }}</span>
               </div>
           </button>
@@ -198,7 +198,7 @@ const selectCategory = (cat: string) => {
               
               <div class="pt-4 pb-1 px-3 flex items-center justify-between">
                   <span class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ $t('task.projects') }}</span>
-                  <button @click="emit('create-project')" class="text-gray-500 dark:text-gray-400 hover:text-indigo-500" :title="$t('task.new_project')">
+                  <button @click="emit('create-project')" class="text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark" :title="$t('task.new_project')">
                       <Plus class="w-4 h-4"/>
                   </button>
               </div>

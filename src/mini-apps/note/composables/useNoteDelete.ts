@@ -10,7 +10,7 @@ import { logger } from '../../../utils/logger';
  * Long enough to notice the mistake and reach the button, short enough that
  * the note is not still hanging around when the user has moved on.
  */
-const UNDO_WINDOW_MS = 7000;
+export const UNDO_WINDOW_MS = 10000;
 
 /**
  * Deleting a note, with the delete held back long enough to take it back.
@@ -22,10 +22,9 @@ const UNDO_WINDOW_MS = 7000;
  * after that would be a race against the tombstone, and the tombstone would
  * sometimes win. Holding a timer is not a race at all.
  *
- * There is no confirmation dialog, deliberately. A dialog asks people to be
- * careful before the fact, which trains them to click through it; an undo lets
- * them be careless and still be fine. Only one of those two actually saves a
- * note.
+ * This composable asks nothing. The one yes/no a delete may have — the
+ * app-wide "Ask before deleting" (`confirmDelete`), off by default — is asked
+ * by the caller before a note is handed over; the undo is the way back.
  *
  * If the app is killed inside the window, the deletion simply never happened —
  * the safe direction to fail in. Leaving the app, or its window being hidden,

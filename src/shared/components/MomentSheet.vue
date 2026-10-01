@@ -23,6 +23,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { Loader2, Trash2 } from 'lucide-vue-next';
 import { errorText } from '../errorText';
 import { logger } from '../../utils/logger';
+import { confirmDelete } from '../../composables/useConfirmDelete';
+import { showAppNotice } from '../../composables/useAppNotice';
 
 interface PersonRef { id: string; title: string }
 
@@ -60,7 +62,6 @@ const moment = ref<MomentDetail | null>(null);
 const reading = ref(false);
 const saving = ref(false);
 const failure = ref('');
-const askingToDelete = ref(false);
 
 interface Form {
     title: string;
@@ -80,7 +81,6 @@ const adding = ref('');
 const load = async (path: string) => {
     reading.value = true;
     failure.value = '';
-    askingToDelete.value = false;
     try {
         const found = await invoke<MomentDetail>('timeline_moment', { vaultPath: props.vaultPath, path });
         moment.value = found;
@@ -164,12 +164,22 @@ const save = async () => {
     }
 };
 
+/**
+ * Into the Trash (`apply_trash`). One press, like every other delete; it asks
+ * first only with "Ask before deleting" on. The sheet closes with it, so the
+ * way back is said in a notice rather than an undo toast the sheet would take
+ * away with it: the Trash.
+ */
 const letGo = async () => {
+    if (!moment.value) return;
+    const name = moment.value.title;
+    if (!(await confirmDelete({ name: name || undefined }))) return;
     if (!moment.value) return;
     saving.value = true;
     failure.value = '';
     try {
         await invoke('timeline_moment_delete', { vaultPath: props.vaultPath, path: moment.value.path });
+        showAppNotice(`${name ? t('common.deleted_item', { name }) : t('nexus.moment_delete')}. ${t('common.in_trash_hint')}`);
         emit('changed');
         emit('close');
     } catch (e) {
@@ -280,28 +290,12 @@ const letGo = async () => {
                     <Loader2 v-if="saving" class="h-3 w-3 animate-spin" />
                     {{ $t('nexus.moment_save') }}
                 </button>
-                <!-- Letting it go is two presses: it is a decision being undone,
-                     and the file goes to the trash rather than away. -->
-                <template v-if="askingToDelete">
-                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ $t('nexus.moment_delete_sure') }}</span>
-                    <button
-                        type="button"
-                        data-moment-delete-yes
-                        class="rounded-md bg-red-600 px-2 py-0.5 text-xs font-semibold text-white hover:bg-red-700"
-                        @click="letGo()"
-                    >{{ $t('nexus.moment_delete_yes') }}</button>
-                    <button
-                        type="button"
-                        class="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
-                        @click="askingToDelete = false"
-                    >{{ $t('nexus.moment_delete_no') }}</button>
-                </template>
                 <button
-                    v-else
                     type="button"
                     data-moment-delete
+                    :disabled="saving"
                     class="ml-auto flex items-center gap-1 rounded-md px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
-                    @click="askingToDelete = true"
+                    @click="letGo()"
                 ><Trash2 class="h-3 w-3" /> {{ $t('nexus.moment_delete') }}</button>
             </div>
         </div>

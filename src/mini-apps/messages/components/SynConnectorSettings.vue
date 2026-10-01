@@ -72,7 +72,7 @@ watch(() => props.vaultPath, load);
 const field =
   'w-full px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50 ' +
   'text-sm text-text dark:text-text-dark placeholder-gray-500 dark:placeholder-gray-400 outline-none ' +
-  'focus:border-violet-400 dark:focus:border-violet-500/50 focus:ring-1 focus:ring-violet-400/20 transition-all';
+  'focus:border-accent dark:focus:border-accent-dark focus:ring-1 focus:ring-accent/20 dark:focus:ring-accent-dark/20 transition-all';
 const plainButton =
   'px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer border border-gray-200 dark:border-gray-700/50 ' +
   'text-text dark:text-text-dark hover:bg-gray-50 dark:hover:bg-white/5 transition-colors ' +
@@ -95,7 +95,7 @@ const subtleDanger =
       <button
         v-if="servers.length"
         type="button"
-        class="text-xs text-violet-600 dark:text-violet-400 hover:underline cursor-pointer disabled:opacity-40"
+        class="text-xs text-accent dark:text-accent-dark hover:underline cursor-pointer disabled:opacity-40"
         :disabled="busy"
         @click="reconnect"
       >
@@ -116,7 +116,7 @@ const subtleDanger =
             :checked="view.server.enabled"
             :disabled="busy"
             :aria-label="t('syn.connector_enabled')"
-            class="w-4 h-4 accent-violet-500 cursor-pointer shrink-0"
+            class="w-4 h-4 accent-accent cursor-pointer shrink-0"
             @change="toggle(view)"
           />
           <span class="text-sm font-medium text-text dark:text-text-dark truncate">{{ view.server.name }}</span>
@@ -146,7 +146,7 @@ const subtleDanger =
     </button>
 
     <!-- The form. -->
-    <div v-else class="p-3 rounded-xl border border-violet-200 dark:border-violet-500/30 space-y-3">
+    <div v-else class="p-3 rounded-xl border border-accent/30 dark:border-accent-dark/30 space-y-3">
       <div>
         <label class="block text-sm font-medium text-text dark:text-text-dark mb-1.5">{{ t('syn.connector_name') }}</label>
         <input v-model="draft.name" type="text" spellcheck="false" :class="field" :placeholder="t('syn.connector_name_placeholder')" />
@@ -154,11 +154,11 @@ const subtleDanger =
 
       <div class="flex flex-col gap-1.5 text-sm text-text dark:text-text-dark">
         <label class="flex items-center gap-2 cursor-pointer">
-          <input v-model="draft.kind" type="radio" value="http" class="accent-violet-500" />
+          <input v-model="draft.kind" type="radio" value="http" class="accent-accent" />
           {{ t('syn.connector_kind_http') }}
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
-          <input v-model="draft.kind" type="radio" value="stdio" class="accent-violet-500" />
+          <input v-model="draft.kind" type="radio" value="stdio" class="accent-accent" />
           {{ t('syn.connector_kind_stdio') }}
         </label>
       </div>
@@ -226,7 +226,7 @@ const subtleDanger =
             <X class="w-4 h-4" />
           </button>
         </div>
-        <button type="button" class="text-xs text-violet-600 dark:text-violet-400 hover:underline cursor-pointer" @click="addSecret">
+        <button type="button" class="text-xs text-accent dark:text-accent-dark hover:underline cursor-pointer" @click="addSecret">
           + {{ t('syn.connector_add_secret') }}
         </button>
         <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.connector_secret_hint') }}</p>

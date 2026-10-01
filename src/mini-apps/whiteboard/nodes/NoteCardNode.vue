@@ -141,7 +141,7 @@ const handleOpenNote = (e: MouseEvent) => {
   <div class="note-card-node" :class="{ 'is-selected': selected }" :style="{ width: cardWidth, height: cardHeight }">
     <NodeResizer
       v-if="selected"
-      :color="data.color || '#7c3aed'"
+      :color="data.color || 'var(--wb-selection, var(--color-accent))'"
       :is-visible="true"
       :min-width="180"
       :min-height="120"
@@ -156,7 +156,7 @@ const handleOpenNote = (e: MouseEvent) => {
 
     <div 
         class="w-full h-full bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden"
-        :style="{ borderColor: selected ? (data.color || '#7c3aed') : undefined }"
+        :style="{ borderColor: selected ? (data.color || 'var(--wb-selection, var(--color-accent))') : undefined }"
     >
       <!-- Header -->
       <div class="flex items-center px-3 py-1.5 bg-gray-50/80 dark:bg-gray-800/80 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -213,11 +213,11 @@ const handleOpenNote = (e: MouseEvent) => {
   background: var(--color-surface, #fff);
   border: 2px solid var(--color-border, #d4d4d8);
 }
-.dark :deep(.vue-flow__handle) {
+:deep(.vue-flow__handle:is(.dark *)) {
   background: var(--color-surface-dark, #1e1e1e);
   border-color: var(--color-border-dark, #52525b);
 }
 .is-selected :deep(.vue-flow__handle) {
-  border-color: var(--color-accent, #7c3aed);
+  border-color: var(--wb-selection, var(--color-accent));
 }
 </style>

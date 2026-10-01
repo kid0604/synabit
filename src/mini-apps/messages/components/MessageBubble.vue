@@ -830,7 +830,7 @@ const copyContent = async () => {
     <!-- Avatar (assistant only) -->
     <div
       v-if="message.role === 'assistant'"
-      class="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 mt-0.5 ring-1 ring-violet-500/30 shadow-lg shadow-violet-500/20"
+      class="w-8 h-8 rounded-xl overflow-hidden flex-shrink-0 mt-0.5 ring-1 ring-accent/30 dark:ring-accent-dark/30 shadow-lg shadow-accent/20"
     >
       <img :src="synAvatar" alt="Syn" class="w-full h-full object-cover" />
     </div>
@@ -853,7 +853,7 @@ const copyContent = async () => {
       <div
         class="px-4 py-3 rounded-2xl text-sm leading-relaxed relative overflow-hidden select-text"
         :class="message.role === 'user'
-          ? 'bg-gradient-to-r from-violet-500 to-purple-600 text-white rounded-br-md shadow-lg shadow-violet-500/20'
+          ? 'bg-accent text-white rounded-br-md shadow-lg shadow-accent/20'
           : 'bg-white dark:bg-[#1e1f25] border border-gray-100 dark:border-gray-800/60 rounded-tl-md shadow-sm'"
       >
         <!-- User message -->
@@ -883,11 +883,11 @@ const copyContent = async () => {
           class="prose prose-sm dark:prose-invert max-w-none
             prose-p:my-1.5 prose-p:leading-relaxed
             prose-pre:bg-gray-900 prose-pre:text-gray-100 prose-pre:rounded-lg prose-pre:my-3
-            prose-code:text-violet-600 dark:prose-code:text-violet-400
+            prose-code:text-accent dark:prose-code:text-accent-dark
             prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
             prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5
-            prose-a:text-violet-600 dark:prose-a:text-violet-400 prose-a:no-underline hover:prose-a:underline
-            prose-blockquote:border-violet-300 dark:prose-blockquote:border-violet-600
+            prose-a:text-accent dark:prose-a:text-accent-dark prose-a:no-underline hover:prose-a:underline
+            prose-blockquote:border-accent/40 dark:prose-blockquote:border-accent-dark/40
             prose-strong:text-gray-900 dark:prose-strong:text-white"
           v-html="renderedContent"
           @click="handleContentClick"
@@ -897,7 +897,7 @@ const copyContent = async () => {
         <!-- Streaming cursor -->
         <span
           v-if="isStreaming && message.role === 'assistant'"
-          class="inline-block w-0.5 h-4 bg-violet-500 ml-0.5 align-middle streaming-cursor"
+          class="inline-block w-0.5 h-4 bg-accent dark:bg-accent-dark ml-0.5 align-middle streaming-cursor"
         />
 
         <!-- Tool Calls Log (collapsible) -->
@@ -931,7 +931,7 @@ const copyContent = async () => {
                 :key="i"
                 class="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-gray-50 dark:bg-gray-800/30 text-xs"
               >
-                <span class="text-violet-500 font-mono font-medium shrink-0">{{ tc.tool_name }}</span>
+                <span class="text-accent dark:text-accent-dark font-mono font-medium shrink-0">{{ tc.tool_name }}</span>
                 <span class="text-gray-500 dark:text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
                 <span v-if="tc.result_preview" class="text-gray-500 dark:text-gray-400 truncate ml-auto">→ {{ tc.result_preview.slice(0, 80) }}</span>
               </div>
@@ -968,13 +968,13 @@ const copyContent = async () => {
                 :src="convertFileSrc(media.path)"
                 :alt="media.filename"
                 class="w-28 h-28 rounded-lg object-cover border border-gray-200 dark:border-gray-700
-                       hover:border-violet-400 dark:hover:border-violet-500 transition-all
-                       hover:shadow-lg hover:shadow-violet-500/10"
+                       hover:border-accent dark:hover:border-accent-dark transition-all
+                       hover:shadow-lg hover:shadow-accent/10"
               />
               <!-- Video preview -->
               <div v-else class="w-28 h-28 rounded-lg border border-gray-200 dark:border-gray-700
-                                 hover:border-violet-400 dark:hover:border-violet-500 transition-all
-                                 hover:shadow-lg hover:shadow-violet-500/10
+                                 hover:border-accent dark:hover:border-accent-dark transition-all
+                                 hover:shadow-lg hover:shadow-accent/10
                                  bg-gray-900 flex items-center justify-center relative overflow-hidden">
                 <video
                   :src="convertFileSrc(media.path)"
@@ -1005,7 +1005,7 @@ const copyContent = async () => {
           v-if="message.role === 'assistant' && message.plan?.steps.length"
           class="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800/50 space-y-2"
         >
-          <h3 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">
+          <h3 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-accent dark:text-accent-dark">
             <ListChecks class="w-3.5 h-3.5" aria-hidden="true" />
             {{ $t('syn.plan_title') }}
           </h3>
@@ -1039,8 +1039,8 @@ const copyContent = async () => {
             :key="source.id"
             @click="$emit('open-source', source)"
             class="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium rounded-md 
-                   bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-400 
-                   hover:bg-violet-100 dark:hover:bg-violet-900/40 transition-colors cursor-pointer"
+                   bg-accent/10 dark:bg-accent-dark/10 text-accent dark:text-accent-dark 
+                   hover:bg-accent/15 dark:hover:bg-accent-dark/20 transition-colors cursor-pointer"
           >
             <FileText class="w-3 h-3" />
             {{ source.title }}
@@ -1179,16 +1179,19 @@ const copyContent = async () => {
   font-weight: 600;
 }
 
-.dark :deep(th) {
+/* `:is(.dark *)` inside `:deep()`: written as `.dark :deep(th)` the scope
+   attribute lands on `.dark`, which is `<html>` and never carries it, so these
+   rules never applied. */
+:deep(th:is(.dark *)) {
   background-color: var(--color-surface-hover-dark);
 }
 
-.dark :deep(th), .dark :deep(td) {
+:deep(th:is(.dark *)), :deep(td:is(.dark *)) {
   border-color: var(--color-border-dark);
 }
 
-.dark :deep(.mermaid-rendered),
-.dark :deep(pre.mermaid) {
+:deep(.mermaid-rendered:is(.dark *)),
+:deep(pre.mermaid:is(.dark *)) {
   background: rgba(30, 31, 37, 0.5);
 }
 
@@ -1244,7 +1247,7 @@ const copyContent = async () => {
 /* A board the answer named, shown under it. */
 :deep(.board-card) {
   margin: 0.75rem 0 0.25rem;
-  border: 1px solid rgba(124, 58, 237, 0.15);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, transparent);
   border-radius: 0.75rem;
   overflow: hidden;
   background: rgba(0, 0, 0, 0.02);
@@ -1263,7 +1266,7 @@ const copyContent = async () => {
   justify-content: space-between;
   gap: 0.75rem;
   padding: 0.4rem 0.75rem;
-  border-top: 1px solid rgba(124, 58, 237, 0.1);
+  border-top: 1px solid color-mix(in srgb, var(--color-accent) 10%, transparent);
   font-size: 12px;
   color: #6b7280;
 }
@@ -1275,12 +1278,16 @@ const copyContent = async () => {
   align-items: center;
   padding: 0.2rem 0.55rem;
   border-radius: 0.5rem;
-  color: #7c3aed;
+  color: var(--color-accent);
   cursor: pointer;
 }
 
+:deep(.board-actions button:is(.dark *)) {
+  color: var(--color-accent-dark);
+}
+
 :deep(.board-actions button:hover) {
-  background: rgba(124, 58, 237, 0.08);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
 }
 
 :deep(pre.mermaid[data-processed="waiting"]) {
@@ -1289,7 +1296,7 @@ const copyContent = async () => {
   overflow: hidden;
   border-radius: 0.75rem;
   background: rgba(0, 0, 0, 0.02);
-  border: 1px solid rgba(124, 58, 237, 0.08);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 8%, transparent);
 }
 
 :deep(.mermaid-container) {
@@ -1311,7 +1318,7 @@ const copyContent = async () => {
   background: rgba(0, 0, 0, 0.03);
   border-radius: 0.75rem;
   padding: 1rem;
-  border: 1px solid rgba(124, 58, 237, 0.15);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, transparent);
   overflow-x: auto;
   /*
     It opens. `zoom-in` says so before anything is clicked, which matters more
@@ -1350,14 +1357,14 @@ const copyContent = async () => {
   align-items: center;
   padding: 0.2rem 0.55rem;
   border-radius: 0.4rem;
-  color: rgb(109 40 217);
-  background: rgba(124, 58, 237, 0.08);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
 :deep(.mermaid-actions button:hover) {
-  background: rgba(124, 58, 237, 0.16);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
 }
 
 :deep(.mermaid-actions button[disabled]) {
@@ -1365,18 +1372,22 @@ const copyContent = async () => {
   cursor: default;
 }
 
-.dark :deep(.mermaid-actions button) {
-  color: rgb(196 181 253);
-  background: rgba(124, 58, 237, 0.18);
+:deep(.mermaid-actions button:is(.dark *)) {
+  color: var(--color-accent-dark);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
 }
 
 :deep(.mermaid-rendered:hover) {
-  border-color: rgba(124, 58, 237, 0.45);
+  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 :deep(.mermaid-rendered:focus-visible) {
-  outline: 2px solid rgba(124, 58, 237, 0.6);
+  outline: 2px solid var(--color-accent);
   outline-offset: 2px;
+}
+
+:deep(.mermaid-rendered:is(.dark *):focus-visible) {
+  outline-color: var(--color-accent-dark);
 }
 
 :deep(.mermaid-rendered svg) {
@@ -1410,16 +1421,20 @@ const copyContent = async () => {
   background: rgba(0, 0, 0, 0.03);
   border-radius: 0.75rem;
   padding: 1rem;
-  border: 1px solid rgba(124, 58, 237, 0.15);
-  color: #a78bfa;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, transparent);
+  color: var(--color-accent);
   font-size: 0.8rem;
   white-space: pre-wrap;
 }
 
+:deep(pre.mermaid:is(.dark *)) {
+  color: var(--color-accent-dark);
+}
+
 /* Wiki-link [[Title]] styling */
 :deep(a.wikilink) {
-  color: #a78bfa;
-  background: rgba(124, 58, 237, 0.1);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   padding: 0.1em 0.4em;
   border-radius: 0.25rem;
   text-decoration: none;
@@ -1429,9 +1444,12 @@ const copyContent = async () => {
 }
 
 :deep(a.wikilink:hover) {
-  background: rgba(124, 58, 237, 0.25);
-  color: #c4b5fd;
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
   text-decoration: none;
+}
+
+:deep(a.wikilink:is(.dark *)) {
+  color: var(--color-accent-dark);
 }
 
 :deep(a.wikilink::before) {
@@ -1454,22 +1472,26 @@ const copyContent = async () => {
   padding: 0 0.3em;
   margin: 0 0.05em;
   border-radius: 0.3em;
-  color: #7c3aed;
-  background: rgba(124, 58, 237, 0.1);
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
   cursor: pointer;
   transition: background 0.15s ease;
 }
 
-.dark :deep(button.cite) {
-  color: #c4b5fd;
+:deep(button.cite:is(.dark *)) {
+  color: var(--color-accent-dark);
 }
 
 :deep(button.cite:hover) {
-  background: rgba(124, 58, 237, 0.25);
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
 :deep(button.cite:focus-visible) {
-  outline: 2px solid #8b5cf6;
+  outline: 2px solid var(--color-accent);
   outline-offset: 1px;
+}
+
+:deep(button.cite:is(.dark *):focus-visible) {
+  outline-color: var(--color-accent-dark);
 }
 </style>

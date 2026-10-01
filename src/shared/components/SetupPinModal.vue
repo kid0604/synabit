@@ -219,7 +219,7 @@ const numPadKeys = [
                     currentStep > step.num
                       ? 'bg-green-500 text-white'
                       : currentStep === step.num
-                        ? 'bg-accent dark:bg-accent-dark text-white'
+                        ? 'bg-accent text-white'
                         : 'bg-[#e6e6e6] dark:bg-[#3a3a3a] text-muted dark:text-muted-dark'
                   ]"
                 >
