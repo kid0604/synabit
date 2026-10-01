@@ -436,6 +436,10 @@ pub async fn feed_add_source(
     url: String,
     category_id: Option<String>,
 ) -> Result<FeedSource, String> {
+    // Scrape mode adds the typed address itself, so it needs the same care as
+    // discovery: "genk.vn" is a site, not a relative URL.
+    let url = fetcher::normalize_input_url(&url);
+
     // Step 1: Try RSS/Atom discovery
     let discovered = discovery::discover_feeds(&url).await?;
 
@@ -678,6 +682,10 @@ pub fn feed_get_articles(
     filter: ArticleFilter,
 ) -> Result<Vec<CachedArticle>, String> {
     let db = db.lock().map_err(|e| e.to_string())?;
+    // Older scraped rows carry words, not dates; see `repair_published_dates`.
+    if let Err(e) = crate::feed_engine::cleanup::repair_published_dates(db.conn()) {
+        log::warn!("Could not repair feed publish dates: {}", e);
+    }
     query_articles(db.conn(), &filter)
 }
 
@@ -749,7 +757,7 @@ pub(crate) fn query_articles(
                 content_type, is_read, is_starred, is_read_later, tags
          FROM feed_articles a
          {}
-         ORDER BY published_at {}
+         ORDER BY COALESCE(NULLIF(published_at, ''), fetched_at) {}
          LIMIT ?{} OFFSET ?{}",
         LIST_CONTENT_PREVIEW,
         where_clause,

@@ -9,6 +9,7 @@ import { useImageCache } from '../composables/useImageCache';
 import { applyHighlights, findMark, occurrenceOfSelection } from '../composables/useHighlights';
 import type { Highlight } from '../types/feed.types';
 import type { CachedArticle, FeedConfig, FeedSource } from '../types/feed.types';
+import { followLink } from '../../../shared/syn/pane';
 
 const props = defineProps<{
   article: CachedArticle | null;
@@ -28,7 +29,7 @@ const emit = defineEmits<{
   'article-updated': [article: CachedArticle];
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const feedService = useArticleService();
 const imageCache = useImageCache();
 const contentRef = ref<HTMLElement | null>(null);
@@ -256,8 +257,10 @@ const needsExtraction = computed(() => {
 });
 
 const formattedDate = computed(() => {
-  if (!props.article?.publishedAt) return '';
-  return new Date(props.article.publishedAt).toLocaleDateString(undefined, {
+  const at = Date.parse(props.article?.publishedAt ?? '');
+  // No date, or one that cannot be read: say nothing rather than "Invalid Date".
+  if (Number.isNaN(at)) return '';
+  return new Date(at).toLocaleDateString(locale.value, {
     year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
   });
 });
@@ -289,15 +292,8 @@ const openOriginal = () => {
   }
 };
 
-// Open external URLs in default browser
-const openExternal = async (url: string) => {
-  try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    await invoke('open_url', { url });
-  } catch {
-    window.open(url, '_blank');
-  }
-};
+// Links in an article open where every other link does; see `followLink`.
+const openExternal = (url: string) => followLink(url);
 
 // Intercept link clicks in article content
 const handleContentClick = (e: MouseEvent) => {

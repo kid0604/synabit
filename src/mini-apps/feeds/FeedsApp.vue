@@ -9,6 +9,7 @@ import { listen } from '@tauri-apps/api/event';
 import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../composables/useUndoableAction';
+import { confirmDelete } from '../../composables/useConfirmDelete';
 import { showAppNotice } from '../../composables/useAppNotice';
 
 import FeedsSidebar from './components/FeedsSidebar.vue';
@@ -451,7 +452,8 @@ const handleFeedAdded = async () => {
 };
 
 /**
- * Unsubscribing, held back for a few seconds rather than asked about.
+ * Unsubscribing, held back for a few seconds; the only question is the
+ * app-wide "Ask before deleting" (`confirmDelete`).
  *
  * The feed leaves the sidebar (and its articles the list) at once; the real
  * removal happens when the undo window closes. Until then `loadData` keeps it
@@ -480,6 +482,9 @@ const removal = useUndoableAction({
 const handleRemoveSource = async (sourceId: string) => {
   const source = sources.value.find(s => s.id === sourceId);
   const name = source?.title || sourceId;
+  // Not the Trash: the subscription and its cached articles are dropped, so
+  // only the undo brings it back.
+  if (!(await confirmDelete({ name, toTrash: false }))) return;
   setRemovalPending(sourceId, true);
   sources.value = sources.value.filter(s => s.id !== sourceId);
   articles.value = articles.value.filter(a => a.feedSourceId !== sourceId);
@@ -517,6 +522,30 @@ const handleRenameSource = async (sourceId: string, newTitle: string) => {
     await feedService.updateSource(source);
     await loadData();
   }
+};
+
+/**
+ * Put a feed in another category ('' = none), from a drag or the ⋯ menu.
+ * Moving it back is the same gesture, so there is no undo toast — only a line
+ * saying where it went, because a dropped feed vanishes from under the pointer.
+ */
+const handleMoveSource = async (sourceId: string, categoryId: string) => {
+  const source = sources.value.find(s => s.id === sourceId);
+  if (!source || source.categoryId === categoryId) return;
+  const previous = source.categoryId;
+  source.categoryId = categoryId;
+  try {
+    await feedService.updateSource(source);
+    const target = categories.value.find(c => c.id === categoryId);
+    showAppNotice(target
+      ? t('feeds.moved_to', { name: source.title, category: target.name })
+      : t('feeds.moved_out', { name: source.title }));
+  } catch (e) {
+    logger.error('Failed to move feed source', e);
+    source.categoryId = previous;
+    showAppNotice(t('feeds.move_failed'), 'error');
+  }
+  await loadData();
 };
 
 const handleToggleFullText = async (sourceId: string) => {
@@ -830,7 +859,7 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
     <!-- Main Content -->
     <div class="flex-1 flex gap-0 overflow-hidden">
       <template v-if="!useMobileLayout">
-        <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :view-counts="viewCounts" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @rename-source="handleRenameSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" @toggle-full-text="handleToggleFullText" @set-scrape-container="handleSetScrapeContainer" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: sidebarWidth + 'px' }" />
+        <FeedsSidebar :sources="sources" :categories="categories" :unread-counts="unreadCounts" :view-counts="viewCounts" :selected-source-id="selectedSourceId" :selected-category-id="selectedCategoryId" :current-view="currentView" @select-source="handleSelectSource" @select-category="handleSelectCategory" @select-view="handleSelectView" @remove-source="handleRemoveSource" @rename-source="handleRenameSource" @move-source="handleMoveSource" @open-opml="showImportExportModal = true" @pause-source="handlePauseSource" @mark-source-read="handleMarkSourceRead" @toggle-full-text="handleToggleFullText" @set-scrape-container="handleSetScrapeContainer" class="shrink-0 border-r border-border dark:border-border-dark" :style="{ width: sidebarWidth + 'px' }" />
         <div
           class="resize-handle"
           role="separator"
@@ -888,6 +917,7 @@ defineExpose({ openFeedById, openArticleById, currentArticle });
                  @select-view="handleSelectViewMobile" 
                  @remove-source="handleRemoveSource" 
                  @rename-source="handleRenameSource" 
+                 @move-source="handleMoveSource" 
                  @open-opml="showImportExportModal = true" 
                  @pause-source="handlePauseSource" 
                  @mark-source-read="handleMarkSourceRead" @toggle-full-text="handleToggleFullText" @set-scrape-container="handleSetScrapeContainer"

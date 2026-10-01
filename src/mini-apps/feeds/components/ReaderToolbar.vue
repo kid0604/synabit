@@ -72,7 +72,7 @@ const { t } = useI18n();
     </button>
 
     <!-- Quick Capture -->
-    <button @click="emit('quick-capture')" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-purple-600 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all duration-200" :title="t('feeds.quick_capture')">
+    <button @click="emit('quick-capture')" class="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-accent dark:hover:text-accent-dark hover:bg-gray-100 dark:hover:bg-gray-800 transition-all duration-200" :title="t('feeds.quick_capture')">
       <Zap class="w-4 h-4" />
     </button>
 

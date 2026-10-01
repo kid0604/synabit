@@ -28,6 +28,9 @@ const COMMON_FEED_PATHS: &[&str] = &[
 /// 1. Parsing HTML <link> alternate tags
 /// 2. Probing common feed paths
 pub async fn discover_feeds(url: &str) -> Result<Vec<DiscoveredFeed>, String> {
+    // What was typed ("genk.vn"), made into a URL; see `normalize_input_url`.
+    let normalized = super::fetcher::normalize_input_url(url);
+    let url = normalized.as_str();
     super::fetcher::guard_url(url)?;
 
     // Sites whose feed address is derivable from the page address get it

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import { Calendar, Circle, Star, BookmarkPlus, Inbox, ChevronRight, Rss, FileText } from 'lucide-vue-next';
 import type { FeedSource, FeedCategory, ViewCounts, FeedView } from '../types/feed.types';
 import FeedSourceItem from './FeedSourceItem.vue';
+import { FEED_DRAG_TYPE } from '../dragType';
 
 const props = defineProps<{
   sources: FeedSource[];
@@ -26,6 +27,8 @@ const emit = defineEmits<{
   'mark-source-read': [id: string];
   'toggle-full-text': [id: string];
   'set-scrape-container': [id: string, selector: string];
+  /** Move a feed to a category; `''` takes it out of every category. */
+  'move-source': [id: string, categoryId: string];
 }>();
 
 const { t } = useI18n();
@@ -35,6 +38,54 @@ const toggleCategory = (catId: string) => {
   const s = new Set(collapsedCategories.value);
   if (s.has(catId)) s.delete(catId); else s.add(catId);
   collapsedCategories.value = s;
+};
+
+// ── Moving a feed by dragging it onto a category ──────────────────
+//
+// `dropTarget` is the category under the pointer ('' = "Uncategorized"), so
+// only that one lights up. While a feed is being dragged the Uncategorized
+// zone shows even when empty, or there would be nowhere to drop a feed that
+// should belong to no category.
+const draggingId = ref<string | null>(null);
+const dropTarget = ref<string | null>(null);
+
+const draggedCategory = computed(() => props.sources.find(s => s.id === draggingId.value)?.categoryId ?? null);
+
+const accepts = (e: DragEvent, categoryId: string) =>
+  !!e.dataTransfer?.types.includes(FEED_DRAG_TYPE) && categoryId !== (draggedCategory.value ?? '');
+
+const onDragOver = (e: DragEvent, categoryId: string) => {
+  if (!accepts(e, categoryId)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  dropTarget.value = categoryId;
+};
+
+const onDragLeave = (e: DragEvent, categoryId: string) => {
+  const zone = e.currentTarget as HTMLElement;
+  if (dropTarget.value === categoryId && !zone.contains(e.relatedTarget as Node | null)) {
+    dropTarget.value = null;
+  }
+};
+
+const onDrop = (e: DragEvent, categoryId: string) => {
+  const id = e.dataTransfer?.getData(FEED_DRAG_TYPE);
+  dropTarget.value = null;
+  draggingId.value = null;
+  if (!id) return;
+  e.preventDefault();
+  moveSource(id, categoryId);
+};
+
+/** Move, and open the category it went into so the feed can be seen there. */
+const moveSource = (id: string, categoryId: string) => {
+  if (categoryId && collapsedCategories.value.has(categoryId)) toggleCategory(categoryId);
+  emit('move-source', id, categoryId);
+};
+
+const endDrag = () => {
+  draggingId.value = null;
+  dropTarget.value = null;
 };
 
 const uncategorizedSources = computed(() => 
@@ -100,7 +151,15 @@ const smartViews = computed(() => [
       <div class="px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ t('feeds.sources') }}</div>
       
       <!-- Categorized feeds -->
-      <div v-for="cat in categories" :key="cat.id" class="space-y-0.5">
+      <div
+        v-for="cat in categories"
+        :key="cat.id"
+        class="space-y-0.5 rounded-xl transition-colors"
+        :class="dropTarget === cat.id ? 'bg-accent/10 dark:bg-accent-dark/10 ring-2 ring-accent/50 dark:ring-accent-dark/50' : ''"
+        @dragover="onDragOver($event, cat.id)"
+        @dragleave="onDragLeave($event, cat.id)"
+        @drop="onDrop($event, cat.id)"
+      >
         <button
           @click="toggleCategory(cat.id)"
           :class="[
@@ -130,13 +189,28 @@ const smartViews = computed(() => [
             @mark-source-read="emit('mark-source-read', source.id)"
             @toggle-full-text="emit('toggle-full-text', source.id)"
             @set-scrape-container="(selector: string) => emit('set-scrape-container', source.id, selector)"
+            :categories="categories"
+            @move-to="(categoryId: string) => moveSource(source.id, categoryId)"
+            @drag-start="draggingId = source.id"
+            @drag-end="endDrag"
           />
         </div>
       </div>
 
-      <!-- Uncategorized feeds -->
-      <div v-if="uncategorizedSources.length > 0" class="space-y-0.5">
+      <!-- Uncategorized feeds; also where a dragged feed goes to leave its category -->
+      <div
+        v-if="uncategorizedSources.length > 0 || (draggingId && draggedCategory)"
+        class="space-y-0.5 rounded-xl transition-colors"
+        :class="dropTarget === '' ? 'bg-accent/10 dark:bg-accent-dark/10 ring-2 ring-accent/50 dark:ring-accent-dark/50' : ''"
+        @dragover="onDragOver($event, '')"
+        @dragleave="onDragLeave($event, '')"
+        @drop="onDrop($event, '')"
+      >
         <div class="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('feeds.uncategorized') }}</div>
+        <p
+          v-if="draggingId && draggedCategory && uncategorizedSources.length === 0"
+          class="mx-3 mb-1 px-3 py-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 text-xs text-gray-500 dark:text-gray-400 text-center"
+        >{{ t('feeds.drop_to_uncategorize') }}</p>
         <FeedSourceItem
           v-for="source in uncategorizedSources"
           :key="source.id"
@@ -150,6 +224,10 @@ const smartViews = computed(() => [
           @mark-source-read="emit('mark-source-read', source.id)"
           @toggle-full-text="emit('toggle-full-text', source.id)"
           @set-scrape-container="(selector: string) => emit('set-scrape-container', source.id, selector)"
+          :categories="categories"
+          @move-to="(categoryId: string) => moveSource(source.id, categoryId)"
+          @drag-start="draggingId = source.id"
+          @drag-end="endDrag"
         />
       </div>
 

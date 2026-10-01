@@ -4,6 +4,7 @@ import { Star } from 'lucide-vue-next';
 import CachedImage from './CachedImage.vue';
 import type { CachedArticle } from '../types/feed.types';
 import { useI18n } from 'vue-i18n';
+import { cardTime, plainPreview } from '../articleText';
 
 const props = withDefaults(defineProps<{
   article: CachedArticle;
@@ -22,31 +23,14 @@ const props = withDefaults(defineProps<{
 });
 
 const emit = defineEmits<{ select: [] }>();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
-const timeAgo = (dateStr: string): string => {
-  if (!dateStr) return '';
-  const now = Date.now();
-  const then = new Date(dateStr).getTime();
-  const diff = now - then;
-  const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return 'just now';
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  const weeks = Math.floor(days / 7);
-  if (weeks < 4) return `${weeks}w`;
-  return new Date(dateStr).toLocaleDateString();
-};
+/** "5 phút trước", or the date; nothing when the feed gave none. */
+const timeAgo = (dateStr: string): string => cardTime(dateStr, locale.value);
 
-const displaySummary = computed(() => {
-  const text = props.article.summary || props.article.content || '';
-  // Strip HTML tags and truncate
-  const clean = text.replace(/<[^>]*>/g, '').trim();
-  return clean.length > 120 ? clean.substring(0, 120) + '...' : clean;
-});
+const displaySummary = computed(() =>
+  plainPreview(props.article.summary || props.article.content || ''),
+);
 </script>
 
 <template>
@@ -82,15 +66,17 @@ const displaySummary = computed(() => {
       <p v-if="displaySummary" class="text-xs text-gray-500 dark:text-gray-400 line-clamp-2 mb-1.5">{{ displaySummary }}</p>
       <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span class="truncate max-w-[120px]">{{ sourceName }}</span>
-        <span>·</span>
-        <span>{{ timeAgo(article.publishedAt) }}</span>
+        <template v-if="timeAgo(article.publishedAt)">
+          <span aria-hidden="true">·</span>
+          <span class="shrink-0 whitespace-nowrap">{{ timeAgo(article.publishedAt) }}</span>
+        </template>
         <span
           v-for="tag in article.tags"
           :key="tag"
           class="px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 shrink-0"
         >{{ tag }}</span>
-        <span v-if="article.readTimeMinutes">·</span>
-        <span v-if="article.readTimeMinutes">{{ article.readTimeMinutes }} {{ t('feeds.read_time_min') }}</span>
+        <span v-if="article.readTimeMinutes" aria-hidden="true">·</span>
+        <span v-if="article.readTimeMinutes" class="shrink-0 whitespace-nowrap">{{ article.readTimeMinutes }} {{ t('feeds.read_time_min') }}</span>
         <Star v-if="article.isStarred" class="w-3 h-3 text-yellow-500 fill-yellow-500 ml-auto shrink-0" />
       </div>
     </div>
@@ -141,8 +127,10 @@ const displaySummary = computed(() => {
       </div>
       <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-auto">
         <span class="truncate max-w-[100px]">{{ sourceName }}</span>
-        <span>·</span>
-        <span>{{ timeAgo(article.publishedAt) }}</span>
+        <template v-if="timeAgo(article.publishedAt)">
+          <span aria-hidden="true">·</span>
+          <span class="shrink-0 whitespace-nowrap">{{ timeAgo(article.publishedAt) }}</span>
+        </template>
       </div>
     </div>
   </div>

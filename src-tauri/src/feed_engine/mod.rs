@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod cleanup;
+pub mod dates;
 pub mod discovery;
 pub mod fetcher;
 pub mod image_cache;

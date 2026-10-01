@@ -204,8 +204,10 @@ fn extract_article_card(
     // Extract summary
     let summary = extract_summary(container, &title);
 
-    // Extract date
-    let published_at = extract_date(container);
+    // Extract date — normalised, because the page's own words ("21' trước",
+    // an author's name in a "date" class) are not a date; see `dates.rs`.
+    let published_at =
+        super::dates::normalize_published(&extract_date(container), chrono::Utc::now());
 
     // Require title + at least 1 more signal to reduce false positives
     let signals = [

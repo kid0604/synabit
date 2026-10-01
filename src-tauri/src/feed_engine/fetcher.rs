@@ -106,6 +106,33 @@ pub enum FetchResult {
     },
 }
 
+/// What a person typed into "Add feed", as a URL the fetcher can use.
+///
+/// People type the site, not the protocol: "genk.vn", "www.genk.vn/rss".
+/// `url::Url` reads a scheme-less string as a relative URL and refuses it
+/// ("relative URL without a base"), and that raw message reached the screen.
+/// So a missing scheme becomes https — which every site worth following
+/// serves, and which redirects to http for the few that do not — and a
+/// protocol-relative "//genk.vn" gets the same. Anything that already names a
+/// scheme is left alone, so `guard_url` still refuses "file:" and friends.
+pub fn normalize_input_url(input: &str) -> String {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix("//") {
+        return format!("https://{rest}");
+    }
+    let has_scheme = trimmed
+        .split_once("://")
+        .is_some_and(|(scheme, _)| !scheme.is_empty() && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')));
+    if has_scheme || trimmed.starts_with("mailto:") || trimmed.starts_with("file:") {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    }
+}
+
 /// Reject a URL this app should not be fetching on someone's behalf.
 ///
 /// A feed URL is typed by a person, or comes out of an OPML file they were
@@ -334,6 +361,24 @@ pub async fn fetch_feed(url: &str, etag: Option<&str>, last_modified: Option<&st
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_bare_domain_becomes_an_https_url() {
+        assert_eq!(normalize_input_url("genk.vn"), "https://genk.vn");
+        assert_eq!(normalize_input_url("  www.genk.vn/rss  "), "https://www.genk.vn/rss");
+        assert_eq!(normalize_input_url("//genk.vn/feed"), "https://genk.vn/feed");
+        assert!(guard_url(&normalize_input_url("genk.vn")).is_ok());
+    }
+
+    #[test]
+    fn a_url_that_names_its_scheme_is_left_alone() {
+        assert_eq!(normalize_input_url("http://example.com/rss"), "http://example.com/rss");
+        assert_eq!(normalize_input_url("https://genk.vn"), "https://genk.vn");
+        // Still refused later by guard_url, not quietly turned into https.
+        assert_eq!(normalize_input_url("file:///etc/passwd"), "file:///etc/passwd");
+        assert!(guard_url(&normalize_input_url("file:///etc/passwd")).is_err());
+    }
+
     use super::*;
 
     #[test]

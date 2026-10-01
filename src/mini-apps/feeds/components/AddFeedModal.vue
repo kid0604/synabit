@@ -6,6 +6,7 @@ import AppDialog from '../../../shared/components/AppDialog.vue';
 import { X, Search, Rss, Plus, Loader2, Check, FolderPlus, Globe } from 'lucide-vue-next';
 import { useArticleService } from '../composables/useArticleService';
 import type { FeedCategory, DiscoveredFeed } from '../types/feed.types';
+import { feedErrorKey } from '../feedErrors';
 
 const props = defineProps<{
   categories: FeedCategory[];
@@ -60,7 +61,8 @@ const handleDiscover = async () => {
     }
     discoveryDone.value = true;
   } catch (e: any) {
-    error.value = typeof e === 'string' ? e : (e?.message || t('feeds.no_feeds_found'));
+    const { key, params } = feedErrorKey(e, 'feeds.no_feeds_found');
+    error.value = t(key, params ?? {});
     discoveryDone.value = true;
   } finally {
     discovering.value = false;
@@ -108,7 +110,8 @@ const handleAdd = async () => {
     }
     emit('added');
   } catch (e: any) {
-    error.value = typeof e === 'string' ? e : (e?.message || t('feeds.add_failed'));
+    const { key, params } = feedErrorKey(e, 'feeds.add_failed');
+    error.value = t(key, params ?? {});
   } finally {
     adding.value = false;
   }

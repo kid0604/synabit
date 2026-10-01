@@ -42,7 +42,8 @@ pub fn extract_content(html: &str, base_url: &str) -> ReadabilityResult {
     // 1. Extract metadata from <head>
     let title = extract_meta_title(&document);
     let author = extract_meta_author(&document);
-    let published_at = extract_meta_date(&document);
+    let published_at =
+        super::dates::normalize_published(&extract_meta_date(&document), chrono::Utc::now());
     let thumbnail_url = extract_meta_image(&document, base_url);
 
     // 2. Find the main content element
