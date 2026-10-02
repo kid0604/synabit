@@ -11,6 +11,8 @@ pub mod pane;
 pub mod consent;
 pub mod correction;
 pub mod engine;
+#[cfg(any(test, feature = "eval"))]
+pub mod eval;
 pub mod focus;
 pub mod gate;
 pub mod footing;

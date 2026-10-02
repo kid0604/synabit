@@ -141,12 +141,18 @@ fn cached() -> std::sync::MutexGuard<'static, Option<Option<bool>>> {
 /// before the switch moved — and is asked again next time. Treating it as
 /// "off" would let a dismissed keychain dialog switch it off; treating it as
 /// "on" would change every adult's answers whenever the keychain is slow.
-pub fn is_on(app: Option<&tauri::AppHandle>, vault: bool) -> bool {
+pub fn is_on<R: tauri::Runtime>(app: Option<&tauri::AppHandle<R>>, vault: bool) -> bool {
+    // A headless runtime — the eval harness — is no device, and must not read
+    // or write this machine's keychain on the way past. The vault's flag is
+    // what it has.
+    if app.is_some_and(|a| crate::secrets::concrete(a).is_none()) {
+        return vault;
+    }
     let local = {
         let mut slot = cached();
         match *slot {
             Some(local) => local,
-            None => match crate::secrets::SecretManager::try_family_safe(app) {
+            None => match crate::secrets::SecretManager::try_family_safe(app.and_then(crate::secrets::concrete)) {
                 Ok(local) => {
                     *slot = Some(local);
                     local
@@ -160,7 +166,7 @@ pub fn is_on(app: Option<&tauri::AppHandle>, vault: bool) -> bool {
     };
     let resolved = resolve(local, vault);
     if resolved.carry_across {
-        match crate::secrets::SecretManager::set_family_safe(app, true) {
+        match crate::secrets::SecretManager::set_family_safe(app.and_then(crate::secrets::concrete), true) {
             Ok(()) => *cached() = Some(Some(true)),
             Err(e) => log::warn!("[Syn] Could not carry family-safe across from the vault: {e}"),
         }

@@ -168,6 +168,8 @@ tauri = { version = "2", features = ["test"] }
 
 [features]
 default = []
+# The agent eval harness, built outside `cargo test` too. See `syn::eval`.
+eval = ["tauri/test"]
 
 [profile.dev]
 debug = 1

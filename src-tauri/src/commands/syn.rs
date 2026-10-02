@@ -44,10 +44,10 @@ const KEYCHAIN_PATIENCE: std::time::Duration = std::time::Duration::from_secs(8)
 /// a blocked thread must not become a blocked command. Answering `None` is the
 /// honest outcome: without a key the provider reports "not connected", which
 /// is a screen the user can act on, rather than a spinner that never resolves.
-pub(crate) async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> Option<String> {
+pub(crate) async fn api_key_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>, slot: &'static str) -> Option<String> {
     let handle = app.clone();
     let read = tokio::task::spawn_blocking(move || {
-        crate::secrets::SecretManager::get_syn_api_key(Some(&handle), slot)
+        crate::secrets::SecretManager::get_syn_api_key(crate::secrets::concrete(&handle), slot)
     });
 
     match tokio::time::timeout(KEYCHAIN_PATIENCE, read).await {
@@ -68,7 +68,13 @@ pub(crate) async fn api_key_for(app: &tauri::AppHandle, slot: &'static str) -> O
     }
 }
 
-pub(crate) async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings) -> Box<dyn ChatProvider> {
+pub(crate) async fn provider_for<R: tauri::Runtime>(app: &tauri::AppHandle<R>, settings: &SynSettings) -> Box<dyn ChatProvider> {
+    // The eval harness answers with the model it is measuring, keyed from its
+    // own environment rather than this machine's keychain. See `syn::eval`.
+    #[cfg(any(test, feature = "eval"))]
+    if let Some(provider) = crate::syn::eval::provider_override(settings) {
+        return provider;
+    }
     // Ollama has no key, and the keychain is not asked for one: a read can wait
     // on a macOS permission dialog, and nothing should wait on that for a
     // provider that would ignore the answer.
@@ -86,7 +92,7 @@ pub(crate) async fn provider_for(app: &tauri::AppHandle, settings: &SynSettings)
 /// vault written before the file existed still carries, and is moved into the
 /// file the first time this runs. Two sources for one thing is how they drift,
 /// so this is the only place either is read. See `syn::instructions`.
-fn standing_instructions(app: &tauri::AppHandle, vault_path: &str, settings: &SynSettings) -> Option<String> {
+fn standing_instructions<R: tauri::Runtime>(app: &tauri::AppHandle<R>, vault_path: &str, settings: &SynSettings) -> Option<String> {
     if let Some(from_settings) = settings.custom_system_prompt.as_deref() {
         crate::syn::instructions::migrate(vault_path, from_settings);
     }
@@ -370,8 +376,8 @@ pub async fn syn_send_message(
 /// The database and the browsing slot are taken from the app handle rather
 /// than passed in, because a caller that is not a command — a bot polling in
 /// the background — has no `State` to pass.
-pub async fn send_message_inner(
-    app: &tauri::AppHandle,
+pub async fn send_message_inner<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     vault_path: &str,
     request: SynChatRequest,
     surface: crate::syn::surface::Surface,
@@ -658,8 +664,8 @@ struct Gathered {
 }
 
 /// Step 4: retrieval, memory, skills, the thread, the count and the timeline.
-fn gather(
-    app: &tauri::AppHandle,
+fn gather<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &crate::db::DbState,
     vault_path: &str,
     settings: &SynSettings,
@@ -799,8 +805,8 @@ fn gather(
 /// already been built. They are a section of the plan now, so there is one
 /// place that knows what the prompt is made of — and one place that can report
 /// on it, which is what `syn_preview_prompt` reads.
-fn messages_for(
-    app: &tauri::AppHandle,
+fn messages_for<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     vault_path: &str,
     settings: &SynSettings,
     request: &SynChatRequest,
@@ -889,8 +895,8 @@ const PLAN_FIRST: &str = "\n\n[Plan first. Look at whatever you need, then write
 /// the app being closed, which the local variables it replaced did not — so a
 /// request that fails now leaves something to read rather than nothing at all.
 #[allow(clippy::too_many_arguments)]
-fn start_run(
-    app: &tauri::AppHandle,
+fn start_run<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     vault_path: &str,
     settings: &SynSettings,
     request: &SynChatRequest,
@@ -911,7 +917,12 @@ fn start_run(
     // `run::Run::pending_call` for the transcript that made this necessary.
     let resume_call = stopped.as_ref().and_then(|s| s.pending_call.clone());
 
-    let mut run = Run::new(question.to_string(), Some(request.conversation_id.clone()), budget);
+    // The goal is the question as typed, and the run is written to
+    // `Syn/runs`, which syncs. A password in it is hidden the way
+    // `save_conversation` hides it in the conversation — the model never sees
+    // it either (`provider::guarded`), so nothing here needs the real text.
+    let (goal, _) = crate::safe::bridge::redact(question);
+    let mut run = Run::new(goal, Some(request.conversation_id.clone()), budget);
     run.tempo = if instant {
         crate::syn::tempo::Tempo::Instant
     } else {
@@ -1130,8 +1141,8 @@ async fn write_turn(
 /// of anything, and reflecting on one would propose memories drawn from work
 /// the user stopped.
 #[allow(clippy::too_many_arguments)]
-async fn reflect_after(
-    app: &tauri::AppHandle,
+async fn reflect_after<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &crate::db::DbState,
     vault_path: &str,
     settings: &SynSettings,
@@ -1621,8 +1632,8 @@ pub async fn syn_run_routine_now(
 ///
 /// `author: syn` so the screen can say where it came from, and `version: 1` so
 /// the first edit somebody makes is a version they can roll back from.
-fn write_suggested_skill(
-    app: &tauri::AppHandle,
+fn write_suggested_skill<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     vault_path: &str,
     draft: &crate::syn::reflect::SkillDraft,
     chain: &[String],
@@ -1678,8 +1689,8 @@ fn write_suggested_skill(
 /// it went wrong — so writing the new steps in would change behaviour the
 /// moment they were written, which is an agent editing its own live procedure
 /// while nobody is looking. It waits here until a person has read both.
-fn stage_revision(
-    app: &tauri::AppHandle,
+fn stage_revision<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     vault_path: &str,
     skill_id: &str,
     draft: &crate::syn::reflect::RevisionDraft,
@@ -3056,7 +3067,11 @@ pub async fn syn_delete_conversation(
     vault_path: String,
     conversation_id: String,
 ) -> Result<(), AppError> {
-    conversation::delete_conversation(&vault_path, &conversation_id)
+    conversation::delete_conversation(&vault_path, &conversation_id)?;
+    // And what its turns did. See `run::delete_runs_of`.
+    let gone = crate::syn::run::delete_runs_of(&vault_path, &conversation_id)?;
+    log::info!("[Syn] Deleted {gone} run(s) of conversation {conversation_id}");
+    Ok(())
 }
 
 /// Rename a conversation.

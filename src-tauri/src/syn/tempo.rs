@@ -105,6 +105,9 @@ const COUNTING: &[&str] = &[
 /// "how many tasks" almost always means the ones that are not done, and getting
 /// it wrong is the difference between 4 and 126 — a number the doc comment on
 /// `node_query.rs` records the assistant getting wrong in production.
+/// Words that ask for something to be found, not counted.
+const LOOKING: &[&str] = &["tìm", "kiếm", "tra ", "find", "search", "look for", "look up"];
+
 const UNFINISHED: &[&str] = &[
     "chưa xong",
     "chưa làm",
@@ -182,6 +185,12 @@ fn type_named<'a>(text: &str, types: &'a [String]) -> Option<&'a str> {
 /// have, and `syn_memory` is Syn's own bookkeeping.
 pub fn of(message: &str, types: &[String]) -> Option<Instant> {
     let text = normalised(message);
+    // Asked to look for something, it is not a count, whatever numbers it
+    // mentions: "tìm trong folder xem có bao nhiêu file dmg" wants the files
+    // found and read, and the fast path has no tools to find them with.
+    if LOOKING.iter().any(|word| text.contains(word)) {
+        return None;
+    }
     let Some(counted_from) = counting_starts_at(&text) else {
         return None;
     };
@@ -290,6 +299,14 @@ pub fn block(instant: &Instant, total: usize, sample: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asked_to_find_something_is_not_a_count() {
+        let types = vec!["file".to_string(), "task".to_string()];
+        assert!(of("tìm trong folder xem có bao nhiêu file dmg", &types).is_none());
+        assert!(of("find how many tasks mention the launch", &types).is_none());
+        assert!(of("bao nhiêu task chưa xong", &types).is_some(), "a plain count still is");
+    }
 
     #[test]
     fn a_number_asked_for_at_the_end_is_not_a_count_of_anything() {
@@ -442,7 +459,7 @@ mod tests {
             "an instant turn is offered no tools"
         );
         let start_run = source
-            .split("fn start_run(")
+            .split("fn start_run<")
             .nth(1)
             .expect("the run is still built in start_run")
             .split("\n}\n")

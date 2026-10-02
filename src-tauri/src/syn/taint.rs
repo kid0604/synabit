@@ -369,6 +369,53 @@ impl Destinations {
     }
 }
 
+/// Whether a `browse` call can be made without asking: it can carry nothing
+/// out of the vault.
+///
+/// The same judgement `Destinations::may_visit` makes for a run that has read
+/// a page, applied before any page has been read, plus the two cases that
+/// need no list at all:
+///
+/// * **A search, a link's number, `more`, a heading.** No address is written;
+///   the words go to the search engine, or the link was the page's own.
+/// * **An address with no room in it** — a front page, a path shorter than
+///   `AUTHORED_PATH_MIN`. Data needs somewhere to go.
+/// * **A link seen in something read, or a host the person named.**
+///
+/// What is left is an address on a host nobody named, with a path or query
+/// long enough to hold something: the shape an exfiltration has, and the one
+/// worth a question, whoever suggested it — a note in the vault can be
+/// somebody else's words too.
+pub fn browse_carries_nothing(args: &serde_json::Value, reach: &Destinations) -> bool {
+    use crate::syn::browser;
+    let what = args.get("what").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let site = args.get("site").and_then(|v| v.as_str()).unwrap_or("").trim();
+
+    let address = if !site.is_empty() && !browser::looks_like_a_url(what) {
+        match browser::page_on(site, what).or_else(|| browser::address_of(site)) {
+            Some(address) => address,
+            // A site that is a name, not a domain: it is searched for.
+            None => return true,
+        }
+    } else {
+        match browser::address_of(what) {
+            Some(address) => address,
+            None => return true,
+        }
+    };
+
+    if reach.may_visit(&address) {
+        return true;
+    }
+    let room = url::Url::parse(&address)
+        .map(|u| {
+            let path = u.path().trim_end_matches('/').len();
+            path + u.query().map_or(0, |q| q.len() + 1) + u.fragment().map_or(0, |f| f.len() + 1)
+        })
+        .unwrap_or(usize::MAX);
+    room < AUTHORED_PATH_MIN
+}
+
 fn strings_in(value: &serde_json::Value, out: &mut Vec<String>) {
     match value {
         serde_json::Value::String(s) => out.push(s.clone()),
@@ -428,6 +475,28 @@ fn urls_in(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_browse_can_do_without_asking() {
+        let reach = Destinations::from_user_words(["check https://this-week-in-rust.org please"]);
+        let free = |args: serde_json::Value| browse_carries_nothing(&args, &reach);
+        assert!(free(serde_json::json!({ "what": "rust async news" })), "a search");
+        assert!(free(serde_json::json!({ "what": "more" })), "reading on");
+        assert!(free(serde_json::json!({ "what": "2" })), "a link offered");
+        assert!(free(serde_json::json!({ "what": "newest", "site": "GenK" })), "a name is searched for");
+        assert!(free(serde_json::json!({ "what": "newest", "site": "genk.vn" })), "a front page");
+        assert!(free(serde_json::json!({ "what": "https://example.com/about" })), "too short to hold data");
+        assert!(
+            free(serde_json::json!({ "what": "https://this-week-in-rust.org/blog/2026/09/30/this-week-in-rust-667/" })),
+            "a named host, any path"
+        );
+        assert!(!free(serde_json::json!({ "what": "https://x.example/?d=1234-5678" })), "room for data");
+        assert!(!free(serde_json::json!({ "what": "/p/aGVsbG8gd29y", "site": "x.example" })), "room on a site");
+
+        let mut seen = Destinations::default();
+        seen.note_seen_in("see https://news.example/2026/10/long-story-slug");
+        assert!(browse_carries_nothing(&serde_json::json!({ "what": "https://news.example/2026/10/long-story-slug" }), &seen));
+    }
 
     #[test]
     fn nothing_that_alters_existing_work_survives_a_read() {

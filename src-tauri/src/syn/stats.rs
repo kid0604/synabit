@@ -229,7 +229,16 @@ pub struct Period {
     pub by_surface: BTreeMap<String, u32>,
     pub rounds: Rounds,
     /// By `RunState` name, every state present.
+    ///
+    /// A run that stopped to ask and was answered is not counted here: it did
+    /// not end, the next run carried its work on. It used to be, so a month of
+    /// questions answered in six seconds read as a month of abandoned work.
     pub ended: BTreeMap<String, u32>,
+    /// Runs that stopped to ask permission or which-one, answered or not.
+    /// "Asks per run" is the friction the gate's rules cost.
+    pub asked: u32,
+    /// Of those, how many were answered and carried on.
+    pub carried_on: u32,
     /// Of the runs that ended `budget_exhausted`, which ceiling: `iterations`,
     /// `tool_calls`, `tokens`, `wall_ms`, or `unknown`. See `ceiling_of`.
     pub ceilings: BTreeMap<String, u32>,
@@ -342,7 +351,14 @@ fn period(runs: &[Run]) -> Period {
     let mut retrieval_total = 0u64;
     for run in runs {
         *out.by_surface.entry(name_of(&run.surface)).or_default() += 1;
-        *out.ended.entry(name_of(&run.state)).or_default() += 1;
+        if matches!(run.state, RunState::AwaitingConsent | RunState::AwaitingChoice) {
+            out.asked += 1;
+        }
+        if run.carried_on_at.is_some() {
+            out.carried_on += 1;
+        } else {
+            *out.ended.entry(name_of(&run.state)).or_default() += 1;
+        }
         out.rounds.count(run.spent.iterations);
         if let Some(which) = ceiling_of(run) {
             *out.ceilings.entry(which.to_string()).or_default() += 1;
@@ -571,6 +587,19 @@ mod tests {
             (r.none, r.one, r.two, r.three_to_five, r.six_to_ten, r.over_ten),
             (1, 1, 1, 2, 2, 2)
         );
+    }
+
+    #[test]
+    fn a_question_answered_and_carried_on_is_not_an_ending() {
+        let mut asked = run_at("2026-09-25T10:00:00Z");
+        asked.state = RunState::AwaitingConsent;
+        asked.carried_on_at = Some("2026-09-25T10:00:06Z".into());
+        let mut waiting = run_at("2026-09-25T11:00:00Z");
+        waiting.state = RunState::AwaitingConsent;
+        let s = stats(&[asked, waiting], now()).recent;
+        assert_eq!(s.asked, 2);
+        assert_eq!(s.carried_on, 1);
+        assert_eq!(s.ended.get("awaiting_consent"), Some(&1), "only the one nobody answered");
     }
 
     #[test]

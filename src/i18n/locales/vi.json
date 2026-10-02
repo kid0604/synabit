@@ -3468,6 +3468,7 @@
     "stats_rounds_six_to_ten": "6–10",
     "stats_rounds_over_ten": "Hơn 10",
     "stats_ended_title": "Các lượt kết thúc thế nào",
+    "stats_asked": "Đã dừng để hỏi {asked} lần — {per100} lần trên 100 lượt. {carried} lần đã được trả lời và làm tiếp, nên không tính là kết thúc ở trên.",
     "stats_ended_why": "Mọi kết thúc khác “xong” đều đáng xem. Nhiều lượt bị cắt ngang nghĩa là giới hạn quá chặt hoặc Syn đang đi vòng.",
     "stats_ceiling_title": "Giới hạn nào đã cắt ngang",
     "stats_ceiling_why": "Mục tiêu là dưới 10% tổng số lượt. Nếu “Không xác định được” tăng dần, câu ghi chú Syn để lại khi dừng đã đổi cách viết và phép đếm này cần sửa.",

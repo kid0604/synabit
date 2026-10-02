@@ -217,6 +217,10 @@ onMounted(load);
             </tbody>
           </table>
 
+          <p v-if="period.asked" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('syn.stats_asked', { asked: num(period.asked), per100: num(Math.round((period.asked / Math.max(1, period.runs)) * 100)), carried: num(period.carried_on ?? 0) }) }}
+          </p>
+
           <h4 class="mt-5 text-xs font-medium text-text dark:text-text-dark">{{ t('syn.stats_ceiling_title') }}</h4>
           <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.stats_ceiling_why') }}</p>
           <p v-if="!stoppedByCeiling" class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.stats_ceiling_none') }}</p>

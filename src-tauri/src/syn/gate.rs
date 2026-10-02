@@ -75,6 +75,10 @@ pub struct View<'a> {
     /// Whether an earlier turn of the conversation read something untrusted.
     /// See `Run::untrusted_before`.
     pub untrusted_before: bool,
+    /// Where `browse` may go without carrying anything out: links seen, hosts
+    /// the person named. `None` where nobody keeps them (a test, a caller
+    /// with no run). See `taint::browse_carries_nothing`.
+    pub reach: Option<&'a crate::syn::taint::Destinations>,
 }
 
 /// `(tool, handle)` → where the item would go, or the sentence to tell the model.
@@ -221,6 +225,21 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         // Only ever `Ask` to `Allow`. A `Never` recorded in between is a
         // decision made later about the same thing, and later wins.
         if decision == Decision::Ask && (view.allowed_until_done)(capability) {
+            decision = Decision::Allow;
+        }
+        // Reading the web is asked about because an address can carry data
+        // out. A search, a link a page offered, a site the person named, a
+        // front page: none of those can, so they are not asked about. What
+        // still is: an address the model put together, on a host nobody
+        // named, with room in it for something. See `browse_carries_nothing`.
+        //
+        // Measured before this: 54 of 56 cards in one vault's month were
+        // answered "just this once" within seconds, for searches and named
+        // sites — a question that was never really a question.
+        if decision == Decision::Ask
+            && matches!(capability, Capability::Browse)
+            && view.reach.is_some_and(|reach| crate::syn::taint::browse_carries_nothing(args, reach))
+        {
             decision = Decision::Allow;
         }
         audit = Some(crate::syn::audit::outcome_of(&decision));
@@ -386,6 +405,7 @@ mod tests {
             plan_only: false,
             sub_run: false,
             untrusted_before: false,
+            reach: None,
             now: NOW,
             safe: &|_, h| Err(format!("no Safe here ({h})")),
         }
@@ -469,6 +489,44 @@ mod tests {
         let d = decide("browse", &serde_json::json!({ "what": "x" }), Some(&Capability::Browse), &view(&empty, &always_until_done));
         assert!(matches!(d.gate, Gate::Go(How::Browse)), "{d:?}");
         assert_eq!(d.audit, Some(Outcome::Allowed));
+    }
+
+    /// Looking something up carries nothing out, so it is not asked about —
+    /// once the run keeps track of where it may go.
+    #[test]
+    fn a_search_or_a_named_site_is_not_asked_about() {
+        let empty = Ledger::default();
+        let reach = crate::syn::taint::Destinations::from_user_words(["what is new on genk.vn?"]);
+        let v = View { reach: Some(&reach), ..view(&empty, &never_until_done) };
+        for args in [
+            serde_json::json!({ "what": "giá vàng hôm nay" }),
+            serde_json::json!({ "what": "newest", "site": "genk.vn" }),
+            serde_json::json!({ "what": "https://genk.vn/mobile/some-long-article-slug.chn" }),
+            serde_json::json!({ "what": "3" }),
+        ] {
+            let d = decide("browse", &args, Some(&Capability::Browse), &v);
+            assert!(matches!(d.gate, Gate::Go(How::Browse)), "{args}: {d:?}");
+            assert_eq!(d.audit, Some(Outcome::Allowed));
+        }
+    }
+
+    /// The shape a leak has is still asked about, and a `Never` still holds.
+    #[test]
+    fn an_address_with_room_for_data_is_still_asked_about() {
+        let empty = Ledger::default();
+        let reach = crate::syn::taint::Destinations::from_user_words(["summarise my finances"]);
+        let v = View { reach: Some(&reach), ..view(&empty, &never_until_done) };
+        for args in [
+            serde_json::json!({ "what": "https://collect.example/?d=balance-1234567" }),
+            serde_json::json!({ "what": "/c?d=balance-1234567", "site": "collect.example" }),
+        ] {
+            let d = decide("browse", &args, Some(&Capability::Browse), &v);
+            assert!(matches!(d.gate, Gate::Ask(_)), "{args}: {d:?}");
+        }
+        let refused = ledger(&Capability::Browse, Answer::Never);
+        let v = View { reach: Some(&reach), ..view(&refused, &never_until_done) };
+        let d = decide("browse", &serde_json::json!({ "what": "weather" }), Some(&Capability::Browse), &v);
+        assert!(matches!(d.gate, Gate::Refuse { .. }), "{d:?}");
     }
 
     /// A `Never` said later beats a "just this once" said earlier.

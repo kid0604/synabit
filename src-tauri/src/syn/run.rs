@@ -1535,6 +1535,42 @@ fn forget_results(dir: &Path, id: &str) {
     }
 }
 
+/// Remove every run a conversation made, with what each one read.
+///
+/// Deleting a conversation used to remove its file and nothing else. Its runs
+/// — the question as typed, every tool call, every note and page read in full
+/// under `results/` — stayed in `Syn/runs`, kept syncing to every device, and
+/// went only when two hundred newer runs pushed them out. "Delete" has to mean
+/// the words are gone, so the runs go with it, and the helpers those runs
+/// started (which carry no conversation of their own, only a parent) go too.
+///
+/// Returns how many runs were removed.
+pub fn delete_runs_of(vault_path: &str, conversation_id: &str) -> AppResult<usize> {
+    let runs = load_all(vault_path)?;
+    let mut doomed: std::collections::HashSet<String> = runs
+        .iter()
+        .filter(|r| r.conversation_id.as_deref() == Some(conversation_id))
+        .map(|r| r.id.clone())
+        .collect();
+    // Helpers of helpers are not made today, but a chain is cheap to follow.
+    loop {
+        let more: Vec<String> = runs
+            .iter()
+            .filter(|r| !doomed.contains(&r.id))
+            .filter(|r| r.parent_run_id.as_ref().is_some_and(|p| doomed.contains(p)))
+            .map(|r| r.id.clone())
+            .collect();
+        if more.is_empty() {
+            break;
+        }
+        doomed.extend(more);
+    }
+    for id in &doomed {
+        delete_run(vault_path, id)?;
+    }
+    Ok(doomed.len())
+}
+
 pub fn delete_run(vault_path: &str, id: &str) -> AppResult<()> {
     let dir = runs_dir(vault_path)?;
     forget_results(&dir, id);
@@ -1557,6 +1593,29 @@ fn tests_budget() -> Budget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_a_conversation_takes_its_runs_and_their_helpers() {
+        let vault = tempfile::TempDir::new().unwrap();
+        let v = vault.path().to_str().unwrap();
+        let mut mine = Run::new("q", Some("conv-a".into()), tests_budget());
+        let long = "x".repeat(MAX_STEP_PREVIEW + 10);
+        mine.record_tool(1, "read_file_text", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, &long, 1);
+        let mut helper = Run::new("look it up", None, tests_budget());
+        helper.parent_run_id = Some(mine.id.clone());
+        let other = Run::new("q", Some("conv-b".into()), tests_budget());
+        for r in [&mine, &helper, &other] {
+            save_run(v, r).unwrap();
+        }
+        let results = vault.path().join("Syn/runs/results").join(format!("{}.json", mine.id));
+        assert!(results.exists(), "the long result should have been kept apart");
+
+        assert_eq!(delete_runs_of(v, "conv-a").unwrap(), 2);
+
+        let left: Vec<String> = load_all(v).unwrap().into_iter().map(|r| r.id).collect();
+        assert_eq!(left, vec![other.id.clone()]);
+        assert!(!results.exists(), "what the run read must go with it");
+    }
 
     #[test]
     fn a_plan_is_read_from_what_the_model_sent() {

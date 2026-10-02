@@ -1031,7 +1031,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "recall".to_string(),
-                description: "Search what you remember. Rarely needed — it is in your prompt; use it when some was left out, or to filter.".to_string(),
+                description: "Search what you remember about the user — preferences, facts, corrections. Your prompt shows only a few; search here before saying you do not know something about them.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {

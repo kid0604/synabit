@@ -325,6 +325,10 @@ export interface StatsPeriod {
   by_surface: Partial<Record<RunSurface, number>>;
   rounds: RoundBuckets;
   ended: Partial<Record<RunState, number>>;
+  /** Runs that stopped to ask permission or which-one, answered or not. */
+  asked?: number;
+  /** Of those, answered and carried on by the next run — not counted in `ended`. */
+  carried_on?: number;
   ceilings: Partial<Record<CeilingKind, number>>;
   tools: ToolFiring[];
   memory: {

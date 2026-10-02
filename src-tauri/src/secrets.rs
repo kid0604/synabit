@@ -213,6 +213,17 @@ fn android_secure_store_class<'local>(
     Ok(jni::objects::JClass::from(class))
 }
 
+/// The app's own handle, when `app` is one.
+///
+/// The secret store takes the concrete handle because on Android it needs the
+/// app's data directory and keystore. Code that is generic over the runtime —
+/// so that it can also be driven headlessly, by the eval harness — reaches the
+/// store through this: the real app gets its handle back, and anything else
+/// gets `None`, which on desktop is what the store ignores anyway.
+pub fn concrete<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<&tauri::AppHandle> {
+    (app as &dyn std::any::Any).downcast_ref::<tauri::AppHandle>()
+}
+
 pub struct SecretManager;
 
 impl SecretManager {

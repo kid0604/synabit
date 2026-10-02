@@ -3468,6 +3468,7 @@
     "stats_rounds_six_to_ten": "6–10",
     "stats_rounds_over_ten": "More than 10",
     "stats_ended_title": "How runs ended",
+    "stats_asked": "Stopped to ask {asked} times — {per100} per 100 runs. {carried} were answered and carried on, so they are not counted as endings above.",
     "stats_ended_why": "Anything but done is worth a look. Many runs cut short means the limits are too tight or Syn is going round in circles.",
     "stats_ceiling_title": "Which limit cut a run short",
     "stats_ceiling_why": "The target is under 10% of all runs. If “Could not tell” starts growing, the note Syn leaves when it stops has changed wording and this count needs fixing.",

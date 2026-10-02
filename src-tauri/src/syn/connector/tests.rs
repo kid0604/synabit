@@ -248,6 +248,7 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         plan_only: false,
         sub_run: false,
         untrusted_before: false,
+        reach: None,
         now: "2026-09-27T10:00:00+00:00",
         safe: &|_, h| Err(format!("no Safe item `{h}` in this test")),
     }

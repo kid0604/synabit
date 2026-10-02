@@ -166,10 +166,11 @@ fn cues(group: &Group) -> &'static [&'static str] {
         Group::Files => &[
             "file", "files", "tệp", "pdf", "docx", "word", "excel", "xlsx", "xls", "csv", "ods",
             "bảng tính", "spreadsheet", "tài liệu", "document", "attachment", "đính kèm",
+            "sheet", "google sheet", "điền vào", "thư mục", "folder",
         ],
         Group::Boards => &[
             "whiteboard", "board", "bảng trắng", "sơ đồ", "mindmap", "mind map", "diagram", "vẽ",
-            "draw", "canvas",
+            "draw", "canvas", "flowchart", "lưu đồ", "kiến trúc", "architecture",
         ],
         Group::Timeline => &[
             "hôm qua", "tuần trước", "tháng trước", "năm ngoái", "năm trước", "dạo này", "gần đây",
@@ -186,7 +187,8 @@ fn cues(group: &Group) -> &'static [&'static str] {
         ],
         Group::Past => &[
             "lần trước", "trước đây", "bạn đã nói", "hôm trước", "bạn nói", "earlier", "last time",
-            "you said", "you told", "you answered", "nhớ lại",
+            "you said", "you told", "you answered", "nhớ lại", "có nhớ", "còn nhớ",
+            "do you remember", "my preference", "sở thích",
         ],
         Group::Safe => &[
             "mật khẩu", "khoá", "khóa", "api key", "token", "secret", "safe", "đăng nhập", "tài khoản",
