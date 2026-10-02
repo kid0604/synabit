@@ -18,6 +18,7 @@ import xml from 'highlight.js/lib/languages/xml';
 import sql from 'highlight.js/lib/languages/sql';
 import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
+import { MODEL_FORBID_TAGS, MODEL_FORBID_ATTR } from '../../../shared/syn/modelHtml';
 import { mathExtension, MATH_ATTRS, renderMathIn } from '../markdownMath';
 import 'katex/dist/katex.min.css';
 import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard, ListChecks } from 'lucide-vue-next';
@@ -210,26 +211,26 @@ const renderedContent = computed(() => {
     return debouncedContent.value;
   }
 
-  const rawHtml = marked.parse(debouncedContent.value) as string;
-  // No `<style>` and no `style` in the model's prose. They used to be let
-  // through for the Mermaid SVG — which never passes here: it is drawn later,
-  // from the `<pre>`'s text, straight into the bubble (see `drawDiagram`). What
-  // they actually let through was an answer restyling the screen around it: a
-  // `position: fixed` block laid over the permission card's buttons, or a
-  // stylesheet relabelling them. DOMPurify allows both by default, so they are
-  // forbidden outright rather than merely not added.
-  let sanitized = DOMPurify.sanitize(rawHtml, {
-    ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject'],
-    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'dx', 'dy', 'alignment-baseline', 'data-wikilink', ...MATH_ATTRS],
-    FORBID_TAGS: ['style'],
-    FORBID_ATTR: ['style'],
-  });
-
-  // Convert [[Title]] wiki-links to clickable links
-  sanitized = sanitized.replace(
+  // `[[Title]]` becomes a link *before* sanitising, so the markup it adds is
+  // sanitised with everything else. Done after, it wrote raw HTML into a
+  // string DOMPurify had already passed: a `[[…]]` inside an attribute value
+  // (`alt="[[…]]"`) closed that attribute and put whatever followed back into
+  // the page — `style` included, on WebViews that leave `<` unescaped in
+  // attributes.
+  const rawHtml = (marked.parse(debouncedContent.value) as string).replace(
     /\[\[([^\]]+)\]\]/g,
     (_match, title) => `<a class="wikilink" data-wikilink="${title.replace(/"/g, '&quot;')}" href="#">${title}</a>`
   );
+  // No `<style>`, no `style`, no forms in the model's prose — see `modelHtml`.
+  // `style` used to be let through for the Mermaid SVG, which never passes
+  // here: it is drawn later, from the `<pre>`'s text, straight into the bubble
+  // (see `drawDiagram`).
+  let sanitized = DOMPurify.sanitize(rawHtml, {
+    ADD_TAGS: ['pre', 'code', 'svg', 'g', 'path', 'rect', 'circle', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'use', 'marker', 'foreignObject'],
+    ADD_ATTR: ['class', 'id', 'viewBox', 'xmlns', 'd', 'fill', 'stroke', 'stroke-width', 'transform', 'x', 'y', 'width', 'height', 'rx', 'ry', 'cx', 'cy', 'r', 'x1', 'y1', 'x2', 'y2', 'points', 'text-anchor', 'dominant-baseline', 'font-size', 'font-weight', 'font-family', 'opacity', 'clip-path', 'marker-end', 'marker-start', 'dx', 'dy', 'alignment-baseline', 'data-wikilink', ...MATH_ATTRS],
+    FORBID_TAGS: MODEL_FORBID_TAGS,
+    FORBID_ATTR: MODEL_FORBID_ATTR,
+  });
 
   // `[n]` to the source it cites, when this message has one. See `citations`.
   sanitized = linkCitations(sanitized, props.message.sources, (n, title) =>

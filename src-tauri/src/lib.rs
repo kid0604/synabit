@@ -615,6 +615,20 @@ pub fn run() {
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 
+            // The vault the app last had open, granted before the window can
+            // ask for a file in it — `start_vault_watcher` grants it again, but
+            // the front end does not wait for that before drawing thumbnails.
+            let last_vault = app
+                .state::<crate::db::DbState>()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get_kv("vault_path")
+                .ok()
+                .flatten();
+            if let Some(vault) = last_vault {
+                crate::watcher::grant_vault_access(app.handle(), &vault);
+            }
+
             // The timeline lives in its own file beside the cache
             // (docs/timeline-2026-09-17.md §4.7). Everything in it is derived
             // from the cache, so a timeline that cannot be opened costs an
@@ -924,6 +938,7 @@ pub fn run() {
             commands::e2ee::get_recovery_phrase,
             // Vault location (mobile) + backup
             commands::vault::resolve_mobile_vault_path,
+            commands::vault::open_vault_file,
             commands::vault::export_vault_archive,
             commands::vault::import_vault_archive,
             commands::vault::suggested_archive_name,

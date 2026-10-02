@@ -410,10 +410,93 @@ pub fn suggested_archive_name() -> String {
     crate::vault_archive::suggested_archive_name(chrono::Local::now())
 }
 
+/// What `open_vault_file` will hand to the operating system.
+///
+/// A picture or a PDF, inside the open vault. The front end used to call the
+/// opener plugin's `openPath` with a scope of `**`, so anything that got a
+/// script into the window could launch any file on the disk — and, being able
+/// to write into the vault, could write a `.command` there first. Here the
+/// vault is the one the backend was told about, not one the caller names, the
+/// path must stay inside it after `..` and links are resolved, and only the
+/// kinds of file a receipt or an attachment is are opened.
+const OPENABLE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tiff", "pdf"];
+
+pub(crate) fn vault_file_to_open(vault: &Path, rel_path: &str) -> AppResult<PathBuf> {
+    let vault = vault
+        .canonicalize()
+        .map_err(|e| AppError::InvalidPath(format!("The vault is not readable: {e}")))?;
+    let target = vault
+        .join(rel_path)
+        .canonicalize()
+        .map_err(|_| AppError::InvalidPath(format!("No such file in the vault: {rel_path}")))?;
+    if !target.starts_with(&vault) || !target.is_file() {
+        return Err(AppError::InvalidPath(format!("Not a file in the vault: {rel_path}")));
+    }
+    let extension = target
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if !OPENABLE.contains(&extension.as_str()) {
+        return Err(AppError::InvalidPath(format!("Not a kind of file this opens: {rel_path}")));
+    }
+    Ok(target)
+}
+
+/// Open a file from the vault in the system's own viewer. See `vault_file_to_open`.
+#[tauri::command]
+pub fn open_vault_file(app: tauri::AppHandle, rel_path: String) -> AppResult<()> {
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+    let vault = {
+        let chat_state = app.state::<crate::chat_engine::ChatEngineState>();
+        let active = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
+        active.clone()
+    }
+    .ok_or_else(|| AppError::InvalidPath("No vault is open".to_string()))?;
+    let target = vault_file_to_open(Path::new(&vault), &rel_path)?;
+    app.opener()
+        .open_path(target.to_string_lossy(), None::<&str>)
+        .map_err(|e| AppError::General(format!("Could not open {rel_path}: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn opens_a_receipt_inside_the_vault() {
+        let vault = TempDir::new().unwrap();
+        std::fs::create_dir_all(vault.path().join("assets")).unwrap();
+        std::fs::write(vault.path().join("assets/r.JPG"), b"x").unwrap();
+        let got = vault_file_to_open(vault.path(), "assets/r.JPG").unwrap();
+        assert!(got.ends_with("assets/r.JPG"));
+    }
+
+    #[test]
+    fn will_not_open_what_could_run() {
+        let vault = TempDir::new().unwrap();
+        for name in ["x.command", "x.app", "x.sh", "x.exe", "x.html", "noext"] {
+            std::fs::write(vault.path().join(name), b"x").unwrap();
+            assert!(vault_file_to_open(vault.path(), name).is_err(), "{name} was opened");
+        }
+    }
+
+    #[test]
+    fn will_not_leave_the_vault() {
+        let outer = TempDir::new().unwrap();
+        let vault = outer.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(outer.path().join("secret.pdf"), b"x").unwrap();
+        assert!(vault_file_to_open(&vault, "../secret.pdf").is_err());
+        assert!(vault_file_to_open(&vault, &outer.path().join("secret.pdf").to_string_lossy()).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(outer.path().join("secret.pdf"), vault.join("link.pdf")).unwrap();
+            assert!(vault_file_to_open(&vault, "link.pdf").is_err());
+        }
+    }
 
     fn write(root: &Path, rel: &str, body: &str) {
         let path = root.join(rel);

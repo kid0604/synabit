@@ -28,6 +28,7 @@ import { useI18n } from 'vue-i18n';
 import { Loader2, Sparkles, Check } from 'lucide-vue-next';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { MODEL_FORBID_TAGS, MODEL_FORBID_ATTR } from '../../../shared/syn/modelHtml';
 
 import { logger } from '../../../utils/logger';
 import { useNodeService } from '../../../composables/useNodeService';
@@ -66,7 +67,11 @@ const rendered = computed(() => {
   const body = props.thread.body ?? '';
   if (!body.trim()) return '';
   try {
-    return DOMPurify.sanitize(marked.parse(body, { async: false }) as string);
+    // A thread's body is Syn's writing: the same rules as an answer.
+    return DOMPurify.sanitize(marked.parse(body, { async: false }) as string, {
+      FORBID_TAGS: MODEL_FORBID_TAGS,
+      FORBID_ATTR: MODEL_FORBID_ATTR,
+    });
   } catch (e) {
     logger.error('[Syn] Could not render a thread', e);
     return '';

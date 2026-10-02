@@ -21,7 +21,7 @@ use crate::path_utils;
 /// was waiting on, for one click on "add folder".
 #[tauri::command]
 pub fn add_file_source(
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
     _vault_path: String,
     path: String,
@@ -34,6 +34,13 @@ pub fn add_file_source(
         name,
     };
     db.upsert_file_source(&source)?;
+    drop(db);
+    // The dialog granted the folder, but not what is inside it; thumbnails
+    // read the files. See `watcher::grant_vault_access`.
+    let dir = std::path::Path::new(&source.path);
+    if dir.is_dir() {
+        crate::watcher::grant_dir(&app_handle, dir);
+    }
     Ok(source)
 }
 

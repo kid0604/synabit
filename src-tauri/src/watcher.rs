@@ -3,6 +3,45 @@
 // that are not available on iOS/Android. On mobile, vault changes are detected
 // by re-scanning on app resume instead.
 
+/// Let the front end read the vault and the folders registered as file sources.
+///
+/// The capability files grant `fs` and the asset protocol only the app's own
+/// folders. Everything else the front end reads — a note's images, a
+/// thumbnail, a receipt — lives in a vault the person chose, wherever that is,
+/// so it cannot be named in a JSON file and is granted here, at runtime, when
+/// the vault is opened. A script that gets into the main window can then reach
+/// what the app shows and no more: not `~/.ssh`, not a launch agent.
+///
+/// The sources come from the database, never from the caller, so asking to
+/// watch a folder is not a way to be granted it. Files picked in a dialog are
+/// granted by the dialog plugin itself, for that session.
+pub(crate) fn grant_vault_access(app: &tauri::AppHandle, vault_path: &str) {
+    use tauri::Manager;
+    let mut dirs = vec![std::path::PathBuf::from(vault_path)];
+    {
+        let db_state = app.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Ok(sources) = db.get_all_file_sources() {
+            dirs.extend(sources.into_iter().map(|s| std::path::PathBuf::from(s.path)));
+        }
+    }
+    for dir in dirs.iter().filter(|d| d.is_dir()) {
+        grant_dir(app, dir);
+    }
+}
+
+/// One folder, recursively, for `fs` and for `asset:` URLs.
+pub(crate) fn grant_dir(app: &tauri::AppHandle, dir: &std::path::Path) {
+    use tauri::Manager;
+    use tauri_plugin_fs::FsExt;
+    if let Err(e) = app.fs_scope().allow_directory(dir, true) {
+        log::warn!("[scope] Could not grant fs access to {}: {e}", dir.display());
+    }
+    if let Err(e) = app.asset_protocol_scope().allow_directory(dir, true) {
+        log::warn!("[scope] Could not grant asset access to {}: {e}", dir.display());
+    }
+}
+
 #[cfg(desktop)]
 mod desktop {
     use crate::error::{AppError, AppResult};
@@ -71,6 +110,8 @@ mod desktop {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+        drop(active_vault);
+        crate::watcher::grant_vault_access(&app_handle, &vault_path);
         // The phone's schedule is made from the vault's settings, and the first
         // plan may have run before there was a vault to read them from.
         #[cfg(mobile)]
@@ -352,6 +393,8 @@ pub mod mobile_stub {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         *active_vault = Some(vault_path.clone());
+        drop(active_vault);
+        crate::watcher::grant_vault_access(&app_handle, &vault_path);
         // The phone's schedule is made from the vault's settings, and the first
         // plan may have run before there was a vault to read them from.
         #[cfg(mobile)]

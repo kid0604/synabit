@@ -27,6 +27,7 @@ import { ref, computed, watch, nextTick } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
+import { MODEL_FORBID_TAGS, MODEL_FORBID_ATTR } from './modelHtml';
 import { useI18n } from 'vue-i18n';
 import { X, CornerDownLeft, Loader2, ArrowUpRight, GitBranch, Plus, Check, Zap, ListChecks } from 'lucide-vue-next';
 
@@ -160,12 +161,12 @@ const canContinueElsewhere = computed(
 const rendered = computed(() => {
   if (!answer.value) return '';
   try {
-    // No `<style>`, no `style`: the model's words do not get to restyle the
-    // bar — or lay something over the permission card beside them. DOMPurify
-    // allows both by default. See `MessageBubble`.
+    // No `<style>`, no `style`, no forms: the model's words do not get to
+    // restyle the bar, lay something over the permission card beside it, or
+    // post anything anywhere. See `modelHtml`.
     return DOMPurify.sanitize(marked.parse(answer.value, { async: false }) as string, {
-      FORBID_TAGS: ['style'],
-      FORBID_ATTR: ['style'],
+      FORBID_TAGS: MODEL_FORBID_TAGS,
+      FORBID_ATTR: MODEL_FORBID_ATTR,
     });
   } catch (e) {
     logger.error('[Syn] Could not render the answer', e);

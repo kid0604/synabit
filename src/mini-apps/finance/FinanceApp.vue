@@ -6,7 +6,7 @@ import { useEventBus } from '../../composables/useEventBus';
 import { useNodeService } from '../../composables/useNodeService';
 import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
-import { openPath } from '@tauri-apps/plugin-opener';
+import { invoke } from '@tauri-apps/api/core';
 import { Plus, Settings, Wallet, Scale, Search, ChevronDown, PieChart, Target, BookOpen, TrendingUp, TrendingDown, RefreshCw, Trash2, AlertTriangle, X, Landmark, CreditCard, Repeat, Paperclip } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import { RECURRING_PATH, monthNodePath, monthNodeTitle, repairFinanceStorage, rowChanges, writeFinanceRows } from './ledger';
@@ -223,7 +223,9 @@ const accountIcon = (id: string) => {
  */
 const openReceipt = async (relPath: string) => {
     try {
-        await openPath(`${props.vaultPath}/${relPath}`);
+        // Through the backend, which opens only pictures and PDFs inside the
+        // vault — see `open_vault_file`.
+        await invoke('open_vault_file', { relPath });
     } catch (e) {
         logger.error('Could not open the receipt', e);
         storageError.value = t('finance.storage_error.receipt_open');

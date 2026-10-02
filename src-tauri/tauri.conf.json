@@ -20,12 +20,14 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost blob: data: https://*.tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://github.com https://objects.githubusercontent.com; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://*.openstreetmap.org https://openstreetmap.org;",
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost blob: data: https://*.tile.openstreetmap.org; connect-src 'self' https://router.project-osrm.org https://github.com https://objects.githubusercontent.com; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://*.openstreetmap.org https://openstreetmap.org; form-action 'none';",
       "dangerousDisableAssetCspModification": ["style-src"],
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "**"
+          "$APPDATA/**",
+          "$APPLOCALDATA/**",
+          "$APPCACHE/**"
         ]
       }
     }
