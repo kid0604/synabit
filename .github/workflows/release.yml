@@ -16,7 +16,14 @@ permissions:
   contents: write
 
 jobs:
+  # Nothing is built for release until the tagged commit passes every check.
+  checks:
+    uses: ./.github/workflows/checks.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
   build:
+    needs: checks
     strategy:
       fail-fast: false
       matrix:
