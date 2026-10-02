@@ -89,9 +89,9 @@ pub fn worth_retrying(status: u16) -> bool {
 /// is reported that way. A builder error or a redirect loop is not here: those
 /// fail the same way every time.
 ///
-/// **A timeout on the whole request is not retried.** The chat client waits
-/// five minutes, because a large local model can genuinely take that long;
-/// running out of five minutes means the model is too slow for the question,
+/// **A timeout is not retried.** The chat client waits through five minutes of
+/// silence, because a large local model can genuinely take that long to start;
+/// running out of that means the model is too slow for the question,
 /// and asking twice more would turn a five-minute failure into a fifteen-minute
 /// one with the same ending.
 pub fn transport_worth_retrying(e: &reqwest::Error) -> bool {

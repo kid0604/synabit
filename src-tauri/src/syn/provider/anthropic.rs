@@ -132,9 +132,9 @@ pub const TURN_CARRIER: &str = "anthropic-turn:";
 /// How much the model may write, streaming and not.
 ///
 /// Required by the API. Generous when streaming — a thinking model spends some
-/// of it before writing anything, and a stream is not at risk of a timeout —
-/// and half that when waiting for the whole reply at once under the five-minute
-/// client timeout. Both fit every Claude this app can reach.
+/// of it before writing anything, and a stream only times out when it goes
+/// quiet (`CHAT_SILENCE`), however long it runs — and half that when waiting
+/// for the whole reply at once, which has to arrive inside one silence. Both fit every Claude this app can reach.
 const MAX_TOKENS_STREAMING: u32 = 32_000;
 const MAX_TOKENS_WAITING: u32 = 16_000;
 

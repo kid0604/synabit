@@ -307,15 +307,31 @@ pub(crate) fn media_type_of(b64: &str) -> &'static str {
 
 /// The HTTP client every provider uses for chat.
 ///
-/// Five minutes, because a large local model on a laptop genuinely takes that
-/// long to answer, and a timeout that fires mid-generation looks to the user
-/// exactly like a crash.
+/// Five minutes of *silence*, not five minutes in all. A large local model on
+/// a laptop genuinely takes that long to start answering, and a timeout that
+/// fires mid-generation looks to the user exactly like a crash.
+///
+/// It used to be a total deadline (`timeout`), which reqwest applies until the
+/// body has finished — streamed bodies included. A stream of 32k tokens with
+/// thinking in front of it can run past five minutes while sending something
+/// every second, and was cut off at 300s with nothing to retry. A read timeout
+/// resets on every chunk, so it catches what it was meant for — a server that
+/// has gone quiet — and lets a long answer finish. A request that is not
+/// streamed waits for its body in one read, so for it nothing changes.
 pub(crate) fn chat_client() -> reqwest::Client {
+    chat_client_quiet_for(CHAT_SILENCE)
+}
+
+fn chat_client_quiet_for(silence: std::time::Duration) -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(silence)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new())
 }
+
+/// How long a chat request may go without receiving a byte. See `chat_client`.
+pub(crate) const CHAT_SILENCE: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// The client for asking a provider *about itself*.
 ///
@@ -414,3 +430,63 @@ mod usage_tests {
     }
 }
 
+
+#[cfg(test)]
+mod chat_client_tests {
+    use super::chat_client_quiet_for;
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// A server that answers in chunks, `gap` apart, for `chunks` chunks.
+    async fn trickle(chunks: usize, gap: Duration) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let _ = sock.read(&mut buf).await;
+            sock.write_all(b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n").await.unwrap();
+            for _ in 0..chunks {
+                tokio::time::sleep(gap).await;
+                if sock.write_all(b"2\r\nok\r\n").await.is_err() {
+                    return;
+                }
+            }
+            let _ = sock.write_all(b"0\r\n\r\n").await;
+        });
+        format!("http://{addr}/")
+    }
+
+    /// A stream that keeps talking outlives the silence it is allowed: eight
+    /// chunks 100ms apart is 800ms in all, against a 300ms silence. With the
+    /// old total deadline this was cut off part-way.
+    #[tokio::test]
+    async fn a_long_stream_that_keeps_talking_is_not_cut_off() {
+        let url = trickle(8, Duration::from_millis(100)).await;
+        let body = chat_client_quiet_for(Duration::from_millis(300))
+            .get(url)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body, "ok".repeat(8));
+    }
+
+    /// And a server that goes quiet is still given up on.
+    #[tokio::test]
+    async fn a_stream_that_goes_quiet_still_times_out() {
+        let url = trickle(2, Duration::from_millis(600)).await;
+        let got = async {
+            chat_client_quiet_for(Duration::from_millis(300))
+                .get(url)
+                .send()
+                .await?
+                .text()
+                .await
+        }
+        .await;
+        assert!(got.is_err_and(|e| e.is_timeout()));
+    }
+}
