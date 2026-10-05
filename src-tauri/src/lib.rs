@@ -8,6 +8,7 @@ pub mod pipeline;
 pub mod query;
 pub mod refusal;
 pub mod path_utils;
+pub mod quit;
 pub mod search;
 pub mod search_fold;
 #[cfg(test)]
@@ -960,6 +961,7 @@ pub fn run() {
             whiteboards::read_board_version,
             whiteboards::list_board_libraries,
             whiteboards::write_board_library,
+            crate::quit::quit_ready,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,
@@ -1168,6 +1170,14 @@ pub fn run() {
             // Quitting locks the Safe the whole way: a password copied a few
             // seconds ago comes off the clipboard, since the timer that would
             // have taken it off dies with the process.
+            // Quitting waits for what is still to be written: see `quit`.
+            // A restart is not held (it cannot be prevented, and is asked for
+            // by the updater, after the front end has had its say).
+            if let tauri::RunEvent::ExitRequested { code, api, .. } = &event {
+                if *code != Some(tauri::RESTART_EXIT_CODE) && crate::quit::hold(app, *code) {
+                    api.prevent_exit();
+                }
+            }
             if let tauri::RunEvent::Exit = event {
                 commands::safe::lock_now(app);
             }

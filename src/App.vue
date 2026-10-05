@@ -109,6 +109,7 @@ onUnmounted(() => {
 import { Loader2, FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { runBeforeQuit } from './composables/useBeforeQuit';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
 import { useNodeService } from './composables/useNodeService';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -1458,6 +1459,13 @@ let ledgerSweepTimer: ReturnType<typeof setTimeout> | undefined;
   bus.on('navigate:to-item', ({ app, itemId }) => {
       activeTool.value = app;
       navigateToItem(app, itemId);
+  });
+
+  // Quitting waits for what each app still has to write (see `quit.rs` and
+  // `useBeforeQuit`), then says it is done.
+  listen('app:before-quit', async () => {
+      await runBeforeQuit();
+      await invoke('quit_ready').catch(() => {});
   });
 
   getCurrentWindow().onCloseRequested(async (event) => {
