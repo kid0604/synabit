@@ -1,3 +1,64 @@
+<script lang="ts">
+/**
+ * The kinds of item this pane draws with the Whiteboard app's own pieces.
+ * Syn writes frames around a subgraph, and a board opened here may have been
+ * worked on in the app since, so it can hold anything the app can. A kind
+ * not on this list — a newer app's, or a typo in a file — is drawn as a plain
+ * labelled box rather than a warning and nothing.
+ */
+export const PANE_NODE_TYPES = ['shape', 'frame', 'sticky', 'text', 'mindmap', 'card', 'note', 'image', 'comment', 'stroke'] as const;
+
+/** The size an item has when its file does not say, as the app gives it. */
+const SIZED: Record<string, [number, number]> = {
+  shape: [160, 80], image: [320, 240], sticky: [200, 200], frame: [480, 320], card: [260, 120], note: [280, 180],
+};
+
+/**
+ * A node as the canvas needs it, which is not quite as the file holds it.
+ *
+ * Three fields the file has no business carrying, all of them about drawing:
+ *
+ * * `style`, because the resizer drags the canvas element itself — a shape
+ *   that sized its own box would leave an element of no size around it. This
+ *   is what the first version missed, and the pane came up showing lines and
+ *   labels floating over nothing: every box was there, nought pixels wide.
+ *   Only for the kinds the app sizes this way; text, a mind map's topics and
+ *   ink size themselves.
+ * * `zIndex` by area, so the small thing sits above the big one that contains
+ *   it. A subgraph frame is the biggest box on the board and would otherwise
+ *   be drawn over everything inside it.
+ * * `data.locked`, which every item honours by offering no editing of its
+ *   own — no renaming, no ticking a task off, no resizing. This pane moves
+ *   boxes; a task card that could be ticked here would write to the vault
+ *   from a pane that says it only moves things. Never written back: saving
+ *   reads positions only (see `positionsNow`).
+ *
+ * The sizes are the Whiteboard app's own rules — see `useNodeOperations` —
+ * kept in step by hand because this pane does not carry that app's store.
+ */
+export const forCanvas = (n: { id: string; type: string; position: { x: number; y: number }; data: any; hidden?: boolean }) => {
+  const known = (PANE_NODE_TYPES as readonly string[]).includes(n.type);
+  const size = SIZED[known ? n.type : 'shape'];
+  const w = n.data?.width || size?.[0] || 160;
+  const h = n.data?.height || size?.[1] || 80;
+  // `editing` is a fresh item's ask to open its editor; there is none here.
+  const data = { ...n.data, locked: true, editing: undefined };
+  if (!known) data.label = n.data?.label || n.data?.title || '';
+  return {
+    id: n.id,
+    type: known ? n.type : 'default',
+    position: { ...n.position },
+    data,
+    // An unknown kind's box uses Vue Flow's own node, which reads `label`.
+    ...(known ? {} : { label: data.label }),
+    hidden: !!n.hidden,
+    draggable: true,
+    ...(size ? { style: { width: `${w}px`, height: `${h}px` } } : {}),
+    zIndex: size ? Math.max(1, Math.round(10000 - (w * h) / 100)) : 10000,
+  };
+};
+</script>
+
 <script setup lang="ts">
 /**
  * The diagram, beside the conversation, with the boxes loose.
@@ -24,11 +85,21 @@
  * picture that answer describes is the one thing it must not do. So it sits in
  * the row, the conversation narrows, and the edge between them can be dragged.
  */
-import { ref, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onBeforeUnmount, provide, toRef } from 'vue';
 import { VueFlow, type NodeDragEvent } from '@vue-flow/core';
 import { Controls } from '@vue-flow/controls';
 import { X, PenTool } from 'lucide-vue-next';
 import ShapeNode from '../../whiteboard/nodes/ShapeNode.vue';
+import FrameNode from '../../whiteboard/nodes/FrameNode.vue';
+import StickyNode from '../../whiteboard/nodes/StickyNode.vue';
+import TextNode from '../../whiteboard/nodes/TextNode.vue';
+import MindmapNode from '../../whiteboard/nodes/MindmapNode.vue';
+import VaultCardNode from '../../whiteboard/nodes/VaultCardNode.vue';
+import NoteCardNode from '../../whiteboard/nodes/NoteCardNode.vue';
+import ImageNode from '../../whiteboard/nodes/ImageNode.vue';
+import CommentNode from '../../whiteboard/nodes/CommentNode.vue';
+import StrokeNode from '../../whiteboard/nodes/StrokeNode.vue';
+import { hiddenByCollapse } from '../../whiteboard/mindmap';
 import WaypointEdge from '../../whiteboard/components/WaypointEdge.vue';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
 import { logger } from '../../../utils/logger';
@@ -39,35 +110,8 @@ import '@vue-flow/core/dist/theme-default.css';
 const props = defineProps<{ vaultPath: string; board: KeptBoard }>();
 const emit = defineEmits<{ close: []; open: [] }>();
 
-/**
- * A node as the canvas needs it, which is not quite as the file holds it.
- *
- * Two fields the file has no business carrying, both of them about drawing:
- *
- * * `style`, because the resizer drags the canvas element itself — a shape
- *   that sized its own box would leave an element of no size around it. This
- *   is what the first version missed, and the pane came up showing lines and
- *   labels floating over nothing: every box was there, nought pixels wide.
- * * `zIndex` by area, so the small thing sits above the big one that contains
- *   it. A subgraph frame is the biggest box on the board and would otherwise
- *   be drawn over everything inside it.
- *
- * Both are the Whiteboard app's own rules — see `useNodeOperations` — kept in
- * step by hand because this pane does not carry that app's store with it.
- */
-const forCanvas = (n: { id: string; type: string; position: { x: number; y: number }; data: any }) => {
-  const w = n.data?.width || 160;
-  const h = n.data?.height || 80;
-  return {
-    id: n.id,
-    type: n.type,
-    position: { ...n.position },
-    data: { ...n.data },
-    draggable: true,
-    style: { width: `${w}px`, height: `${h}px` },
-    zIndex: Math.max(1, Math.round(10000 - (w * h) / 100)),
-  };
-};
+// Pictures find their files through the vault the canvas hands down.
+provide('whiteboardVaultPath', toRef(props, 'vaultPath'));
 
 const nodes = ref<any[]>([]);
 const edges = ref<any[]>([]);
@@ -76,7 +120,9 @@ const saving = ref(false);
 watch(
   () => props.board,
   board => {
-    nodes.value = board.data.nodes.map(forCanvas);
+    // A folded mind-map branch stays folded here, as it is in the app.
+    const hidden = hiddenByCollapse(board.data.nodes, board.data.edges);
+    nodes.value = board.data.nodes.map(n => forCanvas({ ...n, hidden: hidden.has(n.id) }));
     edges.value = board.data.edges.map(e => ({
       ...e,
       type: e.type || 'default',
@@ -114,10 +160,18 @@ const startResize = (e: PointerEvent) => {
  * A drag is a hundred position changes and one intention.
  */
 let pending: ReturnType<typeof setTimeout> | null = null;
+/**
+ * The board's boxes where they now are. Only a box that actually moved is
+ * stamped as changed: the stamps are how a merge with another copy of the
+ * board decides whose change to a box wins, and stamping every box made this
+ * pane win for boxes it never touched.
+ */
 const positionsNow = () =>
   props.board.data.nodes.map(n => {
     const moved = nodes.value.find(v => v.id === n.id);
-    return moved ? { ...n, position: { ...moved.position }, updated: Date.now() } : n;
+    if (!moved) return n;
+    if (moved.position.x === n.position.x && moved.position.y === n.position.y) return n;
+    return { ...n, position: { ...moved.position }, updated: Date.now() };
   });
 
 const save = () => {
@@ -213,7 +267,18 @@ onBeforeUnmount(() => {
         @node-drag-stop="onDragStop"
       >
         <Controls :show-interactive="false" />
-        <template #node-shape="nodeProps"><ShapeNode v-bind="(nodeProps as any)" /></template>
+        <!-- The app's own pieces, each locked (see `forCanvas`); nothing
+             here listens for their edits, so none can reach the file. -->
+        <template #node-shape="p"><ShapeNode v-bind="(p as any)" /></template>
+        <template #node-frame="p"><FrameNode v-bind="(p as any)" /></template>
+        <template #node-sticky="p"><StickyNode v-bind="(p as any)" /></template>
+        <template #node-text="p"><TextNode v-bind="(p as any)" /></template>
+        <template #node-mindmap="p"><MindmapNode v-bind="(p as any)" /></template>
+        <template #node-card="p"><VaultCardNode v-bind="(p as any)" /></template>
+        <template #node-note="p"><NoteCardNode v-bind="(p as any)" /></template>
+        <template #node-image="p"><ImageNode v-bind="(p as any)" /></template>
+        <template #node-comment="p"><CommentNode v-bind="(p as any)" /></template>
+        <template #node-stroke="p"><StrokeNode v-bind="(p as any)" /></template>
         <template #edge-default="edgeProps">
           <WaypointEdge v-bind="(edgeProps as any)" edge-type="default" />
         </template>

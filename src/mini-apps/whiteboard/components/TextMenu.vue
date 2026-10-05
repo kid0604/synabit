@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { Trash2, X, Bold, Italic, AlignLeft, AlignCenter, AlignRight } from 'lucide-vue-next';
+import CustomColorSwatch from './CustomColorSwatch.vue';
+import ItemActions from './ItemActions.vue';
 
 const props = defineProps<{
   nodeId: string;
@@ -14,13 +16,16 @@ const props = defineProps<{
     backgroundColor?: string;
     opacity?: number;
     width?: number;
+    locked?: boolean;
   };
+  canPasteStyle?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'update', nodeId: string, data: Record<string, any>): void;
   (e: 'delete', nodeId: string): void;
   (e: 'close'): void;
+  (e: 'action', id: string, el?: HTMLElement): void;
 }>();
 
 // ─── Local State ────────────────────────────────────────
@@ -33,8 +38,9 @@ const bgColor = ref(props.nodeData.backgroundColor || '');
 const opacity = ref(props.nodeData.opacity ?? 100);
 const nodeWidth = ref(props.nodeData.width || 240);
 
-// Sync on node selection change
-watch(() => props.nodeId, () => {
+// Follow the node, not just the selection: resized on the canvas, undone —
+// whatever this panel shows has to be what the node now is.
+watch(() => props.nodeData, () => {
   fontSize.value = props.nodeData.fontSize || 14;
   fontWeight.value = props.nodeData.fontWeight || 'normal';
   fontStyle.value = props.nodeData.fontStyle || 'normal';
@@ -43,7 +49,7 @@ watch(() => props.nodeId, () => {
   bgColor.value = props.nodeData.backgroundColor || '';
   opacity.value = props.nodeData.opacity ?? 100;
   nodeWidth.value = props.nodeData.width || 240;
-});
+}, { deep: true });
 
 const COLORS = [
   { value: '#1e1e1e', labelKey: 'whiteboard.colors.black' },
@@ -71,39 +77,37 @@ const BG_COLORS = [
 
 const FONT_SIZES = [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48];
 
-function emitUpdate() {
-  emit('update', props.nodeId, {
-    fontSize: fontSize.value,
-    fontWeight: fontWeight.value,
-    fontStyle: fontStyle.value,
-    textAlign: textAlign.value,
-    color: textColor.value,
-    backgroundColor: bgColor.value,
-    opacity: opacity.value,
-    width: nodeWidth.value,
-  });
+/**
+ * Send what this control changed, and only that.
+ *
+ * The panel used to send every field it held each time, from its own copy —
+ * so a text box resized on the canvas went back to its old width at the next
+ * colour click.
+ */
+function emitUpdate(changed: Record<string, any>) {
+  emit('update', props.nodeId, changed);
 }
 
-function setColor(c: string) { textColor.value = c; emitUpdate(); }
-function setBgColor(c: string) { bgColor.value = c; emitUpdate(); }
-function setFontSize(s: number) { fontSize.value = s; emitUpdate(); }
+function setColor(c: string) { textColor.value = c; emitUpdate({ color: c }); }
+function setBgColor(c: string) { bgColor.value = c; emitUpdate({ backgroundColor: c }); }
+function setFontSize(s: number) { fontSize.value = s; emitUpdate({ fontSize: s }); }
 
 function toggleBold() {
   fontWeight.value = fontWeight.value === 'bold' ? 'normal' : 'bold';
-  emitUpdate();
+  emitUpdate({ fontWeight: fontWeight.value });
 }
 function toggleItalic() {
   fontStyle.value = fontStyle.value === 'italic' ? 'normal' : 'italic';
-  emitUpdate();
+  emitUpdate({ fontStyle: fontStyle.value });
 }
 function setAlign(a: string) {
   textAlign.value = a;
-  emitUpdate();
+  emitUpdate({ textAlign: a });
 }
 </script>
 
 <template>
-  <div class="sp-panel" @mousedown.stop @click.stop>
+  <div class="sp-panel" role="region" :aria-label="$t('whiteboard.panel_for', { what: $t('whiteboard.text') })" @mousedown.stop @click.stop @keydown.escape.stop="$emit('close')">
     <!-- Header -->
     <div class="sp-header">
       <span class="sp-title">{{ $t('whiteboard.text') }}</span>
@@ -118,6 +122,12 @@ function setAlign(a: string) {
     </div>
 
     <div class="sp-body">
+      <!-- Actions -->
+      <div class="sp-section">
+        <span class="sp-label">{{ $t('whiteboard.actions') }}</span>
+        <ItemActions :locked="nodeData.locked" :can-paste-style="canPasteStyle" @action="(id: string, el?: HTMLElement) => emit('action', id, el)" />
+      </div>
+
       <!-- Font Size -->
       <div class="sp-section">
         <span class="sp-label">{{ $t('whiteboard.size') }}</span>
@@ -184,8 +194,9 @@ function setAlign(a: string) {
             @click="setColor(c.value)"
             :class="['sp-swatch', textColor === c.value && 'active']"
             :style="{ '--sw-color': c.value }"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :value="textColor" :presets="COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setColor" />
         </div>
       </div>
 
@@ -199,8 +210,9 @@ function setAlign(a: string) {
             @click="setBgColor(c.value)"
             :class="['sp-swatch', bgColor === c.value && 'active', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :value="bgColor" :presets="BG_COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setBgColor" />
         </div>
       </div>
 
@@ -209,7 +221,7 @@ function setAlign(a: string) {
         <span class="sp-label">{{ $t('whiteboard.opacity') }} <span class="sp-value">{{ opacity }}%</span></span>
         <input
           type="range" min="10" max="100" step="5"
-          v-model.number="opacity" @input="emitUpdate"
+          v-model.number="opacity" @input="emitUpdate({ opacity })"
           :aria-label="$t('whiteboard.opacity')"
           class="sp-slider"
         />
@@ -220,7 +232,7 @@ function setAlign(a: string) {
         <span class="sp-label">{{ $t('whiteboard.width') }} <span class="sp-value">{{ nodeWidth }}px</span></span>
         <input
           type="range" min="80" max="600" step="10"
-          v-model.number="nodeWidth" @input="emitUpdate"
+          v-model.number="nodeWidth" @input="emitUpdate({ width: nodeWidth })"
           :aria-label="$t('whiteboard.width')"
           class="sp-slider"
         />

@@ -219,10 +219,33 @@ pub fn summarise_whiteboard(raw_json: &str) -> BoardSummary {
     for node in board_nodes.map(Vec::as_slice).unwrap_or_default() {
         let data = node.get("data");
 
-        if let Some(label) = data.and_then(|d| d.get("label")).and_then(Value::as_str) {
+        // A card's words are its thing's title.
+        if let Some(label) = data
+            .and_then(|d| d.get("label").or_else(|| d.get("title")))
+            .and_then(Value::as_str)
+        {
             if !label.is_empty() {
                 words.push(label.to_string());
             }
+        }
+
+        // A card names the thing it shows — a task, a person, an event — by
+        // its path, the same way: a link to it, so the thing has the board
+        // among its backlinks and the graph draws the line.
+        if node.get("type").and_then(Value::as_str) == Some("card") {
+            if let Some(target) = data.and_then(|d| d.get("ref")).and_then(Value::as_str).filter(|r| !r.is_empty()) {
+                if seen_notes.insert(target.to_string()) {
+                    let kind = data
+                        .and_then(|d| d.get("kind"))
+                        .and_then(Value::as_str)
+                        .filter(|k| matches!(*k, "note" | "person" | "task" | "event" | "project" | "file" | "whiteboard"))
+                        .unwrap_or("node");
+                    let title = data.and_then(|d| d.get("title")).and_then(Value::as_str).unwrap_or(target);
+                    let safe_title = title.replace(['[', ']'], "");
+                    note_links.push(format!("[{safe_title}](synabit://{kind}/{})", urlencoding::encode(target)));
+                }
+            }
+            continue;
         }
 
         // A note card names the note it shows by that note's path in the
@@ -250,6 +273,16 @@ pub fn summarise_whiteboard(raw_json: &str) -> BoardSummary {
             let safe_title = title.replace(['[', ']'], "");
             let encoded = urlencoding::encode(note_id);
             note_links.push(format!("[{safe_title}](synabit://note/{encoded})"));
+        }
+    }
+
+    // Words written on lines are words on the board too: "approves",
+    // "sends invoice to".
+    for edge in parsed.get("edges").and_then(|v| v.as_array()).map(Vec::as_slice).unwrap_or_default() {
+        if let Some(label) = edge.get("data").and_then(|d| d.get("label")).and_then(Value::as_str) {
+            if !label.trim().is_empty() {
+                words.push(label.to_string());
+            }
         }
     }
 
@@ -317,6 +350,26 @@ pub fn extract_blocks(content: &str) -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_card_on_a_board_links_to_its_thing() {
+        let summary = summarise_whiteboard(
+            r#"{"nodes":[{"id":"c","type":"card","data":{"ref":"Tasks/a b.md","kind":"task","title":"Call [bank]"}}],"edges":[]}"#,
+        );
+        assert!(summary.text.contains("Call [bank]"));
+        assert_eq!(summary.note_links, vec!["[Call bank](synabit://task/Tasks%2Fa%20b.md)".to_string()]);
+    }
+
+    #[test]
+    fn a_board_is_found_by_the_words_on_its_lines() {
+        let summary = summarise_whiteboard(
+            r#"{"nodes":[{"id":"a","type":"shape","data":{"label":"Client"}}],
+                "edges":[{"id":"e","source":"a","target":"a","data":{"label":"sends invoice"}}]}"#,
+        );
+        assert!(summary.text.contains("Client"));
+        assert!(summary.text.contains("sends invoice"));
+    }
+
 
     /// A vault directory unique to this run.
     ///

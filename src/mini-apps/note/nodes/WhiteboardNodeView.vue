@@ -1,18 +1,59 @@
+<script lang="ts">
+import type { ShapeDef } from '../../whiteboard/shapes';
+
+/**
+ * Where a shape's path is drawn, as an SVG transform: the same mapping the
+ * board makes. Shape paths are written on a 0–100 square with their outline
+ * from 2 to 98, and the board draws them in `viewBox="2 2 96 96"` stretched
+ * to the item — so the outline touches the item's edges. Scaling 0–100 here
+ * left every embedded shape about 4% small and nudged inward.
+ */
+export function shapeTransform(x: number, y: number, w: number, h: number): string {
+  return `translate(${x}, ${y}) scale(${w / 96}, ${h / 96}) translate(-2, -2)`;
+}
+
+/**
+ * The middle of where a shape's words go, as the board places them: inside
+ * its `labelBox` (insets top, right, bottom, left, in percent of the item)
+ * when it has one — a UML class's name in its top compartment — and the
+ * middle of the item otherwise.
+ */
+export function shapeLabelCenter(
+  def: Pick<ShapeDef, 'labelBox'> | undefined,
+  x: number, y: number, w: number, h: number,
+): { x: number; y: number } {
+  const [top, right, bottom, left] = def?.labelBox ?? [0, 0, 0, 0];
+  return {
+    x: x + (w * (left + (100 - left - right) / 2)) / 100,
+    y: y + (h * (top + (100 - top - bottom) / 2)) / 100,
+  };
+}
+</script>
+
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, shallowRef, computed, defineAsyncComponent, onMounted, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { NodeViewWrapper } from '@tiptap/vue-3';
 import {
   PenTool, ExternalLink, Trash2,
-  AlignLeft, AlignCenter, AlignRight
+  AlignLeft, AlignCenter, AlignRight, Pencil,
 } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { SHAPES_MAP } from '../../whiteboard/shapes';
+import { cleanGlyph, GLYPH_SHAPE } from '../../whiteboard/glyph';
 import { readBoardFile } from '../../whiteboard/boardFile';
+import { paint } from '../../whiteboard/ink';
+import { stickyColor } from '../../whiteboard/sticky';
+import { isMarker } from '../../whiteboard/edgeMarkers';
+import { hiddenByCollapse } from '../../whiteboard/mindmap';
+import { renderRichText } from '../../whiteboard/richText';
 import { assetUrl, rotatedOverhang } from '../../whiteboard/imageAssets';
 import type { WBNode, WhiteboardData } from '../../whiteboard/boardFile';
 import { logger } from '../../../utils/logger';
+
+// The editing canvas loads only when somebody edits a board here.
+const InlineBoardEditor = defineAsyncComponent(() => import('../../whiteboard/components/InlineBoardEditor.vue'));
 
 const props = defineProps<{
   node: any;
@@ -35,7 +76,31 @@ const vaultPath = computed(() => props.editor?.storage?.whiteboard?.vaultPath ||
 // rendered here as whichever parts happened to still be recognisable.
 type BoardData = WhiteboardData;
 
-const boardData = ref<BoardData | null>(null);
+// Shallow: the board is replaced whole on every reload and only read here,
+// and a deep ref turned every point of every stroke into a proxy.
+const boardData = shallowRef<BoardData | null>(null);
+/** Whether the board is being edited here, in the note, rather than shown. */
+const editingHere = ref(false);
+
+/**
+ * What the board shows: everything but what a folded mind-map branch hides,
+ * drawn in stacking order (a frame under what it holds, an item brought to
+ * the front over the rest), as the board itself draws it.
+ */
+const visibleNodes = computed<WBNode[]>(() => {
+  const data = boardData.value;
+  if (!data) return [];
+  const hidden = hiddenByCollapse(data.nodes, data.edges);
+  const z = (n: WBNode) => (typeof n.data?.z === 'number' ? n.data.z : n.type === 'frame' ? -100_000 : 0);
+  // Comments are for the people working on the board, not for its readers.
+  return data.nodes.filter((n) => !hidden.has(n.id) && n.type !== 'comment').sort((a, b) => z(a) - z(b));
+});
+
+/** An item's turn, about its own middle — as the board turns it. */
+function turn(node: WBNode, w: number, h: number): string | undefined {
+  const deg = node.data?.rotation;
+  return deg ? `rotate(${deg}, ${node.position.x + w / 2}, ${node.position.y + h / 2})` : undefined;
+}
 const loading = ref(true);
 const error = ref('');
 
@@ -52,7 +117,8 @@ const alignStyle = computed(() => {
 });
 
 // --- Load whiteboard data ---
-const loadBoard = async () => {
+/** `quiet`: a reload of a board already shown, without the spinner in between. */
+const loadBoard = async (quiet = false) => {
   const path = props.node.attrs.boardPath;
   const vp = vaultPath.value;
   if (!path || !vp) {
@@ -61,7 +127,7 @@ const loadBoard = async () => {
     return;
   }
   try {
-    loading.value = true;
+    if (!quiet || !boardData.value) loading.value = true;
     error.value = '';
     const raw = await invoke<string>('read_whiteboard', { vaultPath: vp, path });
     const read = readBoardFile(raw);
@@ -82,10 +148,22 @@ const loadBoard = async () => {
   }
 };
 
-onMounted(loadBoard);
+onMounted(() => loadBoard());
 
 // Reload when boardPath changes
-watch(() => props.node.attrs.boardPath, loadBoard);
+watch(() => props.node.attrs.boardPath, () => loadBoard());
+
+// A burst of saves (a drag in the app writes every two seconds) is one reload.
+// While the board is edited here, not at all: the editor is what is on
+// screen, its own saves are among the burst, and reloading would rebuild it
+// under the pointer. It is read again when editing ends.
+let reloadTimer: ReturnType<typeof setTimeout> | null = null;
+function reloadSoon() {
+  if (editingHere.value) return;
+  if (reloadTimer) clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => { reloadTimer = null; void loadBoard(true); }, 300);
+}
+watch(editingHere, (editing) => { if (!editing) void loadBoard(true); });
 
 // Auto-reload when whiteboard is updated in the Whiteboard app
 let unlistenWbUpdate: (() => void) | null = null;
@@ -95,18 +173,19 @@ onMounted(async () => {
     const boardPath = props.node.attrs.boardPath;
     const boardId = props.node.attrs.boardId;
     if (event.payload.path === boardPath || event.payload.id === boardId) {
-      loadBoard();
+      reloadSoon();
     }
   });
 });
 
 onUnmounted(() => {
   if (unlistenWbUpdate) unlistenWbUpdate();
+  if (reloadTimer) clearTimeout(reloadTimer);
 });
 
 // --- Mindmap node dimensions ---
 function getMindmapWidth(node: WBNode): number {
-  const label = node.data.label || 'Idea';
+  const label = node.data.label || t('whiteboard.idea');
   const fontSize = node.data.level === 0 ? 15 : 13;
   const minW = node.data.level === 0 ? 140 : 100;
   // Approximate text width: ~0.6 * fontSize per character + padding
@@ -202,7 +281,18 @@ function getNodeBounds(node: WBNode): { x: number; y: number; w: number; h: numb
     const over = node.type === 'image' ? rotatedOverhang(w, h, node.data.rotation || 0) : 0;
     return { x: x - over, y: y - over, w: w + over * 2, h: h + over * 2 };
   }
-  // stroke
+  if (node.type === 'sticky') {
+    return { x, y, w: node.data.width || 200, h: node.data.height || 200 };
+  }
+  if (node.type === 'card') {
+    return { x, y, w: node.data.width || 260, h: node.data.height || 120 };
+  }
+  if (node.type === 'frame') {
+    // Its title sits above it.
+    return { x, y: y - 24, w: node.data.width || 480, h: (node.data.height || 320) + 24 };
+  }
+  // A stroke carries its box; one drawn before that is sized by its points.
+  if (node.data.width && node.data.height) return { x, y, w: node.data.width, h: node.data.height };
   return { x, y, w: 100, h: 100 };
 }
 
@@ -244,8 +334,9 @@ interface ComputedEdge {
 
 const computedEdges = computed<ComputedEdge[]>(() => {
   if (!boardData.value) return [];
+  // Only between items that are showing: a folded branch takes its lines with it.
   const nodeMap = new Map<string, WBNode>();
-  for (const n of boardData.value.nodes) nodeMap.set(n.id, n);
+  for (const n of visibleNodes.value) nodeMap.set(n.id, n);
 
   return boardData.value.edges.map(edge => {
     const src = nodeMap.get(edge.source);
@@ -325,12 +416,14 @@ const computedEdges = computed<ComputedEdge[]>(() => {
     return {
       id: edge.id,
       path,
-      color: d.color || '#94a3b8',
+      color: paint(d.color) || '#94a3b8',
       strokeWidth: d.strokeWidth || 2,
       dashArray,
       animated: !!d.animated,
-      markerEnd: d.markerEnd === 'arrow',
-      markerStart: d.markerStart === 'arrow',
+      // Any end the board draws shows here as an arrow: at this size the
+      // difference between a diamond and a crow's foot is not readable.
+      markerEnd: isMarker(d.markerEnd),
+      markerStart: isMarker(d.markerStart),
     };
   }).filter(Boolean) as ComputedEdge[];
 });
@@ -426,12 +519,31 @@ const onResizeHeight = (e: MouseEvent) => {
   document.addEventListener('mouseup', onUp);
 };
 
+/** An icon's drawing, checked; null for any other shape. */
+function glyphOf(node: WBNode) {
+  return node.data.shapeType === GLYPH_SHAPE ? cleanGlyph(node.data.glyph) : null;
+}
+/** Figures and icons have their words under them. */
+function labelUnder(node: WBNode): boolean {
+  return node.data.shapeType === GLYPH_SHAPE || !!SHAPES_MAP[node.data.shapeType]?.labelBelow;
+}
+
 // Render SVG shape path scaled to actual node position/size
 function getShapeTransform(node: WBNode): string {
   const def = SHAPES_MAP[node.data.shapeType] || SHAPES_MAP['rectangle'];
   const w = node.data.width || def?.defaultWidth || 160;
   const h = node.data.height || def?.defaultHeight || 80;
-  return `translate(${node.position.x}, ${node.position.y}) scale(${w / 100}, ${h / 100})`;
+  return shapeTransform(node.position.x, node.position.y, w, h);
+}
+
+/** Where a shape's label sits: under a figure or icon, else in its label box. */
+function shapeLabelAt(node: WBNode): { x: number; y: number } {
+  const def = SHAPES_MAP[node.data.shapeType];
+  const under = labelUnder(node);
+  const w = node.data.width || def?.defaultWidth || 160;
+  const h = node.data.height || def?.defaultHeight || (under ? 64 : 80);
+  if (under) return { x: node.position.x + w / 2, y: node.position.y + h + 6 };
+  return shapeLabelCenter(def, node.position.x, node.position.y, w, h);
 }
 
 </script>
@@ -496,6 +608,15 @@ function getShapeTransform(node: WBNode): string {
           <span>{{ $t('note.editor.whiteboard.empty') }}</span>
         </div>
 
+        <!-- Edited where it is: see InlineBoardEditor -->
+        <InlineBoardEditor
+          v-else-if="editingHere && vaultPath"
+          :vault-path="vaultPath"
+          :path="node.attrs.boardPath"
+          :board="boardData"
+          @done="editingHere = false"
+        />
+
         <!-- SVG Render -->
         <svg
           v-else
@@ -516,9 +637,30 @@ function getShapeTransform(node: WBNode): string {
               orient="auto"
               markerUnits="userSpaceOnUse"
             >
-              <path d="M 0 0 L 12 6 L 0 12 Z" :fill="edge.color" />
+              <path d="M 0 0 L 12 6 L 0 12 Z" :style="{ fill: edge.color }" />
             </marker>
           </defs>
+
+          <!-- Frames, behind everything they hold -->
+          <template v-for="node in visibleNodes.filter(n => n.type === 'frame')" :key="node.id">
+            <rect
+              :x="node.position.x"
+              :y="node.position.y"
+              :width="node.data.width || 480"
+              :height="node.data.height || 320"
+              rx="10"
+              class="wb-embed-frame"
+            />
+            <text
+              :x="node.position.x + 2"
+              :y="node.position.y - 8"
+              font-size="13"
+              font-weight="600"
+              font-family="Inter, system-ui, sans-serif"
+              fill="currentColor"
+              class="wb-svg-text"
+            >{{ node.data.label || $t('whiteboard.frame') }}</text>
+          </template>
 
           <!-- Edges (bezier curves with dash/animation/arrow support) -->
           <path
@@ -526,7 +668,7 @@ function getShapeTransform(node: WBNode): string {
             :key="edge.id"
             :d="edge.path"
             fill="none"
-            :stroke="edge.color"
+            :style="{ stroke: edge.color }"
             :stroke-width="edge.strokeWidth"
             stroke-linecap="round"
             :stroke-dasharray="edge.dashArray"
@@ -536,12 +678,25 @@ function getShapeTransform(node: WBNode): string {
           />
 
           <!-- Shape Nodes -->
-          <template v-for="node in boardData.nodes.filter(n => n.type === 'shape')" :key="node.id">
-            <g :transform="getShapeTransform(node)">
+          <template v-for="node in visibleNodes.filter(n => n.type === 'shape')" :key="node.id">
+            <g :transform="turn(node, node.data.width || SHAPES_MAP[node.data.shapeType]?.defaultWidth || 160, node.data.height || SHAPES_MAP[node.data.shapeType]?.defaultHeight || 80)">
+            <svg
+              v-if="glyphOf(node)"
+              :x="node.position.x" :y="node.position.y"
+              :width="node.data.width || 64" :height="node.data.height || 64"
+              :viewBox="glyphOf(node)!.viewBox.join(' ')"
+              fill="none"
+              :style="{ stroke: paint(node.data.color) || '#7c3aed' }"
+              :stroke-width="node.data.borderWidth || 2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <component :is="part[0]" v-for="(part, pi) in glyphOf(node)!.parts" :key="pi" v-bind="part[1]" />
+            </svg>
+            <g v-else :transform="getShapeTransform(node)">
               <path
                 :d="(SHAPES_MAP[node.data.shapeType] || SHAPES_MAP['rectangle']).path"
-                :fill="node.data.fillColor || 'none'"
-                :stroke="node.data.color || '#7c3aed'"
+                :style="{ fill: paint(node.data.fillColor) || 'none', stroke: paint(node.data.color) || '#7c3aed' }"
                 :stroke-width="node.data.borderWidth || 2"
                 vector-effect="non-scaling-stroke"
                 stroke-linejoin="round"
@@ -553,7 +708,7 @@ function getShapeTransform(node: WBNode): string {
                 :key="di"
                 :d="deco"
                 fill="none"
-                :stroke="node.data.color || '#7c3aed'"
+                :style="{ stroke: paint(node.data.color) || '#7c3aed' }"
                 :stroke-width="node.data.borderWidth || 2"
                 vector-effect="non-scaling-stroke"
                 stroke-linejoin="round"
@@ -562,19 +717,41 @@ function getShapeTransform(node: WBNode): string {
             <!-- Label -->
             <text
               v-if="node.data.label"
-              :x="node.position.x + (node.data.width || (SHAPES_MAP[node.data.shapeType]?.defaultWidth || 160)) / 2"
-              :y="node.position.y + (node.data.height || (SHAPES_MAP[node.data.shapeType]?.defaultHeight || 80)) / 2"
+              :x="shapeLabelAt(node).x"
+              :y="shapeLabelAt(node).y"
               text-anchor="middle"
-              dominant-baseline="central"
+              :dominant-baseline="labelUnder(node) ? 'hanging' : 'central'"
               :font-size="node.data.fontSize || 13"
               font-family="Inter, system-ui, sans-serif"
               fill="currentColor"
               class="wb-svg-text"
             >{{ node.data.label }}</text>
+            </g>
+          </template>
+
+          <!-- Note cards: the note's title on a card -->
+          <template v-for="node in visibleNodes.filter(n => n.type === 'note' || n.type === 'card')" :key="node.id">
+            <rect
+              :x="node.position.x"
+              :y="node.position.y"
+              :width="node.data.width || 280"
+              :height="node.data.height || 180"
+              rx="12"
+              class="wb-embed-note"
+            />
+            <text
+              :x="node.position.x + 16"
+              :y="node.position.y + 28"
+              font-size="14"
+              font-weight="600"
+              font-family="Inter, system-ui, sans-serif"
+              fill="currentColor"
+              class="wb-svg-text"
+            >{{ node.data.noteTitle || node.data.title || '' }}</text>
           </template>
 
           <!-- Image Nodes -->
-          <template v-for="node in boardData.nodes.filter(n => n.type === 'image')" :key="node.id">
+          <template v-for="node in visibleNodes.filter(n => n.type === 'image')" :key="node.id">
             <image
               v-if="node.data.assetPath && vaultPath"
               :x="node.position.x"
@@ -590,19 +767,40 @@ function getShapeTransform(node: WBNode): string {
           </template>
 
           <!-- Stroke Nodes (freehand drawings) -->
-          <template v-for="node in boardData.nodes.filter(n => n.type === 'stroke')" :key="node.id">
+          <template v-for="node in visibleNodes.filter(n => n.type === 'stroke')" :key="node.id">
             <path
               v-if="node.data.svgPath"
               :d="node.data.svgPath"
-              :fill="node.data.color || '#000'"
+              :style="{ fill: paint(node.data.color) || 'var(--wb-ink)' }"
               :opacity="node.data.opacity ?? 0.85"
               :transform="`translate(${node.position.x}, ${node.position.y})`"
             />
           </template>
 
+          <!-- Sticky notes: their paper, their words -->
+          <template v-for="node in visibleNodes.filter(n => n.type === 'sticky')" :key="node.id">
+            <g :transform="turn(node, node.data.width || 200, node.data.height || 200)">
+            <rect
+              :x="node.position.x"
+              :y="node.position.y"
+              :width="node.data.width || 200"
+              :height="node.data.height || 200"
+              rx="3"
+              :fill="stickyColor(node.data.color).fill"
+            />
+            <foreignObject :x="node.position.x" :y="node.position.y" :width="node.data.width || 200" :height="node.data.height || 200">
+              <div
+                xmlns="http://www.w3.org/1999/xhtml"
+                class="wb-embed-sticky"
+              >{{ node.data.label || '' }}</div>
+            </foreignObject>
+            </g>
+          </template>
+
           <!-- Text Nodes (foreignObject for native CSS word-wrap) -->
-          <template v-for="node in boardData.nodes.filter(n => n.type === 'text')" :key="node.id">
+          <template v-for="node in visibleNodes.filter(n => n.type === 'text')" :key="node.id">
             <foreignObject
+              :transform="turn(node, getTextNodeWidth(node), getTextNodeHeight(node))"
               :x="node.position.x"
               :y="node.position.y"
               :width="getTextNodeWidth(node)"
@@ -616,11 +814,12 @@ function getShapeTransform(node: WBNode): string {
                   padding: '8px 12px',
                   borderRadius: '8px',
                   backgroundColor: node.data.backgroundColor || 'transparent',
-                  opacity: node.data.opacity || 1,
+                  // A percentage, as the board stores it.
+                  opacity: (node.data.opacity ?? 100) / 100,
                   fontSize: (node.data.fontSize || 16) + 'px',
                   fontWeight: node.data.fontWeight || 'normal',
                   fontStyle: node.data.fontStyle || 'normal',
-                  color: node.data.color || 'inherit',
+                  color: paint(node.data.color) || 'inherit',
                   fontFamily: 'Inter, system-ui, sans-serif',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
@@ -628,12 +827,14 @@ function getShapeTransform(node: WBNode): string {
                   boxSizing: 'border-box',
                   lineHeight: '1.4',
                 }"
-              >{{ node.data.label || '' }}</div>
+                class="wb-embed-rich"
+                v-html="renderRichText(node.data.label || '')"
+              />
             </foreignObject>
           </template>
 
           <!-- Mindmap Nodes (pill-shaped with border + light fill) -->
-          <template v-for="node in boardData.nodes.filter(n => n.type === 'mindmap')" :key="node.id">
+          <template v-for="node in visibleNodes.filter(n => n.type === 'mindmap')" :key="node.id">
             <rect
               :x="node.position.x"
               :y="node.position.y"
@@ -655,7 +856,7 @@ function getShapeTransform(node: WBNode): string {
               font-family="Inter, system-ui, sans-serif"
               fill="currentColor"
               class="wb-svg-text"
-            >{{ node.data.label || 'Idea' }}</text>
+            >{{ node.data.label || t('whiteboard.idea') }}</text>
           </template>
         </svg>
       </div>
@@ -674,6 +875,15 @@ function getShapeTransform(node: WBNode): string {
             <AlignRight class="w-3.5 h-3.5" />
           </button>
           <div class="wb-bubble-sep" />
+          <button
+            v-if="boardData && boardData.nodes.length && !editingHere"
+            @click="editingHere = true"
+            :title="$t('whiteboard.inline.edit')"
+            :aria-label="$t('whiteboard.inline.edit')"
+            class="wb-bubble-btn"
+          >
+            <Pencil class="w-3.5 h-3.5" />
+          </button>
           <button @click="openInApp" :title="$t('note.editor.whiteboard.open')" class="wb-bubble-btn">
             <ExternalLink class="w-3.5 h-3.5" />
           </button>
@@ -722,6 +932,50 @@ function getShapeTransform(node: WBNode): string {
 .dark .wb-embed-container {
   border-color: #333;
   background: #1a1a1e;
+}
+
+.wb-embed-note {
+  fill: var(--color-surface, #fff);
+  stroke: rgba(148, 163, 184, 0.8);
+  stroke-width: 1;
+}
+.dark .wb-embed-note {
+  fill: var(--color-surface-dark, #1e1e1e);
+}
+.wb-embed-rich p { margin: 0; }
+.wb-embed-rich ul { list-style: disc; padding-left: 1.2em; margin: 0.2em 0; }
+.wb-embed-rich ol { list-style: decimal; padding-left: 1.4em; margin: 0.2em 0; }
+.wb-embed-rich h1 { font-size: 1.6em; font-weight: 700; margin: 0.1em 0; }
+.wb-embed-rich h2 { font-size: 1.35em; font-weight: 700; margin: 0.1em 0; }
+.wb-embed-rich h3 { font-size: 1.15em; font-weight: 600; margin: 0.1em 0; }
+.wb-embed-frame {
+  fill: rgba(148, 163, 184, 0.08);
+  stroke: rgba(148, 163, 184, 0.8);
+  stroke-width: 1.5;
+}
+.wb-embed-sticky {
+  width: 100%;
+  height: 100%;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #1f2937;
+  font: 500 18px/1.25 Inter, system-ui, sans-serif;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+/* The board's black, as the Whiteboard app paints it (see whiteboard/ink.ts):
+   dark on the light theme, light on the dark one. */
+.wb-embed-container {
+  --wb-ink: #1e1e1e;
+}
+.dark .wb-embed-container {
+  --wb-ink: #e4e4e7;
 }
 
 .dark .wb-embed-wrapper.is-selected .wb-embed-container {

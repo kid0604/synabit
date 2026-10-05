@@ -23,14 +23,20 @@ export function useTextMenu(
       backgroundColor: node.data.backgroundColor || '',
       opacity: node.data.opacity ?? 100,
       width: node.data.width || 240,
+      locked: !!node.data.locked,
     };
   });
 
+  /** A locked item: the panel may unlock it and do nothing else. */
+  const isLocked = (id: string) => !!store.currentBoardData.value?.nodes.find((n: any) => n.id === id)?.data?.locked;
+
   function handleTextUpdate(nodeId: string, data: Record<string, any>) {
+    if (isLocked(nodeId) && Object.keys(data).some((k) => k !== 'locked')) return;
     updateNodeData(nodeId, data);
   }
 
   function handleTextDelete(nodeId: string) {
+    if (isLocked(nodeId)) return;
     deleteNodes([nodeId]);
     selectedTextNodeId.value = null;
   }

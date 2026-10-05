@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Trash2, X } from 'lucide-vue-next';
+import { SHAPES, SHAPES_MAP } from '../shapes';
+import CustomColorSwatch from './CustomColorSwatch.vue';
+import ItemActions from './ItemActions.vue';
 
 const props = defineProps<{
   nodeId: string;
@@ -13,14 +16,29 @@ const props = defineProps<{
     dashStyle?: string;
     opacity?: number;
     fontSize?: number;
+    locked?: boolean;
   };
+  /** Whether a look has been copied that this shape could take. */
+  canPasteStyle?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'update', nodeId: string, data: Record<string, any>): void;
   (e: 'delete', nodeId: string): void;
   (e: 'close'): void;
+  (e: 'action', id: string, el?: HTMLElement): void;
+  (e: 'change-type', nodeId: string, shapeType: string): void;
 }>();
+
+// ─── Shape type ─────────────────────────────────────────
+// Changing what a shape is, keeping where it is and what it says: a box that
+// turns out to be a decision should not have to be drawn again.
+const CATEGORIES = ['basic', 'flowchart', 'arrow', 'uml', 'er', 'network', 'bpmn', 'wireframe', 'callout'] as const;
+const category = ref<string>(SHAPES_MAP[props.nodeData.shapeType]?.category ?? 'basic');
+watch(() => props.nodeId, () => {
+  category.value = SHAPES_MAP[props.nodeData.shapeType]?.category ?? 'basic';
+});
+const shapesInCategory = computed(() => SHAPES.filter((sh) => sh.category === category.value));
 
 // ─── Local State ────────────────────────────────────────
 const strokeColor = ref(props.nodeData.color || '#7c3aed');
@@ -31,8 +49,9 @@ const opacity = ref(props.nodeData.opacity ?? 100);
 const fontSize = ref(props.nodeData.fontSize || 13);
 const nodeLabel = ref(props.nodeData.label || '');
 
-// Sync on prop changes (node selection change)
-watch(() => props.nodeId, () => {
+// Follow the node, not just the selection: renamed on the canvas, resized,
+// undone — whatever this panel shows has to be what the node now is.
+watch(() => props.nodeData, () => {
   strokeColor.value = props.nodeData.color || '#7c3aed';
   fillColor.value = props.nodeData.fillColor || '';
   borderWidth.value = props.nodeData.borderWidth || 2;
@@ -40,7 +59,7 @@ watch(() => props.nodeId, () => {
   opacity.value = props.nodeData.opacity ?? 100;
   fontSize.value = props.nodeData.fontSize || 13;
   nodeLabel.value = props.nodeData.label || '';
-});
+}, { deep: true });
 
 const COLORS = [
   { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
@@ -69,24 +88,23 @@ const DASH_STYLES = [
 
 const FONT_SIZES = [10, 12, 13, 14, 16, 18, 20, 24];
 
-function emitUpdate() {
-  emit('update', props.nodeId, {
-    color: strokeColor.value,
-    fillColor: fillColor.value,
-    borderWidth: borderWidth.value,
-    dashStyle: dashStyle.value,
-    opacity: opacity.value,
-    fontSize: fontSize.value,
-    label: nodeLabel.value,
-  });
+/**
+ * Send what this control changed, and only that.
+ *
+ * The panel used to send every field it held each time, from its own copy —
+ * so a label typed on the canvas after the panel opened was put back to the
+ * old one by the next colour click.
+ */
+function emitUpdate(changed: Record<string, any>) {
+  emit('update', props.nodeId, changed);
 }
 
-function setStrokeColor(c: string) { strokeColor.value = c; emitUpdate(); }
-function setFillColor(c: string) { fillColor.value = c; emitUpdate(); }
-function setWidth(w: number) { borderWidth.value = w; emitUpdate(); }
-function setDash(d: string) { dashStyle.value = d; emitUpdate(); }
-function setFontSize(s: number) { fontSize.value = s; emitUpdate(); }
-function updateLabel() { emitUpdate(); }
+function setStrokeColor(c: string) { strokeColor.value = c; emitUpdate({ color: c }); }
+function setFillColor(c: string) { fillColor.value = c; emitUpdate({ fillColor: c }); }
+function setWidth(w: number) { borderWidth.value = w; emitUpdate({ borderWidth: w }); }
+function setDash(d: string) { dashStyle.value = d; emitUpdate({ dashStyle: d }); }
+function setFontSize(s: number) { fontSize.value = s; emitUpdate({ fontSize: s }); }
+function updateLabel() { emitUpdate({ label: nodeLabel.value }); }
 
 function handleDelete() {
   emit('delete', props.nodeId);
@@ -94,7 +112,7 @@ function handleDelete() {
 </script>
 
 <template>
-  <div class="sp-panel" @mousedown.stop @click.stop>
+  <div class="sp-panel" role="region" :aria-label="$t('whiteboard.panel_for', { what: $t('whiteboard.shape') })" @mousedown.stop @click.stop @keydown.escape.stop="$emit('close')">
     <!-- Header -->
     <div class="sp-header">
       <span class="sp-title">{{ $t('whiteboard.shape') }}</span>
@@ -109,6 +127,35 @@ function handleDelete() {
     </div>
 
     <div class="sp-body">
+      <!-- Actions -->
+      <div class="sp-section">
+        <span class="sp-label">{{ $t('whiteboard.actions') }}</span>
+        <ItemActions :locked="nodeData.locked" :can-paste-style="canPasteStyle" @action="(id: string, el?: HTMLElement) => emit('action', id, el)" />
+      </div>
+
+      <!-- Shape type -->
+      <div class="sp-section">
+        <span class="sp-label">{{ $t('whiteboard.change_shape') }}</span>
+        <select v-model="category" class="sp-select" :aria-label="$t('whiteboard.change_shape')">
+          <option v-for="c in CATEGORIES" :key="c" :value="c">{{ $t('whiteboard.shape_category.' + c) }}</option>
+        </select>
+        <div class="sp-shape-grid">
+          <button
+            v-for="sh in shapesInCategory"
+            :key="sh.id"
+            :class="['sp-shape', nodeData.shapeType === sh.id && 'active']"
+            :title="$t(sh.labelKey)"
+            :aria-label="$t(sh.labelKey)"
+            :aria-pressed="nodeData.shapeType === sh.id"
+            @click="emit('change-type', nodeId, sh.id)"
+          >
+            <svg viewBox="0 0 100 100" class="sp-shape-icon">
+              <path :d="sh.path" fill="none" stroke="currentColor" stroke-width="6" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <!-- Border Color -->
       <div class="sp-section">
         <span class="sp-label">{{ $t('whiteboard.border') }}</span>
@@ -119,8 +166,9 @@ function handleDelete() {
             @click="setStrokeColor(c.value)"
             :class="['sp-swatch', strokeColor === c.value && 'active']"
             :style="{ '--sw-color': c.value }"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :value="strokeColor" :presets="COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setStrokeColor" />
         </div>
       </div>
 
@@ -134,8 +182,9 @@ function handleDelete() {
             @click="setFillColor(c.value)"
             :class="['sp-swatch', fillColor === c.value && 'active', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :value="fillColor" :presets="FILL_COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setFillColor" />
         </div>
       </div>
 
@@ -176,7 +225,7 @@ function handleDelete() {
         <span class="sp-label">{{ $t('whiteboard.opacity') }} <span class="sp-value">{{ opacity }}%</span></span>
         <input
           type="range" min="10" max="100" step="5"
-          v-model.number="opacity" @input="emitUpdate"
+          v-model.number="opacity" @input="emitUpdate({ opacity })"
           :aria-label="$t('whiteboard.opacity')"
           class="sp-slider"
         />
@@ -211,6 +260,55 @@ function handleDelete() {
 </template>
 
 <style scoped>
+.sp-select {
+  width: 100%;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  border: 1px solid var(--color-border, #e6e6e6);
+  background: transparent;
+  color: inherit;
+}
+.dark .sp-select {
+  border-color: var(--color-border-dark, #333);
+}
+.sp-shape-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.sp-shape {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  color: var(--color-text-secondary, #52525b);
+}
+.sp-shape:hover,
+.sp-shape:focus-visible,
+.sp-shape.active {
+  background: var(--color-surface-hover, #f4f4f5);
+  color: var(--color-accent);
+  outline: none;
+}
+.dark .sp-shape {
+  color: var(--color-text-secondary-dark, #a1a1aa);
+}
+.dark .sp-shape:hover,
+.dark .sp-shape:focus-visible,
+.dark .sp-shape.active {
+  background: var(--color-surface-hover-dark, #2a2a2a);
+  color: var(--color-accent-dark);
+}
+.sp-shape-icon {
+  width: 20px;
+  height: 20px;
+  overflow: visible;
+}
 .sp-panel {
   position: fixed;
   top: 60px;
@@ -276,6 +374,7 @@ function handleDelete() {
   color: var(--color-text-secondary, #71717a);
   transition: all 0.12s;
 }
+.dark .sp-icon-btn { color: var(--color-text-secondary-dark, #a1a1aa); }
 .sp-icon-btn:hover {
   background: var(--color-surface-hover, #f5f5f5);
 }

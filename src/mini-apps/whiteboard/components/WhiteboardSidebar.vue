@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useSidebarResize } from '../../../composables/useSidebarResize';
 import { invoke } from '@tauri-apps/api/core';
 import { Plus, Trash2, PenTool, PanelLeftClose, Search, FileText, GripVertical, ChevronDown, ChevronRight, SquarePlus } from 'lucide-vue-next';
 import { useAppStore } from '../../../stores/useAppStore';
@@ -110,22 +111,38 @@ function handleNoteDragStart(event: DragEvent, note: any) {
 }
 
 // ─── Sidebar Resizing ─────────────────────────────────────
-const wSidebar = ref(260);
-const isDraggingSidebar = ref(false);
+// The same edge every other app's sidebar has. This used to set the width to
+// the pointer's `clientX`, which counts the app's icon rail too, so the edge
+// jumped 64px the moment it was grabbed; it was mouse-only and forgot its
+// width on every launch. The composable measures where the sidebar starts,
+// clamps once, and remembers the width per device.
+const SIDEBAR = { initial: 260, min: 180, max: 480 };
+const resize = useSidebarResize({ left: { ...SIDEBAR, remember: 'whiteboard.sidebar.width' } });
+const wSidebar = resize.leftWidth;
+const isDraggingSidebar = resize.isDraggingLeft;
 
-const startDragSidebar = (e: MouseEvent) => {
-  isDraggingSidebar.value = true;
-  const onMouseMove = (ev: MouseEvent) => {
-    wSidebar.value = Math.max(180, Math.min(480, ev.clientX));
-  };
-  const onMouseUp = () => {
-    isDraggingSidebar.value = false;
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
-  };
-  window.addEventListener('mousemove', onMouseMove);
-  window.addEventListener('mouseup', onMouseUp);
+/** Taking hold of the edge; captured so the canvas does not see a pan. */
+const startDragSidebar = (event: PointerEvent) => {
+  (event.currentTarget as HTMLElement).setPointerCapture?.(event.pointerId);
+  resize.startDragLeft(event);
 };
+
+/** Arrow keys move the edge too, through the same clamp as the drag. */
+const nudgeSidebar = (by: number) => {
+  wSidebar.value += by;
+  resize.reclamp();
+};
+
+onMounted(() => {
+  window.addEventListener('pointermove', resize.onMouseMove);
+  window.addEventListener('pointerup', resize.onMouseUp);
+  window.addEventListener('pointercancel', resize.onMouseUp);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('pointermove', resize.onMouseMove);
+  window.removeEventListener('pointerup', resize.onMouseUp);
+  window.removeEventListener('pointercancel', resize.onMouseUp);
+});
 
 defineExpose({ sidebarOpen, isDraggingSidebar });
 </script>
@@ -139,7 +156,23 @@ defineExpose({ sidebarOpen, isDraggingSidebar });
     class="wb-sidebar flex flex-col absolute md:relative z-[49] shrink-0 bg-surface-alt dark:bg-surface-alt-dark border-r border-border dark:border-border-dark"
     :style="{ width: wSidebar + 'px' }"
   >
-    <div class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize hover:bg-black/10 dark:hover:bg-white/10 z-10 opacity-0 hover:opacity-100 transition-opacity" @mousedown.stop="startDragSidebar"></div>
+    <!-- The edge, draggable. A focusable `separator` is the ARIA window
+         splitter, so the arrow keys move it for anybody not on a pointer. -->
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="0"
+      :aria-label="$t('whiteboard.resize_sidebar')"
+      :aria-valuenow="wSidebar"
+      :aria-valuemin="SIDEBAR.min"
+      :aria-valuemax="SIDEBAR.max"
+      class="hidden md:block absolute top-0 right-0 w-1.5 h-full cursor-col-resize touch-none hover:bg-black/10 dark:hover:bg-white/10 focus-visible:bg-accent focus-visible:opacity-100 focus-visible:outline-none z-10 opacity-0 hover:opacity-100 transition-opacity"
+      :class="isDraggingSidebar ? 'opacity-100 bg-accent/60' : ''"
+      @pointerdown.stop.prevent="startDragSidebar"
+      @keydown.left.prevent="nudgeSidebar(-24)"
+      @keydown.right.prevent="nudgeSidebar(24)"
+      @dblclick="wSidebar = SIDEBAR.initial"
+    ></div>
 
     <!--
       One 40px row of 32px controls, the same shape as the Notes sidebar:

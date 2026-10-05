@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
 import { Trash2, X } from 'lucide-vue-next';
+import CustomColorSwatch from './CustomColorSwatch.vue';
+import { MARKER_KINDS, type MarkerPart } from '../edgeMarkers';
 
 const props = defineProps<{
   edgeId: string;
@@ -13,6 +15,7 @@ const props = defineProps<{
     markerEnd?: string;
     markerStart?: string;
     dashStyle?: string;
+    sides?: string;
   };
 }>();
 
@@ -27,21 +30,27 @@ const edgeType = ref(props.edgeData.type || 'default');
 const edgeColor = ref(props.edgeData.color || '');
 const strokeWidth = ref(props.edgeData.strokeWidth || 2);
 const animated = ref(props.edgeData.animated || false);
+/** Whether the line picks the sides that face each other (routing.ts), or keeps the handles it was drawn from. */
+const autoSides = ref(props.edgeData.sides === 'auto');
 const edgeLabel = ref(props.edgeData.label || '');
 const markerEnd = ref(props.edgeData.markerEnd || 'none');
 const markerStart = ref(props.edgeData.markerStart || 'none');
 const dashStyle = ref(props.edgeData.dashStyle || 'solid');
 
-watch(() => props.edgeId, () => {
+// Follow the edge itself, not only which edge: an undo, or a change merged in
+// from another copy of the board, has to show here before the next click
+// sends this panel's copy back.
+watch(() => props.edgeData, () => {
   edgeType.value = props.edgeData.type || 'default';
   edgeColor.value = props.edgeData.color || '';
   strokeWidth.value = props.edgeData.strokeWidth || 2;
   animated.value = props.edgeData.animated || false;
+  autoSides.value = props.edgeData.sides === 'auto';
   edgeLabel.value = props.edgeData.label || '';
   markerEnd.value = props.edgeData.markerEnd || 'none';
   markerStart.value = props.edgeData.markerStart || 'none';
   dashStyle.value = props.edgeData.dashStyle || 'solid';
-});
+}, { deep: true });
 
 const EDGE_TYPES = [
   { value: 'straight', labelKey: 'whiteboard.edge_type.straight' },
@@ -95,6 +104,7 @@ function emitUpdate() {
     markerEnd: markerEnd.value,
     markerStart: markerStart.value,
     dashStyle: dashStyle.value,
+    sides: autoSides.value ? 'auto' : undefined,
   });
 }
 
@@ -102,6 +112,7 @@ function setType(type: string) { edgeType.value = type; emitUpdate(); }
 function setColor(color: string) { edgeColor.value = color; emitUpdate(); }
 function setWidth(w: number) { strokeWidth.value = w; emitUpdate(); }
 function toggleAnimated() { animated.value = !animated.value; emitUpdate(); }
+function toggleAutoSides() { autoSides.value = !autoSides.value; emitUpdate(); }
 function updateLabel() { emitUpdate(); }
 function setDashStyle(style: string) { dashStyle.value = style; emitUpdate(); }
 
@@ -119,11 +130,27 @@ function setArrowMode(mode: string) {
   emitUpdate();
 }
 
+/** The ends a line can have, `none` first. */
+const MARKER_CHOICES = [{ id: 'none', labelKey: 'whiteboard.marker.none', parts: [] as MarkerPart[] }, ...MARKER_KINDS];
+
+function setMarker(which: 'start' | 'end', kind: string) {
+  if (which === 'start') markerStart.value = kind;
+  else markerEnd.value = kind;
+  emitUpdate();
+}
+
+/** A marker part drawn in the panel's own colours, for its icon. */
+function iconPaint(part: MarkerPart) {
+  if (part.paint === 'solid') return { fill: 'currentColor', stroke: 'currentColor' };
+  if (part.paint === 'hollow') return { fill: 'var(--color-surface, #fff)', stroke: 'currentColor' };
+  return { fill: 'none', stroke: 'currentColor' };
+}
+
 function handleDelete() { emit('delete', props.edgeId); }
 </script>
 
 <template>
-  <div class="ep-panel" @mousedown.stop @click.stop>
+  <div class="ep-panel" role="region" :aria-label="$t('whiteboard.panel_for', { what: $t('whiteboard.edge') })" @mousedown.stop @click.stop @keydown.escape.stop="$emit('close')">
     <!-- Header -->
     <div class="ep-header">
       <span class="ep-title">{{ $t('whiteboard.edge') }}</span>
@@ -190,6 +217,32 @@ function handleDelete() { emit('delete', props.edgeId); }
         </div>
       </div>
 
+      <!-- Line ends: arrows, UML and ER notation -->
+      <div v-for="which in (['start', 'end'] as const)" :key="which" class="ep-section">
+        <span class="ep-label">{{ $t('whiteboard.marker.' + which) }}</span>
+        <div class="ep-marker-grid">
+          <button
+            v-for="k in MARKER_CHOICES"
+            :key="k.id"
+            :class="['ep-marker-btn', (which === 'start' ? markerStart : markerEnd) === k.id && 'active']"
+            :title="$t(k.labelKey)"
+            :aria-label="$t(k.labelKey)"
+            :aria-pressed="(which === 'start' ? markerStart : markerEnd) === k.id"
+            @click="setMarker(which, k.id)"
+          >
+            <svg viewBox="0 0 40 20" class="ep-marker-icon" :class="{ 'ep-marker-icon--start': which === 'start' }">
+              <line x1="2" y1="10" :x2="k.parts.length ? 24 : 38" y2="10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+              <g transform="translate(18, 0)">
+                <template v-for="(part, i) in k.parts" :key="i">
+                  <circle v-if="part.cx !== undefined" :cx="part.cx" cy="10" r="4" stroke-width="1.5" :style="iconPaint(part)" />
+                  <path v-else :d="part.d" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" :style="iconPaint(part)" />
+                </template>
+              </g>
+            </svg>
+          </button>
+        </div>
+      </div>
+
       <!-- Color -->
       <div class="ep-section">
         <span class="ep-label">{{ $t('whiteboard.color') }}</span>
@@ -199,8 +252,9 @@ function handleDelete() { emit('delete', props.edgeId); }
             @click="setColor(c.value)"
             :class="['ep-swatch', edgeColor === c.value && 'active', !c.value && 'ep-swatch-default']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :value="edgeColor" :presets="COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setColor" />
         </div>
       </div>
 
@@ -245,6 +299,13 @@ function handleDelete() { emit('delete', props.edgeId); }
         </button>
       </div>
 
+      <div class="ep-section ep-toggle-row">
+        <span class="ep-label">{{ $t('whiteboard.auto_sides') }}</span>
+        <button @click="toggleAutoSides" :class="['ep-toggle', autoSides && 'active']" :aria-label="$t('whiteboard.auto_sides')" :aria-pressed="autoSides" :title="$t('whiteboard.auto_sides_hint')">
+          <div class="ep-toggle-thumb" />
+        </button>
+      </div>
+
       <!-- Label -->
       <div class="ep-section">
         <span class="ep-label">{{ $t('whiteboard.label') }}</span>
@@ -261,6 +322,44 @@ function handleDelete() { emit('delete', props.edgeId); }
 </template>
 
 <style scoped>
+.ep-marker-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 3px;
+}
+.ep-marker-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--color-text-secondary, #52525b);
+}
+.ep-marker-btn:hover,
+.ep-marker-btn:focus-visible,
+.ep-marker-btn.active {
+  background: var(--color-surface-hover, #f4f4f5);
+  color: var(--color-accent);
+  outline: none;
+}
+.dark .ep-marker-btn {
+  color: var(--color-text-secondary-dark, #a1a1aa);
+}
+.dark .ep-marker-btn:hover,
+.dark .ep-marker-btn:focus-visible,
+.dark .ep-marker-btn.active {
+  background: var(--color-surface-hover-dark, #2a2a2a);
+  color: var(--color-accent-dark);
+}
+.ep-marker-icon {
+  width: 34px;
+  height: 17px;
+  overflow: visible;
+}
+/* The start of a line points the other way. */
+.ep-marker-icon--start {
+  transform: scaleX(-1);
+}
 /* ─── Panel Shell (matches ShapeMenu) ──── */
 .ep-panel {
   position: fixed;
@@ -327,6 +426,7 @@ function handleDelete() { emit('delete', props.edgeId); }
   color: var(--color-text-secondary, #71717a);
   transition: all 0.12s;
 }
+.dark .ep-icon-btn { color: var(--color-text-secondary-dark, #a1a1aa); }
 .ep-icon-btn:hover {
   background: var(--color-surface-hover, #f5f5f5);
 }

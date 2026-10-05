@@ -10,6 +10,10 @@ const props = defineProps<{
     level: number;
     editing?: boolean;
     direction?: 'left' | 'right';
+    collapsed?: boolean;
+    /** Worked out by the canvas, not stored: how many children, and how many items a fold hides. */
+    _childCount?: number;
+    _hiddenCount?: number;
   };
 }>();
 
@@ -18,6 +22,7 @@ const emit = defineEmits<{
   (e: 'add-child', payload: { parentId: string; direction: 'right' | 'left' }): void;
   (e: 'add-sibling', nodeId: string): void;
   (e: 'remove-node', nodeId: string): void;
+  (e: 'toggle-collapse', nodeId: string): void;
 }>();
 
 const isEditing = ref(props.data.editing || false);
@@ -56,17 +61,23 @@ onMounted(() => {
 });
 
 function startEdit() {
+  if ((props.data as any).locked) return;
   isEditing.value = true;
   editText.value = props.data.label;
 }
 
 function finishEdit() {
+  // Enter ends the edit and the blur as the input goes would end it again;
+  // only the first one writes.
+  if (!isEditing.value) return;
   isEditing.value = false;
   if (editText.value.trim() === '' && props.data.label === '') {
     emit('remove-node', props.id);
     return;
   }
-  emit('update:data', { ...props.data, label: editText.value, editing: false });
+  // Only what changed: the canvas copy of `data` also carries counts worked
+  // out for drawing (`_childCount`, `_hiddenCount`) that are not the board's.
+  emit('update:data', { label: editText.value, editing: undefined });
 }
 
 function handleKeydown(e: KeyboardEvent) {
@@ -80,8 +91,26 @@ function handleKeydown(e: KeyboardEvent) {
     // Tab creates child in same direction as this node (or right for root)
     emit('add-child', { parentId: props.id, direction: nodeDirection.value });
   } else if (e.key === 'Escape') {
-    isEditing.value = false;
+    cancelEdit();
   }
+}
+
+/**
+ * Leave the edit without keeping what was typed.
+ *
+ * A node that was never named — the child Tab or Enter just made — goes
+ * with the edit: it was only ever a place to type. Any other node keeps its
+ * label, and is told it is no longer being edited; left set, `editing` was
+ * saved with the board and the node opened in edit mode on the next visit.
+ */
+function cancelEdit() {
+  if (!isEditing.value) return;
+  isEditing.value = false;
+  if (props.data.label === '') {
+    emit('remove-node', props.id);
+    return;
+  }
+  if (props.data.editing) emit('update:data', { editing: undefined });
 }
 
 function addChild(direction: 'right' | 'left') {
@@ -116,7 +145,7 @@ function addChild(direction: 'right' | 'left') {
 
     <!-- Left + button: root or left-direction nodes -->
     <button
-      v-if="isRoot || nodeDirection === 'left'"
+      v-if="!(data as any).locked && (isRoot || nodeDirection === 'left')"
       class="wb-mindmap-add wb-mindmap-add--left"
       @click.stop="addChild('left')"
       :style="{ backgroundColor: data.color }"
@@ -126,13 +155,26 @@ function addChild(direction: 'right' | 'left') {
 
     <!-- Right + button: root or right-direction nodes -->
     <button
-      v-if="isRoot || nodeDirection === 'right'"
+      v-if="!(data as any).locked && (isRoot || nodeDirection === 'right')"
       class="wb-mindmap-add wb-mindmap-add--right"
       @click.stop="addChild('right')"
       :style="{ backgroundColor: data.color }"
       :title="$t('whiteboard.add_child_right')"
       :aria-label="$t('whiteboard.add_child_right')"
     >+</button>
+
+    <!-- Fold or unfold the branch below. Shown when there is one; when folded,
+         it says how much is hidden. -->
+    <button
+      v-if="data._childCount"
+      class="wb-mindmap-fold nodrag"
+      :class="[nodeDirection === 'left' && !isRoot ? 'wb-mindmap-fold--left' : 'wb-mindmap-fold--right', data.collapsed && 'is-folded']"
+      :style="{ borderColor: data.color, color: data.collapsed ? '#fff' : data.color, backgroundColor: data.collapsed ? data.color : undefined }"
+      :title="data.collapsed ? $t('whiteboard.mindmap.hidden_count', { count: data._hiddenCount }) : $t('whiteboard.mindmap.collapse')"
+      :aria-label="data.collapsed ? $t('whiteboard.mindmap.hidden_count', { count: data._hiddenCount }) : $t('whiteboard.mindmap.collapse')"
+      :aria-expanded="!data.collapsed"
+      @click.stop="emit('toggle-collapse', id)"
+    >{{ data.collapsed ? data._hiddenCount : '−' }}</button>
 
     <!-- Handles with IDs for directional edges -->
     <Handle id="right-source" type="source" :position="Position.Right" class="wb-mm-handle" />
@@ -197,6 +239,8 @@ function addChild(direction: 'right' | 'left') {
 .wb-mindmap-add--left {
   left: -12px;
 }
+.wb-mindmap-node:focus-within .wb-mindmap-add,
+:global(.vue-flow__node.selected) .wb-mindmap-add,
 .wb-mindmap-node:hover .wb-mindmap-add {
   opacity: 0.8;
   transform: translateY(-50%);
@@ -205,11 +249,36 @@ function addChild(direction: 'right' | 'left') {
   opacity: 1 !important;
   transform: translateY(-50%) scale(1.15);
 }
+.wb-mindmap-fold {
+  position: absolute;
+  top: calc(100% + 2px);
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1.5px solid;
+  background: var(--color-surface, #fff);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 14px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.wb-mindmap-fold--right { right: 6px; }
+.wb-mindmap-fold--left { left: 6px; }
+.wb-mindmap-node:hover .wb-mindmap-fold,
+.wb-mindmap-fold:focus-visible,
+.wb-mindmap-fold.is-folded {
+  opacity: 1;
+}
 .wb-mm-handle {
   width: 6px !important;
   height: 6px !important;
   background: transparent !important;
   border: none !important;
   opacity: 0;
+}
+:global(.dark .wb-mindmap-fold) {
+  background: var(--color-surface-dark, #1e1e1e);
 }
 </style>

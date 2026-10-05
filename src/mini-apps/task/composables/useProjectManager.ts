@@ -9,8 +9,20 @@ import { i18n } from '../../../i18n';
 import { useUndoableAction } from '../../../composables/useUndoableAction';
 import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { showAppNotice } from '../../../composables/useAppNotice';
+import { changeBoardLinks } from '../../whiteboard/boardWrites';
 
 const t = i18n.global.t;
+
+/**
+ * Whether a link in `linked_projects` points at the project `link` names,
+ * whatever title it was written with. Links are `[Title](synabit://project/id)`,
+ * and comparing the whole text missed every link written before the project
+ * was renamed: an unlink then said it had worked and changed nothing.
+ */
+export function samePlaceAs(link: string): (other: string) => boolean {
+  const id = /\(synabit:\/\/project\/([^)]+)\)/.exec(link)?.[1];
+  return (other) => other === link || (!!id && other.includes(`(synabit://project/${id})`));
+}
 
 /** Tells the undo's error message an unlink apart from a delete. */
 class UnlinkFailed extends Error {
@@ -340,7 +352,7 @@ export function useProjectManager(
         const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
         const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
         
-        if (!projectsArray.includes(projectLink)) {
+        if (!projectsArray.some(samePlaceAs(projectLink))) {
           projectsArray.push(projectLink);
           propsObj.linked_projects = projectsArray;
           
@@ -370,7 +382,7 @@ export function useProjectManager(
       isLinkingResource.value = true;
       
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
-      const title = 'New Whiteboard';
+      const title = i18n.global.t('whiteboard.untitled_board');
       const data = {
         title: title,
         type: 'whiteboard',
@@ -447,30 +459,18 @@ export function useProjectManager(
   const commitUnlink = async (node: any, projectLink: string) => {
     try {
       if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
-        const rawContent = await invoke<string>('read_whiteboard', {
-          vaultPath: vaultPath.value,
-          path: node.id
-        });
-        const data = JSON.parse(rawContent);
-        if (data.metadata?.linked_projects && Array.isArray(data.metadata.linked_projects)) {
-          data.metadata.linked_projects = data.metadata.linked_projects.filter((l: string) => l !== projectLink);
-          
-          await invoke('update_whiteboard', {
-            vaultPath: vaultPath.value,
-            path: node.id,
-            title: data.title,
-            tags: data.tags || [],
-            content: JSON.stringify(data, null, 2)
-          });
-          
-          await ns.scanSpecificNodes([node.id]);
-        }
+        // Read, changed and written as every board writer does (boardWrites.ts):
+        // not over a write in between, not over a newer build's file, and
+        // stamped so a sync keeps the unlink.
+        const same = samePlaceAs(projectLink);
+        const changed = await changeBoardLinks(vaultPath.value, node.id, (links) => links.filter((l) => !same(l)));
+        if (changed) await ns.scanSpecificNodes([node.id]);
       } else if (node.node_type === 'file') {
         const fetchedNode = await ns.getNode(node.id);
         if (fetchedNode) {
           const propsObj = fetchedNode.properties || {};
           if (Array.isArray(propsObj.linked_projects)) {
-            propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
+            propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => !samePlaceAs(projectLink)(l));
             await ns.updateFileNodeProperties(fetchedNode.id, propsObj);
           }
         }
@@ -480,7 +480,7 @@ export function useProjectManager(
         if (fetchedNode) {
           const propsObj = fetchedNode.properties || {};
           if (Array.isArray(propsObj.linked_projects)) {
-            propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => l !== projectLink);
+            propsObj.linked_projects = propsObj.linked_projects.filter((l: string) => !samePlaceAs(projectLink)(l));
             
             await ns.writeNode({
               relPath: fetchedNode.id,
@@ -509,35 +509,18 @@ export function useProjectManager(
       const projectLink = `[${activeProject.value.title}](synabit://project/${activeProject.value.id})`;
       
       if (node.node_type === 'whiteboard' && node.id.endsWith('.json')) {
-        const rawContent = await invoke<string>('read_whiteboard', {
-          vaultPath: vaultPath.value,
-          path: node.id
-        });
-        const data = JSON.parse(rawContent);
-        if (!data.metadata) data.metadata = {};
-        
-        const projectsArray = Array.isArray(data.metadata.linked_projects) ? data.metadata.linked_projects : [];
-        if (!projectsArray.includes(projectLink)) {
-          projectsArray.push(projectLink);
-          data.metadata.linked_projects = projectsArray;
-          
-          await invoke('update_whiteboard', {
-            vaultPath: vaultPath.value,
-            path: node.id,
-            title: data.title,
-            tags: data.tags || [],
-            content: JSON.stringify(data, null, 2)
-          });
-          
-          await ns.scanSpecificNodes([node.id]);
-        }
+        // Linked already, maybe under the project's old title: the link is
+        // written afresh with the title it has now, not added a second time.
+        const same = samePlaceAs(projectLink);
+        const changed = await changeBoardLinks(vaultPath.value, node.id, (links) => [...links.filter((l) => !same(l)), projectLink]);
+        if (changed) await ns.scanSpecificNodes([node.id]);
       } else if (node.node_type === 'file') {
         const fullNode = await ns.getNode(node.id);
         if (fullNode) {
           const propsObj = fullNode.properties || {};
           const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
           
-          if (!projectsArray.includes(projectLink)) {
+          if (!projectsArray.some(samePlaceAs(projectLink))) {
             projectsArray.push(projectLink);
             propsObj.linked_projects = projectsArray;
             
@@ -552,7 +535,7 @@ export function useProjectManager(
           const propsObj = fullNode.properties || {};
           const projectsArray = Array.isArray(propsObj.linked_projects) ? propsObj.linked_projects : [];
           
-          if (!projectsArray.includes(projectLink)) {
+          if (!projectsArray.some(samePlaceAs(projectLink))) {
             projectsArray.push(projectLink);
             propsObj.linked_projects = projectsArray;
             

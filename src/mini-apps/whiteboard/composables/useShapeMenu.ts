@@ -22,14 +22,24 @@ export function useShapeMenu(
       dashStyle: node.data.dashStyle || 'solid',
       opacity: node.data.opacity ?? 100,
       fontSize: node.data.fontSize || 13,
+      locked: !!node.data.locked,
     };
   });
 
+  /**
+   * Whether an item is locked: then the panel may unlock it and do nothing else.
+   * Locking was honoured by the menu, the eraser and the selection operations,
+   * but the panel still restyled and deleted a locked item.
+   */
+  const isLocked = (id: string) => !!store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === id)?.data?.locked;
+
   function handleShapeUpdate(nodeId: string, data: Record<string, any>) {
+    if (isLocked(nodeId) && Object.keys(data).some((k) => k !== 'locked')) return;
     updateNodeData(nodeId, data);
   }
 
   function handleShapeDelete(nodeId: string) {
+    if (isLocked(nodeId)) return;
     deleteNodes([nodeId]);
     selectedShapeNodeId.value = null;
   }

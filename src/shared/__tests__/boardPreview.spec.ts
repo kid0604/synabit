@@ -139,3 +139,49 @@ describe('which board an answer is about', () => {
     expect(boardsTouchedBy(null)).toEqual([]);
   });
 });
+
+describe('boardPreview draws every kind of item', () => {
+  it('draws sticky notes, words on their own, and frames', () => {
+    const svg = boardPreview(board([
+      { id: 'f', type: 'frame', position: { x: 0, y: 0 }, data: { label: 'Sprint', width: 600, height: 400 } },
+      { id: 's', type: 'sticky', position: { x: 40, y: 40 }, data: { label: 'Ask legal', color: 'pink', width: 200, height: 200 } },
+      { id: 't', type: 'text', position: { x: 300, y: 60 }, data: { label: 'Loose words', width: 200 } },
+    ]));
+    expect(svg).toContain('Sprint');
+    expect(svg).toContain('Ask legal');
+    expect(svg).toContain('Loose words');
+    // The pink paper, not the box colour.
+    expect(svg).toContain('#fbcfe8');
+  });
+
+  it('has a picture for a board of nothing but writing', () => {
+    expect(boardPreview(board([
+      { id: 'm', type: 'mindmap', position: { x: 0, y: 0 }, data: { label: 'Root' } },
+    ]))).toContain('Root');
+  });
+});
+
+describe('a preview of handwriting', () => {
+  it('keeps only the points it can show, and both ends', () => {
+    const points = Array.from({ length: 2000 }, (_, i) => [i * 0.05, 0, 0.5]);
+    const stroke = { id: 's', type: 'stroke', position: { x: 0, y: 0 }, data: { points, width: 100, height: 2 } } as WBNode;
+    const big = { id: 'b', type: 'shape', position: { x: 0, y: 0 }, data: { width: 4000, height: 3000 } } as WBNode;
+    const svg = boardPreview(board([big, stroke]));
+    const kept = (svg.match(/<polyline points="([^"]+)"/)?.[1] ?? '').split(' ');
+    expect(kept.length).toBeLessThan(200);
+    expect(kept[0]).toBe('0.0,0.0');
+    expect(kept[kept.length - 1]).toBe('100.0,0.0');
+  });
+});
+
+describe('a preview of a board from somewhere else', () => {
+  it('writes positions and colours as values, never as markup', () => {
+    const evil = '0"/><img src=x onerror=alert(1)>';
+    const svg = boardPreview(board([
+      { id: 'a', type: 'shape', position: { x: evil as any, y: 0 }, data: { label: 'A' } } as WBNode,
+      { id: 's', type: 'stroke', position: { x: 0, y: 0 }, data: { color: '"/><script>x</script>', points: [[0, 0], [10, 10]] } } as WBNode,
+    ]));
+    expect(svg).not.toContain('<img');
+    expect(svg).not.toContain('<script');
+  });
+});

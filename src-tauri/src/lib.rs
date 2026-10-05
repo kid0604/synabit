@@ -956,6 +956,10 @@ pub fn run() {
             whiteboards::update_whiteboard,
             whiteboards::delete_whiteboard,
             whiteboards::read_whiteboard,
+            whiteboards::list_board_versions,
+            whiteboards::read_board_version,
+            whiteboards::list_board_libraries,
+            whiteboards::write_board_library,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,
@@ -1103,6 +1107,7 @@ pub fn run() {
             syn_commands::syn_skill_usage,
             syn_commands::syn_skill_trial,
             syn_commands::syn_narrate_person,
+            syn_commands::syn_board_assist,
             syn_commands::syn_create_skill,
             syn_commands::syn_recipe_problems,
             syn_commands::syn_list_tools,

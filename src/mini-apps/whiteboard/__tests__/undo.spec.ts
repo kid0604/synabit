@@ -143,3 +143,54 @@ describe('change stamps', () => {
     expect(store.currentBoardData.value!.nodes[0].updated).toBeGreaterThan(0);
   });
 });
+
+describe('a step back that sticks', () => {
+  it('stamps what an undo changes, so sync does not bring the undone change back', () => {
+    const store = boardWith(['a', 'b']);
+    const [a, b] = store.currentBoardData.value!.nodes;
+    a.updated = 100; b.updated = 100;
+    store.pushUndoState();
+    store.currentBoardData.value!.nodes[0] = { ...a, position: { x: 50, y: 0 }, updated: 200 };
+    store.undo();
+    const [a2, b2] = store.currentBoardData.value!.nodes;
+    expect(a2.position.x).toBe(0);
+    // Newer than the move it undid.
+    expect(a2.updated!).toBeGreaterThan(200);
+    // Untouched items keep their stamps, and their identity.
+    expect(b2.updated).toBe(100);
+  });
+
+  it('stamps an item brought back by undoing its deletion', () => {
+    const store = boardWith(['a']);
+    store.currentBoardData.value!.nodes[0].updated = 5;
+    store.pushUndoState();
+    store.currentBoardData.value!.nodes = [];
+    store.undo();
+    expect(store.currentBoardData.value!.nodes[0].updated!).toBeGreaterThan(5);
+  });
+
+  it('shares unchanged items between steps instead of copying the board', () => {
+    const store = boardWith(['a', 'b']);
+    store.pushUndoState();
+    store.currentBoardData.value!.nodes[0] = { ...store.currentBoardData.value!.nodes[0], data: { label: 'x' } };
+    store.pushUndoState();
+    const [first, second] = store.undoStack.value;
+    expect(second.nodes[1]).toBe(first.nodes[1]);
+    expect(second.nodes[0]).not.toBe(first.nodes[0]);
+  });
+});
+
+describe('restoring an earlier version', () => {
+  it('puts it back as a change made now, which one step undoes', () => {
+    const store = boardWith(['a', 'b']);
+    const before = JSON.parse(JSON.stringify(store.currentBoardData.value));
+    before.nodes[0].updated = 1;
+    store.currentBoardData.value!.nodes = [store.currentBoardData.value!.nodes[1]];
+    store.restoreVersion(before);
+    expect(labels(store)).toEqual(['a', 'b']);
+    // Brought back now, so sync keeps it.
+    expect(store.currentBoardData.value!.nodes[0].updated!).toBeGreaterThan(1);
+    store.undo();
+    expect(labels(store)).toEqual(['b']);
+  });
+});

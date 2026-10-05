@@ -1755,6 +1755,46 @@ async fn the_later_edit_of_a_board_survives_whichever_device_pulls_last() {
     );
 }
 
+/// A board with the given items, each `(id, label, updated)`.
+fn board_with(stamp: &str, items: &[(&str, &str, i64)]) -> String {
+    let nodes: Vec<String> = items
+        .iter()
+        .map(|(id, label, updated)| {
+            format!(
+                r#"{{ "id": "{id}", "type": "sticky", "position": {{ "x": 0, "y": 0 }}, "data": {{ "label": "{label}" }}, "updated": {updated} }}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{ "schemaVersion": 1, "title": "Plan", "tags": [], "metadata": {{ "updated_at": "{stamp}" }}, "nodes": [{}], "edges": [] }}"#,
+        nodes.join(", ")
+    )
+}
+
+/// Two people add to the same board while apart. Whole-board resolution kept
+/// one person's sticky note and dropped the other's; item by item, both stay
+/// on both devices.
+#[tokio::test]
+async fn what_two_devices_add_to_one_board_both_stays() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(BOARD, &board_with("2026-01-01T00:00:00.000Z", &[("seed", "seed", 1)]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    b.write(BOARD, &board_with("2026-01-01T00:00:10.000Z", &[("seed", "seed", 1), ("b1", "from B", 10_000)]));
+    b.sync_ok().await;
+    a.write(BOARD, &board_with("2026-01-01T00:00:20.000Z", &[("seed", "seed", 1), ("a1", "from A", 20_000)]));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    for (who, device) in [("A", a), ("B", b)] {
+        let board = device.read(BOARD).expect("the board is there");
+        assert!(board.contains("from A") && board.contains("from B"), "{who} lost an item:\n{board}");
+    }
+}
+
 // ═══════════════════════════════════════════════════════════
 //  Finance: a ledger two people keep at once
 // ═══════════════════════════════════════════════════════════

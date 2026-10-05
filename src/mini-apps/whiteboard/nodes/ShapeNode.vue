@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
 import { NodeResizer } from '@vue-flow/node-resizer';
 import { SHAPES_MAP } from '../shapes';
+import { isInk, paint, labelOn } from '../ink';
+import { cleanGlyph, GLYPH_SHAPE } from '../glyph';
+import { outlineInsets } from '../pathGeometry';
+import RotateHandle from '../components/RotateHandle.vue';
+import { useOnlySelected } from '../composables/useOnlySelected';
 
 const props = defineProps<{
   id: string;
@@ -18,15 +23,21 @@ const props = defineProps<{
     dashStyle?: string;   // 'solid' | 'dashed' | 'dotted'
     opacity?: number;     // 0-100
     fontSize?: number;
+    rotation?: number;
+    /** The drawing, when this is an icon (`shapeType: 'glyph'`). */
+    glyph?: unknown;
   };
 }>();
 
 const emit = defineEmits<{
   (e: 'update:data', data: any): void;
+  (e: 'rotate', degrees: number, final: boolean): void;
 }>();
 
 const isEditing = ref(false);
+const alone = useOnlySelected(() => props.selected);
 const editText = ref('');
+const inputRef = ref<HTMLInputElement | null>(null);
 
 const strokeWidth = computed(() => props.data.borderWidth || 2);
 
@@ -38,16 +49,21 @@ const strokeDasharray = computed(() => {
   if (d === 'dotted') return '2 4';
   return 'none';
 });
-const fillColor = computed(() => {
-  if (props.data.fillColor) {
-    // User-set fill: apply with ~80% opacity so inner shapes remain visible
-    const hex = props.data.fillColor.replace('#', '');
-    // If it's a 6-char hex, append alpha; if already has alpha (8-char), use as-is
-    if (hex.length === 6) return props.data.fillColor + 'CC';
-    return props.data.fillColor;
-  }
-  return 'none';
+const fillColor = computed(() => paint(props.data.fillColor) || 'none');
+// A user-set fill sits at ~80% so what is inside the shape still shows
+// through. A fill that already carries its own alpha (8-digit hex) keeps it.
+const fillOpacity = computed(() => {
+  const fill = props.data.fillColor;
+  if (!fill) return 1;
+  return isInk(fill) || fill.replace('#', '').length === 6 ? 0.8 : 1;
 });
+const strokeColor = computed(() => paint(props.data.color));
+/** An icon: its drawing, checked, or null for every other shape. */
+const glyph = computed(() => (props.data.shapeType === GLYPH_SHAPE ? cleanGlyph(props.data.glyph) : null));
+/** A picture of a thing — a figure, an icon — has its words under it, on the board. */
+const labelBelow = computed(() => !!glyph.value || !!shapeDef.value.labelBelow);
+/** Words that stay readable on the fill (or the board): see `labelOn`. */
+const labelColor = computed(() => (labelBelow.value ? labelOn(null) : labelOn(props.data.fillColor)));
 
 const shapeDef = computed(() => SHAPES_MAP[props.data.shapeType] || SHAPES_MAP['rectangle']);
 
@@ -63,79 +79,31 @@ const roundedRectRy = computed(() => {
 });
 
 /**
- * Compute handle offsets by sampling the shape's path to find where
- * the shape boundary actually is along each cardinal direction.
- * Returns percentage offsets from the bounding box edge.
+ * Where the connection handles sit: where the outline crosses the middle of
+ * its box (see `outlineInsets`). Read from the path as a path — curves,
+ * subpaths and open lines as they are drawn. Pairing every number in the path
+ * into a point, as before, put a handle on the wrong side of a shape or in
+ * the air beside it on one shape in eight.
  */
 const handleOffsets = computed(() => {
-  const path = shapeDef.value.path;
-  const coords: [number, number][] = [];
-  const numRegex = /-?\d+(?:\.\d+)?/g;
-  const tokens = path.match(numRegex);
-  if (tokens) {
-    for (let i = 0; i < tokens.length - 1; i += 2) {
-      coords.push([parseFloat(tokens[i]), parseFloat(tokens[i + 1])]);
-    }
-  }
-
-  if (coords.length < 3) return { top: '50%', right: '50%', bottom: '50%', left: '50%' };
-
-  let topY = Infinity;
-  let botY = -Infinity;
-  let leftX = Infinity;
-  let rightX = -Infinity;
-
-  for (let i = 0; i < coords.length; i++) {
-    const [x1, y1] = coords[i];
-    const [x2, y2] = coords[(i + 1) % coords.length];
-
-    // Intersection with X = 50 (vertical centerline)
-    if ((x1 <= 50 && x2 >= 50) || (x2 <= 50 && x1 >= 50)) {
-      if (x1 === x2) {
-        topY = Math.min(topY, y1, y2);
-        botY = Math.max(botY, y1, y2);
-      } else {
-        const m = (y2 - y1) / (x2 - x1);
-        const yInt = y1 + m * (50 - x1);
-        topY = Math.min(topY, yInt);
-        botY = Math.max(botY, yInt);
-      }
-    }
-
-    // Intersection with Y = 50 (horizontal centerline)
-    if ((y1 <= 50 && y2 >= 50) || (y2 <= 50 && y1 >= 50)) {
-      if (y1 === y2) {
-        leftX = Math.min(leftX, x1, x2);
-        rightX = Math.max(rightX, x1, x2);
-      } else {
-        const invM = (x2 - x1) / (y2 - y1);
-        const xInt = x1 + invM * (50 - y1);
-        leftX = Math.min(leftX, xInt);
-        rightX = Math.max(rightX, xInt);
-      }
-    }
-  }
-
-  if (topY === Infinity) topY = 0;
-  if (botY === -Infinity) botY = 100;
-  if (leftX === Infinity) leftX = 0;
-  if (rightX === -Infinity) rightX = 100;
-
-  // Transform path coordinates (2-98) to div percentage (0-100%)
-  return {
-    top: `${Math.max(0, (topY - 2) / 96 * 100)}%`,
-    bottom: `${Math.max(0, (98 - botY) / 96 * 100)}%`,
-    left: `${Math.max(0, (leftX - 2) / 96 * 100)}%`,
-    right: `${Math.max(0, (98 - rightX) / 96 * 100)}%`,
-  };
+  const inset = outlineInsets(shapeDef.value.path);
+  return { top: `${inset.top}%`, right: `${inset.right}%`, bottom: `${inset.bottom}%`, left: `${inset.left}%` };
 });
 
+/** Focused by hand: `autofocus` only works for the first editor a page opens. */
 function startEdit() {
+  if ((props.data as any).locked) return;
   isEditing.value = true;
   editText.value = props.data.label;
+  nextTick(() => {
+    inputRef.value?.focus();
+    inputRef.value?.select();
+  });
 }
 
 function finishEdit() {
+  // Enter, then the blur as the input goes: one edit, one write.
+  if (!isEditing.value) return;
   isEditing.value = false;
   emit('update:data', { ...props.data, label: editText.value });
 }
@@ -150,25 +118,52 @@ function onResizeEnd(event: any) {
 </script>
 
 <template>
-  <div class="wb-shape-node" @dblclick.stop="startEdit">
+  <div class="wb-shape-node" :style="data.rotation ? { transform: `rotate(${data.rotation}deg)` } : undefined" @dblclick.stop="startEdit">
+    <RotateHandle
+      v-if="alone && !(data as any).locked && !isEditing"
+      :node-id="id"
+      :rotation="data.rotation"
+      :label="$t('whiteboard.rotate')"
+      @rotate="(deg: number, final: boolean) => emit('rotate', deg, final)"
+    />
     <NodeResizer
-      :is-visible="!!selected"
+      :is-visible="!!selected && !(data as any).locked"
       :min-width="40"
       :min-height="40"
       color="var(--wb-selection, var(--color-accent))"
       @resize-end="onResizeEnd"
     />
 
+    <!-- An icon: its own drawing, on a tile of the fill colour if it has one. -->
+    <svg
+      v-if="glyph"
+      :viewBox="glyph.viewBox.join(' ')"
+      class="wb-shape-svg wb-glyph"
+      fill="none"
+      :style="{ stroke: strokeColor, opacity: shapeOpacity }"
+      :stroke-width="strokeWidth"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <rect
+        :x="glyph.viewBox[0] - glyph.viewBox[2] * 0.12" :y="glyph.viewBox[1] - glyph.viewBox[3] * 0.12"
+        :width="glyph.viewBox[2] * 1.24" :height="glyph.viewBox[3] * 1.24" :rx="glyph.viewBox[2] * 0.2"
+        class="wb-glyph-hit"
+        :style="{ fill: data.fillColor ? fillColor : 'transparent', stroke: 'none' }"
+        :fill-opacity="fillOpacity"
+      />
+      <component :is="part[0]" v-for="(part, i) in glyph.parts" :key="i" v-bind="part[1]" />
+    </svg>
     <!-- SVG Shape — all shapes rendered through same SVG pipeline for consistent stroke -->
-    <svg viewBox="2 2 96 96" preserveAspectRatio="none" class="wb-shape-svg" style="overflow: visible;">
+    <svg v-else viewBox="2 2 96 96" preserveAspectRatio="none" class="wb-shape-svg" style="overflow: visible;">
       <!-- Rounded Rect: use native <rect> with compensated rx/ry for circular corners -->
       <rect
         v-if="data.shapeType === 'roundedRect'"
         x="2" y="2" width="96" height="96"
         :rx="roundedRectRx"
         :ry="roundedRectRy"
-        :fill="fillColor"
-        :stroke="data.color"
+        :style="{ fill: fillColor, stroke: strokeColor }"
+        :fill-opacity="fillOpacity"
         :stroke-width="strokeWidth"
         :stroke-dasharray="strokeDasharray"
         vector-effect="non-scaling-stroke"
@@ -178,8 +173,8 @@ function onResizeEnd(event: any) {
       <path
         v-else
         :d="shapeDef.path"
-        :fill="fillColor"
-        :stroke="data.color"
+        :style="{ fill: fillColor, stroke: strokeColor }"
+        :fill-opacity="fillOpacity"
         :stroke-width="strokeWidth"
         :stroke-dasharray="strokeDasharray"
         vector-effect="non-scaling-stroke"
@@ -193,7 +188,7 @@ function onResizeEnd(event: any) {
         :key="i"
         :d="deco"
         fill="none"
-        :stroke="data.color"
+        :style="{ stroke: strokeColor }"
         :stroke-width="strokeWidth"
         :stroke-dasharray="strokeDasharray"
         vector-effect="non-scaling-stroke"
@@ -213,17 +208,21 @@ function onResizeEnd(event: any) {
     </svg>
 
     <!-- Label -->
-    <div class="wb-shape-label-container">
+    <div
+      class="wb-shape-label-container"
+      :class="{ 'wb-shape-label-container--below': labelBelow }"
+      :style="!labelBelow && shapeDef.labelBox ? { inset: shapeDef.labelBox.map((v) => `${v}%`).join(' ') } : undefined"
+    >
       <input
         v-if="isEditing"
+        ref="inputRef"
         v-model="editText"
         @blur="finishEdit"
         @keydown.enter="finishEdit"
         @keydown.escape="isEditing = false"
         class="wb-shape-input"
-        autofocus
       />
-      <span v-else class="wb-shape-label text-text dark:text-text-dark" :style="{ fontSize: labelFontSize }">
+      <span v-else class="wb-shape-label" :style="{ fontSize: labelFontSize, color: labelColor }">
         {{ data.label || '' }}
       </span>
     </div>
@@ -253,6 +252,10 @@ function onResizeEnd(event: any) {
   width: 100%;
   height: 100%;
 }
+/* An icon is picked up anywhere in its square: it has no inside to see through. */
+.wb-glyph { overflow: visible; }
+.wb-glyph .wb-glyph-hit { pointer-events: all; cursor: grab; }
+.wb-glyph :is(path, circle, ellipse, rect, line, polyline, polygon):not(.wb-glyph-hit) { pointer-events: none; }
 /* Only the stroke/border captures clicks — fill area is click-through */
 .wb-shape-svg path {
   pointer-events: visibleStroke;
@@ -266,6 +269,15 @@ function onResizeEnd(event: any) {
   justify-content: center;
   z-index: 10;
   padding: 0 8px;
+  pointer-events: auto;
+}
+.wb-shape-label-container--below {
+  inset: 100% -48px auto;
+  align-items: flex-start;
+  padding-top: 4px;
+  pointer-events: none;
+}
+.wb-shape-label-container--below .wb-shape-input {
   pointer-events: auto;
 }
 .wb-shape-label {

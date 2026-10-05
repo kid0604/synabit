@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Trash2, X, Group, Ungroup } from 'lucide-vue-next';
+import {
+  Trash2, X, Group, Ungroup,
+  AlignStartVertical, AlignCenterVertical, AlignEndVertical,
+  AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
+  AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
+  MoveHorizontal, MoveVertical, BringToFront, SendToBack, Lock, LockOpen, Copy, Ellipsis } from 'lucide-vue-next';
+import CustomColorSwatch from './CustomColorSwatch.vue';
 
 const props = defineProps<{
   selectedNodes: { id: string; type: string; data: any }[];
@@ -11,6 +17,8 @@ const emit = defineEmits<{
   (e: 'ungroup'): void;
   (e: 'delete'): void;
   (e: 'update-all', data: Record<string, any>): void;
+  /** One of the arrange actions below, by id; the canvas does the work. */
+  (e: 'action', id: string, el?: HTMLElement): void;
   (e: 'close'): void;
 }>();
 
@@ -40,6 +48,26 @@ const FILL_COLORS = [
   ...COLORS,
 ];
 
+const allLocked = computed(() => props.selectedNodes.every((n) => n.data?.locked));
+
+/** The arrange buttons. Distribute needs three things to space; the rest two. */
+const ARRANGE = computed(() => [
+  { id: 'align-left', icon: AlignStartVertical, labelKey: 'whiteboard.arrange.align_left' },
+  { id: 'align-centerX', icon: AlignCenterVertical, labelKey: 'whiteboard.arrange.align_center_x' },
+  { id: 'align-right', icon: AlignEndVertical, labelKey: 'whiteboard.arrange.align_right' },
+  { id: 'align-top', icon: AlignStartHorizontal, labelKey: 'whiteboard.arrange.align_top' },
+  { id: 'align-centerY', icon: AlignCenterHorizontal, labelKey: 'whiteboard.arrange.align_center_y' },
+  { id: 'align-bottom', icon: AlignEndHorizontal, labelKey: 'whiteboard.arrange.align_bottom' },
+  { id: 'distribute-x', icon: AlignHorizontalDistributeCenter, labelKey: 'whiteboard.arrange.distribute_x', disabled: props.selectedNodes.length < 3 },
+  { id: 'distribute-y', icon: AlignVerticalDistributeCenter, labelKey: 'whiteboard.arrange.distribute_y', disabled: props.selectedNodes.length < 3 },
+  { id: 'same-width', icon: MoveHorizontal, labelKey: 'whiteboard.arrange.same_width' },
+  { id: 'same-height', icon: MoveVertical, labelKey: 'whiteboard.arrange.same_height' },
+  { id: 'front', icon: BringToFront, labelKey: 'whiteboard.ctx.to_front' },
+  { id: 'back', icon: SendToBack, labelKey: 'whiteboard.ctx.to_back' },
+  { id: 'lock', icon: allLocked.value ? LockOpen : Lock, labelKey: allLocked.value ? 'whiteboard.ctx.unlock' : 'whiteboard.ctx.lock' },
+  { id: 'duplicate', icon: Copy, labelKey: 'whiteboard.arrange.duplicate' },
+]);
+
 function doGroup() { emit('group'); }
 function doUngroup() { emit('ungroup'); }
 function doDelete() { emit('delete'); }
@@ -49,13 +77,22 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
 </script>
 
 <template>
-  <div class="sp-panel" @mousedown.stop @click.stop>
+  <div class="sp-panel" role="region" :aria-label="$t('whiteboard.panel_for', { what: $t('whiteboard.n_selected', { count: selectedNodes.length }) })" @mousedown.stop @click.stop @keydown.escape.stop="$emit('close')">
     <!-- Header -->
     <div class="sp-header">
       <span class="sp-title">{{ $t('whiteboard.n_selected', { count: selectedNodes.length }) }}</span>
       <div class="sp-header-actions">
         <button @click="doDelete" class="sp-icon-btn sp-delete-btn" :title="$t('whiteboard.delete_all')" :aria-label="$t('whiteboard.delete_all')">
           <Trash2 :size="14" />
+        </button>
+        <button
+          class="sp-icon-btn"
+          aria-haspopup="menu"
+          :title="$t('whiteboard.ctx.more')"
+          :aria-label="$t('whiteboard.ctx.more')"
+          @click="(e: MouseEvent) => emit('action', 'more', e.currentTarget as HTMLElement)"
+        >
+          <Ellipsis :size="14" />
         </button>
         <button @click="doClose" class="sp-icon-btn" :title="$t('whiteboard.close')" :aria-label="$t('whiteboard.close')">
           <X :size="14" />
@@ -64,6 +101,24 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
     </div>
 
     <div class="sp-body">
+      <!-- Arrange -->
+      <div class="sp-section">
+        <span class="sp-label">{{ $t('whiteboard.arrange.title') }}</span>
+        <div class="sp-tool-grid">
+          <button
+            v-for="a in ARRANGE"
+            :key="a.id"
+            class="sp-tool"
+            :disabled="a.disabled"
+            :title="$t(a.labelKey)"
+            :aria-label="$t(a.labelKey)"
+            @click="emit('action', a.id)"
+          >
+            <component :is="a.icon" :size="15" />
+          </button>
+        </div>
+      </div>
+
       <!-- Group / Ungroup -->
       <div class="sp-section">
         <span class="sp-label">{{ $t('whiteboard.organize') }}</span>
@@ -95,8 +150,9 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
             @click="setStrokeColor(c.value)"
             class="sp-swatch"
             :style="{ '--sw-color': c.value }"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :presets="COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setStrokeColor" />
         </div>
       </div>
 
@@ -110,8 +166,9 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
             @click="setFillColor(c.value)"
             :class="['sp-swatch', !c.value && 'sp-swatch-none']"
             :style="c.value ? { '--sw-color': c.value } : {}"
-            :title="$t(c.labelKey)"
+            :title="$t(c.labelKey)" :aria-label="$t(c.labelKey)"
           />
+          <CustomColorSwatch :presets="FILL_COLORS.map((c) => c.value)" :label="$t('whiteboard.custom_color')" @pick="setFillColor" />
         </div>
       </div>
     </div>
@@ -119,6 +176,38 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
 </template>
 
 <style scoped>
+.sp-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+}
+.sp-tool {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border-radius: 6px;
+  color: var(--color-text-secondary, #52525b);
+  transition: background-color 0.12s, color 0.12s;
+}
+.sp-tool:hover:not(:disabled),
+.sp-tool:focus-visible {
+  background: var(--color-surface-hover, #f4f4f5);
+  color: var(--color-accent);
+  outline: none;
+}
+.dark .sp-tool {
+  color: var(--color-text-secondary-dark, #a1a1aa);
+}
+.dark .sp-tool:hover:not(:disabled),
+.dark .sp-tool:focus-visible {
+  background: var(--color-surface-hover-dark, #2a2a2a);
+  color: var(--color-accent-dark);
+}
+.sp-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 /* Reuse the same panel design system as ShapeMenu / EdgeMenu */
 .sp-panel {
   position: fixed;
@@ -182,6 +271,7 @@ function setFillColor(c: string) { emit('update-all', { fillColor: c }); }
   color: var(--color-text-secondary, #71717a);
   transition: all 0.12s;
 }
+.dark .sp-icon-btn { color: var(--color-text-secondary-dark, #a1a1aa); }
 .sp-icon-btn:hover {
   background: var(--color-surface-hover, #f5f5f5);
 }

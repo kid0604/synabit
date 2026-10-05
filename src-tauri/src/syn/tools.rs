@@ -221,6 +221,9 @@ const MAX_RESULT_CHARS: usize = 40_000;
 /// "Penchants of the polymaths", 3,492 words, is about 20,000 characters.
 const MAX_CONTENT_CHARS: usize = 32_000;
 
+/// What a board item's `shape` may be, as the tools describe it (see `board_shapes`).
+const SHAPE_HELP: &str = "Any of the board's shapes by name, or a plain word for one: rectangle, rounded, ellipse, diamond (decision), cylinder (database), cloud, document, person, server, laptop, mobile, router, firewall, load balancer, queue, internet; flowchart (process, dataIO, pill), UML (umlClass, umlLifeline…), BPMN (bpmnTask, bpmnGateway, bpmnEvent…). Unknown names are a plain box.";
+
 /// Context passed to tool execution, providing access to DB, vault path, and app handle.
 /// Write tools need vault_path and app; read tools only need db.
 ///
@@ -1099,7 +1102,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                             "description": "Boxes. Labels must differ: lines and edits name them.",
                             "items": { "type": "object", "required": ["label"], "properties": {
                                 "label": { "type": "string" },
-                                "shape": { "type": "string", "description": "rectangle, roundedRect, ellipse, diamond, hexagon, cylinder" },
+                                "shape": { "type": "string", "description": SHAPE_HELP },
                                 "group": { "type": "string" }
                             } }
                         },
@@ -1126,10 +1129,10 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "board": { "type": "string", "description": "Its title, or its path." },
                         "changes": {
                             "type": "array",
-                            "description": "add {label, shape?, inside?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame}. `inside`/`move_into` put a box in a frame: the only way to say it is in a zone. The frame grows. Name boxes by label.",
+                            "description": "add {label, shape?, inside?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame}. `inside`/`move_into` put a box in a frame: the only way to say it is in a zone. The frame grows. Name things by label: boxes, frames, sticky notes, cards and writing all answer to theirs.",
                             "items": { "type": "object", "required": ["op"], "properties": {
                                 "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into"] },
-                                "label": { "type": "string" }, "shape": { "type": "string" },
+                                "label": { "type": "string" }, "shape": { "type": "string", "description": SHAPE_HELP },
                                 "near": { "type": "string" }, "inside": { "type": "string" },
                                 "frame": { "type": "string" }, "from": { "type": "string" },
                                 "to": { "type": "string" }, "item": { "type": "string" },
@@ -5210,10 +5213,17 @@ fn board_at(vault: &std::path::Path, name: &str) -> AppResult<std::path::PathBuf
     // the same rule every other tool keeps about where it may read.
     if wanted.ends_with(".json") {
         let rel = wanted.trim_start_matches('/');
-        if rel.contains("..") || !rel.starts_with(crate::syn::board::BOARDS_DIR) {
-            return Err(AppError::General("Boards live in the Whiteboards folder.".into()));
+        // A board file in the boards folder: `Whiteboards-old/…` starts with
+        // the folder's name without being in it, and a shape library is JSON
+        // in that folder without being a board — editing it as one rewrote it
+        // into one.
+        let in_folder = rel
+            .strip_prefix(crate::syn::board::BOARDS_DIR)
+            .is_some_and(|rest| rest.starts_with('/'));
+        if rel.contains("..") || !in_folder || !rel.ends_with(".whiteboard.json") {
+            return Err(AppError::General("That is not a board: boards are .whiteboard.json files in the Whiteboards folder.".into()));
         }
-        let path = vault.join(rel);
+        let path = crate::path_utils::resolve_safe_path(&vault.to_string_lossy(), rel)?;
         if path.exists() {
             return Ok(path);
         }
@@ -5246,8 +5256,16 @@ fn board_at(vault: &std::path::Path, name: &str) -> AppResult<std::path::PathBuf
 fn read_board_file(path: &std::path::Path) -> AppResult<crate::syn::board::Board> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| AppError::General(format!("Could not read that board: {e}")))?;
-    serde_json::from_str(&raw)
-        .map_err(|e| AppError::General(format!("That board is not a board this app can read: {e}")))
+    let board: crate::syn::board::Board = serde_json::from_str(&raw)
+        .map_err(|e| AppError::General(format!("That board is not a board this app can read: {e}")))?;
+    // A newer build's board: written back by this one, it would carry the old
+    // version's idea of every field under the new version's number.
+    if board.schema_version.unwrap_or(1) > crate::syn::board::SCHEMA_VERSION {
+        return Err(AppError::General(
+            "That board was saved by a newer version of Synabit; update the app to change it.".into(),
+        ));
+    }
+    Ok(board)
 }
 
 /// Write a board back and put it in the index, the way the app's own commands do.
@@ -5256,13 +5274,25 @@ fn save_board_file<R: tauri::Runtime>(
     path: &std::path::Path,
     board: &crate::syn::board::Board,
 ) -> AppResult<()> {
+    {
+        let held = crate::commands::whiteboards::board_lock(path);
+        let _held = held.lock().unwrap_or_else(|e| e.into_inner());
+        write_board_file(path, board)?;
+    }
+    index_board_file(ctx, path)
+}
+
+fn write_board_file(path: &std::path::Path, board: &crate::syn::board::Board) -> AppResult<()> {
     let json = serde_json::to_string_pretty(board)
         .map_err(|e| AppError::General(format!("Could not write that board: {e}")))?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(path, json)?;
+    crate::path_utils::write_atomic(path, json.as_bytes())?;
+    Ok(())
+}
 
+/// Put a written board in the index. After the board's lock is let go: sync
+/// takes the database first and the board second, so holding both the other
+/// way round could leave each waiting on the other.
+fn index_board_file<R: tauri::Runtime>(ctx: &ToolContext<R>, path: &std::path::Path) -> AppResult<()> {
     let db = lock(ctx)?;
     crate::commands::whiteboards::index_board(&db, ctx.vault_path, path);
     Ok(())
@@ -5305,12 +5335,16 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     let now = chrono::Utc::now().timestamp_millis();
     let board = crate::syn::board::draw(title, &sketch, now).map_err(AppError::General)?;
 
-    let path = std::path::Path::new(ctx.vault_path)
-        .join(crate::syn::board::BOARDS_DIR)
-        .join(format!("whiteboard-{now}.whiteboard.json"));
+    let dir = std::path::Path::new(ctx.vault_path).join(crate::syn::board::BOARDS_DIR);
+    std::fs::create_dir_all(&dir)?;
+    let path = crate::commands::whiteboards::claim_board_file(&dir, now.max(0) as u128)?;
     save_board_file(ctx, &path, &board)?;
 
-    let rel = format!("{}/whiteboard-{now}.whiteboard.json", crate::syn::board::BOARDS_DIR);
+    let rel = format!(
+        "{}/{}",
+        crate::syn::board::BOARDS_DIR,
+        path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+    );
     Ok(serde_json::json!({
         "board": rel,
         "title": title,
@@ -5325,7 +5359,7 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
 fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
     let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
-    let mut board = read_board_file(&path)?;
+    let mut board: crate::syn::board::Board;
 
     let changes: Vec<crate::syn::board::Change> = serde_json::from_value(
         args.get("changes").cloned().unwrap_or(Value::Null),
@@ -5336,8 +5370,19 @@ fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     }
 
     let now = chrono::Utc::now().timestamp_millis();
-    let done = crate::syn::board::apply(&mut board, &changes, now).map_err(AppError::General)?;
-    save_board_file(ctx, &path, &board)?;
+    let done = {
+        // From the read to the write, no other writer: see `board_lock`.
+        let lock = crate::commands::whiteboards::board_lock(&path);
+        let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+        board = read_board_file(&path)?;
+        let done = crate::syn::board::apply(&mut board, &changes, now).map_err(AppError::General)?;
+        // What was there before Syn's change, in the board's history, so the
+        // change can be taken back from the History panel.
+        crate::commands::whiteboards::keep_before_write(ctx.app, ctx.vault_path, &path, true);
+        write_board_file(&path, &board)?;
+        done
+    };
+    index_board_file(ctx, &path)?;
 
     Ok(serde_json::json!({
         "board": rel_board_path(ctx, &path).trim_start_matches("File: "),

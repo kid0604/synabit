@@ -10,6 +10,7 @@ import { useEventBus } from '../../../composables/useEventBus';
 const props = defineProps<{
   id: string;
   data: {
+    locked?: boolean;
     noteId: string;
     noteTitle?: string;
     blockId?: string;
@@ -140,7 +141,7 @@ const handleOpenNote = (e: MouseEvent) => {
 <template>
   <div class="note-card-node" :class="{ 'is-selected': selected }" :style="{ width: cardWidth, height: cardHeight }">
     <NodeResizer
-      v-if="selected"
+      v-if="selected && !data.locked"
       :color="data.color || 'var(--wb-selection, var(--color-accent))'"
       :is-visible="true"
       :min-width="180"

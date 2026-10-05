@@ -21,6 +21,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { boardFromDiagram } from '../../shared/diagramToBoard';
 import { newBoardData } from '../whiteboard/boardFile';
+import { writeItemChanges } from '../whiteboard/boardWrites';
+import { boardText } from '../whiteboard/boardDisk';
 import type { WhiteboardData } from '../whiteboard/boardFile';
 
 /** What the vault hands back when a board is created. */
@@ -57,7 +59,7 @@ export const keepAsBoard = async (
     vaultPath,
     title,
     tags: [] as string[],
-    content: JSON.stringify(data, null, 2),
+    content: boardText(data),
   });
   return { id: meta.id, path: meta.path, title, data };
 };
@@ -67,22 +69,29 @@ export const keepAsBoard = async (
  *
  * The pane beside the conversation moves boxes; everything else a board can
  * have — colours, shapes, freehand, text — belongs to the Whiteboard app. So
- * this writes the whole document back with new positions rather than trying to
- * be a second editor.
+ * this reads the board as it is on disk now and moves the boxes there, rather
+ * than writing back the copy the pane opened with: that copy is older than
+ * anything the Whiteboard app, Syn or a sync has written since, and writing
+ * it whole put their changes back the way they were.
+ *
+ * A box is moved when its stamp is later than the one on disk, so a box the
+ * Whiteboard app moved after the pane did keeps the Whiteboard's place.
  */
 export const saveBoard = async (
   vaultPath: string,
   path: string,
   data: WhiteboardData,
 ): Promise<void> => {
-  data.metadata = { ...(data.metadata || {}), updated_at: new Date().toISOString() };
-  await invoke('update_whiteboard', {
+  // Positions only, and only where moved here later than anywhere else. A
+  // board that is gone, unreadable or from a newer build is not written at
+  // all: written from the pane's copy, a board deleted in the Whiteboard app
+  // came back, and half a file was replaced by the pane's older whole one.
+  const ok = await writeItemChanges(
     vaultPath,
     path,
-    title: data.title || 'Untitled',
-    tags: data.tags || [],
-    content: JSON.stringify(data, null, 2),
-  });
+    data.nodes.map((n) => ({ id: n.id, position: n.position, updated: n.updated ?? 0 })),
+  );
+  if (!ok) throw new Error(`${path} could not be saved from the pane: it is gone, unreadable or from a newer build`);
 };
 
 /**

@@ -63,12 +63,24 @@ const DECLINED: ListRule = ListRule {
     stamp: |item| str_field(item, "at"),
 };
 
+/// A whiteboard shape library's pieces, dated by when each was added. Pieces
+/// are added on one device or another and never edited in place, so the
+/// union is what both devices hold.
+const LIBRARY_PIECES: ListRule = ListRule {
+    key: by_id,
+    stamp: |item| str_field(item, "added_at"),
+};
+
+/// A whiteboard shape library: `Whiteboards/Libraries/<name>.boardlib.json`.
+fn is_library(path: &str) -> bool {
+    path.strip_prefix("Whiteboards/Libraries/")
+        .is_some_and(|name| name.ends_with(".boardlib.json") && !name.contains('/'))
+}
+
 /// Is this file merged item by item rather than resolved whole?
 pub fn is_merged(rel_path: &str) -> bool {
-    matches!(
-        rel_path.replace('\\', "/").as_str(),
-        "Syn/routines.json" | "Syn/proposals.json" | "Syn/declined.json"
-    )
+    let path = rel_path.replace('\\', "/");
+    matches!(path.as_str(), "Syn/routines.json" | "Syn/proposals.json" | "Syn/declined.json") || is_library(&path)
 }
 
 /// Merge two copies of a file named by [`is_merged`].
@@ -83,6 +95,7 @@ pub fn merge(rel_path: &str, local: &str, remote: &str) -> Option<Value> {
         "Syn/routines.json" => merge_routines(&local, &remote),
         "Syn/proposals.json" => Some(Value::Array(merge_list(local.as_array()?, remote.as_array()?, &PROPOSALS))),
         "Syn/declined.json" => Some(Value::Array(merge_list(local.as_array()?, remote.as_array()?, &DECLINED))),
+        path if is_library(path) => merge_library(&local, &remote),
         _ => None,
     }
 }
@@ -121,6 +134,20 @@ fn merge_routines(local: &Value, remote: &Value) -> Option<Value> {
     } else {
         merged.insert("removed".into(), to_object(removed));
     }
+    Some(Value::Object(merged))
+}
+
+/// A shape library: `{ type, version, name, items: [...] }`. The pieces are
+/// the union of both copies; everything else is the remote's. Adding a piece
+/// on two devices before either had synced used to keep one device's copy
+/// whole and lose the other's piece.
+fn merge_library(local: &Value, remote: &Value) -> Option<Value> {
+    let local = local.as_object()?;
+    let remote = remote.as_object()?;
+    let items = |o: &Map<String, Value>| o.get("items").and_then(Value::as_array).cloned();
+    let merged_items = merge_list(&items(local)?, &items(remote)?, &LIBRARY_PIECES);
+    let mut merged = remote.clone();
+    merged.insert("items".into(), Value::Array(merged_items));
     Some(Value::Object(merged))
 }
 
@@ -297,5 +324,21 @@ mod tests {
         assert!(merge("Syn/routines.json", "{ not json", "{}").is_none());
         assert!(merge("Syn/proposals.json", "{}", "[]").is_none(), "wrong shape");
         assert!(is_merged("Syn/declined.json") && !is_merged("Notes/declined.json"));
+        assert!(is_merged("Whiteboards/Libraries/Kit.boardlib.json"));
+        assert!(!is_merged("Whiteboards/Libraries/sub/Kit.boardlib.json") && !is_merged("Whiteboards/a.whiteboard.json"));
+    }
+
+    #[test]
+    fn a_shape_library_keeps_the_pieces_both_devices_added() {
+        let base = |items: &str| format!(r#"{{"type":"synabit-board-library","version":1,"name":"Kit","items":[{items}]}}"#);
+        let shared = r#"{"id":"a","title":"A","added_at":"2026-10-01T00:00:00Z","nodes":[]}"#;
+        let here = base(&format!(r#"{shared},{{"id":"b","title":"Mine","added_at":"2026-10-05T10:00:00Z","nodes":[]}}"#));
+        let there = base(&format!(r#"{shared},{{"id":"c","title":"Theirs","added_at":"2026-10-05T10:01:00Z","nodes":[]}}"#));
+        let merged = merge("Whiteboards/Libraries/Kit.boardlib.json", &here, &there).expect("merged");
+        let ids: Vec<&str> = merged["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["a", "c", "b"]);
+        // And the other way round lands on the same pieces.
+        let back = merge("Whiteboards/Libraries/Kit.boardlib.json", &there, &here).expect("merged");
+        assert_eq!(back["items"].as_array().unwrap().len(), 3);
     }
 }

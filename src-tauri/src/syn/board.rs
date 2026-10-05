@@ -27,7 +27,7 @@ use serde_json::{json, Map, Value};
 pub const BOARDS_DIR: &str = "Whiteboards";
 
 /// The format version the Whiteboard app writes and refuses to read past.
-const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 1;
 
 /// The names of the three tools, which are offered together or not at all.
 pub const TOOLS: [&str; 3] = ["read_board", "draw_board", "edit_board"];
@@ -101,6 +101,10 @@ pub struct Item {
     pub data: Map<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated: Option<i64>,
+    /// Fields of the item this module does not use, kept as they were — the
+    /// same reason as `Board::rest`, one level down.
+    #[serde(flatten, default)]
+    pub rest: Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -125,6 +129,9 @@ pub struct Link {
     pub data: Map<String, Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated: Option<i64>,
+    /// As `Item::rest`.
+    #[serde(flatten, default)]
+    pub rest: Map<String, Value>,
 }
 
 fn default_link() -> String {
@@ -133,7 +140,12 @@ fn default_link() -> String {
 
 impl Item {
     pub fn label(&self) -> &str {
-        self.data.get("label").and_then(Value::as_str).unwrap_or("")
+        // A card shows a vault thing, and its name is that thing's title.
+        self.data
+            .get("label")
+            .or_else(|| self.data.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
     }
     pub fn width(&self) -> f64 {
         self.data.get("width").and_then(Value::as_f64).unwrap_or(160.0)
@@ -188,12 +200,28 @@ pub fn describe(board: &Board) -> String {
     let notes: Vec<&Item> = board
         .nodes
         .iter()
-        .filter(|n| n.kind == "text" || n.kind == "note" || n.kind == "mindmap")
+        .filter(|n| matches!(n.kind.as_str(), "text" | "note" | "mindmap" | "sticky" | "card"))
         .collect();
 
+    // Frames are of two kinds: the app's own `frame` items, and — from boards
+    // drawn before there were any, by Syn or from a diagram — a box with two
+    // or more others sitting on it.
     let all: Vec<Item> = boxes.iter().map(|b| (*b).clone()).collect();
     let mut frames: Vec<(&Item, usize)> =
         boxes.iter().map(|b| (*b, b.holds(&all))).filter(|(_, n)| *n >= 2).collect();
+    let held_things: Vec<Item> = board
+        .nodes
+        .iter()
+        .filter(|n| n.kind != "frame" && n.kind != "stroke")
+        .cloned()
+        .collect();
+    frames.extend(
+        board
+            .nodes
+            .iter()
+            .filter(|n| n.kind == "frame")
+            .map(|f| (f, f.holds(&held_things))),
+    );
     frames.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
 
     // A frame is a box, and counting it as one would say a drawing of eight
@@ -222,6 +250,7 @@ pub fn describe(board: &Board) -> String {
         for (frame, held) in frames.iter().take(20) {
             let inside: Vec<&str> = boxes
                 .iter()
+                .chain(notes.iter())
                 .filter(|b| {
                     b.id != frame.id
                         && b.position.x >= frame.position.x
@@ -243,10 +272,16 @@ pub fn describe(board: &Board) -> String {
 
     out.push_str("\nBoxes:\n");
     for item in boxes.iter().take(NAMED) {
+        // An icon is a picture of something: said as what it is a picture of.
+        let icon = item.data.get("glyph").and_then(|g| g.get("name")).and_then(Value::as_str);
+        let kind = match (item.shape(), icon) {
+            ("glyph", Some(name)) => format!("icon: {name}"),
+            (shape, _) => shape.to_string(),
+        };
         out.push_str(&format!(
             "- {} [{}] at {},{}\n",
             naming(item.label()),
-            item.shape(),
+            kind,
             item.position.x.round(),
             item.position.y.round()
         ));
@@ -256,8 +291,10 @@ pub fn describe(board: &Board) -> String {
     }
 
     if !board.edges.is_empty() {
+        // Every item, not just the boxes: a line can end on a frame, a
+        // sticky note or a piece of writing.
         let by_id: std::collections::HashMap<&str, &Item> =
-            boxes.iter().map(|b| (b.id.as_str(), *b)).collect();
+            board.nodes.iter().map(|b| (b.id.as_str(), b)).collect();
         out.push_str("\nLines:\n");
         for link in board.edges.iter().take(NAMED) {
             let name = |id: &str| {
@@ -275,6 +312,27 @@ pub fn describe(board: &Board) -> String {
         }
         if board.edges.len() > NAMED {
             out.push_str(&format!("…and {} more.\n", board.edges.len() - NAMED));
+        }
+    }
+
+    // Comments: what the people working on the board said about it, and
+    // about which thing — often the most useful thing on a board to read.
+    let comments: Vec<&Item> = board.nodes.iter().filter(|n| n.kind == "comment").collect();
+    if !comments.is_empty() {
+        out.push_str("\nComments:\n");
+        for c in comments.iter().take(NAMED) {
+            let about = c
+                .data
+                .get("on")
+                .and_then(Value::as_str)
+                .and_then(|id| board.nodes.iter().find(|n| n.id == id))
+                .map(|n| format!(" (on \"{}\")", n.label()))
+                .unwrap_or_default();
+            let done = if c.data.get("resolved").and_then(Value::as_bool).unwrap_or(false) { " [resolved]" } else { "" };
+            out.push_str(&format!("- {}{about}{done}\n", c.label()));
+        }
+        if comments.len() > NAMED {
+            out.push_str(&format!("…and {} more.\n", comments.len() - NAMED));
         }
     }
 
@@ -583,6 +641,7 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
         let (out_side, in_side) = sides_between(from, to);
         edges.push(Link {
             id: format!("edge-{now_ms:x}-{}", edges.len()),
+            rest: Map::new(),
             source: from.id.clone(),
             source_handle: Some(out_side.into()),
             target: to.id.clone(),
@@ -673,13 +732,40 @@ fn shape(
     kind: Option<&str>,
     now_ms: i64,
 ) -> Item {
+    // A figure (a person, a server, a phone) is drawn square, in the middle of
+    // the room its label was given, with the label under it: stretched to a
+    // label's width it is no longer the thing, and the label lands across it.
+    // The board's own name for the shape: a model's "database" is a cylinder,
+    // and a name the board does not have is a plain box (see `board_shapes`).
+    let kind = kind.and_then(crate::syn::board_shapes::board_shape);
+    let (x, w, h) = if kind.is_some_and(crate::syn::board_shapes::is_figure) {
+        let side = h.min(56.0);
+        (x + (w - side) / 2.0, side, side)
+    } else {
+        (x, w, h)
+    };
     let mut data = Map::new();
     data.insert("shapeType".into(), json!(kind.unwrap_or("rectangle")));
     data.insert("label".into(), json!(label));
     data.insert("color".into(), json!(BOX_COLOUR));
     data.insert("width".into(), json!(w));
     data.insert("height".into(), json!(h));
-    Item { id, kind: "shape".into(), position: Point { x, y }, data, updated: Some(now_ms) }
+    Item { id, kind: "shape".into(), position: Point { x, y }, data, updated: Some(now_ms), rest: Map::new() }
+}
+
+/// An id nothing on the board has. Counting what is on the board is not
+/// enough: a removal in the same call shrinks the count, and the next thing
+/// added would take the id of the one added before it.
+fn fresh_id(board: &Board, prefix: &str, now_ms: i64) -> String {
+    let taken = |id: &str| board.nodes.iter().any(|n| n.id == id) || board.edges.iter().any(|e| e.id == id);
+    let mut n = board.nodes.len() + board.edges.len();
+    loop {
+        let id = format!("{prefix}-{now_ms:x}-{n}");
+        if !taken(&id) {
+            return id;
+        }
+        n += 1;
+    }
 }
 
 fn frame(id: String, x: f64, y: f64, w: f64, h: f64, label: &str, now_ms: i64) -> Item {
@@ -689,7 +775,7 @@ fn frame(id: String, x: f64, y: f64, w: f64, h: f64, label: &str, now_ms: i64) -
     data.insert("color".into(), json!(FRAME_COLOUR));
     data.insert("width".into(), json!(w));
     data.insert("height".into(), json!(h));
-    Item { id, kind: "shape".into(), position: Point { x, y }, data, updated: Some(now_ms) }
+    Item { id, kind: "shape".into(), position: Point { x, y }, data, updated: Some(now_ms), rest: Map::new() }
 }
 
 /// Which side of each box a line leaves from, decided by where they ended up.
@@ -810,7 +896,7 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                         (START, below + GAP_Y)
                     }
                 };
-                let id = format!("box-{now_ms:x}-{}", board.nodes.len());
+                let id = fresh_id(board, "box", now_ms);
                 board.nodes.push(shape(id, x, y, w, BOX_H, label, kind.as_deref(), now_ms));
                 // A frame told to hold something holds it from this moment,
                 // not from whenever geometry happens to agree: the new box is
@@ -839,7 +925,8 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                     data.insert("label".into(), json!(words));
                 }
                 board.edges.push(Link {
-                    id: format!("edge-{now_ms:x}-{}", board.edges.len()),
+                    id: fresh_id(board, "edge", now_ms),
+                    rest: Map::new(),
                     source,
                     source_handle: Some(out_side.into()),
                     target,
@@ -865,8 +952,27 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                 let id = board.nodes[at].id.clone();
                 board.nodes.remove(at);
                 let before = board.edges.len();
-                board.edges.retain(|e| e.source != id && e.target != id);
+                let mut gone = vec![id.clone()];
+                board.edges.retain(|e| {
+                    let keep = e.source != id && e.target != id;
+                    if !keep {
+                        gone.push(e.id.clone());
+                    }
+                    keep
+                });
                 let lines = before - board.edges.len();
+                // Recorded as deleted, so a sync with another device's copy
+                // does not bring them back (see `sync::core::board_merge`).
+                let deleted = board
+                    .metadata
+                    .get_or_insert_with(Map::new)
+                    .entry("deleted")
+                    .or_insert_with(|| json!({}));
+                if let Some(map) = deleted.as_object_mut() {
+                    for id in gone {
+                        map.insert(id, json!(now_ms));
+                    }
+                }
                 done.push(format!("removed \"{item}\" and {lines} line(s) that ended on it"));
             }
 
@@ -974,7 +1080,8 @@ fn held_by(board: &Board, frame: usize) -> Vec<usize> {
         .enumerate()
         .filter(|(i, n)| {
             *i != frame
-                && n.kind == "shape"
+                && nameable(n)
+                && n.kind != "frame"
                 && n.position.x >= outer.position.x
                 && n.position.y >= outer.position.y
                 && n.position.x + n.width() <= outer.position.x + outer.width()
@@ -993,13 +1100,17 @@ fn held_by(board: &Board, frame: usize) -> Vec<usize> {
 /// Only frames change size. Nothing inside one moves: the arrangement is the
 /// person's, and this is the board catching up with it.
 fn refit_frames(board: &mut Board, now_ms: i64) {
-    let frames: Vec<usize> = (0..board.nodes.len())
-        .filter(|i| board.nodes[*i].kind == "shape" && held_by(board, *i).len() >= 2)
+    // The app's own frames hold what is in them however few; a live frame
+    // lays out its own cards and is left to do so.
+    let own_frame = |n: &Item| n.kind == "frame" && n.data.get("query").is_none();
+    let frames: Vec<(usize, usize)> = (0..board.nodes.len())
+        .filter(|i| own_frame(&board.nodes[*i]) || (board.nodes[*i].kind == "shape" && held_by(board, *i).len() >= 2))
+        .map(|i| (i, if own_frame(&board.nodes[i]) { 1 } else { 2 }))
         .collect();
 
-    for frame in frames {
+    for (frame, least) in frames {
         let held = held_by(board, frame);
-        if held.len() < 2 {
+        if held.len() < least {
             continue;
         }
         let (mut left, mut top, mut right, mut bottom) =
@@ -1027,21 +1138,41 @@ fn refit_frames(board: &mut Board, now_ms: i64) {
     }
 }
 
-/// The box somebody means when they say a name.
+/// What can be named on a board: anything with words on it, except a comment
+/// (which is about something, not a thing) and freehand ink.
+fn nameable(n: &Item) -> bool {
+    !matches!(n.kind.as_str(), "comment" | "stroke")
+}
+
+/// The thing somebody means when they say a name: a box first, then a frame,
+/// a sticky note, a card or a piece of writing. Only boxes used to answer, so
+/// a frame Syn had made itself, by grouping, could not be put anything into.
 fn find(board: &Board, label: &str) -> Option<usize> {
     let wanted = label.trim().to_lowercase();
+    let named = |n: &Item| nameable(n) && n.label().trim().to_lowercase() == wanted;
     board
         .nodes
         .iter()
-        .position(|n| n.kind == "shape" && n.label().trim().to_lowercase() == wanted)
+        .position(|n| n.kind == "shape" && named(n))
+        .or_else(|| board.nodes.iter().position(named))
+}
+
+/// Whether this item is a frame: the app's own, or a box that holds others.
+fn is_frame(board: &Board, at: usize) -> bool {
+    let n = &board.nodes[at];
+    n.kind == "frame" || (n.kind == "shape" && held_by(board, at).len() >= 2)
 }
 
 /// A place near where it was asked for, that nothing is already sitting on.
 fn free_spot(board: &Board, x: f64, y: f64, w: f64, h: f64) -> (f64, f64) {
+    // A frame is somewhere to be, not something in the way: what sits in one
+    // is what is in the way. (Every frame used to count as in the way, so a
+    // box put next to something in a frame was pushed out below it.)
+    let frames: Vec<bool> = (0..board.nodes.len()).map(|i| is_frame(board, i)).collect();
     let clashes = |x: f64, y: f64| {
-        board.nodes.iter().any(|n| {
-            n.kind == "shape"
-                && n.holds(&[]) == 0
+        board.nodes.iter().enumerate().any(|(i, n)| {
+            nameable(n)
+                && !frames[i]
                 && x < n.position.x + n.width()
                 && n.position.x < x + w
                 && y < n.position.y + n.height()
@@ -1064,6 +1195,82 @@ mod tests {
     use super::*;
 
     const NOW: i64 = 1_757_000_000_000;
+
+    /// The app's own frames and sticky notes are read as what they are: a
+    /// frame names what sits in it, and a line to a sticky note says where it
+    /// goes rather than that its end has gone.
+    #[test]
+    fn frames_and_sticky_notes_are_described() {
+        let board: Board = serde_json::from_value(json!({
+            "title": "Plan",
+            "nodes": [
+                { "id": "f", "type": "frame", "position": { "x": 0.0, "y": 0.0 },
+                  "data": { "label": "Sprint", "width": 600.0, "height": 400.0 } },
+                { "id": "a", "type": "shape", "position": { "x": 40.0, "y": 40.0 },
+                  "data": { "label": "Design" } },
+                { "id": "s", "type": "sticky", "position": { "x": 300.0, "y": 60.0 },
+                  "data": { "label": "Ask legal", "width": 200.0, "height": 200.0 } }
+            ],
+            "edges": [ { "id": "e", "source": "a", "target": "s" } ]
+        }))
+        .expect("a board");
+
+        let said = describe(&board);
+        assert!(said.contains("- Sprint (2 inside): Design, Ask legal"), "{said}");
+        assert!(said.contains("1 loose pieces of writing"), "{said}");
+        assert!(said.contains("- Design → Ask legal"), "{said}");
+    }
+
+    /// Comments are read, with what they are about.
+    #[test]
+    fn comments_are_read_with_what_they_are_about() {
+        let board: Board = serde_json::from_value(json!({
+            "title": "Plan",
+            "nodes": [
+                { "id": "a", "type": "shape", "position": { "x": 0.0, "y": 0.0 }, "data": { "label": "Launch" } },
+                { "id": "c", "type": "comment", "position": { "x": 120.0, "y": 0.0 }, "data": { "label": "Move to May?", "on": "a" } }
+            ]
+        }))
+        .expect("a board");
+        let said = describe(&board);
+        assert!(said.contains("- Move to May? (on \"Launch\")"), "{said}");
+    }
+
+    /// An edit keeps what it does not understand, on items and lines too.
+    #[test]
+    fn an_edit_keeps_fields_it_does_not_know() {
+        let mut board: Board = serde_json::from_value(json!({
+            "title": "Plan",
+            "nodes": [
+                { "id": "a", "type": "shape", "position": { "x": 0.0, "y": 0.0 }, "data": { "label": "A" }, "locked": true },
+                { "id": "b", "type": "shape", "position": { "x": 300.0, "y": 0.0 }, "data": { "label": "B" } }
+            ],
+            "edges": [ { "id": "e", "source": "a", "target": "b", "zIndex": 1000000 } ]
+        }))
+        .expect("a board");
+        apply(&mut board, &[Change::Rename { item: "A".into(), label: "Alpha".into() }], NOW).expect("renamed");
+        let back = serde_json::to_value(&board).unwrap();
+        assert_eq!(back["nodes"][0]["locked"], json!(true));
+        assert_eq!(back["edges"][0]["zIndex"], json!(1000000));
+    }
+
+    /// Adding, removing and adding again in one call gives two different ids.
+    #[test]
+    fn ids_stay_unique_within_one_call() {
+        let mut board: Board = serde_json::from_value(json!({
+            "title": "Plan",
+            "nodes": [ { "id": "x", "type": "shape", "position": { "x": 0.0, "y": 0.0 }, "data": { "label": "X" } } ]
+        }))
+        .expect("a board");
+        let changes = vec![
+            Change::Add { label: "One".into(), shape: None, near: None, inside: None },
+            Change::Remove { item: "X".into() },
+            Change::Add { label: "Two".into(), shape: None, near: None, inside: None },
+        ];
+        apply(&mut board, &changes, NOW).expect("applied");
+        let ids: std::collections::HashSet<_> = board.nodes.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(ids.len(), board.nodes.len(), "{:?}", board.nodes.iter().map(|n| &n.id).collect::<Vec<_>>());
+    }
 
     fn sketch(json: Value) -> Sketch {
         serde_json::from_value(json).expect("a sketch")
@@ -1508,6 +1715,7 @@ mod tests {
             position: Point { x: 0.0, y: 0.0 },
             data: Map::new(),
             updated: None,
+            rest: Map::new(),
         });
 
         let said = describe(&board);
@@ -1555,5 +1763,54 @@ mod tests {
         let out = serde_json::to_value(&board).expect("written");
         assert_eq!(out["type"], "whiteboard", "an unknown key was dropped");
         assert_eq!(out["nodes"][0]["data"]["rotation"], 45, "so was one inside a node");
+    }
+
+    /// The app's own frames, sticky notes and writing can be named, as boxes can.
+    #[test]
+    fn what_the_app_draws_can_be_named_and_added_to() {
+        let mut board: Board = serde_json::from_value(json!({
+            "title": "T",
+            "nodes": [
+                { "id": "f", "type": "frame", "position": { "x": 0, "y": 0 }, "data": { "label": "Hub", "width": 400, "height": 300 } },
+                { "id": "s", "type": "sticky", "position": { "x": 40, "y": 60 }, "data": { "label": "Note", "width": 160, "height": 160 } },
+                { "id": "i", "type": "shape", "position": { "x": 600, "y": 0 }, "data": { "shapeType": "glyph", "label": "", "glyph": { "name": "server" } } }
+            ],
+            "edges": []
+        }))
+        .unwrap();
+        assert!(describe(&board).contains("[icon: server]"));
+        apply(&mut board, &changes(json!([
+            { "op": "add", "label": "Switch", "inside": "Hub" },
+            { "op": "connect", "from": "Note", "to": "Switch" },
+            { "op": "add", "label": "Router", "near": "Note" }
+        ])), NOW).expect("applied");
+        let frame = board.nodes.iter().find(|n| n.id == "f").unwrap().clone();
+        let inside = |label: &str| {
+            let n = at(&board, label);
+            n.position.x >= frame.position.x && n.position.y >= frame.position.y
+                && n.position.x + n.width() <= frame.position.x + frame.width()
+                && n.position.y + n.height() <= frame.position.y + frame.height()
+        };
+        assert!(inside("Switch"), "added inside the app's frame, which grew for it");
+        assert_eq!(board.edges.len(), 1);
+        // Beside the note, not pushed out of the frame because the frame was "in the way".
+        let router = at(&board, "Router");
+        let note = at(&board, "Note");
+        assert!((router.position.y - note.position.y).abs() < 1.0, "{:?} vs {:?}", router.position, note.position);
+    }
+
+    /// A shape a model names in its own words is the board's shape.
+    #[test]
+    fn a_shape_named_in_other_words_is_the_boards_own() {
+        let mut board: Board = serde_json::from_value(json!({ "title": "T", "nodes": [], "edges": [] })).unwrap();
+        apply(&mut board, &changes(json!([
+            { "op": "add", "label": "Orders", "shape": "database" },
+            { "op": "add", "label": "Thing", "shape": "netNonsense" },
+            { "op": "add", "label": "Idea", "shape": "infoLightbulb" }
+        ])), NOW).expect("applied");
+        assert_eq!(at(&board, "Orders").shape(), "cylinder");
+        assert_eq!(at(&board, "Thing").shape(), "rectangle");
+        let idea = at(&board, "Idea");
+        assert_eq!(idea.width(), idea.height(), "a figure is drawn square");
     }
 }

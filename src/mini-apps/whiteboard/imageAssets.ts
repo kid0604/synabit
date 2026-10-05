@@ -184,3 +184,22 @@ export function mimeFor(path: string): string {
       return 'application/octet-stream';
   }
 }
+
+/**
+ * The picture in a `data:` URL, as a file's worth of bytes — decoded here,
+ * not fetched. The app's content policy does not let `fetch` read `data:`
+ * URLs, so a fetch that works in development fails in the built app.
+ */
+export function dataUrlBlob(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',');
+  const head = dataUrl.slice(5, comma);
+  const type = head.split(';')[0] || 'application/octet-stream';
+  const body = dataUrl.slice(comma + 1);
+  if (/;base64$/i.test(head)) {
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new Blob([bytes], { type });
+  }
+  return new Blob([decodeURIComponent(body)], { type });
+}

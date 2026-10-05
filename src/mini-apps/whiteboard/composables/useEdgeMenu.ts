@@ -1,5 +1,5 @@
 import { ref, computed, type Ref } from 'vue';
-import { MarkerType, useVueFlow } from '@vue-flow/core';
+import { useVueFlow } from '@vue-flow/core';
 import { stampElement } from '../boardFile';
 import type { WBNode, WBEdge } from './useWhiteboardStore';
 
@@ -53,31 +53,7 @@ export function useEdgeMenu(
     wbEdge.data = { ...wbEdge.data, ...data };
     stampElement(wbEdge);
 
-    // Rebuild the full VueFlow edge object
-    const d = wbEdge.data || {};
-    const newVfEdge: any = {
-      id: wbEdge.id,
-      source: wbEdge.source,
-      sourceHandle: wbEdge.sourceHandle,
-      target: wbEdge.target,
-      targetHandle: wbEdge.targetHandle,
-      type: wbEdge.type || 'default',
-      animated: !!d.animated,
-      label: d.label || '',
-      style: {
-        stroke: d.color || undefined,
-        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
-        strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
-      },
-      data: d,
-      zIndex: 10001,
-    };
-    if (d.markerEnd === 'arrow') {
-      newVfEdge.markerEnd = { type: MarkerType.ArrowClosed, color: d.color || undefined };
-    }
-    if (d.markerStart === 'arrow') {
-      newVfEdge.markerStart = { type: MarkerType.ArrowClosed, color: d.color || undefined };
-    }
+    const newVfEdge = buildVfEdge(wbEdge, store.currentBoardData.value.nodes);
 
     // Set guard flag, remove old edge, add new edge, clear flag
     updatingEdgeId = edgeId;

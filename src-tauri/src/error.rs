@@ -34,6 +34,12 @@ pub enum AppError {
     #[error("General application error: {0}")]
     General(String),
 
+    /// A file changed since the caller read it, so the write it asked for
+    /// would have gone over somebody else's. Not a failure: the caller reads
+    /// again, combines, and asks again.
+    #[error("Changed since it was read: {0}")]
+    Stale(String),
+
     /// A question the engine will not answer, and why.
     ///
     /// Its own variant because it is not a failure: nothing went wrong, the
@@ -76,6 +82,7 @@ impl Serialize for AppError {
             }
             AppError::AssetTooLarge(msg) => ("ASSET_TOO_LARGE".to_string(), msg.clone()),
             AppError::General(msg) => ("GENERAL_ERROR".to_string(), msg.clone()),
+            AppError::Stale(msg) => ("STALE".to_string(), msg.clone()),
             AppError::Refused(why) => (format!("REFUSED:{}", why.code()), why.to_string()),
             AppError::Safe(e) => (format!("SAFE:{}", e.code()), e.to_string()),
         };
@@ -84,6 +91,7 @@ impl Serialize for AppError {
         // question the engine cannot ask, which is the engine working.
         match self {
             AppError::Refused(why) => log::debug!("Refused [{}]: {}", why.code(), message),
+            AppError::Stale(_) => log::debug!("Stale write refused: {}", message),
             AppError::Safe(e) if !e.is_failure() => log::debug!("Safe [{}]: {}", e.code(), message),
             _ => log::error!("Backend Error [{}]: {}", code, message),
         }

@@ -13,6 +13,7 @@ const props = defineProps<{
   /** Where the canvas has placed this node, in board coordinates. */
   position: { x: number; y: number };
   data: {
+    locked?: boolean;
     /** Where the picture lives inside the vault, e.g. `assets/a1b2c3.png`. */
     assetPath: string;
     alt?: string;
@@ -296,7 +297,7 @@ function resetRotation(event: MouseEvent) {
     <!-- Corner handles. `nodrag` is what stops the canvas dragging the node. -->
     <div
       v-for="corner in CORNERS"
-      v-show="selected"
+      v-show="selected && !data.locked"
       :key="corner"
       :class="['wb-image-node__grip', `wb-image-node__grip--${corner}`, 'nodrag', 'nopan']"
       @pointerdown="onResizeStart($event, corner)"
@@ -307,7 +308,7 @@ function resetRotation(event: MouseEvent) {
 
     <!-- Turn handle. -->
     <button
-      v-if="selected"
+      v-if="selected && !data.locked"
       class="wb-image-node__rotate nodrag nopan"
       type="button"
       :title="$t('whiteboard.rotate_image')"

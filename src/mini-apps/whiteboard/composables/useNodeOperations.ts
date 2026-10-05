@@ -1,12 +1,25 @@
 import { type Ref } from 'vue';
-import { MarkerType } from '@vue-flow/core';
 import type { WBNode, WBEdge } from './useWhiteboardStore';
+import { paint } from '../ink';
+
+/** Where connectors are stacked: above any node. */
+export const EDGE_Z = 1_000_000;
+/** A line with no colour of its own is drawn in the theme's grey. */
+export const EDGE_GREY = 'var(--wb-edge, #8b8b8b)';
+
+/** Where comments are stacked: over every item, under the connectors. */
+export const COMMENT_Z = 500_000;
+
+/** Where frames are stacked: below any item that is not one. */
+export const FRAME_Z = -100_000;
 
 export function useNodeOperations(
   store: any,
   vfNodes: Ref<any[]>,
   vfEdges: Ref<any[]>,
   scheduleSave: () => void,
+  /** What a screen reader says for a line, from what it joins. */
+  spokenEdge?: (edge: WBEdge, nodes: WBNode[]) => string,
 ) {
   /**
    * Compute z-index for shape nodes based on area.
@@ -29,12 +42,41 @@ export function useNodeOperations(
    * shapes — whatever is smaller sits on top, so a picture inside a frame
    * stays clickable.
    */
-  const SIZED_TYPES = new Set(['shape', 'image']);
+  const SIZED_TYPES = new Set(['shape', 'image', 'sticky', 'frame', 'card']);
+  /** The size an item has before anyone resizes it. */
+  const DEFAULT_SIZE: Record<string, [number, number]> = {
+    shape: [160, 80], image: [320, 240], sticky: [200, 200], frame: [480, 320], card: [260, 120],
+  };
+
+  /**
+   * Draw a node the way the board says: its stacking, and whether it is
+   * locked. A node brought to the front or sent to the back carries its place
+   * in `data.z`; one that never was is stacked by size, as before. A locked
+   * node stays selectable — that is how it gets unlocked — but cannot be
+   * dragged or deleted from the canvas.
+   */
+  const applyState = (vfNode: any) => {
+    const z = vfNode.data?.z;
+    if (typeof z === 'number') vfNode.zIndex = z;
+    // A comment sits over what it is about, never under the next item along.
+    else if (vfNode.type === 'comment') vfNode.zIndex = COMMENT_Z;
+    const locked = !!vfNode.data?.locked;
+    vfNode.draggable = !locked;
+    vfNode.deletable = !locked;
+    vfNode.class = [locked && 'wb-locked', vfNode.data?.link && 'wb-has-link'].filter(Boolean).join(' ') || undefined;
+  };
+
   const applySize = (vfNode: any, width?: number, height?: number) => {
-    if (!SIZED_TYPES.has(vfNode.type)) return;
-    const w = width || vfNode.data?.width || (vfNode.type === 'image' ? 320 : 160);
-    const h = height || vfNode.data?.height || (vfNode.type === 'image' ? 240 : 80);
-    vfNode.zIndex = computeShapeZIndex(w, h);
+    if (!SIZED_TYPES.has(vfNode.type)) {
+      applyState(vfNode);
+      return;
+    }
+    const [dw, dh] = DEFAULT_SIZE[vfNode.type] ?? [160, 80];
+    const w = width || vfNode.data?.width || dw;
+    const h = height || vfNode.data?.height || dh;
+    // A frame is the ground its items stand on: always behind them.
+    vfNode.zIndex = vfNode.type === 'frame' ? FRAME_Z : computeShapeZIndex(w, h);
+    applyState(vfNode);
 
     if (vfNode.type === 'image') {
       // A style *function*, because a turned picture needs the whole node
@@ -100,10 +142,12 @@ export function useNodeOperations(
 
   /**
    * Build a VueFlow edge object from a WBEdge (store model).
-   * Exact logic from syncToVueFlow edge mapping (L115-143).
+   * The one place an edge is drawn from what the board holds; the edge menu
+   * rebuilds through it too, so a style change looks like a reload would.
    */
-  const buildVfEdge = (edge: WBEdge, _nodes: WBNode[]) => {
+  const buildVfEdge = (edge: WBEdge, nodes: WBNode[]) => {
     const d = edge.data || {};
+    const color = paint(d.color) || undefined;
     const edgeObj: any = {
       id: edge.id,
       source: edge.source,
@@ -114,23 +158,22 @@ export function useNodeOperations(
       animated: !!d.animated,
       label: d.label || '',
       style: {
-        stroke: d.color || undefined,
+        stroke: color,
         strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
         strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
       },
       data: d,
     };
-    // Apply markers
-    if (d.markerEnd === 'arrow') {
-      edgeObj.markerEnd = { type: MarkerType.ArrowClosed, color: d.color || undefined };
-    }
-    if (d.markerStart === 'arrow') {
-      edgeObj.markerStart = { type: MarkerType.ArrowClosed, color: d.color || undefined };
-    }
-    // Set edge z-index ABOVE all shape z-indices so edges are always clickable
-    edgeObj.zIndex = 10001;
+    // Its ends are drawn by the edge itself, from `data` (see WaypointEdge and
+    // edgeMarkers.ts) — not handed to the canvas as markers, which would draw
+    // an empty marker of its own under the same id.
+    // Above every node, however far forward a node has been brought, so a
+    // connector stays visible and clickable over what it joins.
+    edgeObj.zIndex = EDGE_Z;
+    // Read by its ends, not as the canvas would: "Edge from shape_1759…".
+    if (spokenEdge) edgeObj.ariaLabel = spokenEdge(edge, nodes);
     return edgeObj;
   };
 
-  return { computeShapeZIndex, applySize, deleteNodes, updateNodeData, buildVfEdge };
+  return { computeShapeZIndex, applySize, applyState, deleteNodes, updateNodeData, buildVfEdge };
 }

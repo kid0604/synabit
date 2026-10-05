@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
 import { onClickOutside } from '@vueuse/core';
-import { MousePointer2, Hand, Pencil, Shapes, Type, Network, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square, Image as ImageIcon } from 'lucide-vue-next';
-import { SHAPES } from '../shapes';
+import { MousePointer2, Hand, Pencil, Shapes, Type, Network, Undo2, Redo2, Download, Highlighter, Eraser, Grip, Grid3X3, Square, Image as ImageIcon, StickyNote, Frame, SquarePlus } from 'lucide-vue-next';
+import ShapePicker from './ShapePicker.vue';
+import type { Glyph } from '../glyph';
+import type { LibraryItem, ShapeLibrary } from '../shapeLibraries';
+import { paint, PAPERS } from '../ink';
 import type { ToolMode, DrawSubTool } from '../composables/useWhiteboardStore';
 
 const props = defineProps<{
@@ -14,20 +17,34 @@ const props = defineProps<{
   drawSize: number;
   backgroundPattern: 'dots' | 'lines' | 'none';
   backgroundColor: string;
+  snapToGrid: boolean;
+  smartGuides: boolean;
+  minimap: boolean;
+  libraries: ShapeLibrary[];
 }>();
 
 const emit = defineEmits<{
   (e: 'update:activeTool', tool: ToolMode): void;
   (e: 'select-shape', shape: string): void;
+  (e: 'pick-icon', glyph: Glyph): void;
+  (e: 'pick-item', item: LibraryItem): void;
+  (e: 'import-library'): void;
+  (e: 'remove-library', path: string): void;
   (e: 'update:drawSubTool', sub: DrawSubTool): void;
   (e: 'update:drawColor', color: string): void;
   (e: 'update:drawSize', size: number): void;
   (e: 'undo'): void;
   (e: 'redo'): void;
-  (e: 'export'): void;
+  (e: 'export', options: { format: 'png' | 'svg' | 'pdf' | 'html'; transparent?: boolean }): void;
+  (e: 'insert', el: HTMLElement): void;
   (e: 'add-image'): void;
+  (e: 'import'): void;
+  (e: 'export-file', format: 'drawio' | 'excalidraw'): void;
   (e: 'update:backgroundPattern', pattern: 'dots' | 'lines' | 'none'): void;
   (e: 'update:backgroundColor', color: string): void;
+  (e: 'update:snapToGrid', on: boolean): void;
+  (e: 'update:smartGuides', on: boolean): void;
+  (e: 'update:minimap', on: boolean): void;
 }>();
 
 const showShapeMenu = ref(false);
@@ -37,6 +54,43 @@ const drawMenuRef = ref<HTMLElement | null>(null);
 
 const showBgMenu = ref(false);
 const bgMenuRef = ref<HTMLElement | null>(null);
+
+const showExportMenu = ref(false);
+
+/**
+ * On a wide window, open a picker beside its button and inside the window.
+ *
+ * The toolbar scrolls when the window is too short for it, and a box that
+ * scrolls clips what is positioned inside it — so the pickers are fixed to
+ * the window and placed here, from where their button is on screen. A picker
+ * opened from a low button (Export, the last one) goes up as far as it must
+ * to fit, and scrolls if the window is shorter than it is.
+ */
+function placePicker(container: HTMLElement | null) {
+  if (!container || !window.matchMedia('(min-width: 768px)').matches) return;
+  const button = container.querySelector<HTMLElement>(':scope > button');
+  const picker = container.querySelector<HTMLElement>('.wb-draw-picker, .wb-shape-picker');
+  if (!button || !picker) return;
+  const r = button.getBoundingClientRect();
+  const room = window.innerHeight - 16;
+  picker.style.position = 'fixed';
+  picker.style.maxHeight = `${room}px`;
+  if (!picker.classList.contains('wb-shape-picker')) picker.style.overflowY = 'auto';
+  const h = Math.min(picker.offsetHeight, room);
+  picker.style.left = `${Math.round(r.right + 8)}px`;
+  picker.style.top = `${Math.round(Math.min(Math.max(8, r.top - 8), window.innerHeight - h - 8))}px`;
+  picker.style.bottom = 'auto';
+}
+watch(showDrawMenu, (on) => { if (on) nextTick(() => placePicker(drawMenuRef.value)); });
+watch(showShapeMenu, (on) => { if (on) nextTick(() => placePicker(shapeMenuRef.value)); });
+watch(showBgMenu, (on) => { if (on) nextTick(() => placePicker(bgMenuRef.value)); });
+watch(showExportMenu, (on) => { if (on) nextTick(() => placePicker(exportMenuRef.value)); });
+const exportMenuRef = ref<HTMLElement | null>(null);
+
+function exportAs(format: 'png' | 'svg' | 'pdf' | 'html', transparent = false) {
+  showExportMenu.value = false;
+  emit('export', { format, transparent });
+}
 
 onClickOutside(shapeMenuRef, () => {
   if (showShapeMenu.value) {
@@ -51,27 +105,27 @@ onClickOutside(drawMenuRef, () => {
   }
 });
 
+onClickOutside(exportMenuRef, () => {
+  showExportMenu.value = false;
+});
+
 onClickOutside(bgMenuRef, () => {
   if (showBgMenu.value) {
     showBgMenu.value = false;
   }
 });
 
-const categories = [
-  { key: 'basic', labelKey: 'whiteboard.shape_category.basic' },
-  { key: 'flowchart', labelKey: 'whiteboard.shape_category.flowchart' },
-  { key: 'arrow', labelKey: 'whiteboard.shape_category.arrow' },
-  { key: 'uml', labelKey: 'whiteboard.shape_category.uml' },
-  { key: 'er', labelKey: 'whiteboard.shape_category.er' },
-  { key: 'network', labelKey: 'whiteboard.shape_category.network' },
-  { key: 'bpmn', labelKey: 'whiteboard.shape_category.bpmn' },
-  { key: 'wireframe', labelKey: 'whiteboard.shape_category.wireframe' },
-  { key: 'callout', labelKey: 'whiteboard.shape_category.callout' },
-];
-
 const drawColors = [
-  '#1e1e1e', '#ef4444', '#f59e0b', '#10b981', '#3b82f6',
-  '#7c3aed', '#ec4899', '#06b6d4', '#84cc16', '#f97316',
+  { value: '#1e1e1e', labelKey: 'whiteboard.colors.ink' },
+  { value: '#ef4444', labelKey: 'whiteboard.colors.red' },
+  { value: '#f59e0b', labelKey: 'whiteboard.colors.amber' },
+  { value: '#10b981', labelKey: 'whiteboard.colors.green' },
+  { value: '#3b82f6', labelKey: 'whiteboard.colors.blue' },
+  { value: '#7c3aed', labelKey: 'whiteboard.colors.purple' },
+  { value: '#ec4899', labelKey: 'whiteboard.colors.pink' },
+  { value: '#06b6d4', labelKey: 'whiteboard.colors.cyan' },
+  { value: '#84cc16', labelKey: 'whiteboard.colors.lime' },
+  { value: '#f97316', labelKey: 'whiteboard.colors.orange' },
 ];
 
 const drawSubIcon = computed(() => {
@@ -94,6 +148,13 @@ function selectTool(tool: ToolMode) {
   emit('update:activeTool', tool);
 }
 
+/** Escape: whichever picker is open closes. */
+function closePopups(e: KeyboardEvent) {
+  if (!(showDrawMenu.value || showShapeMenu.value || showBgMenu.value || showExportMenu.value)) return;
+  e.stopPropagation();
+  showDrawMenu.value = showShapeMenu.value = showBgMenu.value = showExportMenu.value = false;
+}
+
 function selectShape(shapeId: string) {
   emit('select-shape', shapeId);
   showShapeMenu.value = false;
@@ -106,14 +167,17 @@ function selectDrawSub(sub: DrawSubTool) {
     emit('update:activeTool', 'draw');
   }
 }
+
+const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
 </script>
 
 <template>
-  <div class="wb-toolbar">
+  <div class="wb-toolbar" @keydown.escape="closePopups">
     <!-- Tools -->
     <button
       @click="selectTool('select')"
       :class="['wb-toolbar-btn', activeTool === 'select' && 'wb-toolbar-btn--active']"
+      :aria-pressed="activeTool === 'select'"
       :title="$t('whiteboard.select_tool')"
       :aria-label="$t('whiteboard.select_tool')"
     >
@@ -122,6 +186,7 @@ function selectDrawSub(sub: DrawSubTool) {
     <button
       @click="selectTool('pan')"
       :class="['wb-toolbar-btn', activeTool === 'pan' && 'wb-toolbar-btn--active']"
+      :aria-pressed="activeTool === 'pan'"
       :title="$t('whiteboard.pan_tool')"
       :aria-label="$t('whiteboard.pan_tool')"
     >
@@ -133,6 +198,9 @@ function selectDrawSub(sub: DrawSubTool) {
       <button
         @click="selectTool('draw')"
         :class="['wb-toolbar-btn', activeTool === 'draw' && 'wb-toolbar-btn--active']"
+        aria-haspopup="true"
+        :aria-expanded="showDrawMenu"
+      :aria-pressed="activeTool === 'draw'"
         :title="$t('whiteboard.draw_tool')"
         :aria-label="$t('whiteboard.draw_tool')"
       >
@@ -147,6 +215,7 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('pen')"
             :class="['wb-draw-sub-btn', drawSubTool === 'pen' && 'wb-draw-sub-btn--active']"
+            :aria-pressed="drawSubTool === 'pen'"
             :title="$t('whiteboard.pen')"
           >
             <Pencil class="w-4 h-4" />
@@ -155,6 +224,7 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('highlighter')"
             :class="['wb-draw-sub-btn', drawSubTool === 'highlighter' && 'wb-draw-sub-btn--active']"
+            :aria-pressed="drawSubTool === 'highlighter'"
             :title="$t('whiteboard.highlighter')"
           >
             <Highlighter class="w-4 h-4" />
@@ -163,6 +233,7 @@ function selectDrawSub(sub: DrawSubTool) {
           <button
             @click.stop="selectDrawSub('eraser')"
             :class="['wb-draw-sub-btn', drawSubTool === 'eraser' && 'wb-draw-sub-btn--active']"
+            :aria-pressed="drawSubTool === 'eraser'"
             :title="$t('whiteboard.eraser_tool')"
           >
             <Eraser class="w-4 h-4" />
@@ -191,12 +262,13 @@ function selectDrawSub(sub: DrawSubTool) {
           <div class="wb-draw-colors">
             <button
               v-for="c in drawColors"
-              :key="c"
-              @click.stop="$emit('update:drawColor', c)"
-              :class="['wb-draw-color-btn', drawColor === c && 'wb-draw-color-btn--active']"
-              :style="{ background: c }"
-              :aria-label="c"
-              :title="c"
+              :key="c.value"
+              @click.stop="$emit('update:drawColor', c.value)"
+              :class="['wb-draw-color-btn', drawColor === c.value && 'wb-draw-color-btn--active']"
+              :style="{ background: paint(c.value) }"
+              :aria-pressed="drawColor === c.value"
+              :aria-label="$t(c.labelKey)"
+              :title="$t(c.labelKey)"
             ></button>
           </div>
         </template>
@@ -208,6 +280,9 @@ function selectDrawSub(sub: DrawSubTool) {
       <button
         @click="selectTool('shape')"
         :class="['wb-toolbar-btn', activeTool === 'shape' && 'wb-toolbar-btn--active']"
+        aria-haspopup="true"
+        :aria-expanded="showShapeMenu"
+      :aria-pressed="activeTool === 'shape'"
         :title="$t('whiteboard.shapes_tool')"
         :aria-label="$t('whiteboard.shapes_tool')"
       >
@@ -215,48 +290,21 @@ function selectDrawSub(sub: DrawSubTool) {
       </button>
       <!-- Shape picker popup -->
       <div v-if="showShapeMenu" class="wb-shape-picker">
-        <div v-for="cat in categories" :key="cat.key" class="wb-shape-category">
-          <div class="wb-shape-cat-label">{{ $t(cat.labelKey) }}</div>
-          <div class="wb-shape-grid">
-            <button
-              v-for="shape in SHAPES.filter(s => s.category === cat.key)"
-              :key="shape.id"
-              @click.stop="selectShape(shape.id)"
-              class="wb-shape-grid-btn"
-              :title="$t(shape.labelKey)"
-              :aria-label="$t(shape.labelKey)"
-            >
-              <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" class="w-6 h-6">
-                <path
-                  :d="shape.path"
-                  fill="currentColor"
-                  fill-opacity="0.08"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linejoin="round"
-                  vector-effect="non-scaling-stroke"
-                  fill-rule="evenodd"
-                />
-                <path
-                  v-for="(deco, i) in (shape.deco || [])"
-                  :key="i"
-                  :d="deco"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  vector-effect="non-scaling-stroke"
-                  stroke-linejoin="round"
-                />
-              </svg>
-            </button>
-          </div>
-        </div>
+        <ShapePicker
+          :libraries="libraries"
+          @pick-shape="selectShape"
+          @pick-icon="(g: Glyph) => { emit('pick-icon', g); showShapeMenu = false; }"
+          @pick-item="(i: LibraryItem) => { emit('pick-item', i); showShapeMenu = false; }"
+          @import-library="emit('import-library')"
+          @remove-library="(p: string) => emit('remove-library', p)"
+        />
       </div>
     </div>
 
     <button
       @click="selectTool('mindmap')"
       :class="['wb-toolbar-btn', activeTool === 'mindmap' && 'wb-toolbar-btn--active']"
+      :aria-pressed="activeTool === 'mindmap'"
       :title="$t('whiteboard.mindmap_tool')"
       :aria-label="$t('whiteboard.mindmap_tool')"
     >
@@ -265,10 +313,29 @@ function selectDrawSub(sub: DrawSubTool) {
     <button
       @click="selectTool('text')"
       :class="['wb-toolbar-btn', activeTool === 'text' && 'wb-toolbar-btn--active']"
+      :aria-pressed="activeTool === 'text'"
       :title="$t('whiteboard.text_tool')"
       :aria-label="$t('whiteboard.text_tool')"
     >
       <Type class="w-4 h-4" />
+    </button>
+    <button
+      @click="selectTool('sticky')"
+      :class="['wb-toolbar-btn', activeTool === 'sticky' && 'wb-toolbar-btn--active']"
+      :title="$t('whiteboard.sticky_tool')"
+      :aria-label="$t('whiteboard.sticky_tool')"
+      :aria-pressed="activeTool === 'sticky'"
+    >
+      <StickyNote class="w-4 h-4" />
+    </button>
+    <button
+      @click="selectTool('frame')"
+      :class="['wb-toolbar-btn', activeTool === 'frame' && 'wb-toolbar-btn--active']"
+      :title="$t('whiteboard.frame_tool')"
+      :aria-label="$t('whiteboard.frame_tool')"
+      :aria-pressed="activeTool === 'frame'"
+    >
+      <Frame class="w-4 h-4" />
     </button>
 
     <button
@@ -287,7 +354,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('undo')"
       :disabled="!canUndo"
       class="wb-toolbar-btn"
-      :title="$t('whiteboard.undo')"
+      :title="`${$t('whiteboard.undo')} (${isMac ? '⌘Z' : 'Ctrl+Z'})`"
       :aria-label="$t('whiteboard.undo')"
     >
       <Undo2 class="w-4 h-4" />
@@ -296,7 +363,7 @@ function selectDrawSub(sub: DrawSubTool) {
       @click="$emit('redo')"
       :disabled="!canRedo"
       class="wb-toolbar-btn"
-      :title="$t('whiteboard.redo')"
+      :title="`${$t('whiteboard.redo')} (${isMac ? '⇧⌘Z' : 'Ctrl+Y'})`"
       :aria-label="$t('whiteboard.redo')"
     >
       <Redo2 class="w-4 h-4" />
@@ -307,6 +374,8 @@ function selectDrawSub(sub: DrawSubTool) {
     <div class="relative" ref="bgMenuRef">
       <button
         @click="showBgMenu = !showBgMenu"
+        aria-haspopup="true"
+        :aria-expanded="showBgMenu"
         :class="['wb-toolbar-btn', showBgMenu && 'wb-toolbar-btn--active']"
         :title="$t('whiteboard.background_style')"
         :aria-label="$t('whiteboard.background_style')"
@@ -322,6 +391,7 @@ function selectDrawSub(sub: DrawSubTool) {
         <div class="wb-draw-sub-tools">
           <button
             @click.stop="$emit('update:backgroundPattern', 'none')"
+            :aria-pressed="backgroundPattern === 'none'"
             :class="['wb-draw-sub-btn', backgroundPattern === 'none' && 'wb-draw-sub-btn--active']"
             :title="$t('whiteboard.blank')"
           >
@@ -330,6 +400,7 @@ function selectDrawSub(sub: DrawSubTool) {
           </button>
           <button
             @click.stop="$emit('update:backgroundPattern', 'dots')"
+            :aria-pressed="backgroundPattern === 'dots'"
             :class="['wb-draw-sub-btn', backgroundPattern === 'dots' && 'wb-draw-sub-btn--active']"
             :title="$t('whiteboard.dots')"
           >
@@ -338,6 +409,7 @@ function selectDrawSub(sub: DrawSubTool) {
           </button>
           <button
             @click.stop="$emit('update:backgroundPattern', 'lines')"
+            :aria-pressed="backgroundPattern === 'lines'"
             :class="['wb-draw-sub-btn', backgroundPattern === 'lines' && 'wb-draw-sub-btn--active']"
             :title="$t('whiteboard.lines')"
           >
@@ -346,44 +418,114 @@ function selectDrawSub(sub: DrawSubTool) {
           </button>
         </div>
 
+        <label class="wb-toggle-row mt-2">
+          <input type="checkbox" :checked="snapToGrid" @change="$emit('update:snapToGrid', ($event.target as HTMLInputElement).checked)" />
+          <span>{{ $t('whiteboard.snap_to_grid') }}</span>
+        </label>
+        <label class="wb-toggle-row">
+          <input type="checkbox" :checked="smartGuides" @change="$emit('update:smartGuides', ($event.target as HTMLInputElement).checked)" />
+          <span>{{ $t('whiteboard.smart_guides') }}</span>
+        </label>
+        <label class="wb-toggle-row">
+          <input type="checkbox" :checked="minimap" @change="$emit('update:minimap', ($event.target as HTMLInputElement).checked)" />
+          <span>{{ $t('whiteboard.minimap') }}</span>
+        </label>
+
         <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.background_color') }}</div>
         <div class="wb-draw-colors">
           <button
-            v-for="color in ['transparent', ...drawColors]"
-            :key="color"
+            v-for="p in PAPERS"
+            :key="p.value"
             class="wb-draw-color-btn relative overflow-hidden"
-            :class="{ 'wb-draw-color-btn--active': backgroundColor === color }"
-            :style="{ backgroundColor: color === 'transparent' ? '#ffffff' : color }"
-            :title="color === 'transparent' ? $t('whiteboard.colors.default') : color"
-            :aria-label="color === 'transparent' ? $t('whiteboard.colors.default') : color"
-            @click.stop="$emit('update:backgroundColor', color)"
+            :class="{ 'wb-draw-color-btn--active': backgroundColor === p.value, 'wb-paper-default': p.value === 'transparent' }"
+            :style="p.value === 'transparent' ? {} : { backgroundColor: p.value }"
+            :aria-pressed="backgroundColor === p.value"
+            :title="$t(p.labelKey)"
+            :aria-label="$t(p.labelKey)"
+            @click.stop="$emit('update:backgroundColor', p.value)"
           >
-            <div v-if="color === 'transparent'" class="absolute inset-0 flex items-center justify-center opacity-30">
-              <div class="w-[150%] h-[1.5px] bg-black -rotate-45"></div>
+            <div v-if="p.value === 'transparent'" class="absolute inset-0 flex items-center justify-center opacity-30">
+              <div class="w-[150%] h-[1.5px] bg-current -rotate-45"></div>
             </div>
           </button>
         </div>
       </div>
     </div>
 
+    <!-- Templates, vault cards, live frames: the board's own menu, also
+         reachable here and not only by right-clicking empty canvas. -->
     <button
-      @click="$emit('export')"
       class="wb-toolbar-btn"
-      :title="$t('whiteboard.export_png')"
-      :aria-label="$t('whiteboard.export_png')"
+      aria-haspopup="menu"
+      :title="$t('whiteboard.insert')"
+      :aria-label="$t('whiteboard.insert')"
+      @click="(e: MouseEvent) => $emit('insert', e.currentTarget as HTMLElement)"
     >
-      <Download class="w-4 h-4" />
+      <SquarePlus class="w-4 h-4" />
     </button>
+
+    <div class="relative" ref="exportMenuRef">
+      <button
+        @click="showExportMenu = !showExportMenu"
+        :class="['wb-toolbar-btn', showExportMenu && 'wb-toolbar-btn--active']"
+        :title="$t('whiteboard.export_title')"
+        :aria-label="$t('whiteboard.export_title')"
+        aria-haspopup="menu"
+        :aria-expanded="showExportMenu"
+      >
+        <Download class="w-4 h-4" />
+      </button>
+
+      <div v-if="showExportMenu" class="wb-draw-picker wb-export-menu" @pointerdown.stop>
+        <div class="wb-draw-cat-label">{{ $t('whiteboard.export_png') }}</div>
+        <button class="wb-export-option" @click.stop="exportAs('png')">
+          {{ $t('whiteboard.export_as_shown') }}
+        </button>
+        <button class="wb-export-option" @click.stop="exportAs('png', true)">
+          {{ $t('whiteboard.export_transparent') }}
+        </button>
+        <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.export_title') }}</div>
+        <button class="wb-export-option" @click.stop="exportAs('svg')">
+          {{ $t('whiteboard.export_svg') }}
+        </button>
+        <button class="wb-export-option" @click.stop="exportAs('pdf')">
+          {{ $t('whiteboard.export_pdf') }}
+        </button>
+        <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.share.title') }}</div>
+        <button class="wb-export-option" :title="$t('whiteboard.share.hint')" @click.stop="exportAs('html')">
+          {{ $t('whiteboard.share.web_page') }}
+        </button>
+        <div class="wb-draw-cat-label mt-2">{{ $t('whiteboard.export_other.title') }}</div>
+        <button class="wb-export-option" :title="$t('whiteboard.export_other.hint')" @click.stop="showExportMenu = false; $emit('export-file', 'drawio')">
+          {{ $t('whiteboard.export_other.drawio') }}
+        </button>
+        <button class="wb-export-option" :title="$t('whiteboard.export_other.hint')" @click.stop="showExportMenu = false; $emit('export-file', 'excalidraw')">
+          {{ $t('whiteboard.export_other.excalidraw') }}
+        </button>
+        <div class="wb-export-sep" />
+        <button class="wb-export-option" @click.stop="showExportMenu = false; $emit('import')">
+          {{ $t('whiteboard.import_file') }}
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* On a narrow window the toolbar scrolls sideways, and a box that scrolls
+   clips whatever is positioned inside it — the pen, shape, background and
+   export pickers opened and were cut off. So there the pickers are fixed to
+   the window rather than to their button, and the toolbar is centred without
+   a transform: a transform would make it the box the fixed pickers are
+   placed and clipped in. */
 .wb-toolbar {
   position: absolute;
-  left: 50%;
+  left: 16px;
+  right: 16px;
   bottom: 16px;
   top: auto;
-  transform: translateX(-50%);
+  width: max-content;
+  margin-inline: auto;
   z-index: 50;
   display: flex;
   flex-direction: row;
@@ -396,15 +538,37 @@ function selectDrawSub(sub: DrawSubTool) {
   max-width: calc(100vw - 32px);
   overflow-x: auto;
 }
+/* Centred down the side without a transform (a transform would make the
+   toolbar the box its fixed pickers are placed in), and scrolling when the
+   window is shorter than it is: its buttons used to go off the top and the
+   bottom of a short window, out of reach. */
 @media (min-width: 768px) {
   .wb-toolbar {
     left: 16px;
-    top: 50%;
-    bottom: auto;
-    transform: translateY(-50%);
+    right: auto;
+    top: 16px;
+    bottom: 16px;
+    height: max-content;
+    max-height: calc(100% - 32px);
+    margin-block: auto;
+    margin-inline: 0;
     flex-direction: column;
-    overflow-x: visible;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
   }
+  /* Scrolled, not squeezed: buttons keep their size. */
+  .wb-toolbar > * {
+    flex-shrink: 0;
+  }
+}
+/* The theme's own canvas, shown as it is on each theme. */
+.wb-paper-default {
+  background: var(--color-base, #fdfdfc);
+}
+.dark .wb-paper-default {
+  background: var(--color-base-dark, #242424);
+  color: #fafafa;
 }
 .dark .wb-toolbar {
   background: var(--color-surface-dark, #1e1e1e);
@@ -460,12 +624,13 @@ function selectDrawSub(sub: DrawSubTool) {
 
 /* ─── Draw Picker Popup ─────────────────────────── */
 .wb-draw-picker {
-  position: absolute;
+  position: fixed;
   left: 50%;
-  bottom: 100%;
+  bottom: 76px;
   top: auto;
-  margin-bottom: 12px;
   transform: translateX(-50%);
+  max-height: calc(100% - 140px);
+  overflow-y: auto;
   width: 200px;
   padding: 10px;
   background: var(--color-surface, #fff);
@@ -476,11 +641,13 @@ function selectDrawSub(sub: DrawSubTool) {
 }
 @media (min-width: 768px) {
   .wb-draw-picker {
+    position: absolute;
     left: 48px;
     top: -8px;
     bottom: auto;
-    margin-bottom: 0;
     transform: none;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 .dark .wb-draw-picker {
@@ -491,6 +658,50 @@ function selectDrawSub(sub: DrawSubTool) {
 .wb-draw-sub-tools {
   display: flex;
   gap: 4px;
+}
+.wb-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 2px;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text, #18181b);
+}
+.dark .wb-toggle-row {
+  color: var(--color-text-dark, #e4e4e7);
+}
+.wb-toggle-row input {
+  accent-color: var(--color-accent);
+}
+.wb-export-sep {
+  height: 1px;
+  margin: 6px 2px;
+  background: var(--color-border, #e6e6e6);
+}
+.dark .wb-export-sep {
+  background: var(--color-border-dark, #333);
+}
+.wb-export-option {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--color-text, #18181b);
+  transition: background-color 0.15s;
+}
+.wb-export-option:hover,
+.wb-export-option:focus-visible {
+  background: var(--color-surface-hover, #f5f5f5);
+}
+.dark .wb-export-option {
+  color: var(--color-text-dark, #e4e4e7);
+}
+.dark .wb-export-option:hover,
+.dark .wb-export-option:focus-visible {
+  background: var(--color-surface-hover-dark, #2a2a2a);
 }
 .wb-draw-sub-btn {
   flex: 1;
@@ -588,16 +799,19 @@ function selectDrawSub(sub: DrawSubTool) {
 
 /* ─── Shape Picker Popup ─────────────────────────── */
 .wb-shape-picker {
-  position: absolute;
+  position: fixed;
   left: 50%;
-  bottom: 100%;
+  bottom: 76px;
   top: auto;
-  margin-bottom: 12px;
   transform: translateX(-50%);
-  width: 320px;
-  max-width: calc(100vw - 32px);
-  max-height: 400px;
+  max-height: calc(100% - 140px);
   overflow-y: auto;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  max-height: 460px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 10px;
   background: var(--color-surface, #fff);
   border: 1px solid var(--color-border, #e6e6e6);
@@ -607,10 +821,10 @@ function selectDrawSub(sub: DrawSubTool) {
 }
 @media (min-width: 768px) {
   .wb-shape-picker {
+    position: absolute;
     left: 48px;
     top: -8px;
     bottom: auto;
-    margin-bottom: 0;
     transform: none;
     max-height: 600px;
   }
@@ -619,51 +833,6 @@ function selectDrawSub(sub: DrawSubTool) {
   background: var(--color-surface-dark, #1e1e1e);
   border-color: var(--color-border-dark, #2c2c2c);
   box-shadow: 0 8px 32px rgba(0,0,0,0.4);
-}
-.wb-shape-category + .wb-shape-category {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--color-border, #e6e6e6);
-}
-.dark .wb-shape-category + .wb-shape-category {
-  border-color: var(--color-border-dark, #2c2c2c);
-}
-.wb-shape-cat-label {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--color-text-secondary, #52525b);
-  margin-bottom: 6px;
-  padding-left: 2px;
-}
-.dark .wb-shape-cat-label {
-  color: var(--color-text-secondary-dark, #a1a1aa);
-}
-.wb-shape-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 4px;
-}
-.wb-shape-grid-btn {
-  width: 38px;
-  height: 38px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary, #52525b);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.dark .wb-shape-grid-btn {
-  color: var(--color-text-secondary-dark, #a1a1aa);
-}
-.wb-shape-grid-btn:hover {
-  background: var(--color-accent);
-  color: white;
 }
 /* The accent is 2.7:1 on the dark panel; borders, rings and text that carry
    it there take the paler dark accent. Fills under white text keep the accent. */

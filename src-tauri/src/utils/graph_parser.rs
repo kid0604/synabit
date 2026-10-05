@@ -24,10 +24,18 @@ static ASSET_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event|project|file)/([^)]+)\)",
+        r"\[([^\]]*)\]\(synabit://(?:note|node|person|task|quickcap|event|project|file|whiteboard)/([^)]+)\)",
     )
     .unwrap()
 });
+/// A whiteboard embedded in a note.
+///
+/// The editor writes the embed as an HTML block with the board's path in an
+/// attribute (`note/WhiteboardExtension.ts`), not as a link — so a note
+/// showing a board had no edge to it: no backlink on the board, no line in
+/// the graph.
+static BOARD_EMBED_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"data-board-path="([^"]+)""#).unwrap());
 static RENAME_MD_LINK_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"\[([^\]]*)\]\((synabit://(?:note|node|person|task|quickcap|event|project)/)([^)]+)\)",
@@ -125,6 +133,27 @@ pub fn extract_edges(source_id: &str, text: &str) -> Vec<GraphEdge> {
                     target_title_or_path: path,
                     link_type: "internal_link".to_string(),
                     relation: None,
+                });
+            }
+        }
+    }
+
+    // 5. Embedded whiteboards (<div data-type="whiteboard" data-board-path="…">)
+    for cap in BOARD_EMBED_RE.captures_iter(text) {
+        if let Some(m) = cap.get(1) {
+            // The attribute is HTML-escaped by the editor.
+            let path = m
+                .as_str()
+                .replace("&quot;", "\"")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&");
+            if seen.insert(path.clone()) {
+                edges.push(GraphEdge {
+                    source_id: source_id.to_string(),
+                    target_title_or_path: path,
+                    link_type: "internal_link".to_string(),
+                    relation: Some("embed".to_string()),
                 });
             }
         }
@@ -546,6 +575,17 @@ pub fn rename_links_in_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_that_embeds_a_board_links_to_it() {
+        let note = r#"Intro
+<div data-type="whiteboard" data-board-id="Whiteboards/a &amp; b.whiteboard.json" data-board-path="Whiteboards/a &amp; b.whiteboard.json" data-title="Plan"></div>
+And a link: [Plan](synabit://whiteboard/Whiteboards%2Fother.whiteboard.json)"#;
+        let edges = extract_edges("Notes/n.md", note);
+        let targets: Vec<&str> = edges.iter().map(|e| e.target_title_or_path.as_str()).collect();
+        assert!(targets.contains(&"Whiteboards/a & b.whiteboard.json"), "{targets:?}");
+        assert!(targets.contains(&"Whiteboards/other.whiteboard.json"), "{targets:?}");
+    }
 
     // ── extract_edges ─────────────────────────────
 

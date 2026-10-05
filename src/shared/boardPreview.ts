@@ -18,6 +18,12 @@
  * will not recognise.
  */
 import type { WhiteboardData, WBNode } from '../mini-apps/whiteboard/boardFile';
+import { stickyColor } from '../mini-apps/whiteboard/sticky';
+import { hiddenByCollapse } from '../mini-apps/whiteboard/mindmap';
+import { cleanGlyph } from '../mini-apps/whiteboard/glyph';
+
+/** Item kinds drawn as a labelled box. Freehand and frames are drawn their own way. */
+const BOXED = new Set(['shape', 'sticky', 'text', 'mindmap', 'note', 'image', 'card']);
 
 /** How big the picture is allowed to be, in the bubble. */
 const WIDE = 640;
@@ -31,7 +37,8 @@ const escape = (text: string): string =>
 
 const width = (node: WBNode): number => Number(node.data?.width) || 160;
 const height = (node: WBNode): number => Number(node.data?.height) || 80;
-const label = (node: WBNode): string => String(node.data?.label ?? '');
+// A card's name is its thing's title; a note card's, the note's.
+const label = (node: WBNode): string => String(node.data?.label ?? node.data?.title ?? node.data?.noteTitle ?? '');
 
 /**
  * Whether this box is a frame — something drawn behind other things.
@@ -69,10 +76,18 @@ const centre = (node: WBNode) => ({
  * no picture, because it looks like something failed.
  */
 export function boardPreview(board: WhiteboardData): string {
-  const nodes = board.nodes ?? [];
-  const shapes = nodes.filter(n => n.type === 'shape');
+  // What a folded mind-map branch hides is hidden here too.
+  const hidden = hiddenByCollapse(board.nodes ?? [], board.edges ?? []);
+  // Comments are notes for whoever edits the board; a preview shows the board.
+  // Positions as numbers, whatever the file says: they are written into the
+  // markup below, and a board file can come from anywhere — a sync, a hand
+  // edit — so a "number" there could otherwise carry markup of its own.
+  const nodes = (board.nodes ?? [])
+    .filter(n => !hidden.has(n.id) && n.type !== 'comment')
+    .map(n => ({ ...n, position: { x: Number(n.position?.x) || 0, y: Number(n.position?.y) || 0 } }));
+  const boxed = nodes.filter(n => BOXED.has(n.type));
   const strokes = nodes.filter(n => n.type === 'stroke');
-  if (!shapes.length && !strokes.length) return '';
+  if (!boxed.length && !strokes.length && !nodes.some(n => n.type === 'frame')) return '';
 
   // What the picture has to cover.
   let left = Infinity;
@@ -88,13 +103,16 @@ export function boardPreview(board: WhiteboardData): string {
   const span = Math.max(right - left, 1);
   const drop = Math.max(bottom - top, 1);
   const scale = Math.min(WIDE / span, TALL / drop, 1);
-  const frames = framesIn(nodes);
+  // The app's own frames, and the boxes that serve as frames on boards drawn
+  // before it had any.
+  const frameShapes = framesIn(nodes);
+  const frames = nodes.filter(n => n.type === 'frame' || frameShapes.has(n.id));
   const byId = new Map(nodes.map(n => [n.id, n]));
 
   const parts: string[] = [];
 
   // Frames first, so they sit behind what they hold.
-  for (const node of shapes.filter(n => frames.has(n.id))) {
+  for (const node of frames) {
     parts.push(
       `<rect x="${node.position.x}" y="${node.position.y}" width="${width(node)}" height="${height(node)}"` +
         ` rx="10" fill="rgba(148,163,184,0.10)" stroke="rgba(148,163,184,0.8)" stroke-width="${1.5 / scale}"/>`,
@@ -123,22 +141,51 @@ export function boardPreview(board: WhiteboardData): string {
   for (const node of strokes) {
     const points = (node.data?.points as [number, number, number?][] | undefined) ?? [];
     if (points.length < 2) continue;
-    const path = points
-      .map(([x, y]) => `${(node.position.x + x).toFixed(1)},${(node.position.y + y).toFixed(1)}`)
+    // Only the points a preview can show: one per pixel at its size. A stroke
+    // keeps every point the pen reported, and written out whole, a page of
+    // handwriting made a preview of megabytes for a picture in a chat bubble.
+    const step = 1 / scale;
+    const kept: [number, number][] = [];
+    for (let i = 0; i < points.length; i++) {
+      const [x, y] = points[i];
+      const last = kept[kept.length - 1];
+      if (!last || i === points.length - 1 || Math.abs(x - last[0]) >= step || Math.abs(y - last[1]) >= step) kept.push([x, y]);
+    }
+    const path = kept
+      .map(([x, y]) => `${(node.position.x + (Number(x) || 0)).toFixed(1)},${(node.position.y + (Number(y) || 0)).toFixed(1)}`)
       .join(' ');
     parts.push(
-      `<polyline points="${path}" fill="none" stroke="${String(node.data?.color ?? '#7c3aed')}"` +
+      `<polyline points="${path}" fill="none" stroke="${escape(String(node.data?.color ?? '#7c3aed'))}"` +
         ` stroke-width="${1.5 / scale}" stroke-opacity="0.7"/>`,
     );
   }
 
-  for (const node of shapes.filter(n => !frames.has(n.id))) {
+  for (const node of boxed.filter(n => !frameShapes.has(n.id))) {
     const w = width(node);
     const h = height(node);
-    parts.push(
-      `<rect x="${node.position.x}" y="${node.position.y}" width="${w}" height="${h}" rx="8"` +
-        ` fill="rgba(124,58,237,0.08)" stroke="#7c3aed" stroke-width="${1.2 / scale}"/>`,
-    );
+    // Each kind as it looks on the board, closely enough to be recognised: a
+    // sticky note is its paper, words on their own have no box.
+    if (node.type === 'sticky') {
+      parts.push(
+        `<rect x="${node.position.x}" y="${node.position.y}" width="${w}" height="${h}" rx="3"` +
+          ` fill="${stickyColor(node.data?.color).fill}"/>`,
+      );
+    } else if (node.type === 'shape' && node.data?.shapeType === 'glyph' && cleanGlyph(node.data?.glyph)) {
+      // An icon is its drawing — checked, so only geometry is written out.
+      const g = cleanGlyph(node.data.glyph)!;
+      const inner = g.parts
+        .map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([k, v]) => `${k}="${escape(String(v))}"`).join(' ')}/>`)
+        .join('');
+      parts.push(
+        `<svg x="${node.position.x}" y="${node.position.y}" width="${w}" height="${h}" viewBox="${g.viewBox.join(' ')}"` +
+          ` fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`,
+      );
+    } else if (node.type !== 'text') {
+      parts.push(
+        `<rect x="${node.position.x}" y="${node.position.y}" width="${w}" height="${h}" rx="8"` +
+          ` fill="rgba(124,58,237,0.08)" stroke="#7c3aed" stroke-width="${1.2 / scale}"/>`,
+      );
+    }
     const words = label(node);
     if (!words) continue;
 

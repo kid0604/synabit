@@ -3,6 +3,7 @@ pub mod node_document;
 pub mod apply;
 pub mod asset;
 pub mod asset_sync;
+pub mod board_merge;
 pub mod change;
 pub mod crdt;
 pub mod crypto;

@@ -207,6 +207,96 @@ pub async fn syn_narrate_person(
     Ok(Narrative { sentences, sources, dropped, withheld: false })
 }
 
+/// Syn on a whiteboard: one thing done to what is selected — see
+/// `syn::board_assist`. Returns the answer as JSON the board places itself.
+///
+/// `image` is a picture of the selection (base64 PNG), sent only for a
+/// sketch, and only to a model that can see. `request` is what a diagram
+/// should show and `source` a note to draw it from, for `generate`.
+// A command's arguments are what the webview sends, named.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn syn_board_assist(
+    app: tauri::AppHandle,
+    vault_path: String,
+    action: String,
+    items: Vec<crate::syn::board_assist::AssistItem>,
+    image: Option<String>,
+    locale: Option<String>,
+    request: Option<String>,
+    source: Option<String>,
+) -> Result<serde_json::Value, AppError> {
+    use crate::syn::board_assist::{self, Action};
+    use crate::syn::provider::{ChatMessage, ChatRequest};
+
+    let action = Action::parse(&action).ok_or_else(|| AppError::General(format!("Unknown board action: {action}")))?;
+    let settings = settings_for(&vault_path);
+    if !settings.enabled {
+        return Err(AppError::General(SWITCHED_OFF.to_string()));
+    }
+    let model = settings
+        .default_model
+        .clone()
+        .ok_or_else(|| AppError::General("[syn:no_model] No model is configured".to_string()))?;
+    if action == Action::Sketch {
+        if image.is_none() {
+            return Err(AppError::General("[syn:no_sketch] There is no sketch to read.".into()));
+        }
+        if !crate::syn::provider::capability::for_settings(&settings, None).vision {
+            return Err(AppError::General("[syn:needs_vision] Reading a sketch needs a model that can see pictures.".into()));
+        }
+    } else if action == Action::Generate {
+        if request.as_deref().map(str::trim).unwrap_or("").is_empty() {
+            return Err(AppError::General("[syn:no_request] Say what the diagram should show.".into()));
+        }
+    } else if items.is_empty() {
+        return Err(AppError::General("[syn:nothing_selected] Nothing is selected.".into()));
+    }
+
+    let language = if locale.as_deref().unwrap_or("en").starts_with("vi") { "Vietnamese" } else { "English" };
+    let (text, schema) = board_assist::prompt(action, &items, language, request.as_deref(), source.as_deref());
+    let mut ask = ChatMessage::new("user", text);
+    if action == Action::Sketch {
+        ask.images = image.map(|i| vec![i]);
+    }
+    let family_safe = crate::syn::family_safe::is_on(Some(&app), settings.family_safe);
+    let messages: Vec<_> = crate::syn::family_safe::system_message(family_safe).into_iter().chain([ask]).collect();
+    let provider = provider_for(&app, &settings).await;
+
+    let request = |json_schema| ChatRequest {
+        model: &model,
+        messages: &messages,
+        temperature: Some(0.3),
+        num_ctx: settings.num_ctx,
+        tools: None,
+        json_schema,
+    };
+    // Structured output first; a server that refuses it gets the plain request,
+    // and the JSON is found in the text instead.
+    // Only a refusal of the schema is worth asking again without it. A
+    // timeout asked again was a second five-minute wait, the first error
+    // thrown away, and the board's Syn buttons busy all the while.
+    let reply = match provider.chat(request(Some(&schema))).await {
+        Ok(reply) => reply,
+        Err(e) if schema_refused(&e.to_string()) => provider
+            .chat(request(None))
+            .await
+            .map_err(|e| AppError::General(format!("[syn:failed] Syn could not do that: {e}")))?,
+        Err(e) => return Err(AppError::General(format!("[syn:failed] Syn could not do that: {e}"))),
+    };
+    let answer = board_assist::json_in(&reply.content)
+        .ok_or_else(|| AppError::General("[syn:unusable] Syn's answer was not something the board can use.".into()))?;
+    board_assist::tidy(action, answer, &items).map_err(AppError::General)
+}
+
+/// Whether a provider's error is it turning down structured output — the one
+/// failure a plain request can get past.
+fn schema_refused(error: &str) -> bool {
+    let e = error.to_lowercase();
+    !e.contains("timed out") && !e.contains("timeout")
+        && ["schema", "response_format", "format", "json", "unsupported", "not supported", "400", "422"].iter().any(|w| e.contains(w))
+}
+
 /// What every Syn command says when the switch is off.
 ///
 /// One string, in one place, because the frontend matches on it to tell "Syn is
@@ -3377,5 +3467,25 @@ mod family_safe_settings {
         let body = body.split("\n}\n").next().expect("body");
         assert!(body.contains("family_safe::is_on("));
         assert!(body.contains("family_safe::system_message("));
+    }
+
+    /// Syn on a board skips `standing_instructions` as well, and carries it too.
+    #[test]
+    fn board_assist_asks_for_family_safe_answers() {
+        let source = include_str!("syn.rs");
+        let body = source.split("pub async fn syn_board_assist(").nth(1).expect("exists");
+        let body = body.split("\n}\n").next().expect("body");
+        assert!(body.contains("family_safe::is_on("));
+        assert!(body.contains("family_safe::system_message("));
+    }
+}
+
+#[cfg(test)]
+mod board_assist_retry {
+    #[test]
+    fn only_a_refused_schema_is_asked_again_without_it() {
+        assert!(super::schema_refused("HTTP 400: response_format json_schema is not supported"));
+        assert!(!super::schema_refused("The model went silent for 300s (timed out)"));
+        assert!(!super::schema_refused("connection refused"));
     }
 }

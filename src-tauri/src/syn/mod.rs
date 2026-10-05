@@ -1,4 +1,6 @@
 pub mod board;
+pub mod board_assist;
+pub mod board_shapes;
 pub mod context;
 pub mod conversation;
 pub mod delegate;

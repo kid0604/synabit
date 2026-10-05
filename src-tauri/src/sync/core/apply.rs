@@ -20,6 +20,7 @@
 //!   → postcard serialize → encrypt(e2ee_key) → push_doc(doc_hash, ciphertext)
 //! ```
 
+use crate::sync::core::board_merge;
 use std::fs;
 use std::path::Path;
 
@@ -51,20 +52,12 @@ use crate::sync::SyncResult;
 /// Atomic file write: write to a sibling temp file, then rename.
 ///
 /// This prevents half-written files if the process crashes mid-write.
+///
+/// The app's own: a temp name of its own per write, so two writes cannot
+/// share one, and flushed to disk before the rename, so a power cut leaves the
+/// old file or the new one and never an empty one.
 fn atomic_write(path: &Path, content: &[u8]) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or(Path::new("."));
-    fs::create_dir_all(parent)?;
-
-    // Deterministic temp name derived from the target to avoid collisions
-    let tmp_name = format!(
-        ".{}.tmp",
-        path.file_name().unwrap_or_default().to_string_lossy()
-    );
-    let tmp_path = parent.join(&tmp_name);
-
-    fs::write(&tmp_path, content)?;
-    fs::rename(&tmp_path, path)?;
-    Ok(())
+    crate::path_utils::write_atomic(path, content)
 }
 
 /// Extract `metadata.updated_at` from a JSON string for LWW conflict
@@ -425,7 +418,7 @@ fn pull_finance<R: tauri::Runtime>(
 /// file now holds something the remote copy lacks and so must be published.
 fn pull_json_impl<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
-    _vault_path: &str,
+    vault_path: &str,
     local_path: &Path,
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
@@ -449,6 +442,37 @@ fn pull_json_impl<R: tauri::Runtime>(
     };
 
     let local_text = read_text_or_empty_if_missing(local_path)?;
+
+    // A whiteboard is combined item by item — see `board_merge`.
+    if local_path.exists() && board_merge::is_board(&payload.rel_path) {
+        // No other writer between reading the board and writing it back, and
+        // the copy combined with is the one on disk now, not the one read
+        // above before the lock was held.
+        let lock = crate::commands::whiteboards::board_lock(local_path);
+        let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let local_text = read_text_or_empty_if_missing(local_path)?;
+        let (final_text, baseline_override) =
+            settle_board(vault_path, &payload.rel_path, node_id, &local_text, &remote_text)?;
+        if final_text != local_text {
+            // Once a sitting, as the app's own saves: a merge can drop what
+            // another device deleted, and that should be recoverable here.
+            crate::commands::whiteboards::keep_before_write(app_handle, vault_path, local_path, false);
+            atomic_write(local_path, final_text.as_bytes())
+                .map_err(|e| AppError::SyncError(format!("Write JSON {}: {}", node_id, e)))?;
+        }
+        let new_doc = loro::LoroDoc::new();
+        let peer_id = db.get_or_create_peer_id()?;
+        new_doc
+            .set_peer_id(peer_id)
+            .map_err(|e| AppError::SyncError(format!("set_peer_id error: {:?}", e)))?;
+        new_doc
+            .get_text("content")
+            .insert(0, &final_text)
+            .map_err(|e| AppError::SyncError(format!("CRDT insert error: {:?}", e)))?;
+        new_doc.commit();
+        db.replace_crdt_snapshot(vault_id, node_id, &new_doc.export_snapshot())?;
+        return Ok(baseline_override);
+    }
 
     let merged = if local_path.exists() && crate::sync::core::merge::is_merged(&payload.rel_path) {
         crate::sync::core::merge::merge(&payload.rel_path, &local_text, &remote_text)
@@ -514,6 +538,52 @@ fn pull_json_impl<R: tauri::Runtime>(
     db.replace_crdt_snapshot(vault_id, node_id, &new_doc.export_snapshot())?;
 
     Ok(baseline_override)
+}
+
+/// What a pulled board settles to, and the baseline to record when the result
+/// holds something the remote copy lacks (so it is published back).
+fn settle_board(
+    vault_path: &str,
+    rel_path: &str,
+    node_id: &str,
+    local_text: &str,
+    remote_text: &str,
+) -> AppResult<(String, Option<String>)> {
+    use board_merge::BoardMerge;
+    let republish = || Some(crate::sync::utils::sha256_hex(remote_text.as_bytes()));
+    let now = chrono::Utc::now().timestamp_millis();
+    Ok(match board_merge::merge_boards(local_text, remote_text, now) {
+        BoardMerge::Merged(merged) => {
+            let remote_value = serde_json::from_str::<serde_json::Value>(remote_text).ok();
+            let local_value = serde_json::from_str::<serde_json::Value>(local_text).ok();
+            if remote_value.as_ref() == Some(&merged) {
+                (remote_text.to_string(), None)
+            } else {
+                info!("Board merge for {}: kept items from both copies", node_id);
+                let text = if local_value.as_ref() == Some(&merged) {
+                    local_text.to_string()
+                } else {
+                    serde_json::to_string_pretty(&merged)?
+                };
+                (text, republish())
+            }
+        }
+        BoardMerge::KeepWithConflictCopy { keep, copy } => {
+            // The copy goes beside the board, named so it is still a board;
+            // the vault watcher picks it up and the next sync sends it on.
+            let aside = board_merge::board_conflict_path(rel_path, &format!("{:x}", now));
+            let aside_path = Path::new(vault_path).join(&aside);
+            atomic_write(&aside_path, copy.as_bytes())
+                .map_err(|e| AppError::SyncError(format!("Write conflict copy {}: {}", aside, e)))?;
+            info!("Board {} from a different build: kept one copy, set the other aside as {}", node_id, aside);
+            let keep_local = keep == local_text;
+            (keep, if keep_local { republish() } else { None })
+        }
+        BoardMerge::Take(text) => {
+            let keep_local = text == local_text && text != remote_text;
+            (text, if keep_local { republish() } else { None })
+        }
+    })
 }
 
 /// Pull a Markdown file using CRDT merge (conflict-free character-level).

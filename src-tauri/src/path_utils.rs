@@ -148,6 +148,54 @@ pub fn enforce_within_roots(
     ))
 }
 
+/// Replace a vault file in one step: write a temporary file beside it, flush
+/// it to disk, then rename it over the original.
+///
+/// A plain `fs::write` truncates the file first and fills it after, so a crash,
+/// a full disk or a killed process in between leaves half a file — for a board,
+/// JSON that no longer parses and hours of work that will not open. A rename
+/// within one folder is atomic: a reader sees the old file or the new one.
+///
+/// The temporary name starts with a dot and ends in `.tmp`, which the vault
+/// watcher ignores, and carries a random part so two writers never share one.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let tmp = dir.join(format!(
+        ".{}.{}.tmp",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let written = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    })();
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    // On Windows a rename over a file another program has open — a virus
+    // scanner, the search indexer, a cloud client — is refused for the moment
+    // it holds it. A few short retries ride that out; elsewhere the first try
+    // is the only one that can fail.
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) if cfg!(windows) && e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 4 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * attempt));
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -381,5 +429,19 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&tmp1);
         let _ = std::fs::remove_dir_all(&tmp2);
+    }
+
+    #[test]
+    fn write_atomic_replaces_the_file_and_leaves_nothing_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Whiteboards").join("b.whiteboard.json");
+        write_atomic(&path, b"first").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["b.whiteboard.json".to_string()]);
     }
 }
