@@ -503,6 +503,7 @@ mod tests {
         for tool in [
             "trash_node",
             "update_node",
+            "table_rows",
             "restore_node",
             "restore_version",
             "edit_board",

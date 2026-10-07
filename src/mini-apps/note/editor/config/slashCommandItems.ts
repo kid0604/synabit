@@ -12,7 +12,9 @@ import {
   Network as MarkmapIcon,
   Table as SearchIcon,
   ChevronRight as ChevronRightIcon,
-  LayoutTemplate as TemplateIcon
+  LayoutTemplate as TemplateIcon,
+  Sheet as RichTableIcon,
+  ChartColumn as RichChartIcon
 } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -297,6 +299,34 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
         editor.chain().focus().deleteRange(range)
           .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
           .run();
+      },
+    },
+    {
+      // A kind of its own, beside "Table" and not instead of it — see
+      // docs/rich-table-2026-10-05.md §3.2.
+      title: 'Rich Table',
+      titleKey: 'note.slash.rich_table.title',
+      descriptionKey: 'note.slash.rich_table.desc',
+      icon: RichTableIcon,
+      command: ({ editor, range }: any) => {
+        const t = i18n.global.t;
+        editor.chain().focus().deleteRange(range)
+          .insertRichTable([t('rich_table.default_columns.name'), t('rich_table.default_columns.notes')])
+          .run();
+        // Straight into the first cell, ready to type, rather than leaving
+        // the new table selected as a block.
+        setTimeout(() => editor.commands.enterRichTable?.(), 0);
+      },
+    },
+    {
+      // A chart of a Rich Table, placed away from it. The block asks which
+      // table and view when there is a choice to make.
+      title: 'Chart of a table',
+      titleKey: 'note.slash.rich_chart.title',
+      descriptionKey: 'note.slash.rich_chart.desc',
+      icon: RichChartIcon,
+      command: ({ editor, range }: any) => {
+        editor.chain().focus().deleteRange(range).insertRichChart('', '').run();
       },
     },
     {

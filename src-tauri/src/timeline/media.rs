@@ -1119,6 +1119,9 @@ mod tests {
     ];
 
     /// The npm packages bundled into every build, Android's included.
+    /// `yaml` (Rich Tables, 2026-10-06) adds nothing: 2.9.0, the same copy
+    /// `markmap-lib` already pulled into the editor's chunk — the build of
+    /// 2026-10-02 carries it — now named because the editor imports it too.
     const REVIEWED_PACKAGES: &[&str] = &[
         "@tailwindcss/typography", "@tailwindcss/vite", "@tauri-apps/api", "@tauri-apps/plugin-autostart",
         "@tauri-apps/plugin-deep-link", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-fs", "@tauri-apps/plugin-log",
@@ -1133,7 +1136,7 @@ mod tests {
         "d3", "dompurify", "highlight.js", "html-to-image", "html2pdf.js", "katex", "leaflet", "lowlight",
         "lucide-vue-next", "marked", "marked-highlight", "markmap-common", "markmap-lib", "markmap-toolbar",
         "markmap-view", "mermaid", "pdfjs-dist", "perfect-freehand", "pinia", "tailwindcss", "tippy.js",
-        "tiptap-markdown", "vue", "vue-i18n", "vue-router",
+        "tiptap-markdown", "vue", "vue-i18n", "vue-router", "yaml",
     ];
 
     /// A manifest line with its comment taken off, `#` inside a string kept.

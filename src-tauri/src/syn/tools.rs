@@ -666,7 +666,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "title": { "type": "string", "description": "The title." },
                         "content": {
                             "type": "string",
-                            "description": "Markdown body. Optional."
+                            "description": "Markdown body. Optional. A table followed by `<!-- rich-table` is a Rich Table: keep the comment; numbers plain (45000), dates YYYY-MM-DD, [x]/[ ]; leave `type: formula` cells empty, the app computes them."
                         },
                         "properties": {
                             "type": "object",
@@ -700,7 +700,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         },
                         "content": {
                             "type": "string",
-                            "description": "Replaces the whole body. Omit for a field-only change."
+                            "description": "Replaces the whole body. Omit for a field-only change. A table followed by `<!-- rich-table` is a Rich Table: keep the comment; numbers plain (45000), dates YYYY-MM-DD, [x]/[ ]; leave `type: formula` cells empty, the app computes them."
                         }
                     }
                 }),
@@ -1307,6 +1307,32 @@ fn phase_f_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "table_rows".to_string(),
+                description: "Add, change or remove rows of a Rich Table (a table followed by `<!-- rich-table`) in a note, by column name, without rewriting the note. Read it with get_node first to see its columns. Formula columns are computed by the app; leave them out.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["node_id"],
+                    "properties": {
+                        "node_id": { "type": "string", "description": "The note's id." },
+                        "table": { "type": "string", "description": "The table's `name:`, or its number from 1. The first table when omitted." },
+                        "add": { "type": "array", "items": { "type": "object" }, "description": "New rows, as {column: value}. Numbers plain, dates YYYY-MM-DD, true/false for checkboxes." },
+                        "update": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["where", "set"],
+                                "properties": { "where": { "type": "object" }, "set": { "type": "object" } }
+                            },
+                            "description": "Rows whose `where` columns all equal (ignoring case) get `set`."
+                        },
+                        "delete": { "type": "array", "items": { "type": "object" }, "description": "Rows matching any of these {column: value} are removed." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "update_transaction".to_string(),
                 description: "Correct a transaction, by its id from get_transactions. Only the fields you send change; the reply gives the old values, to undo. restore: true puts back one delete_transaction removed.".to_string(),
                 parameters: serde_json::json!({
@@ -1431,6 +1457,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "read_board" => tool_read_board(ctx, args),
         "draw_board" => tool_draw_board(ctx, args),
         "edit_board" => tool_edit_board(ctx, args),
+        "table_rows" => tool_table_rows(ctx, args),
 
         // What Syn knows about the person rather than about their vault.
         // Stored as nodes, so `trash_node` and `restore_node` already forget
@@ -3749,6 +3776,68 @@ fn skill_patch_problem(node: &crate::models::node::NodeMetadata, patch: &Value) 
     None
 }
 
+/// Rows of a Rich Table, changed by column name (`syn::rich_table`), and the
+/// note written back through the app's own writer, as `update_node` does —
+/// CRDT, index and all.
+fn tool_table_rows<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use crate::commands::nodes::{existing_body, existing_properties};
+
+    let node_id = args
+        .get("node_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::General("Missing required parameter: node_id".into()))?;
+    let Some(node) = lock(ctx)?.get_node(node_id)? else {
+        return Ok(serde_json::json!({ "error": "Node not found", "node_id": node_id }).to_string());
+    };
+    let full_path = std::path::Path::new(ctx.vault_path).join(&node.id);
+    let ext = full_path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+    if ext != "md" {
+        return Ok(serde_json::json!({ "error": "Only a note's tables can be changed", "node_id": node_id }).to_string());
+    }
+
+    let objects = |key: &str| -> Vec<serde_json::Map<String, Value>> {
+        args.get(key)
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_object().cloned()).collect())
+            .unwrap_or_default()
+    };
+    let add = objects("add");
+    let delete = objects("delete");
+    let update: Vec<_> = objects("update")
+        .into_iter()
+        .map(|u| {
+            let part = |k: &str| u.get(k).and_then(|v| v.as_object()).cloned().unwrap_or_default();
+            (part("where"), part("set"))
+        })
+        .collect();
+    if add.is_empty() && update.is_empty() && delete.is_empty() {
+        return Ok(serde_json::json!({ "error": "Nothing to do: give add, update or delete." }).to_string());
+    }
+
+    let body = existing_body(&full_path, &ext);
+    let which = args.get("table").and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string())));
+    let (next, outcome) = match crate::syn::rich_table::apply(&body, which.as_deref(), &add, &update, &delete) {
+        Ok(done) => done,
+        Err(problem) => return Ok(serde_json::json!({ "error": problem, "node_id": node_id }).to_string()),
+    };
+
+    crate::commands::nodes::write_node_inner(
+        ctx.app,
+        ctx.db,
+        ctx.vault_path.to_string(),
+        node.id.clone(),
+        node.title.clone(),
+        node.node_type.clone(),
+        Value::Object(existing_properties(&full_path, &ext)),
+        Some(next),
+    )?;
+    let _ = ctx.app.emit(
+        "node:updated",
+        serde_json::json!({ "id": node.id, "node_type": node.node_type, "title": node.title }),
+    );
+    Ok(serde_json::json!({ "success": true, "node_id": node.id, "result": outcome }).to_string())
+}
+
 fn tool_update_node<R: tauri::Runtime>(
     ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     use crate::commands::nodes::{
@@ -6026,6 +6115,16 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Rows of a Rich Table. `update_node` reaches the same note, but only
+        // by rewriting all of it — every row the model was not touching typed
+        // out again, any of which it can get wrong. This edits the rows named
+        // and no other line. It is the `tables` group's, so a turn that does
+        // not mention a table pays nothing for it.
+        let tables = ["table_rows"];
+        for tool in tables {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -6041,6 +6140,7 @@ mod tests {
             .chain(elsewhere)
             .chain(the_run)
             .chain(safe)
+            .chain(tables)
             .collect();
         for name in &names {
             assert!(

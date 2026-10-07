@@ -56,6 +56,8 @@ pub enum Group {
     Past,
     /// The user's Safe: the names of what Syn may use, and asking for more.
     Safe,
+    /// Rich Tables inside notes: their rows, by column.
+    Tables,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -74,6 +76,7 @@ impl Group {
             Group::Structure => "structure".into(),
             Group::Past => "past".into(),
             Group::Safe => "safe".into(),
+            Group::Tables => "tables".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -90,6 +93,7 @@ impl Group {
             "structure" => Group::Structure,
             "past" => Group::Past,
             "safe" => Group::Safe,
+            "tables" => Group::Tables,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -114,6 +118,7 @@ impl Group {
             Group::Structure => "rename or remove a field or a kind across every note".into(),
             Group::Past => "your own earlier runs, and remembered things searched by hand".into(),
             Group::Safe => "the user's Safe: names of secrets you may use with connectors, and asking the user to add one".into(),
+            Group::Tables => "rich tables in notes: add, change or remove rows by column".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
@@ -140,6 +145,7 @@ pub fn group_of(tool: &str) -> Group {
         "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => Group::Structure,
         "recall" | crate::syn::tools::LOOK_BACK_TOOL => Group::Past,
         "safe_list" | "safe_health" | "safe_request" => Group::Safe,
+        "table_rows" => Group::Tables,
         _ => Group::Core,
     }
 }
@@ -194,9 +200,25 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "mật khẩu", "khoá", "khóa", "api key", "token", "secret", "safe", "đăng nhập", "tài khoản",
             "password", "passwords", "key", "keys", "credential", "credentials", "login", "api",
         ],
+        // Not "hàng" or "dòng" alone: "cửa hàng" is a shop, "hàng ngày" is
+        // daily, "dòng thời gian" is a timeline. A row is asked for with a
+        // verb in front of it, or with the table named.
+        Group::Tables => &[
+            "bảng", "cột", "thêm hàng", "thêm một hàng", "thêm dòng", "thêm một dòng", "xoá hàng",
+            "xóa hàng", "xoá dòng", "xóa dòng", "sửa hàng", "sửa dòng", "vào bảng", "trong bảng",
+            "table", "tables", "row", "rows", "column", "columns",
+        ],
         Group::Core | Group::Connector(_) => &[],
     }
 }
+
+/// Cues matched only as typed, with their marks.
+///
+/// Folded, each is a commoner word: "bảng" (table) is `bang`, which is also
+/// "bằng" (by, with — "bằng cách nào"); "cột" is `cot`, also "cốt". A question
+/// typed without marks reaches a table through the longer cues instead —
+/// "vào bảng", "thêm hàng" — which fold into nothing else.
+const MARKED_ONLY: &[&str] = &["bảng", "cột"];
 
 /// Whether the text carries any Vietnamese marks at all.
 fn has_marks(text: &str) -> bool {
@@ -217,6 +239,9 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         .filter(|w| !w.is_empty())
         .collect();
     let said = |cue: &str| {
+        if !marked && MARKED_ONLY.contains(&cue) {
+            return false;
+        }
         let cue = shape(cue);
         if cue.contains(' ') {
             asked.contains(&cue)
@@ -236,6 +261,7 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Structure,
         Group::Past,
         Group::Safe,
+        Group::Tables,
     ] {
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);
@@ -314,6 +340,19 @@ mod tests {
         assert!(!groups("wordy notes").contains(&"files".into()));
         // Typed without marks, it is matched folded: "tien" is money.
         assert!(groups("thang nay tieu bao nhieu tien").contains(&"finance".into()));
+    }
+
+    /// "hàng" is a shop, a day, goods long before it is a row; "bằng" folds
+    /// into "bảng". None of these is about a table.
+    #[test]
+    fn a_shop_a_day_or_a_way_is_not_a_table() {
+        for q in ["cửa hàng gần nhà", "làm hàng ngày", "bằng cách nào", "bang cach nao", "dòng thời gian tuần này", "50 nghìn đồng"] {
+            assert!(!groups(q).contains(&"tables".into()), "{q}");
+        }
+        assert!(groups("thêm một hàng vào bảng chi tiêu").contains(&"tables".into()));
+        assert!(groups("them mot hang vao bang chi tieu").contains(&"tables".into()));
+        assert!(groups("xoá dòng cà phê").contains(&"tables".into()));
+        assert!(groups("add a row to my reading table").contains(&"tables".into()));
     }
 
     #[test]

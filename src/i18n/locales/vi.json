@@ -617,6 +617,14 @@
         "title": "Bảng",
         "desc": "Chèn một bảng"
       },
+      "rich_table": {
+        "title": "Rich Table",
+        "desc": "Bảng có kiểu cột, bộ lọc và tổng"
+      },
+      "rich_chart": {
+        "title": "Biểu đồ từ bảng",
+        "desc": "Biểu đồ sống của một Rich Table trong note"
+      },
       "equation": {
         "title": "Công thức",
         "desc": "Công thức toán LaTeX/KaTeX"
@@ -4451,7 +4459,8 @@
     "setup_pull_percent": "Đã tải {n}%",
     "setup_pull_failed": "Không tải được mô hình. Hãy kiểm tra Ollama đang mở và máy có mạng, rồi thử lại.",
     "family_safe_device": "Tuỳ chọn này chỉ áp dụng trên thiết bị này.",
-    "family_safe_failed": "Không đổi được chế độ trả lời an toàn cho gia đình. Hãy thử lại."
+    "family_safe_failed": "Không đổi được chế độ trả lời an toàn cho gia đình. Hãy thử lại.",
+    "doing_table_rows": "Sửa các hàng của bảng"
   },
   "update": {
     "available": "Synabit {version} đã sẵn sàng!",
@@ -5079,5 +5088,337 @@
     "links": {
       "open_failed": "Không mở được liên kết này."
     }
+  },
+  "rich_table": {
+    "default_column": "Cột",
+    "default_columns": {
+      "name": "Tên",
+      "notes": "Ghi chú"
+    },
+    "new_row": "Mới",
+    "search": "Tìm trong bảng",
+    "cell_editor": "Ô",
+    "cell_at": "{column}, hàng {row}: {value}",
+    "empty_cell": "trống",
+    "open_row": "Mở hàng {n}",
+    "apply_order": "Giữ thứ tự này trong bảng",
+    "delete_table": "Xoá bảng",
+    "types": {
+      "text": "Văn bản",
+      "number": "Số",
+      "select": "Chọn",
+      "multi": "Chọn nhiều",
+      "date": "Ngày",
+      "checkbox": "Hộp kiểm",
+      "url": "Liên kết",
+      "note": "Note",
+      "formula": "Công thức"
+    },
+    "formats": {
+      "number": "Số",
+      "integer": "Số nguyên",
+      "decimal_1": "1 chữ số thập phân",
+      "decimal_2": "2 chữ số thập phân",
+      "percent": "Phần trăm",
+      "vnd": "Đồng (₫)",
+      "usd": "Đô la ($)",
+      "eur": "Euro (€)"
+    },
+    "column": {
+      "rename": "Tên cột",
+      "type": "Kiểu",
+      "foreign": "Cột “{type}” đến từ một bản Synabit mới hơn và chỉ được xem.",
+      "format": "Định dạng",
+      "with_time": "Kèm giờ",
+      "color": "Đổi màu",
+      "add_option": "Thêm lựa chọn",
+      "sort_asc": "Sắp xếp tăng dần",
+      "sort_desc": "Sắp xếp giảm dần",
+      "sort_clear": "Bỏ sắp xếp",
+      "filter_by": "Lọc theo cột này",
+      "freeze": "Cố định đến cột này",
+      "unfreeze": "Bỏ cố định cột",
+      "wrap": "Xuống dòng",
+      "insert_left": "Chèn bên trái",
+      "insert_right": "Chèn bên phải",
+      "move_left": "Dời sang trái",
+      "move_right": "Dời sang phải",
+      "delete": "Xoá cột",
+      "delete_confirm": "Bấm lần nữa để xoá",
+      "hide": "Ẩn trong view này"
+    },
+    "row": {
+      "open": "Mở hàng",
+      "insert_above": "Chèn phía trên",
+      "insert_below": "Chèn phía dưới",
+      "duplicate": "Nhân đôi",
+      "move_up": "Lên trên",
+      "move_down": "Xuống dưới",
+      "delete": "Xoá hàng | Xoá {n} hàng"
+    },
+    "ops": {
+      "eq": "là",
+      "neq": "không là",
+      "gt": ">",
+      "gte": "≥",
+      "lt": "<",
+      "lte": "≤",
+      "contains": "chứa",
+      "not_contains": "không chứa",
+      "empty": "trống",
+      "not_empty": "không trống"
+    },
+    "filter": {
+      "add": "Lọc",
+      "apply": "Áp dụng",
+      "value": "Giá trị",
+      "checked": "Đã đánh dấu",
+      "unchecked": "Chưa đánh dấu",
+      "clear": "Bỏ bộ lọc",
+      "unread": "Bộ lọc nâng cao",
+      "unread_note": "Bộ lọc này cần bản Synabit mới hơn; đang hiện mọi hàng.",
+      "as_formula": "Lọc bằng công thức",
+      "formula_hint": "Hiện những hàng mà điều này đúng. Enter để áp dụng.",
+      "formula_placeholder": "[Số tiền] > 100000 or CONTAINS([Ghi chú], \"gấp\")"
+    },
+    "summary": {
+      "add": "Tính",
+      "none": "Không",
+      "count": "Đếm",
+      "filled": "Có giá trị",
+      "empty": "Trống",
+      "unique": "Khác nhau",
+      "percent_filled": "% có giá trị",
+      "percent_empty": "% trống",
+      "sum": "Tổng",
+      "avg": "Trung bình",
+      "median": "Trung vị",
+      "min": "Nhỏ nhất",
+      "max": "Lớn nhất",
+      "range": "Khoảng",
+      "earliest": "Sớm nhất",
+      "latest": "Muộn nhất",
+      "checked": "Đã đánh dấu",
+      "unchecked": "Chưa đánh dấu",
+      "percent_checked": "% đã đánh dấu"
+    },
+    "stats": {
+      "sum": "Tổng",
+      "avg": "TB",
+      "count": "Đếm",
+      "min": "Min",
+      "max": "Max"
+    },
+    "pick": {
+      "create": "Tạo “{name}”",
+      "empty": "Chưa có lựa chọn — gõ để thêm",
+      "clear": "Xoá"
+    },
+    "sheet": {
+      "title": "Hàng {n}",
+      "prev": "Hàng trước",
+      "next": "Hàng sau"
+    },
+    "notice": {
+      "meta": "Không đọc được cấu hình của bảng này, nên bảng được hiện nguyên trạng và sẽ không bị sửa. Các phiên bản trước nằm trong lịch sử của note.",
+      "version": "Bảng này được tạo bởi một bản Synabit mới hơn; chỉ được xem.",
+      "extra_cells": "Hàng {n} có nhiều ô hơn số cột; phần thừa đã được gộp vào ô cuối.",
+      "orphan": "Cấu hình của cột “{name}” vẫn được giữ, nhưng bảng không có cột nào tên như vậy.",
+      "duplicate": "Có hai cột tên “{name}”; hãy đổi tên một cột.",
+      "same_name": "Một bảng khác trong ghi chú cũng tên “{name}”; công thức không phân biệt được. Hãy đổi tên một bảng.",
+      "reads_ambiguous": "Có hai bảng tên “{name}”, nên công thức của bảng này chưa được ghi cho tới khi đổi tên một bảng.",
+      "reads_unreadable": "Bảng “{name}” không đọc được, nên công thức dùng nó trong bảng này chưa được ghi.",
+      "ring": "Bảng này và một bảng khác đọc công thức của nhau thành vòng, nên không bảng nào được ghi. Sửa một công thức để phá vòng."
+    },
+    "formula": {
+      "label": "Công thức của {name}",
+      "placeholder": "[Đơn giá] * [Số lượng]",
+      "hint": "Gõ [ để chọn cột, hoặc một chữ cái để chọn trong {n} hàm. {apply} để áp dụng.",
+      "example": "Hàng đầu ra",
+      "apply": "Áp dụng",
+      "edit": "Sửa công thức",
+      "replaces_values": "Giá trị đang có trong cột sẽ bị thay bằng kết quả công thức. Bấm lần nữa để làm — hoàn tác sẽ lấy lại.",
+      "error_count": "{n} lỗi | {n} lỗi",
+      "codes": {
+        "NAME": "#TÊN",
+        "TYPE": "#KIỂU",
+        "DIV0": "#CHIA0",
+        "CYCLE": "#VÒNG",
+        "VALUE": "#GIÁTRỊ"
+      },
+      "errors": {
+        "syntax": {
+          "empty": "Công thức đang trống.",
+          "unexpected_end": "Công thức dừng lại khi chưa xong.",
+          "expected_close": "Có một “(” chưa được đóng.",
+          "expected_close_call": "Dấu “(” của hàm chưa được đóng.",
+          "unclosed_string": "Một đoạn chữ trong ngoặc kép chưa được đóng.",
+          "unclosed_bracket": "Có một “[” chưa được đóng.",
+          "unexpected_token": "Không ngờ gặp “{near}” ở đây.",
+          "unexpected_char": "“{char}” không có nghĩa gì trong công thức."
+        },
+        "unknown_column": "Không có cột “{name}”.",
+        "unknown_column_in": "Bảng “{table}” không có cột “{name}”.",
+        "unknown_table": "Note này không có bảng nào tên “{name}”.",
+        "unknown_name": "“{name}” không phải tên cột, cũng không phải tên đặt bằng LET.",
+        "function_needs_parens": "{name} là một hàm: viết {name}(…).",
+        "table_needs_column": "“table” cần một cột: table[Tên].",
+        "unknown_function": "Không có hàm {name}.",
+        "arity": "{name} nhận {expected} đối số; ở đây có {got}.",
+        "let_shape": "LET nhận từng cặp tên và giá trị, rồi đến kết quả.",
+        "let_name": "Trong LET, tên phải là một từ.",
+        "cycle": "Các cột này cần lẫn nhau: {names}.",
+        "name": "Có một tên trong công thức không tồn tại.",
+        "type": "Có một giá trị sai kiểu.",
+        "value": "Có một giá trị nằm ngoài phạm vi.",
+        "div0": "Chia cho 0.",
+        "not_number": "“{value}” không phải là số.",
+        "list_not_number": "Một danh sách không phải là số.",
+        "not_date": "“{value}” không phải là ngày.",
+        "date_arithmetic": "Không dùng ngày với “{op}” được.",
+        "negative_sqrt": "Không có căn bậc hai của số âm.",
+        "index_out_of_range": "Không có phần tử thứ {n}.",
+        "not_found": "Không tìm thấy “{key}”.",
+        "bad_date": "Ngày này không tồn tại.",
+        "bad_unit": "“{unit}” không phải đơn vị: days, weeks, months hoặc years.",
+        "irr_signs": "IRR cần ít nhất một khoản thu và một khoản chi.",
+        "irr_no_answer": "Không có lãi suất nào làm các dòng tiền này cân bằng."
+      }
+    },
+    "layouts": {
+      "table": "Bảng",
+      "chart": "Biểu đồ",
+      "pivot": "Tổng hợp",
+      "board": "Kanban"
+    },
+    "charts": {
+      "bar": "Cột",
+      "hbar": "Thanh",
+      "line": "Đường",
+      "area": "Vùng",
+      "donut": "Donut",
+      "scatter": "Phân tán",
+      "number": "Con số"
+    },
+    "measures": {
+      "count": "Đếm",
+      "sum": "Tổng",
+      "avg": "Trung bình",
+      "min": "Nhỏ nhất",
+      "max": "Lớn nhất",
+      "median": "Trung vị"
+    },
+    "buckets": {
+      "day": "theo ngày",
+      "week": "theo tuần",
+      "month": "theo tháng",
+      "year": "theo năm"
+    },
+    "colors": {
+      "gray": "Xám",
+      "red": "Đỏ",
+      "orange": "Cam",
+      "yellow": "Vàng",
+      "green": "Xanh lá",
+      "blue": "Xanh dương",
+      "purple": "Tím",
+      "pink": "Hồng"
+    },
+    "chart": {
+      "blank": "(trống)",
+      "other": "Khác",
+      "versus": "so với {period}",
+      "folded": "{n} nhóm nữa gộp vào Khác | {n} nhóm nữa gộp vào Khác",
+      "table": "Số liệu",
+      "aria": "Biểu đồ của view này",
+      "problems": {
+        "no_x": "Chọn cột để nhóm trong phần tuỳ chỉnh view.",
+        "no_y": "Cột mà biểu đồ đo đã không còn; chọn cột khác trong phần tuỳ chỉnh view.",
+        "no_data": "Không có hàng nào để vẽ.",
+        "not_numeric": "Biểu đồ phân tán cần hai cột số."
+      },
+      "export_png": "Lưu thành ảnh"
+    },
+    "pivot": {
+      "choose_rows": "Chọn cột để nhóm hàng trong phần tuỳ chỉnh view.",
+      "total": "Tổng"
+    },
+    "board": {
+      "choose": "Kanban cần một cột Chọn để làm làn.",
+      "none": "Chưa có",
+      "untitled": "Chưa đặt tên"
+    },
+    "view": {
+      "settings": "Tuỳ chỉnh view",
+      "add": "Thêm view",
+      "name": "Tên view",
+      "layout": "Bố cục",
+      "group": "Nhóm theo",
+      "none": "Không",
+      "columns": "Cột hiển thị",
+      "rules": "Tô màu",
+      "scale": "Thang màu",
+      "when": "Khi",
+      "target_row": "Cả hàng",
+      "target_cell": "Các ô được nhắc",
+      "add_rule": "Luật",
+      "add_scale": "Thang màu",
+      "rule_no_column": "Cột này đã không còn.",
+      "pin_chart": "Hiện biểu đồ phía trên bảng",
+      "chart": "Biểu đồ",
+      "x": "Nhóm theo",
+      "y": "Đo",
+      "period": "So các kỳ của",
+      "series": "Tách theo",
+      "stack": "Xếp chồng",
+      "cumulative": "Cộng dồn",
+      "pivot_rows": "Hàng",
+      "pivot_columns": "Cột",
+      "value": "Giá trị",
+      "lanes": "Làn",
+      "card_title": "Tiêu đề thẻ",
+      "automatic": "Tự động",
+      "card_fields": "Trường trên thẻ",
+      "duplicate": "Nhân đôi view",
+      "delete": "Xoá view",
+      "copy_of": "{name} (bản sao)",
+      "row_height": "Chiều cao hàng"
+    },
+    "add_column": "Thêm cột",
+    "ctx": {
+      "copy": "Sao chép",
+      "clear": "Xoá nội dung"
+    },
+    "note_picker": {
+      "hint": "Gõ để tìm note; Enter giữ nguyên chữ đã gõ."
+    },
+    "row_heights": {
+      "short": "Thấp",
+      "medium": "Vừa",
+      "tall": "Cao",
+      "extra": "Rất cao"
+    },
+    "table_name": "Tên bảng",
+    "table_name_hint": "một từ, vd. chi-tieu",
+    "table_name_taken": "Một bảng khác trong ghi chú đã dùng tên này.",
+    "chart_block": {
+      "title": "Biểu đồ",
+      "unnamed": "Bảng {n} (chưa đặt tên)",
+      "name_base": "bang",
+      "choose": "Chọn bảng và view",
+      "pick": "Biểu đồ này vẽ bảng nào?",
+      "no_tables": "Note này chưa có Rich Table nào.",
+      "no_chart": "Bảng này chưa có view biểu đồ.",
+      "make": "Tạo view biểu đồ",
+      "table": "Bảng",
+      "view": "View",
+      "remove": "Xoá biểu đồ"
+    },
+    "export": {
+      "title": "Xuất view này",
+      "file": "bang",
+      "failed": "Không xuất được: {reason}"
+    },
+    "orphan": "Đây là cấu hình của một Rich Table, nhưng bảng phía trên không còn đọc được như một bảng, nên cấu hình được giữ nguyên ở đây. Sửa lại bảng (một hàng tiêu đề, một hàng --- cùng số ô, không nằm trong danh sách hay trích dẫn) thì nó áp dụng lại."
   }
 }

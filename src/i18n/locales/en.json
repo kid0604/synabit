@@ -617,6 +617,14 @@
         "title": "Table",
         "desc": "Insert a table"
       },
+      "rich_table": {
+        "title": "Rich Table",
+        "desc": "A table with column types, filters and totals"
+      },
+      "rich_chart": {
+        "title": "Chart of a table",
+        "desc": "A live chart of a Rich Table in this note"
+      },
       "equation": {
         "title": "Equation",
         "desc": "LaTeX/KaTeX Math formula"
@@ -4451,7 +4459,8 @@
     "setup_pull_percent": "{n}% downloaded",
     "setup_pull_failed": "Couldn’t download the model. Check that Ollama is open and this computer is online, then try again.",
     "family_safe_device": "This setting applies to this device only.",
-    "family_safe_failed": "Could not change family-safe answers. Try again."
+    "family_safe_failed": "Could not change family-safe answers. Try again.",
+    "doing_table_rows": "Changing rows of a table"
   },
   "update": {
     "available": "Synabit {version} is available!",
@@ -5079,5 +5088,337 @@
     "links": {
       "open_failed": "Couldn't open that link."
     }
+  },
+  "rich_table": {
+    "default_column": "Column",
+    "default_columns": {
+      "name": "Name",
+      "notes": "Notes"
+    },
+    "new_row": "New",
+    "search": "Search this table",
+    "cell_editor": "Cell",
+    "cell_at": "{column}, row {row}: {value}",
+    "empty_cell": "empty",
+    "open_row": "Open row {n}",
+    "apply_order": "Keep this order in the table",
+    "delete_table": "Delete table",
+    "types": {
+      "text": "Text",
+      "number": "Number",
+      "select": "Select",
+      "multi": "Multi-select",
+      "date": "Date",
+      "checkbox": "Checkbox",
+      "url": "Link",
+      "note": "Note",
+      "formula": "Formula"
+    },
+    "formats": {
+      "number": "Number",
+      "integer": "Whole number",
+      "decimal_1": "1 decimal",
+      "decimal_2": "2 decimals",
+      "percent": "Percent",
+      "vnd": "Đồng (₫)",
+      "usd": "Dollar ($)",
+      "eur": "Euro (€)"
+    },
+    "column": {
+      "rename": "Column name",
+      "type": "Type",
+      "foreign": "“{type}” columns come from a newer Synabit and are shown read-only.",
+      "format": "Format",
+      "with_time": "Include time",
+      "color": "Change colour",
+      "add_option": "Add an option",
+      "sort_asc": "Sort ascending",
+      "sort_desc": "Sort descending",
+      "sort_clear": "Remove sort",
+      "filter_by": "Filter by this column",
+      "freeze": "Freeze up to here",
+      "unfreeze": "Unfreeze columns",
+      "wrap": "Wrap text",
+      "insert_left": "Insert left",
+      "insert_right": "Insert right",
+      "move_left": "Move left",
+      "move_right": "Move right",
+      "delete": "Delete column",
+      "delete_confirm": "Click again to delete",
+      "hide": "Hide in this view"
+    },
+    "row": {
+      "open": "Open row",
+      "insert_above": "Insert above",
+      "insert_below": "Insert below",
+      "duplicate": "Duplicate",
+      "move_up": "Move up",
+      "move_down": "Move down",
+      "delete": "Delete row | Delete {n} rows"
+    },
+    "ops": {
+      "eq": "is",
+      "neq": "is not",
+      "gt": ">",
+      "gte": "≥",
+      "lt": "<",
+      "lte": "≤",
+      "contains": "contains",
+      "not_contains": "does not contain",
+      "empty": "is empty",
+      "not_empty": "is not empty"
+    },
+    "filter": {
+      "add": "Filter",
+      "apply": "Apply",
+      "value": "Value",
+      "checked": "Checked",
+      "unchecked": "Unchecked",
+      "clear": "Remove filter",
+      "unread": "Advanced filter",
+      "unread_note": "This filter needs a newer Synabit; every row is shown.",
+      "as_formula": "Filter with a formula",
+      "formula_hint": "Rows for which this is true are shown. Enter applies.",
+      "formula_placeholder": "[Amount] > 100 or CONTAINS([Note], \"urgent\")"
+    },
+    "summary": {
+      "add": "Calculate",
+      "none": "None",
+      "count": "Count",
+      "filled": "Filled",
+      "empty": "Empty",
+      "unique": "Unique",
+      "percent_filled": "% filled",
+      "percent_empty": "% empty",
+      "sum": "Sum",
+      "avg": "Average",
+      "median": "Median",
+      "min": "Min",
+      "max": "Max",
+      "range": "Range",
+      "earliest": "Earliest",
+      "latest": "Latest",
+      "checked": "Checked",
+      "unchecked": "Unchecked",
+      "percent_checked": "% checked"
+    },
+    "stats": {
+      "sum": "Sum",
+      "avg": "Average",
+      "count": "Count",
+      "min": "Min",
+      "max": "Max"
+    },
+    "pick": {
+      "create": "Create “{name}”",
+      "empty": "No options yet — type to add one",
+      "clear": "Clear"
+    },
+    "sheet": {
+      "title": "Row {n}",
+      "prev": "Previous row",
+      "next": "Next row"
+    },
+    "notice": {
+      "meta": "This table's settings could not be read, so it is shown as it is and will not be changed. Its earlier versions are in the note's history.",
+      "version": "This table was made by a newer Synabit; it is shown read-only.",
+      "extra_cells": "Row {n} had more cells than columns; the extra ones were added to its last cell.",
+      "orphan": "Settings for a column “{name}” are kept, but the table has no column by that name.",
+      "duplicate": "Two columns are called “{name}”; rename one.",
+      "same_name": "Another table in this note is also called “{name}”; formulas cannot tell them apart. Rename one.",
+      "reads_ambiguous": "Two tables are called “{name}”, so this table's formulas are not written until one is renamed.",
+      "reads_unreadable": "The table “{name}” cannot be read, so this table's formulas that use it are not written.",
+      "ring": "This table and another read each other's formulas in a ring, so neither is written. Break the ring by changing one formula."
+    },
+    "formula": {
+      "label": "Formula for {name}",
+      "placeholder": "[Price] * [Quantity]",
+      "hint": "Type [ for a column, or a letter for one of {n} functions. {apply} applies.",
+      "example": "First row gives",
+      "apply": "Apply",
+      "edit": "Edit formula",
+      "replaces_values": "This column's values will be replaced by what the formula computes. Click again to go ahead — undo brings them back.",
+      "error_count": "{n} error | {n} errors",
+      "codes": {
+        "NAME": "#NAME",
+        "TYPE": "#TYPE",
+        "DIV0": "#DIV0",
+        "CYCLE": "#CYCLE",
+        "VALUE": "#VALUE"
+      },
+      "errors": {
+        "syntax": {
+          "empty": "The formula is empty.",
+          "unexpected_end": "The formula stops before it is finished.",
+          "expected_close": "A “(” is never closed.",
+          "expected_close_call": "The function's “(” is never closed.",
+          "unclosed_string": "A text in quotes is never closed.",
+          "unclosed_bracket": "A “[” is never closed.",
+          "unexpected_token": "Did not expect “{near}” here.",
+          "unexpected_char": "“{char}” means nothing in a formula."
+        },
+        "unknown_column": "There is no column “{name}”.",
+        "unknown_column_in": "Table “{table}” has no column “{name}”.",
+        "unknown_table": "No table in this note is named “{name}”.",
+        "unknown_name": "“{name}” is neither a column nor a name given with LET.",
+        "function_needs_parens": "{name} is a function: write {name}(…).",
+        "table_needs_column": "“table” needs a column: table[Name].",
+        "unknown_function": "There is no function {name}.",
+        "arity": "{name} takes {expected} arguments; this has {got}.",
+        "let_shape": "LET takes names and values in pairs, then a result.",
+        "let_name": "In LET, a name must be one word.",
+        "cycle": "These columns need each other: {names}.",
+        "name": "A name in the formula does not exist.",
+        "type": "A value is of the wrong kind.",
+        "value": "A value is out of range.",
+        "div0": "Division by zero.",
+        "not_number": "“{value}” is not a number.",
+        "list_not_number": "A list is not a number.",
+        "not_date": "“{value}” is not a date.",
+        "date_arithmetic": "Dates cannot be used with “{op}”.",
+        "negative_sqrt": "No square root of a negative number.",
+        "index_out_of_range": "There is no item {n}.",
+        "not_found": "“{key}” was not found.",
+        "bad_date": "That date does not exist.",
+        "bad_unit": "“{unit}” is not a unit: days, weeks, months or years.",
+        "irr_signs": "IRR needs at least one payment in and one out.",
+        "irr_no_answer": "No rate makes these flows balance."
+      }
+    },
+    "layouts": {
+      "table": "Table",
+      "chart": "Chart",
+      "pivot": "Pivot",
+      "board": "Board"
+    },
+    "charts": {
+      "bar": "Columns",
+      "hbar": "Bars",
+      "line": "Line",
+      "area": "Area",
+      "donut": "Donut",
+      "scatter": "Scatter",
+      "number": "Number"
+    },
+    "measures": {
+      "count": "Count",
+      "sum": "Sum",
+      "avg": "Average",
+      "min": "Min",
+      "max": "Max",
+      "median": "Median"
+    },
+    "buckets": {
+      "day": "by day",
+      "week": "by week",
+      "month": "by month",
+      "year": "by year"
+    },
+    "colors": {
+      "gray": "Gray",
+      "red": "Red",
+      "orange": "Orange",
+      "yellow": "Yellow",
+      "green": "Green",
+      "blue": "Blue",
+      "purple": "Purple",
+      "pink": "Pink"
+    },
+    "chart": {
+      "blank": "(empty)",
+      "other": "Other",
+      "versus": "vs {period}",
+      "folded": "{n} more folded into Other | {n} more folded into Other",
+      "table": "Numbers",
+      "aria": "Chart of this table's view",
+      "problems": {
+        "no_x": "Choose what to group by in this view's settings.",
+        "no_y": "The column this chart measures is gone; choose another in the view's settings.",
+        "no_data": "No rows to chart.",
+        "not_numeric": "A scatter needs two number columns."
+      },
+      "export_png": "Save as a picture"
+    },
+    "pivot": {
+      "choose_rows": "Choose what the rows are grouped by in this view's settings.",
+      "total": "Total"
+    },
+    "board": {
+      "choose": "A board needs a Select column for its lanes.",
+      "none": "No value",
+      "untitled": "Untitled"
+    },
+    "view": {
+      "settings": "View settings",
+      "add": "Add a view",
+      "name": "View name",
+      "layout": "Layout",
+      "group": "Group by",
+      "none": "None",
+      "columns": "Columns shown",
+      "rules": "Colouring",
+      "scale": "Colour scale",
+      "when": "When",
+      "target_row": "Row",
+      "target_cell": "Cells it names",
+      "add_rule": "Rule",
+      "add_scale": "Colour scale",
+      "rule_no_column": "That column is gone.",
+      "pin_chart": "Show a chart above the table",
+      "chart": "Chart",
+      "x": "Group by",
+      "y": "Measure",
+      "period": "Compare periods of",
+      "series": "Split by",
+      "stack": "Stacked",
+      "cumulative": "Running total",
+      "pivot_rows": "Rows",
+      "pivot_columns": "Columns",
+      "value": "Value",
+      "lanes": "Lanes",
+      "card_title": "Card title",
+      "automatic": "Automatic",
+      "card_fields": "Fields on cards",
+      "duplicate": "Duplicate view",
+      "delete": "Delete view",
+      "copy_of": "{name} (copy)",
+      "row_height": "Row height"
+    },
+    "add_column": "Add a column",
+    "ctx": {
+      "copy": "Copy",
+      "clear": "Clear contents"
+    },
+    "note_picker": {
+      "hint": "Type to find a note; Enter keeps what you typed."
+    },
+    "row_heights": {
+      "short": "Short",
+      "medium": "Medium",
+      "tall": "Tall",
+      "extra": "Extra tall"
+    },
+    "table_name": "Table name",
+    "table_name_hint": "one-word name, e.g. expenses",
+    "table_name_taken": "Another table in this note already has this name.",
+    "chart_block": {
+      "title": "Chart",
+      "unnamed": "Table {n} (no name)",
+      "name_base": "table",
+      "choose": "Choose table and view",
+      "pick": "Which table should this chart show?",
+      "no_tables": "There is no Rich Table in this note yet.",
+      "no_chart": "This table has no chart view yet.",
+      "make": "Make a chart view",
+      "table": "Table",
+      "view": "View",
+      "remove": "Remove chart"
+    },
+    "export": {
+      "title": "Export this view",
+      "file": "table",
+      "failed": "Could not export: {reason}"
+    },
+    "orphan": "These are a Rich Table's settings, but the table above them can no longer be read as a table, so they are kept here unchanged. Fix the table (one header row, a --- row with as many cells, no list or quote around it) and they apply again."
   }
 }

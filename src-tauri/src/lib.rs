@@ -941,6 +941,7 @@ pub fn run() {
             commands::vault::resolve_mobile_vault_path,
             commands::vault::open_vault_file,
             commands::vault::export_vault_archive,
+            commands::tables::export_table_xlsx,
             commands::vault::import_vault_archive,
             commands::vault::suggested_archive_name,
             // Diagnostics

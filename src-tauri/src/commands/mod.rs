@@ -19,6 +19,7 @@ pub mod safe;
 pub mod syn;
 pub mod telegram;
 pub mod sync;
+pub mod tables;
 pub mod tags;
 pub mod thumbnails;
 pub mod timeline;

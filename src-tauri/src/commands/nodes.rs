@@ -956,10 +956,12 @@ fn parse_blocks_from_content(content: &str) -> Vec<BlockPreview> {
 
     let re = block_id_regex();
     let mut blocks = Vec::new();
+    let body_lines: Vec<&str> = body.lines().collect();
+    let hidden = in_html_comment(&body_lines);
 
-    for line in body.lines() {
+    for (at, line) in body_lines.iter().enumerate() {
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || hidden[at] {
             continue;
         }
 
@@ -1084,9 +1086,13 @@ pub(crate) fn place_block_marker(
     let body_starts_at = frontmatter_end(&lines);
 
     let wanted = normalise_for_match(snippet);
-    let target = (body_starts_at..lines.len())
+    // A Rich Table's settings are YAML in a comment; a marker on one of
+    // those lines would become part of a setting.
+    let hidden = in_html_comment(&lines);
+    let candidates = || (body_starts_at..lines.len()).filter(|i| !hidden[*i]);
+    let target = candidates()
         .find(|i| normalise_for_match(lines[*i]) == wanted)
-        .or_else(|| (body_starts_at..lines.len()).find(|i| lines[*i].trim().contains(snippet)));
+        .or_else(|| candidates().find(|i| lines[*i].trim().contains(snippet)));
 
     let Some(index) = target else {
         return BlockMarker::NotFound;
@@ -1109,6 +1115,29 @@ pub(crate) fn place_block_marker(
         }
     }
     BlockMarker::Inserted(out)
+}
+
+/// Which lines are inside an HTML comment — a Rich Table's `<!-- rich-table`
+/// settings, a `<!-- rich-chart -->`, or any other — counting the lines that
+/// open and close it. No block of prose lives there.
+fn in_html_comment(lines: &[&str]) -> Vec<bool> {
+    let mut out = Vec::with_capacity(lines.len());
+    let mut open = false;
+    for line in lines {
+        let t = line.trim();
+        if !open && t.starts_with("<!--") {
+            open = !t[4..].contains("-->");
+            out.push(true);
+        } else if open {
+            if t.contains("-->") {
+                open = false;
+            }
+            out.push(true);
+        } else {
+            out.push(false);
+        }
+    }
+    out
 }
 
 /// The index of the first line after any YAML frontmatter.
@@ -1790,6 +1819,20 @@ mod block_marker_tests {
             BlockMarker::AlreadyThere(id) => assert_eq!(id, "exist1"),
             _ => panic!("should have found the marker already there"),
         }
+    }
+
+    /// A Rich Table's settings are YAML in a comment: `name: chi-tieu` there
+    /// is not a paragraph, and a marker on it would become part of the name.
+    #[test]
+    fn a_rich_tables_settings_are_never_given_a_marker() {
+        let file = "| A |\n| --- |\n| x |\n<!-- rich-table\nname: chi-tieu\n-->\n\nchi-tieu\n";
+        let out = inserted(file, "chi-tieu");
+        assert!(out.contains("name: chi-tieu\n"), "{out}");
+        assert!(out.ends_with("chi-tieu ^abc123\n"), "{out}");
+
+        let alone = "<!-- rich-table\nname: chi-tieu\n-->\n";
+        assert!(matches!(place_block_marker(alone, "chi-tieu", "abc123"), BlockMarker::NotFound));
+        assert!(super::parse_blocks_from_content(alone).is_empty());
     }
 
     #[test]

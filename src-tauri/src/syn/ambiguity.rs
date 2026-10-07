@@ -49,7 +49,11 @@ use serde::{Deserialize, Serialize};
 /// `update_node` is here with `trash_node` because editing the wrong note is
 /// quieter than deleting it — nothing disappears, so nothing prompts anybody to
 /// go looking.
-pub const ASK_BEFORE: &[&str] = &["trash_node", "update_node"];
+///
+/// `table_rows` for the same reason as `update_node`: it changes rows in a
+/// note named by id, and rows changed in the wrong note look exactly like
+/// rows changed in the right one.
+pub const ASK_BEFORE: &[&str] = &["trash_node", "update_node", "table_rows"];
 
 /// One thing the run found and could have meant.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -190,6 +194,21 @@ mod tests {
             now(),
         )
         .is_some());
+    }
+
+    /// Rows changed in the wrong one of several notes is the same quiet
+    /// mistake as an edit to it.
+    #[test]
+    fn changing_a_table_in_one_of_several_is_a_question_too() {
+        let ask = should_ask(
+            "table_rows",
+            &serde_json::json!({ "node_id": "Notes/c.md", "add": [{ "Khoản": "Cà phê" }] }),
+            &three(),
+            now(),
+        )
+        .expect("it stops");
+        assert_eq!(ask.tool, "table_rows");
+        assert_eq!(ask.chose, "Notes/c.md");
     }
 
     /// One result is not a choice.

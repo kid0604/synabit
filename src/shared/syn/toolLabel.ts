@@ -16,7 +16,7 @@ export const LABELLED_TOOLS = [
   'create_transaction', 'update_transaction', 'delete_transaction', 'read_spreadsheet',
   'write_spreadsheet', 'remember', 'recall', 'load_skill', 'run_recipe', 'look_back', 'browse',
   'timeline', 'read_board', 'draw_board', 'edit_board', 'capture', 'update_plan', 'rename_field',
-  'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools',
+  'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools', 'table_rows',
 ] as const;
 
 export function toolLabel(t: (key: string, values?: Record<string, unknown>) => string, tool: string): string {

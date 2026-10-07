@@ -28,6 +28,9 @@ import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
 import { DetailsExtension } from './extensions/DetailsExtension';
+import { RichTableExtension, RichTableOrphan } from './extensions/RichTableExtension';
+import { RichChartExtension } from './extensions/RichChartExtension';
+import { InlineFormula } from './extensions/InlineFormula';
 import { BlockIdHider } from './extensions/BlockIdHider';
 import 'katex/dist/katex.min.css';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
@@ -541,6 +544,16 @@ const editor = useEditor({
     CustomTableCell,
     CustomTableHeader,
     NoNestedTables,
+    RichTableExtension.configure({
+      // A Note column's picker searches notes the way `@` mentions do.
+      searchNotes: async (query: string) => {
+        const r = await invoke<{ results: { id: string; title: string }[] }>('search_notes', { vaultPath: props.vaultPath, query });
+        return r.results.map(({ id, title }) => ({ id, title }));
+      },
+    }),
+    RichChartExtension,
+    RichTableOrphan,
+    InlineFormula,
     TextAlign.configure({
       types: ['heading', 'paragraph'],
     }),

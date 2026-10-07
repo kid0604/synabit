@@ -265,7 +265,9 @@ impl VaultTools {
             | "draw_board" | "edit_board"
             // Phase F. What undoes each is not the generic sentence for a
             // write — see `reversal_for`.
-            | "update_transaction" | "delete_transaction" | "write_spreadsheet" => {
+            | "update_transaction" | "delete_transaction" | "write_spreadsheet"
+            // Rows inside a note: a write to that note, undone by its earlier version.
+            | "table_rows" => {
                 VaultWrite
             }
 
@@ -651,7 +653,7 @@ mod tests {
             "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
             "read_board", "draw_board", "edit_board", "capture", "timeline",
             "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
-            "safe_list", "safe_health", "safe_request",
+            "safe_list", "safe_health", "safe_request", "table_rows",
             crate::syn::tools::LOOK_BACK_TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
