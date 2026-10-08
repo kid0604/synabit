@@ -8,14 +8,16 @@ of the three desktop platforms that is pinned to the OS itself:
 
 | Platform | Engine | Updates with |
 | --- | --- | --- |
-| macOS | WKWebView | the OS — a user on an older macOS is on an older WebKit, permanently |
+| macOS | WKWebView | Safari updates, which reach the current macOS and the two before it; an older macOS is frozen on its last Safari |
 | Windows | WebView2 | itself, evergreen Chromium |
 | Linux | WebKitGTK | the distribution's packages |
 | Android | System WebView | Play Store, but stale on devices without Play Services (`minSdk = 24`) |
 
-No `bundle.macOS.minimumSystemVersion` is declared in `src-tauri/tauri.conf.json`,
-so the floor is Tauri's default rather than a considered decision. Treat the
-supported range as wide until somebody narrows it on purpose.
+`bundle.macOS.minimumSystemVersion` in `src-tauri/tauri.conf.json` is **13.3**,
+the first macOS that ships Safari 16.4 — the floor Tailwind 4's CSS needs, and
+the `build.target` Vite compiles for. Below it the app installed but drew broken
+styles. Raising it is a decision; lowering it means proving the CSS still
+renders on that Safari.
 
 **The policy:**
 
@@ -28,8 +30,9 @@ supported range as wide until somebody narrows it on purpose.
   different approach.
 
 The worked example is `content-visibility` in `TaskListView.vue`. It is Baseline
-Newly available (September 2025; Safari 26, so macOS 26), which means a large
-share of macOS users will not have it. That is fine, and only fine because a
+Newly available (September 2025; Safari 26, which macOS 13 never gets and
+macOS 14–15 get only once Safari is updated), so a large share of macOS users
+will not have it. That is fine, and only fine because a
 WebView that does not know the property ignores it and renders every row, which
 is exactly what the list did before. Had it needed a fallback to be correct
 rather than merely fast, it would not have gone in.

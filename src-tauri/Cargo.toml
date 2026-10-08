@@ -4,6 +4,7 @@ version = "0.9.20"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"
+publish = false
 default-run = "synabit"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -174,3 +175,11 @@ eval = ["tauri/test"]
 debug = 1
 strip = "debuginfo"
 
+
+# What ships. Thin LTO and one codegen unit trade a slower release build for a
+# smaller, faster binary; `strip` drops symbols nobody runs. Panics still
+# unwind: the Loro bridge relies on catch_unwind (commands/nodes.rs).
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

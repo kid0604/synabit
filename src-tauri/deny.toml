@@ -1,0 +1,70 @@
+# cargo-deny: what CI refuses in the dependency tree. Run `cargo deny check`
+# from src-tauri/.
+
+[advisories]
+# Each one is here because no compatible release fixes it yet, not because it
+# does not matter. Remove a line as soon as `cargo update` or an upgrade makes
+# it pass; anything new fails the build.
+ignore = [
+    # lopdf 0.34, stack overflow on deeply nested PDF objects. Fixed upstream
+    # only in a breaking release; reached from PDF export and file text
+    # extraction of files the user chose.
+    { id = "RUSTSEC-2026-0187", reason = "needs lopdf 0.45, a breaking upgrade" },
+    # quick-xml 0.37 (feed-rs and our own use) and 0.38: quadratic duplicate-
+    # attribute check and unbounded namespace declarations, both denial of
+    # service on hostile XML such as a malicious feed.
+    { id = "RUSTSEC-2026-0194", reason = "feed-rs pins quick-xml 0.37; ours moves with it" },
+    { id = "RUSTSEC-2026-0195", reason = "feed-rs pins quick-xml 0.37; ours moves with it" },
+    # Reached only through loro 0.16; leaves with a loro upgrade.
+    { id = "RUSTSEC-2026-0292", reason = "transitive through loro 0.16" },
+    # Unmaintained, not vulnerable: all transitive through loro, iroh or tauri.
+    { id = "RUSTSEC-2023-0089", reason = "unmaintained, transitive (heapless via postcard)" },
+    { id = "RUSTSEC-2024-0370", reason = "unmaintained, transitive" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained, transitive" },
+    { id = "RUSTSEC-2025-0057", reason = "unmaintained, transitive" },
+    { id = "RUSTSEC-2025-0075", reason = "unmaintained, transitive (unic-*)" },
+    { id = "RUSTSEC-2025-0080", reason = "unmaintained, transitive (unic-*)" },
+    { id = "RUSTSEC-2025-0081", reason = "unmaintained, transitive (unic-*)" },
+    { id = "RUSTSEC-2025-0098", reason = "unmaintained, transitive (unic-*)" },
+    { id = "RUSTSEC-2025-0100", reason = "unmaintained, transitive (unic-*)" },
+    { id = "RUSTSEC-2026-0247", reason = "unmaintained, transitive through loro" },
+    { id = "RUSTSEC-2026-0248", reason = "unmaintained, transitive through loro" },
+    { id = "RUSTSEC-2026-0251", reason = "unmaintained, transitive through loro" },
+]
+
+[licenses]
+# Permissive licences, plus MPL-2.0 (file-level copyleft: fine to link, and we
+# do not modify those files). Nothing GPL-family: a new one fails the build
+# and is a decision to make on purpose.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "bzip2-1.0.6",
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+# Our own crates (the app and the sync protocol) are source-available, see
+# LICENSE, and marked `publish = false`, which is what this skips.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

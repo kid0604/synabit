@@ -37,6 +37,12 @@ jobs:
       - name: Frontend tests
         run: npx vitest run
 
+      # Only what ships (--omit=dev) and only what is serious enough to act on:
+      # the low and moderate advisories left need major upgrades of katex and
+      # the typography plugin, which is a decision, not a CI gate.
+      - name: Dependency advisories (npm)
+        run: npm audit --omit=dev --audit-level=high
+
       - uses: dtolnay/rust-toolchain@stable
 
       # Tauri links against the system webview, and on Linux that is WebKitGTK
@@ -61,9 +67,18 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Known vulnerabilities, licences and sources in the Rust tree; what is
+      # deliberately accepted, and why, is listed in src-tauri/deny.toml.
+      - name: Dependency advisories and licences (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: src-tauri/Cargo.toml
+
+      # --tests as well as --lib: tests/safe_cli.rs drives the real
+      # synabit-safe binary, and `--lib` alone never built or ran it.
       - name: Rust tests
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo test --lib --tests
 
       # The protocol crate lives in its own workspace, so `cargo test` from the
       # server directory does not reach it. Its tests failed to compile for
@@ -75,3 +90,23 @@ jobs:
       - name: Sync server tests
         working-directory: sync-server
         run: cargo test
+
+  # macOS is where Synabit is used most, and the one platform the job above
+  # never ran on: keychain, file-flush and path code all have Apple branches.
+  rust-macos:
+    name: Rust tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test --lib --tests
