@@ -121,7 +121,7 @@
   justify-content: center;
   gap: 2px;
   color: var(--rt-muted);
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   user-select: none;
@@ -307,7 +307,7 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
@@ -415,7 +415,7 @@
 .rt-menu-section { display: flex; flex-direction: column; gap: 2px; padding: 4px 0; }
 .rt-menu-section + .rt-menu-section { border-top: 1px solid var(--color-border, #e6e6e6); }
 .dark .rt-menu-section + .rt-menu-section { border-color: var(--color-border-subtle-dark, #3a3a3a); }
-.rt-menu-label { padding: 2px 8px; font-size: 11px; color: var(--rt-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.rt-menu-label { padding: 2px 8px; font-size: 12px; color: var(--rt-muted); text-transform: uppercase; letter-spacing: 0.04em; }
 .rt-menu-note { padding: 6px 8px; color: var(--rt-muted); font-size: 12px; }
 .rt-menu-note.is-error { color: var(--color-danger, #dc2626); padding: 4px 0 0; }
 .rt-menu-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px; }
@@ -671,7 +671,7 @@
   width: 22px;
   color: var(--rt-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 12px;
 }
 .rt-fx-sig {
   margin-left: auto;
@@ -680,7 +680,7 @@
   white-space: nowrap;
   color: var(--rt-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
+  font-size: 12px;
 }
 .rt-fx-doc {
   display: flex;
@@ -697,7 +697,7 @@
 .rt-fx-status.is-error { color: var(--color-danger, #ef4444); }
 .rt-fx-status b { color: var(--color-text, #1c1c1e); }
 .dark .rt-fx-status b { color: var(--color-text-dark, #f4f4f5); }
-.rt-kbd { opacity: 0.7; font-size: 11px; margin-left: 4px; }
+.rt-kbd { opacity: 0.7; font-size: 12px; margin-left: 4px; }
 .rt-btn:disabled { opacity: 0.45; cursor: default; }
 .rt-pill-text {
   display: inline-flex;
@@ -818,8 +818,8 @@
 .rt-chart-svg { display: block; overflow: visible; touch-action: pan-y; }
 .rt-grid-line { stroke: var(--rt-line); stroke-width: 1; shape-rendering: crispEdges; }
 .rt-grid-line.is-zero { stroke: var(--rt-muted); opacity: 0.5; }
-.rt-axis-text { fill: var(--rt-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.rt-value-text { fill: var(--rt-text); font-size: 11px; font-weight: 600; }
+.rt-axis-text { fill: var(--rt-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.rt-value-text { fill: var(--rt-text); font-size: 12px; font-weight: 600; }
 .rt-mark { transition: opacity 0.12s; cursor: pointer; }
 .rt-mark.is-dim { opacity: 0.45; }
 .rt-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
@@ -932,7 +932,7 @@
   background: none;
   color: inherit;
   font: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 .rt-segmented button.is-active { background: var(--color-surface, #fff); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
@@ -1020,7 +1020,7 @@
   pointer-events: none;
 }
 .rt-note-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rt-note-path { margin-left: auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; direction: rtl; text-align: left; }
+.rt-note-path { margin-left: auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; direction: rtl; text-align: left; }
 
 /* The last header makes room for the "+" over its right end, handle included. */
 .rt-th.is-last { padding-right: 40px; }

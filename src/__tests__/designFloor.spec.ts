@@ -1,4 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+
+// Vitest's own; see ./node.d.ts for why Node's types are not loaded.
+declare const __dirname: string;
 
 /**
  * The design floor, beyond what the linter can see.
@@ -21,11 +26,28 @@ import { describe, it, expect } from 'vitest';
  * the last test fails if a listed debt is paid without its line going too.
  */
 
-const sources = import.meta.glob('../**/*.{vue,css}', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
+/**
+ * Every `.vue` and `.css` file under `src/`, read from disk.
+ *
+ * It used to be `import.meta.glob('../**\/*.{vue,css}', { query: '?raw' })`.
+ * Under Vitest that hands back an empty string for every `.css` file — CSS
+ * goes through the style pipeline, not the raw loader — so the stylesheet
+ * half of this test read nothing and passed, while eleven sizes under the
+ * floor sat in richTable.css and richBlocks.css. The file system cannot do that to us.
+ */
+const SRC = resolve(__dirname, '..');
+
+function walk(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) return entry.name === 'node_modules' ? [] : walk(path);
+    return /\.(vue|css)$/.test(entry.name) ? [path] : [];
+  });
+}
+
+const sources: Record<string, string> = Object.fromEntries(
+  walk(SRC).map((path) => [relative(SRC, path).split('\\').join('/'), readFileSync(path, 'utf8')]),
+);
 
 type Rule = 'font-size' | 'placeholder-gray-400' | 'placeholder:text-gray-400' | 'text-gray-300';
 
@@ -83,9 +105,18 @@ function findOffences(file: string, src: string): Offence[] {
 }
 
 describe('design floor', () => {
-  const offences = Object.entries(sources).flatMap(([path, src]) =>
-    findOffences(path.replace(/^\.\.\//, ''), src),
-  );
+  const offences = Object.entries(sources).flatMap(([path, src]) => findOffences(path, src));
+
+  /**
+   * The check on the check: the stylesheets are actually read. Without it the
+   * reader can break the way the old one did — every `.css` empty — and the
+   * floor below would pass on nothing.
+   */
+  it('reads the stylesheets, not just the components', () => {
+    expect(sources['shared/rich-table/richTable.css']?.length ?? 0).toBeGreaterThan(1000);
+    expect(sources['style.css']?.length ?? 0).toBeGreaterThan(0);
+    expect(Object.keys(sources).filter((f) => f.endsWith('.vue')).length).toBeGreaterThan(100);
+  });
 
   it('finds what it is looking for', () => {
     expect(findOffences('x.vue', '<template><p class="text-gray-300 dark:text-gray-400"/></template>')).toHaveLength(1);
