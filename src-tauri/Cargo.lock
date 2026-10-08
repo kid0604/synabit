@@ -7662,7 +7662,7 @@ dependencies = [
 
 [[package]]
 name = "synabit"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "aes 0.8.4",
  "ammonia",
