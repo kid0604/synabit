@@ -52,6 +52,7 @@ impl DbBridge {
     pub fn new_in_memory() -> AppResult<Self> {
         let mut conn = Connection::open_in_memory()
             .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
+        crate::db::local_state::ensure_attached(&conn)?;
         run_sync_schema_migrations(&mut conn)?;
         crate::db::text::teach(&conn)
             .map_err(|e| AppError::General(format!("DB Open Error: {e}")))?;
@@ -95,20 +96,22 @@ impl DbBridge {
     ///
     /// Set aside, never deleted. Most of this database is a cache of the vault
     /// and rebuilds from it on the next scan, but not all of it: the CRDT
-    /// version history, the capture queue in `kv_store`, feed highlights and
-    /// calendar subscriptions live only here. A damaged file may still give most
-    /// of that back to `sqlite3 .recover`; a deleted one gives back nothing.
+    /// version history lives only here. A damaged file may still give it back
+    /// to `sqlite3 .recover`; a deleted one gives back nothing. What this device
+    /// keeps for itself is not in this file at all — see `db::local_state`.
     ///
     /// A database that is merely busy — a second copy of the app holding it —
     /// is not damaged, and moving it out from under the copy using it would be
     /// the damage. That failure is returned as it is.
     pub(crate) fn open_or_recover(db_path: &std::path::Path, now: u64) -> AppResult<Self> {
-        let first = match Self::open_checked(db_path) {
+        let first = match Self::open_checked(db_path, now) {
             Ok(db) => return Ok(db),
             Err(e) => e,
         };
         let reason = first.to_string();
-        if is_contention(&reason) {
+        // `state.db` sets itself aside when it is damaged (`local_state::attach`);
+        // a failure that survives that says nothing about this file.
+        if is_contention(&reason) || reason.contains("State DB") {
             return Err(first);
         }
         log::error!("vault_cache.db at {} could not be opened: {reason}", db_path.display());
@@ -120,12 +123,11 @@ impl DbBridge {
         })?;
         log::error!(
             "Moved the damaged database aside to {} (kept, not deleted: it holds version \
-             history, the capture queue, feed highlights and calendar subscriptions that the \
-             vault cannot rebuild). Starting with a fresh database.",
+             history that the vault cannot rebuild). Starting with a fresh database.",
             moved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
         );
 
-        Self::open_checked(db_path).map_err(|e| {
+        Self::open_checked(db_path, now).map_err(|e| {
             AppError::General(format!(
                 "The database could not be opened ({reason}), and a fresh one could not be created either: {e}"
             ))
@@ -139,7 +141,7 @@ impl DbBridge {
     /// query first touches the torn page — mid-session, as an error nobody can
     /// act on. It is the cheap variant (no index-to-table cross-check), which
     /// on a cache of this size costs milliseconds at startup.
-    fn open_checked(db_path: &std::path::Path) -> AppResult<Self> {
+    fn open_checked(db_path: &std::path::Path, now: u64) -> AppResult<Self> {
         let conn = Connection::open(db_path)
             .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
         // Another copy of the app writing at this moment is a wait, not a
@@ -159,6 +161,13 @@ impl DbBridge {
                 verdict.join("; ")
             )));
         }
+        // Beside the cache, never inside it: deleting `vault_cache.db` must
+        // cost nothing the vault cannot give back. See `db::local_state`.
+        crate::db::local_state::attach(
+            &conn,
+            &db_path.with_file_name(crate::db::local_state::FILE_NAME),
+            now,
+        )?;
         Self::init_with_conn(conn)
     }
 
@@ -179,6 +188,11 @@ impl DbBridge {
         // leaves every Vietnamese letter alone. See `db::text`.
         crate::db::text::teach(&conn)
             .map_err(|e| AppError::General(format!("DB Open Error: {e}")))?;
+
+        // The device's own state, attached as `state`. `open_checked` attached
+        // the real file already; this only stands one up in memory for a
+        // connection nobody gave a file to.
+        crate::db::local_state::ensure_attached(&conn)?;
 
         // ─── One-time Legacy Cleanup ────────────────────────────
         // These tables were migrated to Universal Node Core in v0.2.x.
@@ -219,16 +233,7 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Schema Error (files): {}", e)))?;
 
-        // ─── File Sources Table ────────────────────────────────
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS file_sources (
-                id TEXT PRIMARY KEY,
-                path TEXT UNIQUE NOT NULL,
-                name TEXT NOT NULL
-            )",
-            [],
-        )
-        .map_err(|e| AppError::General(format!("DB Schema Error (file_sources): {}", e)))?;
+        // `file_sources` is in `state.db`: see `db::local_state`.
 
         // ─── Where each indexed file currently sits ─────────────
         //
@@ -661,6 +666,11 @@ impl DbBridge {
         // the next refresh would overwrite the edit, and leave hundreds of
         // orphans behind when the subscription is removed. A cache belongs in
         // a cache.
+        //
+        // The subscription itself is not a copy of anything: its URL, name,
+        // colour and switches are in `Calendar/subscriptions.json`, and this
+        // table indexes that file beside what the server last said
+        // (`calendar::subscriptions_file`).
         conn.execute(
             "CREATE TABLE IF NOT EXISTS calendar_subscriptions (
                 id TEXT PRIMARY KEY,
@@ -726,25 +736,8 @@ impl DbBridge {
         )
         .map_err(|e| AppError::General(format!("DB Index Error (subscription_events): {}", e)))?;
 
-        // Which reminders have already been announced.
-        //
-        // This used to be rebuilt every sixty seconds by reading and parsing
-        // every message file in the vault — after two years of use, some seven
-        // hundred files a minute, forever, to answer a question a primary key
-        // answers instantly.
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS reminder_deliveries (
-                delivery_key TEXT PRIMARY KEY,
-                delivered_at INTEGER NOT NULL
-            )",
-            [],
-        )
-        .map_err(|e| AppError::General(format!("DB Schema Error (reminder_deliveries): {}", e)))?;
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_at
-                 ON reminder_deliveries(delivered_at);",
-        )
-        .map_err(|e| AppError::General(format!("DB Index Error (reminder_deliveries): {}", e)))?;
+        // Which reminders have already been announced lives in `state.db`
+        // (`db::local_state`): losing it would fire them all again.
 
         // Blocks are cleared a whole note at a time, but the table's primary key
         // leads with block_id, so that lookup had no index to use.
@@ -1035,28 +1028,9 @@ impl DbBridge {
 
         // ─── Feed Highlights ──────────────────────────────────
         //
-        // Keyed by the feed and the article's guid rather than by the local
-        // article id, for the same reason the read state is: article ids are
-        // UUIDs minted at insert time and differ on every device, while the
-        // guid comes from the publisher.
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS feed_highlights (
-                id TEXT PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                guid TEXT NOT NULL,
-                text TEXT NOT NULL,
-                occurrence INTEGER NOT NULL DEFAULT 0,
-                note TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL DEFAULT ''
-            )",
-            [],
-        )
-        .map_err(|e| AppError::General(format!("DB Schema Error (feed_highlights): {}", e)))?;
-
-        conn.execute_batch(
-            "CREATE INDEX IF NOT EXISTS idx_fh_article ON feed_highlights(source_id, guid);",
-        )
-        .map_err(|e| AppError::General(format!("DB Index Error (feed_highlights): {}", e)))?;
+        // In the vault, `Feeds/highlights.json` — see `feed_engine::highlights`.
+        // An older cache's `feed_highlights` table is read once to move them
+        // there, and dropped.
 
         // ─── Feed Source State ────────────────────────────────
         //
@@ -1199,6 +1173,10 @@ impl DbBridge {
 
         // ─── Versioned Sync Schema Migrations ─────────────────────
         run_sync_schema_migrations(&mut conn)?;
+
+        // Last, once the cache's own `kv_store` exists: what an older cache
+        // held for the device moves into `state.db`, once.
+        crate::db::local_state::move_from_cache(&conn)?;
 
         Ok(Self { conn })
     }

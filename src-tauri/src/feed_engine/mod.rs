@@ -9,4 +9,5 @@ pub mod parser;
 pub mod readability;
 pub mod sanitizer;
 pub mod scrape;
+pub mod highlights;
 pub mod state_sync;

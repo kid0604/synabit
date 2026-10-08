@@ -7,3 +7,4 @@ pub mod node_parser;
 pub mod quickcap_storage;
 pub mod tag_grammar;
 pub mod timestamp;
+pub mod vault_doc;

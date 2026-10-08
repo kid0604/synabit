@@ -5,7 +5,12 @@
 //! replaced whole on every refresh, and its id is not a path anything could
 //! write to. Nothing had to be told to treat it carefully, because there is
 //! nothing to treat carelessly.
+//!
+//! The subscription itself — the URL, its name, colour and switches — is the
+//! user's, and is in the vault: `calendar::subscriptions_file`. Every change
+//! here is written there first and the table follows.
 
+use crate::calendar::subscriptions_file;
 use crate::db::subscriptions::Subscription;
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
@@ -27,10 +32,38 @@ fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
 
+/// The vault the app has open, which holds the subscriptions themselves.
+fn open_vault(app: &tauri::AppHandle) -> Option<String> {
+    use tauri::Manager;
+    app.try_state::<crate::chat_engine::ChatEngineState>()
+        .and_then(|state| state.active_vault_path.lock().ok().and_then(|path| path.clone()))
+}
+
+fn require_vault(app: &tauri::AppHandle) -> AppResult<String> {
+    open_vault(app).ok_or_else(|| AppError::General("No vault is open".to_string()))
+}
+
+/// Bring the table in line with the vault's file, if a vault is open. See
+/// `calendar::subscriptions_file`.
+fn reconcile(app: &tauri::AppHandle) -> AppResult<()> {
+    use tauri::Manager;
+    let Some(vault) = open_vault(app) else {
+        return Ok(());
+    };
+    let state = app.state::<DbState>();
+    let mut db = state.lock().unwrap_or_else(|e| e.into_inner());
+    subscriptions_file::reconcile(&mut db, &vault)
+}
+
 #[tauri::command]
-pub fn list_calendar_subscriptions(
-    state: tauri::State<'_, DbState>,
-) -> AppResult<Vec<Subscription>> {
+pub fn list_calendar_subscriptions(app: tauri::AppHandle) -> AppResult<Vec<Subscription>> {
+    use tauri::Manager;
+    // A file that cannot be read is reported, and the last list this device
+    // knew is shown rather than nothing.
+    if let Err(e) = reconcile(&app) {
+        log::warn!("calendar subscriptions: {e}");
+    }
+    let state = app.state::<DbState>();
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.list_subscriptions()
 }
@@ -58,54 +91,49 @@ pub async fn add_calendar_subscription(
         name.trim().to_string()
     };
 
-    {
-        use tauri::Manager;
-        let state = app.state::<DbState>();
-        let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        db.add_subscription(&id, &url, &fallback, now())?;
-    }
+    let vault = require_vault(&app)?;
+    subscriptions_file::add(&vault, &id, &url, &fallback, now())?;
+    reconcile(&app)?;
 
     refresh_one(&app, &id).await
 }
 
 #[tauri::command]
 pub fn set_calendar_subscription_enabled(
-    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.set_subscription_enabled(&id, enabled)
+    subscriptions_file::update(&require_vault(&app)?, &id, |e| e.enabled = enabled)?;
+    reconcile(&app)
 }
 
 /// Whether this calendar's events should be announced like the user's own.
 #[tauri::command]
 pub fn set_calendar_subscription_remind(
-    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
     remind: bool,
 ) -> AppResult<()> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.set_subscription_remind(&id, remind)
+    subscriptions_file::update(&require_vault(&app)?, &id, |e| e.remind = remind)?;
+    reconcile(&app)
 }
 
 #[tauri::command]
 pub fn rename_calendar_subscription(
-    state: tauri::State<'_, DbState>,
+    app: tauri::AppHandle,
     id: String,
     name: String,
 ) -> AppResult<()> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.rename_subscription(&id, name.trim())
+    let name = name.trim().to_string();
+    subscriptions_file::update(&require_vault(&app)?, &id, |e| e.name = name)?;
+    reconcile(&app)
 }
 
 #[tauri::command]
-pub fn remove_calendar_subscription(
-    state: tauri::State<'_, DbState>,
-    id: String,
-) -> AppResult<()> {
-    let mut db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.remove_subscription(&id)
+pub fn remove_calendar_subscription(app: tauri::AppHandle, id: String) -> AppResult<()> {
+    subscriptions_file::remove(&require_vault(&app)?, &id)?;
+    reconcile(&app)
 }
 
 /// Re-read one calendar.
@@ -195,6 +223,10 @@ pub async fn refresh_one(app: &tauri::AppHandle, id: &str) -> AppResult<RefreshR
 pub async fn refresh_calendar_subscriptions(
     app: tauri::AppHandle,
 ) -> AppResult<Vec<RefreshReport>> {
+    // Calendars another device added arrive as a change to the vault's file.
+    if let Err(e) = reconcile(&app) {
+        log::warn!("calendar subscriptions: {e}");
+    }
     let subs = {
         use tauri::Manager;
         let state = app.state::<DbState>();

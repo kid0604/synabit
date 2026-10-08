@@ -9,6 +9,7 @@ pub mod edges;
 mod people_brief;
 mod files;
 mod kv;
+pub mod local_state;
 pub mod legacy_sync_migration;
 pub mod metrics;
 mod nexus;

@@ -42,7 +42,7 @@ pub fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> AppResult<()> {
 }
 
 /// The pure half of [`write`].
-fn render(existing: Option<&str>, mut value: Value, stamp: &str) -> AppResult<String> {
+pub(crate) fn render(existing: Option<&str>, mut value: Value, stamp: &str) -> AppResult<String> {
     if let Value::Object(object) = &mut value {
         let mut metadata = existing
             .and_then(|text| serde_json::from_str::<Value>(text).ok())

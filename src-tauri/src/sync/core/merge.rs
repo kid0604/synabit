@@ -71,6 +71,23 @@ const LIBRARY_PIECES: ListRule = ListRule {
     stamp: |item| str_field(item, "added_at"),
 };
 
+/// Feed highlights and calendar subscriptions: made on one device or another,
+/// changed now and then, removed with a stamped `removed_at` that the newer
+/// stamp carries. See `feed_engine::highlights`, `calendar::subscriptions_file`.
+const STAMPED_ENTRIES: ListRule = ListRule {
+    key: by_id,
+    stamp: |item| str_field(item, "updated_at").max(str_field(item, "removed_at")),
+};
+
+/// Files that are `{ <list>: [...] }` of [`STAMPED_ENTRIES`], and which list.
+fn stamped_list(path: &str) -> Option<&'static str> {
+    match path {
+        "Feeds/highlights.json" => Some("highlights"),
+        "Calendar/subscriptions.json" => Some("subscriptions"),
+        _ => None,
+    }
+}
+
 /// A whiteboard shape library: `Whiteboards/Libraries/<name>.boardlib.json`.
 fn is_library(path: &str) -> bool {
     path.strip_prefix("Whiteboards/Libraries/")
@@ -80,7 +97,9 @@ fn is_library(path: &str) -> bool {
 /// Is this file merged item by item rather than resolved whole?
 pub fn is_merged(rel_path: &str) -> bool {
     let path = rel_path.replace('\\', "/");
-    matches!(path.as_str(), "Syn/routines.json" | "Syn/proposals.json" | "Syn/declined.json") || is_library(&path)
+    matches!(path.as_str(), "Syn/routines.json" | "Syn/proposals.json" | "Syn/declined.json")
+        || is_library(&path)
+        || stamped_list(&path).is_some()
 }
 
 /// Merge two copies of a file named by [`is_merged`].
@@ -96,7 +115,7 @@ pub fn merge(rel_path: &str, local: &str, remote: &str) -> Option<Value> {
         "Syn/proposals.json" => Some(Value::Array(merge_list(local.as_array()?, remote.as_array()?, &PROPOSALS))),
         "Syn/declined.json" => Some(Value::Array(merge_list(local.as_array()?, remote.as_array()?, &DECLINED))),
         path if is_library(path) => merge_library(&local, &remote),
-        _ => None,
+        path => merge_stamped(&local, &remote, stamped_list(path)?),
     }
 }
 
@@ -148,6 +167,22 @@ fn merge_library(local: &Value, remote: &Value) -> Option<Value> {
     let merged_items = merge_list(&items(local)?, &items(remote)?, &LIBRARY_PIECES);
     let mut merged = remote.clone();
     merged.insert("items".into(), Value::Array(merged_items));
+    Some(Value::Object(merged))
+}
+
+/// `{ <field>: [...] }`, the list merged by [`STAMPED_ENTRIES`] and everything
+/// else the remote's. Tombstones are kept in the list: dropping them would let
+/// a third device that has not heard of the removal bring the entry back.
+fn merge_stamped(local: &Value, remote: &Value, field: &str) -> Option<Value> {
+    let local = local.as_object()?;
+    let remote = remote.as_object()?;
+    let list = |o: &Map<String, Value>| match o.get(field) {
+        None => Some(Vec::new()),
+        Some(v) => v.as_array().cloned(),
+    };
+    let merged_items = merge_list(&list(local)?, &list(remote)?, &STAMPED_ENTRIES);
+    let mut merged = remote.clone();
+    merged.insert(field.into(), Value::Array(merged_items));
     Some(Value::Object(merged))
 }
 
@@ -326,6 +361,54 @@ mod tests {
         assert!(is_merged("Syn/declined.json") && !is_merged("Notes/declined.json"));
         assert!(is_merged("Whiteboards/Libraries/Kit.boardlib.json"));
         assert!(!is_merged("Whiteboards/Libraries/sub/Kit.boardlib.json") && !is_merged("Whiteboards/a.whiteboard.json"));
+    }
+
+    /// Two devices highlighting before either had synced each keep theirs; a
+    /// removal on one is not undone by the other's older copy.
+    #[test]
+    fn feed_highlights_from_both_devices_are_kept_and_a_removal_holds() {
+        let h = |id: &str, at: &str, removed: Option<&str>| {
+            let mut v = json!({"id": id, "source_id": "f", "guid": "g", "text": id, "created_at": at, "updated_at": removed.unwrap_or(at)});
+            if let Some(r) = removed {
+                v["removed_at"] = json!(r);
+                v["text"] = json!("");
+            }
+            v
+        };
+        let phone = json!({"highlights": [h("a", "2026-10-01T00:00:00Z", None), h("p", "2026-10-02T00:00:00Z", None)],
+                           "metadata": {"node_id": "n-h"}});
+        let desk = json!({"highlights": [h("a", "2026-10-01T00:00:00Z", Some("2026-10-03T00:00:00Z")), h("d", "2026-10-02T01:00:00Z", None)],
+                          "metadata": {"node_id": "n-h"}});
+        for (l, r) in [(&phone, &desk), (&desk, &phone)] {
+            let out = merged("Feeds/highlights.json", l, r);
+            let mut got: Vec<(String, bool)> = out["highlights"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| (v["id"].as_str().unwrap().to_string(), v.get("removed_at").is_some()))
+                .collect();
+            got.sort();
+            assert_eq!(got, [("a".into(), true), ("d".into(), false), ("p".into(), false)]);
+            assert_eq!(out["metadata"]["node_id"], "n-h");
+            let again = merged("Feeds/highlights.json", r, &out);
+            assert_eq!(again["highlights"].as_array().unwrap().len(), 3, "and merging the merge changes nothing");
+        }
+    }
+
+    #[test]
+    fn calendar_subscriptions_take_the_newer_edit_of_each() {
+        let s = |name: &str, at: &str| json!({"id": "s1", "url": "https://x/a.ics", "name": name, "updated_at": at});
+        let older = json!({"subscriptions": [s("Cũ", "2026-10-01T00:00:00.000Z")]});
+        let newer = json!({"subscriptions": [s("Mới", "2026-10-02T00:00:00.000Z"),
+                                             {"id": "s2", "url": "https://x/b.ics", "updated_at": "2026-10-02T00:00:00.000Z"}]});
+        for (l, r) in [(&older, &newer), (&newer, &older)] {
+            let out = merged("Calendar/subscriptions.json", l, r);
+            let subs = out["subscriptions"].as_array().unwrap();
+            assert_eq!(subs.len(), 2);
+            assert_eq!(subs.iter().find(|v| v["id"] == "s1").unwrap()["name"], "Mới");
+        }
+        assert!(is_merged("Calendar/subscriptions.json") && is_merged("Feeds/highlights.json"));
+        assert!(!is_merged("Notes/Calendar/subscriptions.json"));
     }
 
     #[test]

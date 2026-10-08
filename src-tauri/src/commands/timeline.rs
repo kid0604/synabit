@@ -511,6 +511,11 @@ pub async fn timeline_extract_run(
     let (work, changes, directory, remaining) = {
         let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
         extract::load(timeline.conn(), &vault_path)?;
+        // An older `timeline.db` still holding corrections gives them to the
+        // vault, where deleting the index cannot take them.
+        if let Err(e) = reader::move_legacy_corrections(timeline.conn(), &vault_path, &device) {
+            log::warn!("timeline reader: could not move corrections into the vault: {e}");
+        }
         let (plan, directory) =
             reading_plan(&app_handle, state.inner(), &timeline, &vault_path, &config, settled_before)?;
         let asked_for_changes = matches!(scope.as_str(), "new" | "all");
@@ -799,10 +804,17 @@ fn learn_from(
     if learned.is_empty() {
         return Ok(());
     }
+    let device = match crate::commands::sync::ensure_device_id(app_handle) {
+        Ok(device) => device,
+        Err(e) => {
+            log::warn!("timeline reader: could not keep corrections without a device id: {e}");
+            return Ok(());
+        }
+    };
     let timeline = timeline.lock().unwrap_or_else(|e| e.into_inner());
     for correction in &learned {
         // Worth keeping, not worth failing the keep over.
-        if let Err(e) = reader::remember_correction(timeline.conn(), correction) {
+        if let Err(e) = reader::remember_correction(timeline.conn(), vault_path, &device, correction) {
             log::warn!("timeline reader: could not keep a correction: {e}");
         }
     }

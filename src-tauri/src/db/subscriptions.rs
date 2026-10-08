@@ -148,6 +148,40 @@ impl DbBridge {
         Ok(())
     }
 
+    /// Take a calendar's settings from the vault's file, keeping what this
+    /// device last heard from its server — unless the address itself changed,
+    /// in which case the old server's ETag means nothing to the new one.
+    pub fn upsert_subscription_config(
+        &self,
+        entry: &crate::calendar::subscriptions_file::Entry,
+    ) -> AppResult<()> {
+        self.conn
+            .execute(
+                "INSERT INTO calendar_subscriptions (id, url, name, colour, enabled, remind, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(id) DO UPDATE SET
+                    etag = CASE WHEN url = excluded.url THEN etag ELSE '' END,
+                    last_modified = CASE WHEN url = excluded.url THEN last_modified ELSE '' END,
+                    url = excluded.url,
+                    name = excluded.name,
+                    colour = excluded.colour,
+                    enabled = excluded.enabled,
+                    remind = excluded.remind,
+                    created_at = excluded.created_at",
+                params![
+                    entry.id,
+                    entry.url,
+                    entry.name,
+                    entry.colour,
+                    entry.enabled as i64,
+                    entry.remind as i64,
+                    entry.created_at,
+                ],
+            )
+            .map_err(|e| AppError::General(format!("DB Write Error (subscriptions): {}", e)))?;
+        Ok(())
+    }
+
     /// Remove a calendar and everything it put here.
     ///
     /// In one transaction: a subscription without its events is a calendar

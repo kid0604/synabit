@@ -24,6 +24,14 @@
 //! `kv_store` and cannot fail for any reason the user would recognise; the
 //! cap itself is written later, when a vault is open.
 //!
+//! The row is in `state.db`, not the cache (`db::local_state` routes every
+//! `capture:` key there). Until it is drained it is the only copy of what
+//! somebody typed, and the cache is the file a user is told they may delete.
+//! It is not written into the vault instead because the queue exists for the
+//! moments there is no vault to write into; once one is open the front end
+//! drains it into caps straight away, so it only ever holds what arrived while
+//! there was none.
+//!
 //! # Why the drain lives in the front end
 //!
 //! Turning text into a cap means deriving its tags and its title and
@@ -617,6 +625,28 @@ mod tests {
 
         let texts: Vec<String> = queued(&db).unwrap().into_iter().map(|c| c.text).collect();
         assert_eq!(texts, ["trước", "sau"]);
+    }
+
+    /// A capture waiting for a vault is the only copy of what was typed, so
+    /// deleting the cache — which the README says is safe — must not take it.
+    #[test]
+    fn a_queued_capture_survives_the_cache_being_deleted() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("vault_cache.db");
+        {
+            let db = DbBridge::open_or_recover(&cache, 1).unwrap();
+            enqueue(&db, &input("trước khi xoá cache")).unwrap();
+        }
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(dir.path().join(format!("vault_cache.db{suffix}")));
+        }
+        let db = DbBridge::open_or_recover(&cache, 2).unwrap();
+        let waiting = queued(&db).unwrap();
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].text, "trước khi xoá cache");
+        // And the counter came with it, so the next one still sorts after.
+        let next = enqueue(&db, &input("sau")).unwrap();
+        assert!(next > waiting[0].id);
     }
 
     // ── the Android handoff ─────────────────────────────────

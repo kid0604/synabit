@@ -164,15 +164,15 @@ export function useArticleService() {
 
   // Highlights
   async function getHighlights(articleId: string): Promise<Highlight[]> {
-    return await invoke<Highlight[]>('feed_get_highlights', { articleId });
+    return await invoke<Highlight[]>('feed_get_highlights', { vaultPath: vaultPath.value, articleId });
   }
 
   async function addHighlight(articleId: string, text: string, occurrence: number, note?: string): Promise<Highlight> {
-    return await invoke<Highlight>('feed_add_highlight', { articleId, text, occurrence, note });
+    return await invoke<Highlight>('feed_add_highlight', { vaultPath: vaultPath.value, articleId, text, occurrence, note });
   }
 
   async function removeHighlight(highlightId: string): Promise<void> {
-    await invoke('feed_remove_highlight', { highlightId });
+    await invoke('feed_remove_highlight', { vaultPath: vaultPath.value, highlightId });
   }
 
   // Rules

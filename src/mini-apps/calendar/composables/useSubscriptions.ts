@@ -19,11 +19,21 @@ export function useSubscriptions(onChanged: () => void) {
 
     const colours = computed(() => coloursById(subscriptions.value));
 
+    // Asked once per screen: a calendar this device has never fetched — one
+    // another device subscribed to, or any of them after the cache was
+    // rebuilt — would otherwise draw nothing until the next half-hourly round.
+    let fetchedUnseen = false;
+
     const load = async () => {
         try {
             subscriptions.value = await invoke<Subscription[]>('list_calendar_subscriptions');
         } catch (e) {
             logger.error('Could not read the subscribed calendars:', e);
+            return;
+        }
+        if (!fetchedUnseen && subscriptions.value.some(s => s.enabled && s.lastFetchedAt === 0)) {
+            fetchedUnseen = true;
+            refreshAll().catch(() => {});
         }
     };
 

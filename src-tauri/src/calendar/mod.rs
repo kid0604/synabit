@@ -15,5 +15,6 @@ pub mod ics;
 pub mod recurrence;
 pub mod reminders;
 pub mod scheduler;
+pub mod subscriptions_file;
 pub mod rrule;
 pub mod tz;

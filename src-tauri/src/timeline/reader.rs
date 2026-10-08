@@ -526,9 +526,8 @@ pub struct Bag {
 }
 
 /// One thing the person put right after a reading, kept so the next reading
-/// is told about it. On this device: it is about how they write, and it
-/// changes as they do.
-#[derive(Debug, Clone, PartialEq)]
+/// is told about it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Correction {
     /// `title`, `category`, or `person` for a name given to somebody.
     pub field: String,
@@ -539,46 +538,158 @@ pub struct Correction {
 /// How many are worth telling a reading about.
 pub const CORRECTIONS: usize = 20;
 
-pub fn remember_correction(conn: &Connection, correction: &Correction) -> AppResult<()> {
-    ensure_corrections(conn)?;
-    conn.execute(
-        "INSERT INTO reader_corrections (at, field, before_text, after_text) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![
-            crate::utils::timestamp::canonical(Utc::now()),
-            correction.field,
-            correction.before,
-            correction.after
-        ],
-    )
-    .map_err(sql)?;
-    Ok(())
+/// Where corrections are kept: `Timeline/corrections/<device>.json`.
+///
+/// A correction is a decision the person made (§4.7, tier 2), so it is in the
+/// vault, not in `timeline.db` — which is an index and may be deleted at any
+/// time. One file per device, as the reviews are: each device only ever adds
+/// to its own, so there is nothing for sync to merge, and the reading is told
+/// the newest of all of them.
+pub const CORRECTIONS_DIR: &str = "Timeline/corrections";
+
+/// How many one device's file keeps. Only the newest [`CORRECTIONS`] across
+/// every device are ever read; the rest are a margin for the other devices'
+/// being newer.
+const KEPT_PER_DEVICE: usize = 100;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct Kept {
+    at: String,
+    #[serde(flatten)]
+    correction: Correction,
 }
 
-/// The latest corrections, newest last, the way an example list reads.
-pub fn corrections(conn: &Connection) -> AppResult<Vec<Correction>> {
-    ensure_corrections(conn)?;
+#[derive(Debug, Serialize, Deserialize)]
+struct CorrectionsFile {
+    format: u32,
+    device: String,
+    #[serde(default)]
+    corrections: Vec<Kept>,
+    #[serde(flatten)]
+    rest: serde_json::Map<String, Value>,
+}
+
+fn corrections_path(vault_path: &str, device: &str) -> std::path::PathBuf {
+    std::path::Path::new(vault_path).join(CORRECTIONS_DIR).join(format!("{device}.json"))
+}
+
+/// Add to this device's file, written through `path_utils::write_atomic`. A
+/// file that cannot be read is left as it is rather than replaced.
+fn keep(vault_path: &str, device: &str, now: DateTime<Utc>, add: Vec<Kept>) -> AppResult<()> {
+    let _writing = crate::utils::vault_doc::writing();
+    let path = corrections_path(vault_path, device);
+    let mut file = match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str::<CorrectionsFile>(&text).map_err(|e| {
+            AppError::General(format!("{} cannot be read ({e}), so nothing was added to it", path.display()))
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => CorrectionsFile {
+            format: 1,
+            device: device.to_string(),
+            corrections: Vec::new(),
+            rest: serde_json::Map::new(),
+        },
+        Err(e) => return Err(AppError::General(format!("{}: {e}", path.display()))),
+    };
+    for kept in add {
+        if !file.corrections.contains(&kept) {
+            file.corrections.push(kept);
+        }
+    }
+    file.corrections.sort_by(|a, b| a.at.cmp(&b.at));
+    let excess = file.corrections.len().saturating_sub(KEPT_PER_DEVICE);
+    file.corrections.drain(..excess);
+    super::extract::stamp(&mut file.rest, now);
+    let text = serde_json::to_string_pretty(&file).map_err(|e| AppError::General(e.to_string()))?;
+    crate::path_utils::write_atomic(&path, text.as_bytes())
+        .map_err(|e| AppError::General(format!("{}: {e}", path.display())))
+}
+
+pub fn remember_correction(
+    conn: &Connection,
+    vault_path: &str,
+    device: &str,
+    correction: &Correction,
+) -> AppResult<()> {
+    move_legacy_corrections(conn, vault_path, device)?;
+    let now = Utc::now();
+    keep(
+        vault_path,
+        device,
+        now,
+        vec![Kept { at: crate::utils::timestamp::canonical(now), correction: correction.clone() }],
+    )
+}
+
+fn has_legacy_table(conn: &Connection) -> bool {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reader_corrections'",
+        [],
+        |_| Ok(()),
+    )
+    .is_ok()
+}
+
+/// What an older `timeline.db` kept, before corrections moved to the vault.
+fn legacy_corrections(conn: &Connection) -> AppResult<Vec<Kept>> {
+    if !has_legacy_table(conn) {
+        return Ok(Vec::new());
+    }
     let mut stmt = conn
-        .prepare("SELECT field, before_text, after_text FROM reader_corrections ORDER BY at DESC, rowid DESC LIMIT ?1")
+        .prepare("SELECT at, field, before_text, after_text FROM reader_corrections")
         .map_err(sql)?;
-    let mut found: Vec<Correction> = stmt
-        .query_map([CORRECTIONS as i64], |r| Ok(Correction { field: r.get(0)?, before: r.get(1)?, after: r.get(2)? }))
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(Kept {
+                at: r.get(0)?,
+                correction: Correction { field: r.get(1)?, before: r.get(2)?, after: r.get(3)? },
+            })
+        })
         .map_err(sql)?
         .flatten()
         .collect();
-    found.reverse();
-    Ok(found)
+    Ok(rows)
 }
 
-fn ensure_corrections(conn: &Connection) -> AppResult<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS reader_corrections (
-            at          TEXT NOT NULL,
-            field       TEXT NOT NULL,
-            before_text TEXT NOT NULL,
-            after_text  TEXT NOT NULL
-        );",
-    )
-    .map_err(sql)
+/// Move an older `timeline.db`'s corrections into this device's file in the
+/// vault, then drop the table. Written before dropped, so an interruption is
+/// put right by the next call — and a correction already in the file is not
+/// written twice.
+pub fn move_legacy_corrections(conn: &Connection, vault_path: &str, device: &str) -> AppResult<usize> {
+    let legacy = legacy_corrections(conn)?;
+    let moved = legacy.len();
+    if moved > 0 {
+        keep(vault_path, device, Utc::now(), legacy)?;
+        log::info!("timeline: moved {moved} correction(s) from timeline.db into {CORRECTIONS_DIR}");
+    }
+    if has_legacy_table(conn) {
+        conn.execute_batch("DROP TABLE reader_corrections").map_err(sql)?;
+    }
+    Ok(moved)
+}
+
+/// The latest corrections from every device, newest last, the way an example
+/// list reads. An older `timeline.db`'s are counted too until they are moved.
+pub fn corrections(conn: &Connection, vault_path: &str) -> AppResult<Vec<Correction>> {
+    let mut all = legacy_corrections(conn)?;
+    if let Ok(entries) = std::fs::read_dir(std::path::Path::new(vault_path).join(CORRECTIONS_DIR)) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_none_or(|ext| ext != "json") {
+                continue;
+            }
+            // One device's unreadable file must not cost the others'.
+            if let Some(file) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<CorrectionsFile>(&text).ok())
+            {
+                all.extend(file.corrections);
+            }
+        }
+    }
+    all.sort_by(|a, b| a.at.cmp(&b.at));
+    all.dedup();
+    let skip = all.len().saturating_sub(CORRECTIONS);
+    Ok(all.into_iter().skip(skip).map(|kept| kept.correction).collect())
 }
 
 impl Bag {
@@ -793,7 +904,7 @@ pub fn plan_in(
     plan.changes = changes(&sources, &super::moments::kept(db)?, &read, &directory);
     // What the person put right before, so a reading is told how they write,
     // and the kinds this vault keeps moments in.
-    let learned = corrections(conn)?;
+    let learned = corrections(conn, vault_path)?;
     let kinds = config.categories();
     for bag in plan.pending.iter_mut().chain(&mut plan.old_version) {
         bag.corrections.clone_from(&learned);

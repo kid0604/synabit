@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::db::DbState;
 use crate::feed_engine::{
-    cleanup, discovery, fetcher, image_cache, opml as feed_opml, parser, readability, scrape,
-    state_sync,
+    cleanup, discovery, fetcher, highlights, image_cache, opml as feed_opml, parser, readability,
+    scrape, state_sync,
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -409,6 +409,11 @@ pub fn feed_get_sources(
     // which is the thing this change exists to stop.
     if migrate_legacy_state(conn, &mut stored) {
         write_json_file(&path, &stored)?;
+    }
+    // Highlights an older cache kept move into the vault the first time Feeds
+    // opens, rather than waiting for their article to be read again.
+    if let Err(e) = highlights::adopt_from_cache(conn, &vault_path) {
+        log::warn!("feed highlights: could not move the cache's into the vault: {e}");
     }
 
     let mut states = load_source_states(conn);
@@ -1885,16 +1890,18 @@ pub struct Highlight {
     pub created_at: String,
 }
 
-fn row_to_highlight(row: &rusqlite::Row) -> rusqlite::Result<Highlight> {
-    Ok(Highlight {
-        id: row.get(0)?,
-        source_id: row.get(1)?,
-        guid: row.get(2)?,
-        text: row.get(3)?,
-        occurrence: row.get(4)?,
-        note: row.get(5)?,
-        created_at: row.get(6)?,
-    })
+impl From<crate::feed_engine::highlights::Stored> for Highlight {
+    fn from(h: crate::feed_engine::highlights::Stored) -> Self {
+        Highlight {
+            id: h.id,
+            source_id: h.source_id,
+            guid: h.guid,
+            text: h.text,
+            occurrence: h.occurrence,
+            note: h.note,
+            created_at: h.created_at,
+        }
+    }
 }
 
 /// Which feed and guid an article id belongs to.
@@ -1910,35 +1917,38 @@ fn article_identity(
     .map_err(|e| format!("Article not found: {}", e))
 }
 
+/// The article's feed and guid, having first moved any highlights an older
+/// cache still holds into the vault. See `feed_engine::highlights`.
+fn identity_for_highlights(
+    db: &tauri::State<'_, DbState>,
+    vault_path: &str,
+    article_id: &str,
+) -> Result<(String, String), String> {
+    let db = db.lock().map_err(|e| e.to_string())?;
+    let conn = db.conn();
+    if let Err(e) = highlights::adopt_from_cache(conn, vault_path) {
+        log::warn!("feed highlights: could not move the cache's into the vault: {e}");
+    }
+    article_identity(conn, article_id)
+}
+
 #[tauri::command]
 pub fn feed_get_highlights(
+    vault_path: String,
     db: tauri::State<'_, DbState>,
     article_id: String,
 ) -> Result<Vec<Highlight>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let conn = db.conn();
-    let (source_id, guid) = article_identity(conn, &article_id)?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, source_id, guid, text, occurrence, note, created_at
-             FROM feed_highlights
-             WHERE source_id = ?1 AND guid = ?2
-             ORDER BY occurrence ASC, created_at ASC",
-        )
-        .map_err(|e| format!("Query error: {}", e))?;
-
-    let highlights = stmt
-        .query_map(params![source_id, guid], row_to_highlight)
-        .map_err(|e| format!("Query map error: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(highlights)
+    let (source_id, guid) = identity_for_highlights(&db, &vault_path, &article_id)?;
+    Ok(highlights::on_article(&vault_path, &source_id, &guid)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(Highlight::from)
+        .collect())
 }
 
 #[tauri::command]
 pub fn feed_add_highlight(
+    vault_path: String,
     db: tauri::State<'_, DbState>,
     article_id: String,
     text: String,
@@ -1950,52 +1960,27 @@ pub fn feed_add_highlight(
         return Err("Nothing was selected".to_string());
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
-    let conn = db.conn();
-    let (source_id, guid) = article_identity(conn, &article_id)?;
-
-    let highlight = Highlight {
+    let (source_id, guid) = identity_for_highlights(&db, &vault_path, &article_id)?;
+    let now = crate::syn::vault_json::now_stamp();
+    let stored = highlights::Stored {
         id: uuid::Uuid::new_v4().to_string(),
         source_id,
         guid,
         text: trimmed.to_string(),
         occurrence: occurrence.max(0),
         note: note.unwrap_or_default(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: now.clone(),
+        updated_at: now,
+        removed_at: String::new(),
     };
-
-    conn.execute(
-        "INSERT INTO feed_highlights
-            (id, source_id, guid, text, occurrence, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            highlight.id,
-            highlight.source_id,
-            highlight.guid,
-            highlight.text,
-            highlight.occurrence,
-            highlight.note,
-            highlight.created_at,
-        ],
-    )
-    .map_err(|e| format!("Insert error: {}", e))?;
-
-    Ok(highlight)
+    highlights::add(&vault_path, stored.clone()).map_err(|e| e.to_string())?;
+    Ok(Highlight::from(stored))
 }
 
 #[tauri::command]
-pub fn feed_remove_highlight(
-    db: tauri::State<'_, DbState>,
-    highlight_id: String,
-) -> Result<(), String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
-    db.conn()
-        .execute(
-            "DELETE FROM feed_highlights WHERE id = ?1",
-            params![highlight_id],
-        )
-        .map_err(|e| format!("Delete error: {}", e))?;
-    Ok(())
+pub fn feed_remove_highlight(vault_path: String, highlight_id: String) -> Result<(), String> {
+    highlights::remove(&vault_path, &highlight_id, &crate::syn::vault_json::now_stamp())
+        .map_err(|e| e.to_string())
 }
 
 // ═══════════════════════════════════════════════════════════════

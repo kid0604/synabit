@@ -143,17 +143,16 @@ pub fn reset(
     }
 
     // 4. The index, which is only ever a reading of the two above.
-    // The corrections table is made the first time somebody puts a reading
-    // right, so it may not be there at all.
-    super::reader::corrections(conn)?;
+    // Corrections are not in it, and are not reset: they are what the person
+    // taught the reader about how they write, in `Timeline/corrections/`, and
+    // that is as true of the next reading as it was of the last.
     conn.execute_batch(
         "DELETE FROM event_links;
          DELETE FROM events;
          DELETE FROM extract_runs;
          DELETE FROM extract_drops;
          DELETE FROM month_files;
-         DELETE FROM node_sources;
-         DELETE FROM reader_corrections;",
+         DELETE FROM node_sources;",
     )
     .map_err(|e| AppError::General(format!("timeline reset: {e}")))?;
 

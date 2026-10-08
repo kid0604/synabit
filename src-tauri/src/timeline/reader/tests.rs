@@ -1164,20 +1164,77 @@ fn a_change_says_which_fields_the_person_wrote_themselves() {
 #[test]
 fn what_the_person_put_right_is_told_to_the_next_reading() {
     let store = TimelineStore::open_in_memory().unwrap();
+    let (_dir, vault_path) = vault();
     for correction in [
         Correction { field: "title".into(), before: "Họp với team".into(), after: "Họp UAT v2 với MDP".into() },
         Correction { field: "person".into(), before: "Cam".into(), after: "Cam (con)".into() },
     ] {
-        remember_correction(store.conn(), &correction).unwrap();
+        remember_correction(store.conn(), &vault_path, "mac", &correction).unwrap();
     }
-    let learned = corrections(store.conn()).unwrap();
+    let learned = corrections(store.conn(), &vault_path).unwrap();
     assert_eq!(learned.len(), 2);
 
-    let (_dir, vault_path) = vault();
     let db = the_vault();
     let (plan, _) = plan_of(&db, &store, &vault_path, "2026-09-01");
     let sent = message(plan.pending.iter().find(|b| b.day == day("2026-07-21")).unwrap());
     assert!(sent.contains("CORRECTIONS THE WRITER MADE BEFORE"), "{sent}");
     assert!(sent.contains("title \"Họp với team\" → \"Họp UAT v2 với MDP\""), "{sent}");
     assert!(sent.contains("people \"Cam\" → Cam (con)"), "{sent}");
+}
+
+/// A correction is the person's decision (§4.7, tier 2): deleting
+/// `timeline.db` must not take it.
+#[test]
+fn a_correction_survives_the_index_being_deleted() {
+    let (_dir, vault_path) = vault();
+    {
+        let store = TimelineStore::open_in_memory().unwrap();
+        let c = Correction { field: "title".into(), before: "Họp".into(), after: "Họp UAT".into() };
+        remember_correction(store.conn(), &vault_path, "mac", &c).unwrap();
+    }
+    let fresh = TimelineStore::open_in_memory().unwrap();
+    let learned = corrections(fresh.conn(), &vault_path).unwrap();
+    assert_eq!(learned, [Correction { field: "title".into(), before: "Họp".into(), after: "Họp UAT".into() }]);
+    assert!(std::path::Path::new(&vault_path).join(CORRECTIONS_DIR).join("mac.json").exists());
+}
+
+/// Every device's corrections are read, newest last, and no more than a
+/// reading is told about.
+#[test]
+fn corrections_from_every_device_are_read_together() {
+    let (_dir, vault_path) = vault();
+    let store = TimelineStore::open_in_memory().unwrap();
+    for n in 0..CORRECTIONS + 5 {
+        let device = if n % 2 == 0 { "mac" } else { "phone" };
+        let c = Correction { field: "title".into(), before: format!("b{n}"), after: format!("a{n}") };
+        remember_correction(store.conn(), &vault_path, device, &c).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let learned = corrections(store.conn(), &vault_path).unwrap();
+    assert_eq!(learned.len(), CORRECTIONS);
+    assert_eq!(learned.last().unwrap().after, format!("a{}", CORRECTIONS + 4));
+}
+
+/// A `timeline.db` from before corrections moved: they are read in the
+/// meantime, moved into this device's file once, and the table goes.
+#[test]
+fn an_old_indexs_corrections_move_into_the_vault() {
+    let (_dir, vault_path) = vault();
+    let store = TimelineStore::open_in_memory().unwrap();
+    store
+        .conn()
+        .execute_batch(
+            "CREATE TABLE reader_corrections (at TEXT NOT NULL, field TEXT NOT NULL,
+                 before_text TEXT NOT NULL, after_text TEXT NOT NULL);
+             INSERT INTO reader_corrections VALUES ('2026-09-01T00:00:00Z', 'person', 'Cam', 'Cam (con)');",
+        )
+        .unwrap();
+    assert_eq!(corrections(store.conn(), &vault_path).unwrap().len(), 1, "read before it is moved");
+
+    assert_eq!(move_legacy_corrections(store.conn(), &vault_path, "mac").unwrap(), 1);
+    assert_eq!(move_legacy_corrections(store.conn(), &vault_path, "mac").unwrap(), 0);
+
+    let fresh = TimelineStore::open_in_memory().unwrap();
+    let learned = corrections(fresh.conn(), &vault_path).unwrap();
+    assert_eq!(learned, [Correction { field: "person".into(), before: "Cam".into(), after: "Cam (con)".into() }]);
 }
