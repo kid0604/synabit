@@ -21,7 +21,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { load } from '@tauri-apps/plugin-store';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { KeyRound, Lock, Search } from 'lucide-vue-next';
-import { i18n } from './i18n';
+import { i18n, setAppLocale } from './i18n';
 import { logger } from './utils/logger';
 import { safeCode, useSafeApi, type ItemSummary } from './mini-apps/safe/api';
 import { kindInfo } from './mini-apps/safe/kinds';
@@ -167,7 +167,7 @@ onMounted(async () => {
   try {
     const settings = await load('settings.json', { autoSave: false } as never);
     const language = await settings.get<'en' | 'vi'>('appLanguage');
-    if (language) i18n.global.locale.value = language;
+    if (language) await setAppLocale(language);
     vaultPath.value = (await settings.get<string>('vaultPath')) || '';
     const theme = await settings.get<'light' | 'dark' | 'system'>('themeMode');
     const dark = theme === 'dark' || (theme !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);

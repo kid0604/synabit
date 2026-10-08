@@ -5,7 +5,7 @@ import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
 import { showAppNotice } from '../../../composables/useAppNotice';
 import { asFieldKind, type FieldKind } from '../../../shared/fieldValue';
-import { iconNamed, setChosenIcons } from '../../../shared/views/nodeTypeIcon';
+import { ensureIconsKnown, iconNamed, setChosenIcons } from '../../../shared/views/nodeTypeIcon';
 
 /**
  * A kind's shape, once somebody has an opinion about it.
@@ -92,6 +92,9 @@ export function useThingsSchema() {
       // is to say nothing. The files were written and never read back, and
       // every edit looked like it had done nothing at all.
       const rows = await ns.getNodeSummaries('schema');
+      // `readIcon` judges a name synchronously, and most of Lucide is fetched
+      // only when something outside the built-in set is asked for.
+      await ensureIconsKnown(rows.map(row => (row.properties as Record<string, unknown> | undefined)?.icon));
       schemas.value = rows
         .map(row => {
           const props = (row.properties ?? {}) as Record<string, unknown>;

@@ -4,6 +4,7 @@ import { Type, FileText, Search, PanelLeft, PanelLeftClose, PanelRight, PanelRig
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { useNodeService } from '../../composables/useNodeService';
 import { showAppNotice } from '../../composables/useAppNotice';
 
@@ -698,6 +699,10 @@ onUnmounted(() => {
     window.removeEventListener('synabit-navigate', onSynabitNavigate as EventListener);
 });
 
+// A rescan when the vault changes — not while the Notes screen is hidden, when
+// it is marked stale and done once on the way back.
+const vault = useVaultReload(() => scanVault());
+
 onMounted(async () => {
     window.addEventListener('mousemove', sidebar.onMouseMove);
     window.addEventListener('mouseup', sidebar.onMouseUp);
@@ -747,16 +752,18 @@ onMounted(async () => {
         tabs.reloadNoteFile(id, () => !save.saveTimeouts.has(id));
     });
 
-    bus.on('vault:changed', () => { scanVault(); });
+    bus.on('vault:changed', () => vault.whenShown());
 
+    // The suppression is read when the event arrives, not when the scan runs:
+    // it is about whether this event was our own save coming back.
     bus.on('vault:file-modified', () => {
         if (Date.now() < save.getSuppressWatcherUntil()) return;
-        scanVault();
+        vault.whenShown();
     });
 
     bus.on('vault:file-created-deleted', () => {
         if (Date.now() < save.getSuppressWatcherUntil()) return;
-        scanVault();
+        vault.whenShown();
     });
 
     bus.on('vault:sync-completed', (payload: any) => {

@@ -1,9 +1,10 @@
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import type { Ref } from 'vue';
 import type { TaskMetadata, EventMetadata } from '../types';
 import type { EventsInRange } from '../../../types/ipc';
 import { indexOccurrencesByDate } from '../helpers';
 import { logger } from '../../../utils/logger';
+import { useVaultReload } from '../../../composables/useVaultReload';
 import { getTodayStr, taskProperties } from '../../task/types';
 
 export function useCalendarData(
@@ -130,13 +131,10 @@ export function useCalendarData(
         }
     };
 
-    // Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
-    let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedLoad = (ms = 300) => {
-        if (_debounceTimer) clearTimeout(_debounceTimer);
-        _debounceTimer = setTimeout(() => { loadData(); }, ms);
-    };
-    onUnmounted(() => { if (_debounceTimer) clearTimeout(_debounceTimer); });
+    // Coalesces rapid-fire events (e.g. node:updated + vault:file-modified),
+    // and waits for the calendar to be shown again when it is hidden.
+    const vaultReload = useVaultReload(() => loadData());
+    const debouncedLoad = () => vaultReload.schedule();
 
     onMounted(() => {
         loadData();

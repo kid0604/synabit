@@ -26,8 +26,22 @@
  * showing most of the time.
  */
 import { ref } from 'vue';
-import mermaid from 'mermaid';
+import type { Mermaid } from 'mermaid';
 import { i18n } from '../i18n';
+
+/**
+ * Mermaid is over a megabyte, and most sessions never draw a diagram. It is
+ * fetched the first time one is asked for, not when a module that might draw
+ * one is imported — so the editor, the chat and the whiteboard no longer carry
+ * it in their own load.
+ */
+let library: Promise<Mermaid> | null = null;
+const loadMermaid = (): Promise<Mermaid> => {
+  library ??= import('mermaid').then(m => m.default);
+  // A failed fetch must not be cached, or every later diagram fails with it.
+  library.catch(() => { library = null; });
+  return library;
+};
 
 export type DiagramTheme = 'dark' | 'default';
 
@@ -65,7 +79,7 @@ let configuredFor: DiagramTheme | null = null;
  * call that used to be made from everywhere. Making it here, once per theme
  * change, is what stops one surface's idea of a diagram becoming everyone's.
  */
-const configure = () => {
+const configure = (mermaid: Mermaid) => {
   if (configuredFor === diagramTheme.value) return;
   configuredFor = diagramTheme.value;
   mermaid.initialize({
@@ -105,8 +119,9 @@ export const renderDiagram = (id: string, code: string): Promise<Drawn> => {
     // event loop first lets the page paint what the last one produced, and
     // lets a click be heard, between one picture and the next.
     await new Promise(resolve => setTimeout(resolve, 0));
-    configure();
     try {
+      const mermaid = await loadMermaid();
+      configure(mermaid);
       const { svg } = await mermaid.render(id, code);
       return { svg };
     } catch (e) {

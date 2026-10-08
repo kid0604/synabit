@@ -485,6 +485,7 @@ const refreshQuickCapCount = async () => {
 // capture arrives even when the user never opens that tab.
 const { drainCaptures } = useCaptureIntake();
 let stopCaptureListener: (() => void) | null = null;
+let stopOpenUrlListener: (() => void) | null = null;
 
 watch(
     vaultPath,
@@ -687,7 +688,10 @@ const callWhenReady = (getRef: () => any, method: string, ...args: any[]) => {
     let attempts = 0;
     const interval = setInterval(() => {
         const componentRef = getRef();
-        if (componentRef && typeof componentRef[method] === 'function') {
+        // An app the keep-alive dropped (`:max`) leaves its ref pointing at the
+        // unmounted instance until the new one mounts; calling into that would
+        // be heard by nobody. Wait for the live one instead.
+        if (componentRef && !componentRef.$?.isUnmounted && typeof componentRef[method] === 'function') {
             clearInterval(interval);
             componentRef[method](...args);
         } else if (attempts >= 40) { // 2 seconds max
@@ -980,6 +984,10 @@ const askThread = ref<string | undefined>(undefined);
  */
 const { enabled: synEnabled } = useSynEnabled(() => vaultPath.value ?? '');
 
+/** A protected mini-app that has not been unlocked this session. */
+const isRouteLocked = (name: string): boolean =>
+    appLockStore.isEnabled && appLockStore.isAppProtected(name) && !appLockStore.isMiniAppAccessible(name);
+
 const askBarAllowed = computed(() => {
     if (!vaultPath.value) return false;
     if (!synEnabled.value) return false;
@@ -1222,7 +1230,7 @@ onMounted(async () => {
   // Both deep-link paths are needed: `getCurrent` for a cold start, where the
   // URL arrived before anything was listening, and `onOpenUrl` for a shortcut
   // used while the app is already running.
-  await onOpenUrl((urls) => {
+  stopOpenUrlListener = await onOpenUrl((urls) => {
     if (urls.some(isComposeUrl)) openCompose();
   });
 
@@ -1511,6 +1519,7 @@ let ledgerSweepTimer: ReturnType<typeof setTimeout> | undefined;
 
 onUnmounted(() => {
   stopCaptureListener?.();
+  stopOpenUrlListener?.();
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   document.removeEventListener('click', followExternalLink);
   document.removeEventListener('auxclick', followExternalLink);
@@ -1893,15 +1902,34 @@ onUnmounted(() => {
         <!-- MINI APP CONTENT AREA (Vue Router + KeepAlive) -->
         <div class="flex-1 h-full overflow-hidden relative">
             <router-view v-slot="{ Component, route }">
-                <!-- Tier 2: Show PIN pad directly for protected mini-apps -->
+                <!--
+                  Tier 2: Show PIN pad directly for protected mini-apps.
+
+                  Beside the keep-alive, not instead of it. When this was the
+                  `v-if` and the keep-alive its `v-else`, opening a locked app
+                  unmounted the keep-alive and every app cached in it — each
+                  one's open note, scroll and draft gone for a PIN prompt.
+
+                  The locked app itself is not rendered: its `<component>` is
+                  `v-if`ed out below, so the keep-alive renders nothing. If it
+                  had been opened before, its cached instance is deactivated,
+                  which takes its DOM out of the document — nothing of it sits
+                  behind the PIN pad to be read or tabbed to.
+                -->
                 <LockScreen
-                    v-if="appLockStore.isEnabled && appLockStore.isAppProtected(route.name as string) && !appLockStore.isMiniAppAccessible(route.name as string)"
+                    v-if="isRouteLocked(route.name as string)"
                     :title="$t('shell.lock.enter_pin_for_app', { app: getAppName(route.name as string) })"
                     @unlocked="appLockStore.unlockMiniApp(route.name as string)"
                     @cancelled="router.back()"
                 />
-                <keep-alive v-else>
+                <!--
+                  Five apps kept warm, the least recently used dropped. Every
+                  cached app stays mounted and subscribed to the vault, so
+                  without a bound a long session holds all twelve.
+                -->
+                <keep-alive :max="5">
                     <component 
+                        v-if="!isRouteLocked(route.name as string)"
                         :is="Component" 
                         :key="route.name"
                         :vault-path="vaultPath" 

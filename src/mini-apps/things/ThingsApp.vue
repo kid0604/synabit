@@ -42,7 +42,7 @@ import RenameKindDialog from '../../shared/views/RenameKindDialog.vue';
 import SchemaManager from '../../shared/views/SchemaManager.vue';
 import TemplatePicker from './components/TemplatePicker.vue';
 import { kindFromTemplate, templateCreates, templateKindNames, existingTemplateKind, type KindTemplate } from './templates';
-import { i18n } from '../../i18n';
+import { i18n, loadAllLocales } from '../../i18n';
 import { iconNamed } from '../../shared/views/nodeTypeIcon';
 import UndoToast from '../../shared/components/UndoToast.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
@@ -951,7 +951,9 @@ const startFromTemplate = async (template: KindTemplate) => {
     ...schema.schemas.value.map(s => s.nodeType),
   ];
   // In any case and in any language the app speaks: the same template picked
-  // before a language switch made `book`, and must not make `sách` now.
+  // before a language switch made `book`, and must not make `sách` now — so
+  // every language, including ones this session has not fetched.
+  await loadAllLocales().catch(() => undefined);
   const translators = i18n.global.availableLocales.map(locale =>
     (key: string) => i18n.global.t(key, {}, { locale }));
   const already = existingTemplateKind([nodeType, ...templateKindNames(template, translators)], existing);

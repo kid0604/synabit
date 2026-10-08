@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { usePlatform } from '../../composables/usePlatform';
 import { Rss, RefreshCw, Plus, Settings, Filter, X } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
@@ -630,12 +631,13 @@ const handleArticleUpdated = (updated: CachedArticle) => {
   }
 };
 
-// Debounce
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedLoad = (fn: () => void, ms = 300) => {
-  if (_debounceTimer) clearTimeout(_debounceTimer);
-  _debounceTimer = setTimeout(fn, ms);
-};
+// Coalesces rapid-fire events, and waits for the screen to be shown again
+// when it is hidden — then re-reads everything, read state included.
+const vault = useVaultReload(async () => {
+  await loadData();
+  await reconcileReadState();
+});
+const debouncedLoad = (fn: () => unknown) => vault.schedule(fn);
 
 // Search debounce
 let searchTimer: ReturnType<typeof setTimeout> | null = null;

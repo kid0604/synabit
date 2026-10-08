@@ -1,9 +1,21 @@
 <script setup lang="ts">
 import { NodeViewWrapper, nodeViewProps } from '@tiptap/vue-3';
-import { ref, computed, nextTick, onMounted } from 'vue';
-import katex from 'katex';
+import { ref, shallowRef, computed, nextTick, onMounted } from 'vue';
+import type Katex from 'katex';
 import { useI18n } from 'vue-i18n';
 import 'katex/dist/katex.min.css';
+
+/**
+ * KaTeX is fetched the first time a note holds an equation, not with the
+ * editor: most notes have none, and the editor is loaded by four screens.
+ * One promise for every equation on the page.
+ */
+let katexLoading: Promise<typeof Katex> | null = null;
+const loadKatex = () => {
+  katexLoading ??= import('katex').then(m => m.default);
+  katexLoading.catch(() => { katexLoading = null; });
+  return katexLoading;
+};
 
 const props = defineProps(nodeViewProps);
 const { t } = useI18n();
@@ -11,6 +23,9 @@ const { t } = useI18n();
 /** Text going into `v-html`, so a message that holds `<` stays text. */
 const escapeHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+const katex = shallowRef<typeof Katex | null>(null);
+loadKatex().then(k => { katex.value = k; }).catch(() => undefined);
 
 const isEditing = ref(false);
 const inputRef = ref<HTMLInputElement | null>(null);
@@ -34,8 +49,10 @@ const latexContent = computed({
 
 const renderedHtml = computed(() => {
    if (!latexContent.value) return `<span class="text-gray-500 dark:text-gray-400 text-sm">${escapeHtml(t('note.editor.equation_empty'))}</span>`;
+   // Until KaTeX lands, the source itself — the same characters, not a blank.
+   if (!katex.value) return `<span class="font-mono text-sm">${escapeHtml(latexContent.value)}</span>`;
    try {
-      return katex.renderToString(latexContent.value, {
+      return katex.value.renderToString(latexContent.value, {
          throwOnError: false,
          displayMode: false // Inline display mode
       });

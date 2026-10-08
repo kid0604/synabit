@@ -5,6 +5,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import DOMPurify from 'dompurify';
 import { useIntersectionObserver, useWindowSize } from '@vueuse/core';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { usePlatform } from '../../composables/usePlatform';
 import { useNodeService } from '../../composables/useNodeService';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
@@ -1199,6 +1200,10 @@ const repairStorageOnce = async () => {
     }
 };
 
+// Coalesces a burst of vault events into one read, and waits for the screen
+// to be shown again when it is hidden.
+const vault = useVaultReload(() => loadCaps());
+
 onMounted(() => {
     window.addEventListener('paste', handleGlobalPaste);
     window.addEventListener('keydown', handleGlobalKeydown);
@@ -1209,17 +1214,9 @@ onMounted(() => {
 
     void loadThumbnails();
 
-    bus.on('vault:file-modified', () => {
-        loadCaps();
-    });
-
-    bus.on('vault:file-created-deleted', () => {
-        loadCaps();
-    });
-
-    bus.on('vault:sync-completed', () => {
-        loadCaps();
-    });
+    bus.on('vault:file-modified', () => vault.schedule());
+    bus.on('vault:file-created-deleted', () => vault.schedule());
+    bus.on('vault:sync-completed', () => vault.schedule());
 });
 
 onUnmounted(() => {

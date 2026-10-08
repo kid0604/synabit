@@ -4,7 +4,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { useAppLockStore } from '../stores/useAppLockStore';
 import { useEventBus } from './useEventBus';
 import { invoke } from '@tauri-apps/api/core';
-import { i18n } from '../i18n';
+import { i18n, setAppLocale } from '../i18n';
 import { applyUiScale } from '../utils/uiScale';
 
 /**
@@ -86,7 +86,9 @@ export function useSettings() {
 
     // Sync initial language. `lang` on the root too, so a screen reader
     // reads Vietnamese with a Vietnamese voice rather than an English one.
-    i18n.global.locale.value = appLanguage.value as any;
+    // Awaited: a language other than English is fetched on first use, and the
+    // tray menu is translated from whatever is loaded.
+    await setAppLocale(appLanguage.value);
     document.documentElement.lang = appLanguage.value;
     void translateTrayMenu();
 
@@ -100,8 +102,8 @@ export function useSettings() {
     });
 
     // Watch for language changes to update i18n
-    watch(appLanguage, (newLang) => {
-      i18n.global.locale.value = newLang as any;
+    watch(appLanguage, async (newLang) => {
+      await setAppLocale(newLang);
       document.documentElement.lang = newLang;
       void translateTrayMenu();
     });

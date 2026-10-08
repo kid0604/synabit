@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { useNodeService } from '../../composables/useNodeService';
 import { Users, Plus, Mail, Phone, Building, Hash, Search, Edit2, Gift, Briefcase, LayoutDashboard, Clock, FileText, Share2, ArrowUpDown, AlertCircle, CalendarPlus, UserPlus, Upload, Download } from 'lucide-vue-next';
 import PersonModal from './PersonModal.vue';
@@ -276,20 +277,17 @@ watch(() => selectedPerson.value?.id, (newId, oldId) => {
     }
 });
 
-// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedLoad = (fn: () => void, ms = 300) => {
-    if (_debounceTimer) clearTimeout(_debounceTimer);
-    _debounceTimer = setTimeout(fn, ms);
+const refreshAll = () => {
+    fetchPeople();
+    if (financeLoaded) loadFinance(true);
+    if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
 };
 
-const debouncedRefreshAll = () => {
-    debouncedLoad(() => {
-        fetchPeople();
-        if (financeLoaded) loadFinance(true);
-        if (selectedPerson.value) fetchLinkedNodes(selectedPerson.value.title, selectedPerson.value.id);
-    });
-};
+// Coalesces rapid-fire events (e.g. node:updated + vault:file-modified), and
+// waits for the screen to be shown again when it is hidden.
+const vault = useVaultReload(refreshAll);
+const debouncedLoad = (fn: () => unknown) => vault.schedule(fn);
+const debouncedRefreshAll = () => vault.schedule();
 
 onMounted(async () => {
     // Move anything still kept the old way before the list is drawn from it.
@@ -360,11 +358,9 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+    // Event-bus subscriptions clean themselves up, and so does a refresh
+    // queued on the way out (`useVaultReload`); this one never did.
     window.removeEventListener('resize', handleResize);
-    // A refresh queued on the way out would run against a screen that is no
-    // longer there. Event-bus subscriptions clean themselves up; these two
-    // never did.
-    if (_debounceTimer) clearTimeout(_debounceTimer);
 });
 
 // ─── Saved segments ─────────────────────────────────────────

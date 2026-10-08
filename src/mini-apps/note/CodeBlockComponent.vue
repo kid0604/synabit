@@ -107,10 +107,38 @@ import { useI18n } from 'vue-i18n';
 import { renderDiagram, diagramId, diagramTheme } from '../../shared/mermaid';
 import DiagramViewer from '../../shared/components/DiagramViewer.vue';
 import QueryResultTable from './QueryResultTable.vue';
-import { Transformer } from 'markmap-lib';
-import { Markmap, deriveOptions } from 'markmap-view';
-import { Toolbar } from 'markmap-toolbar';
+import { grammarsLoaded } from './editor/codeHighlight';
+import type { Transformer } from 'markmap-lib';
+import type { Markmap, deriveOptions } from 'markmap-view';
+import type { Toolbar } from 'markmap-toolbar';
 import 'markmap-toolbar/dist/style.css';
+
+/**
+ * Markmap — its parser, its view and its toolbar — is fetched the first time a
+ * block asks to be drawn as one, not with the editor every note screen loads.
+ * One promise for every block; a failed fetch is not kept.
+ */
+interface MarkmapLibs {
+  transformer: Transformer;
+  Markmap: typeof Markmap;
+  deriveOptions: typeof deriveOptions;
+  Toolbar: typeof Toolbar;
+}
+let markmapLoading: Promise<MarkmapLibs> | null = null;
+const loadMarkmap = (): Promise<MarkmapLibs> => {
+  markmapLoading ??= Promise.all([
+    import('markmap-lib'),
+    import('markmap-view'),
+    import('markmap-toolbar'),
+  ]).then(([lib, view, toolbar]) => ({
+    transformer: new lib.Transformer(),
+    Markmap: view.Markmap,
+    deriveOptions: view.deriveOptions,
+    Toolbar: toolbar.Toolbar,
+  }));
+  markmapLoading.catch(() => { markmapLoading = null; });
+  return markmapLoading;
+};
 
 const props = defineProps(nodeViewProps);
 const { t } = useI18n();
@@ -118,7 +146,12 @@ const { t } = useI18n();
 const copied = ref(false);
 const displayMode = ref<'code' | 'split' | 'preview'>('split');
 
-const languages = props.extension.options.lowlight.listLanguages();
+// Recomputed when highlight.js's grammars arrive: the editor shows a note
+// before they are fetched, and the dropdown would otherwise stay at three.
+const languages = computed(() => {
+  void grammarsLoaded.value;
+  return props.extension.options.lowlight.listLanguages();
+});
 
 const selectedLanguage = computed({
   get: () => props.node.attrs.language,
@@ -194,8 +227,6 @@ let markmapRenderTimeout: number | null = null;
 let markmapResizeObserver: ResizeObserver | null = null;
 let pendingMarkmapData: { root: any, options: any } | null = null;
 
-const markmapTransformer = new Transformer();
-
 const renderMarkmap = async () => {
   if (selectedLanguage.value !== 'markmap') return;
   const content = props.node.textContent;
@@ -217,7 +248,10 @@ const renderMarkmap = async () => {
 
   try {
     markmapError.value = '';
-    const { root, features } = markmapTransformer.transform(content);
+    const { transformer, Markmap, deriveOptions, Toolbar } = await loadMarkmap();
+    // The block may have changed language, or gone, while the library came.
+    if (selectedLanguage.value !== 'markmap' || !svgEl.isConnected) return;
+    const { root, features } = transformer.transform(content);
     const derivedOptions = deriveOptions(features);
     
     // Store data to be applied once we have layout

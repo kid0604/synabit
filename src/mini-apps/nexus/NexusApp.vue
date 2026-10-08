@@ -3,6 +3,7 @@ import { computed, ref, onMounted, onUnmounted, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useRouter } from 'vue-router';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { Search, FileText, CheckSquare, Zap, X, ChevronRight, Tag, File, Calendar, PenTool, Users, Lock, Scale, Share2, CalendarDays, Sparkles, SlidersHorizontal, Lightbulb } from 'lucide-vue-next';
 import DOMPurify from 'dompurify';
 import GraphView from './components/GraphView.vue';
@@ -535,12 +536,10 @@ watch(caseSensitive, () => {
     if (searchQuery.value.trim()) performSearch();
 });
 
-// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedLoad = (fn: () => void, ms = 300) => {
-    if (_debounceTimer) clearTimeout(_debounceTimer);
-    _debounceTimer = setTimeout(fn, ms);
-};
+// Coalesces rapid-fire events (e.g. node:updated + vault:file-modified), and
+// waits for the screen to be shown again when it is hidden.
+const vault = useVaultReload(() => reload());
+const debouncedLoad = (fn: () => unknown) => vault.schedule(fn);
 
 /**
  * Re-read the vault, and re-run the query if one is open. The query has to go

@@ -18,7 +18,6 @@ import { Table, TableRow } from '@tiptap/extension-table';
 import TextAlign from '@tiptap/extension-text-align';
 import { TextStyle } from '@tiptap/extension-text-style';
 import { Color } from '@tiptap/extension-color';
-import { common, createLowlight } from 'lowlight';
 import { Markdown } from 'tiptap-markdown';
 import { EquationExtension } from './EquationExtension';
 import { VideoExtension } from './VideoExtension';
@@ -87,30 +86,8 @@ import EmbedPickerModal from './EmbedPickerModal.vue';
 import PdfModal from './editor/components/modals/PdfModal.vue';
 import EmojiPickerModal from './editor/components/modals/EmojiPickerModal.vue';
 import EditorToolbar from './editor/toolbar/EditorToolbar.vue';
-import { useWindowSize } from '@vueuse/core';
-
-const lowlight = createLowlight(common);
-
-/**
- * `mermaid`, `markmap` and `query` are ours, not highlight.js's — a diagram or
- * a saved query, rendered below the block rather than coloured inside it.
- *
- * Registering them as plain text is what keeps typing in them fast. The
- * lowlight plugin falls back to `highlightAuto` for any language it does not
- * know, which runs the block through every grammar it has; and it re-runs that
- * for *every* code block in the note on every keystroke made inside one. On a
- * note of five mermaid diagrams that measured 150ms per character, against
- * 5ms once the language is known — a note you could watch yourself type.
- *
- * Naming them here also puts them in the block's language dropdown, which
- * until now could not display the language the block was actually set to.
- */
-for (const name of ['mermaid', 'markmap', 'query']) {
-  // Written out rather than reusing highlight.js's own `plaintext`, which
-  // carries the `text` and `txt` aliases with it and would hand them to
-  // whichever of these three registered last.
-  lowlight.register(name, () => ({ name, contains: [], disableAutodetect: true }));
-}
+import { useWindowSize, useEventListener } from '@vueuse/core';
+import { lowlight, loadCodeGrammars, rehighlight } from './editor/codeHighlight';
 
 const props = defineProps<{
   modelValue: string;
@@ -1010,13 +987,19 @@ onMounted(() => {
     location.setEditor(editor.value);
   }
 
-  // Listen for whiteboard embed "Open in Whiteboard" events
+  // Listen for whiteboard embed "Open in Whiteboard" events. Through
+  // `useEventListener`, so the listener goes when this component does.
   const editorDom = editor.value?.view?.dom;
   if (editorDom) {
-    editorDom.addEventListener('open-whiteboard-embed', ((e: CustomEvent) => {
+    useEventListener(editorDom, 'open-whiteboard-embed', ((e: CustomEvent) => {
       emit('open-internal-note', { id: e.detail.id, type: 'whiteboard' });
     }) as EventListener);
   }
+
+  // Code colours, after the note is on screen rather than before it.
+  loadCodeGrammars()
+    .then(() => { if (editor.value) rehighlight(editor.value); })
+    .catch((e) => logger.warn('[Editor] Code highlighting failed to load', e));
 });
 
 /**

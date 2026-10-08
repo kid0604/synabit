@@ -15,11 +15,11 @@
  * Results are capped. Rendering nineteen hundred buttons to answer `a` is a
  * slow frame for a list nobody reads past the first row of.
  */
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Check, RotateCcw } from 'lucide-vue-next';
 
-import { ICON_NAMES, SUGGESTED_ICONS, iconNamed, iconForNodeType } from './nodeTypeIcon';
+import { ICON_NAMES, SUGGESTED_ICONS, iconNamed, iconForNodeType, loadIconCatalog } from './nodeTypeIcon';
 
 const props = defineProps<{
   nodeType: string;
@@ -38,6 +38,10 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const search = ref('');
+
+// The first page is drawn from icons already loaded; searching wants the whole
+// library, which is fetched now rather than with every screen that lists rows.
+onMounted(() => { loadIconCatalog().catch(() => undefined); });
 
 /** Enough to choose from, few enough to draw in one frame. */
 const MOST = 96;

@@ -3,7 +3,6 @@ import type { Ref, ComputedRef } from 'vue';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
 import { marked } from 'marked';
-import html2pdf from 'html2pdf.js';
 import { writeTextFile, writeFile } from '@tauri-apps/plugin-fs';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
@@ -166,6 +165,9 @@ ${htmlBody}
               pagebreak:    { mode: ['css', 'legacy', 'avoid-all'] }
             };
             
+            // About a megabyte of jsPDF and html2canvas, for a button few
+            // people press: fetched when they press it, not with the editor.
+            const { default: html2pdf } = await import('html2pdf.js');
             const pdfBlob = await html2pdf().set(opt).from(container).output('blob');
             document.body.removeChild(container);
             

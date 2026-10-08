@@ -3,6 +3,8 @@ import { ref, onMounted, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
+import { useEventListener } from '@vueuse/core';
 import { useNodeService } from '../../composables/useNodeService';
 import { open as openFileDialog, save as saveFileDialog } from '@tauri-apps/plugin-dialog';
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs';
@@ -91,6 +93,9 @@ const storageError = ref<string | null>(null);
 const loading = ref(true);
 
 const isMobile = ref(window.innerWidth < 768);
+// In setup rather than `onMounted`, where it sat after three awaits — past the
+// point Vue can tie anything to this component — and was never removed.
+useEventListener(window, 'resize', () => { isMobile.value = window.innerWidth < 768; });
 const isSidebarOpen = ref(false);
 const showSummaryStats = ref(window.innerWidth >= 768);
 
@@ -942,12 +947,9 @@ watch(() => route.query, () => {
     }
 });
 
-// Debounce wrapper: coalesces rapid-fire events (e.g. node:updated + vault:file-modified)
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedLoad = (fn: () => void, ms = 300) => {
-    if (_debounceTimer) clearTimeout(_debounceTimer);
-    _debounceTimer = setTimeout(fn, ms);
-};
+// Coalesces rapid-fire events (e.g. node:updated + vault:file-modified), and
+// waits for the screen to be shown again when it is hidden.
+const vault = useVaultReload(() => loadData());
 
 // Lifecycle
 /**
@@ -993,38 +995,35 @@ onMounted(async () => {
         // still needs the full pass.
         const finance = (paths || []).filter(p => p.includes('Finance'));
         if (finance.length > 0 && finance.every(isMonthPath)) {
-            finance.forEach(p => reloadMonth(p.replace(/\\/g, '/')));
+            vault.whenShown(() => finance.forEach(p => reloadMonth(p.replace(/\\/g, '/'))));
             return;
         }
-        debouncedLoad(() => loadData());
+        vault.schedule();
     });
 
-    const handleResize = () => { isMobile.value = window.innerWidth < 768; };
-    window.addEventListener('resize', handleResize);
-
     bus.on('vault:file-created-deleted', () => {
-        debouncedLoad(() => loadData());
+        vault.schedule();
     });
 
     bus.on('vault:sync-completed', () => {
-        debouncedLoad(() => loadData());
+        vault.schedule();
     });
 
     // Cross-app: refresh when finance data changes from other apps (e.g., TaskApp saves a finance_month)
     bus.on('node:created', ({ nodeType, id }) => {
         if (nodeType === 'finance_month' && id && isMonthPath(id)) {
-            reloadMonth(id);
+            vault.whenShown(() => reloadMonth(id));
             return;
         }
-        if (nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
+        if (nodeType === 'finance_config' || nodeType === 'finance_debts') vault.schedule();
     });
 
     bus.on('node:updated', ({ nodeType, id }) => {
         if (nodeType === 'finance_month' && id && isMonthPath(id)) {
-            reloadMonth(id);
+            vault.whenShown(() => reloadMonth(id));
             return;
         }
-        if (nodeType === 'finance_config' || nodeType === 'finance_debts') debouncedLoad(() => loadData());
+        if (nodeType === 'finance_config' || nodeType === 'finance_debts') vault.schedule();
     });
 });
 

@@ -1,9 +1,13 @@
-import * as lucide from 'lucide-vue-next';
 import {
   FileText, CheckSquare, Calendar, Users, Zap, Palette, FolderOpen,
   Wallet, Rss, Filter, Box, Scale,
+  Book, BookOpen, Bookmark, Lightbulb, Tag, Flag, Star, SquareCheck, Target,
+  Clock, Bell, Trophy, Wrench, House, Building2, MapPin, Briefcase,
+  GraduationCap, Sprout, Dog, Cat, Utensils, Coffee, Wine, Shirt, Heart, Pill,
+  Dumbbell, Plane, Car, Bike, Music, Film, Camera, Image, Gift, ShoppingCart,
+  Code, Terminal, Database, Server, Globe, Link, Microscope, TrendingUp, Package,
 } from 'lucide-vue-next';
-import { h, ref, render, watch, type Component } from 'vue';
+import { h, reactive, ref, render, watch, type Component } from 'vue';
 
 /**
  * An icon for a node type, with a shape for the ones nobody has heard of.
@@ -36,11 +40,6 @@ const ICONS: Readonly<Record<string, Component>> = {
 /**
  * Every icon the library ships, by the name Lucide itself uses.
  *
- * A namespace import, which defeats tree-shaking on purpose: the point is to
- * have all of them. About 137 KB gzipped over the fifty-odd this started with,
- * which on a Tauri app reading its assets off local disk is a parse cost and
- * not a download.
- *
  * Kebab-case rather than the JavaScript export name, because this string is
  * written into somebody's `Schema/<kind>.md` and read back by whatever version
  * is installed next. `file-text` is the name on lucide.dev, so a person
@@ -51,6 +50,16 @@ const ICONS: Readonly<Record<string, Component>> = {
  * and the extra names are Lucide's own trail of renames. A schema written
  * against an older name goes on resolving, which is the whole reason to store
  * their names rather than invent a second vocabulary.
+ *
+ * # Two halves
+ *
+ * The whole library is about 790 KB, and it used to be a namespace import
+ * here — which put it in the load of every screen that draws a row. Now the
+ * icons this app itself offers (the built-in kinds, the picker's first page,
+ * the templates) are imported by name and resolve at once; the rest of the
+ * library is fetched the first time somebody searches the picker or a schema
+ * names an icon outside that set. Until it lands such a kind draws its
+ * built-in icon, and redraws when it arrives: `iconChoiceVersion` moves.
  */
 function kebab(exported: string): string {
   return exported
@@ -60,9 +69,9 @@ function kebab(exported: string): string {
     .toLowerCase();
 }
 
-const BY_NAME: ReadonlyMap<string, Component> = (() => {
+const byKebab = (exports: Record<string, unknown>): Map<string, Component> => {
   const map = new Map<string, Component>();
-  for (const [exported, value] of Object.entries(lucide)) {
+  for (const [exported, value] of Object.entries(exports)) {
     // The module also exports helpers, and every icon a second time with a
     // `Lucide` prefix and a third with an `Icon` suffix.
     if (!/^[A-Z]/.test(exported)) continue;
@@ -71,13 +80,68 @@ const BY_NAME: ReadonlyMap<string, Component> = (() => {
     map.set(kebab(exported), value as Component);
   }
   return map;
-})();
+};
 
-/** Every name that can be stored, for a picker to search. */
-export const ICON_NAMES: readonly string[] = [...BY_NAME.keys()].sort();
+/** The icons this app names itself — available without loading anything. */
+const STATIC_BY_NAME: ReadonlyMap<string, Component> = byKebab({
+  FileText, CheckSquare, Calendar, Users, Zap, Palette, FolderOpen,
+  Wallet, Rss, Filter, Box, Scale,
+  Book, BookOpen, Bookmark, Lightbulb, Tag, Flag, Star, SquareCheck, Target,
+  Clock, Bell, Trophy, Wrench, House, Building2, MapPin, Briefcase,
+  GraduationCap, Sprout, Dog, Cat, Utensils, Coffee, Wine, Shirt, Heart, Pill,
+  Dumbbell, Plane, Car, Bike, Music, Film, Camera, Image, Gift, ShoppingCart,
+  Code, Terminal, Database, Server, Globe, Link, Microscope, TrendingUp, Package,
+});
+
+/** The whole library, once it has been fetched. */
+let fullByName: ReadonlyMap<string, Component> | null = null;
+let catalogLoading: Promise<void> | null = null;
+
+/**
+ * Every name that can be stored, for a picker to search.
+ *
+ * Starts as the names available without loading anything and becomes the whole
+ * library when `loadIconCatalog` resolves; reactive, so a picker that is open
+ * when it lands widens on its own.
+ */
+export const ICON_NAMES: string[] = reactive([...STATIC_BY_NAME.keys()].sort());
+
+/** Fetch the whole library. Safe to call any number of times. */
+export function loadIconCatalog(): Promise<void> {
+  if (fullByName) return Promise.resolve();
+  catalogLoading ??= import('lucide-vue-next')
+    .then((lucide) => {
+      fullByName = byKebab(lucide as unknown as Record<string, unknown>);
+      ICON_NAMES.splice(0, ICON_NAMES.length, ...[...fullByName.keys()].sort());
+      reapplyChoices();
+    })
+    .catch((err) => {
+      // Not cached, so the next ask tries again.
+      catalogLoading = null;
+      throw err;
+    });
+  return catalogLoading;
+}
+
+/**
+ * Make sure every one of these names can be judged known or unknown
+ * synchronously: fetches the library only if one of them is outside the set
+ * available without it. A failed fetch leaves those names reading as unknown.
+ */
+export async function ensureIconsKnown(names: Iterable<unknown>): Promise<void> {
+  if (fullByName) return;
+  for (const name of names) {
+    if (typeof name === 'string' && !STATIC_BY_NAME.has(name)) {
+      await loadIconCatalog().catch(() => undefined);
+      return;
+    }
+  }
+}
 
 export function iconNamed(name: string): Component | null {
-  return BY_NAME.get(name) ?? null;
+  // Read so a template that asked before the library landed asks again after.
+  void iconChoiceVersion.value;
+  return STATIC_BY_NAME.get(name) ?? fullByName?.get(name) ?? null;
 }
 
 /**
@@ -118,17 +182,30 @@ export const SUGGESTED_ICONS: readonly string[] = [
  */
 const chosen = new Map<string, string>();
 
+/** What was last asked for, including names still waiting on the library. */
+let asked: Array<[string, string]> = [];
+
 /** The registry's version, so a computed can depend on it. */
 export const iconChoiceVersion = ref(0);
 
-export function setChosenIcons(icons: Iterable<[string, string]>): void {
+function reapplyChoices(): void {
   chosen.clear();
-  for (const [nodeType, name] of icons) {
+  for (const [nodeType, name] of asked) {
     // Ignoring a name this version does not know rather than drawing nothing:
     // a schema file outlives the build that wrote it, and can be hand-edited.
-    if (BY_NAME.has(name)) chosen.set(nodeType, name);
+    if (STATIC_BY_NAME.has(name) || fullByName?.has(name)) chosen.set(nodeType, name);
   }
   iconChoiceVersion.value++;
+}
+
+export function setChosenIcons(icons: Iterable<[string, string]>): void {
+  asked = [...icons];
+  reapplyChoices();
+  // A name outside the built-in set may still be one of Lucide's: fetch the
+  // library, and the choice applies when it lands.
+  if (!fullByName && asked.some(([, name]) => !STATIC_BY_NAME.has(name))) {
+    loadIconCatalog().catch(() => undefined);
+  }
 }
 
 /** What this kind was given, or `null` — for a picker to show as selected. */

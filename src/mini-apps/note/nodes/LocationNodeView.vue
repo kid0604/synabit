@@ -5,7 +5,7 @@ import {
   MapPin, ExternalLink, RefreshCw, Pencil, Trash2, Check, X,
   AlignLeft, AlignCenter, AlignRight, Navigation
 } from 'lucide-vue-next';
-import L from 'leaflet';
+import type * as Leaflet from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { openUrl } from '@tauri-apps/plugin-opener';
 
@@ -20,8 +20,8 @@ const props = defineProps<{
 
 const mapContainer = ref<HTMLElement | null>(null);
 const blockRef = ref<HTMLElement | null>(null);
-let leafletMap: L.Map | null = null;
-let marker: L.Marker | null = null;
+let leafletMap: Leaflet.Map | null = null;
+let marker: Leaflet.Marker | null = null;
 
 const isRoute = computed(() => props.node.attrs.mode === 'route');
 const provider = computed(() => props.node.attrs.provider || 'osm');
@@ -174,22 +174,36 @@ function buildRouteEmbedUrl(url: string): string {
   return url.includes('output=embed') ? url : url + '&output=embed';
 }
 
-// Custom marker icons
-const pinIcon = L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#ef4444" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
-  className: 'location-pin-icon',
-  iconSize: [28, 28],
-  iconAnchor: [14, 28],
-  popupAnchor: [0, -28],
-});
+/**
+ * Leaflet is fetched the first time a note shows a map, not with the editor:
+ * the editor is loaded by four screens and most notes hold no location.
+ * One promise for every map on the page; a failed fetch is not kept.
+ */
+type LeafletModule = typeof Leaflet;
+let leafletLoading: Promise<LeafletModule> | null = null;
+const loadLeaflet = (): Promise<LeafletModule> => {
+  leafletLoading ??= import('leaflet').then(m => ((m as { default?: LeafletModule }).default ?? m) as LeafletModule);
+  leafletLoading.catch(() => { leafletLoading = null; });
+  return leafletLoading;
+};
 
-const originIcon = L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#22c55e" stroke="#fff" stroke-width="1.5"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
-  className: 'location-pin-icon', iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -28],
-});
-const destIcon = L.divIcon({
-  html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#ef4444" stroke="#fff" stroke-width="1.5"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
-  className: 'location-pin-icon', iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -28],
+// Custom marker icons — made once Leaflet is here.
+const makeIcons = (L: LeafletModule) => ({
+  pinIcon: L.divIcon({
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#ef4444" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
+    className: 'location-pin-icon',
+    iconSize: [28, 28],
+    iconAnchor: [14, 28],
+    popupAnchor: [0, -28],
+  }),
+  originIcon: L.divIcon({
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#22c55e" stroke="#fff" stroke-width="1.5"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
+    className: 'location-pin-icon', iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -28],
+  }),
+  destIcon: L.divIcon({
+    html: `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="#ef4444" stroke="#fff" stroke-width="1.5"><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>`,
+    className: 'location-pin-icon', iconSize: [28, 28], iconAnchor: [14, 28], popupAnchor: [0, -28],
+  }),
 });
 
 /** Parse OSM route coords from URL: ?route=lat1,lng1;lat2,lng2 */
@@ -206,7 +220,7 @@ function parseOsmRouteCoords(url: string): { oLat: number; oLng: number; dLat: n
   return null;
 }
 
-let routeLine: L.GeoJSON | null = null;
+let routeLine: Leaflet.GeoJSON | null = null;
 // No handles kept for the route's two endpoint markers, unlike `marker` and
 // `routeLine` above: those are read again to move a pin and to refit bounds,
 // whereas these are placed once and never touched. `leafletMap.remove()` in
@@ -214,12 +228,12 @@ let routeLine: L.GeoJSON | null = null;
 // nothing but two variables that only ever appeared on the left of an `=`.
 
 /** Fetch OSRM route and draw polyline */
-const fetchOsrmRoute = async (oLat: number, oLng: number, dLat: number, dLng: number) => {
+const fetchOsrmRoute = async (L: LeafletModule, oLat: number, oLng: number, dLat: number, dLng: number) => {
   if (!leafletMap) return;
   try {
     const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${oLng},${oLat};${dLng},${dLat}?overview=full&geometries=geojson`);
     const data = await res.json();
-    if (data.routes?.[0]) {
+    if (data.routes?.[0] && leafletMap) {
       if (routeLine) { leafletMap.removeLayer(routeLine); routeLine = null; }
       routeLine = L.geoJSON(data.routes[0].geometry, {
         // Leaflet writes this into an SVG attribute, where var() is not read,
@@ -235,10 +249,24 @@ const fetchOsrmRoute = async (oLat: number, oLng: number, dLat: number, dLng: nu
   } catch (e) { console.warn('OSRM route fetch failed:', e); }
 };
 
-const initLeafletMap = () => {
+let unmounted = false;
+
+const initLeafletMap = async () => {
   // Google routes use iframe; OSM routes use Leaflet
   if (!mapContainer.value || (isGoogle.value && !isOsmRoute.value)) return;
   if (isGoogleRoute.value) return; // Google route = iframe only
+  let L: LeafletModule;
+  try {
+    L = await loadLeaflet();
+  } catch (e) {
+    console.warn('Leaflet failed to load:', e);
+    return;
+  }
+  // Asked again after the wait: the block may be gone, switched to Google, or
+  // already drawn by a second call that raced this one.
+  if (unmounted || leafletMap || !mapContainer.value) return;
+  if ((isGoogle.value && !isOsmRoute.value) || isGoogleRoute.value) return;
+  const { pinIcon, originIcon, destIcon } = makeIcons(L);
   const a = props.node.attrs;
 
   const center: [number, number] = isOsmRoute.value
@@ -265,7 +293,7 @@ const initLeafletMap = () => {
       L.marker([coords.dLat, coords.dLng], { icon: destIcon }).addTo(leafletMap);
       const bounds = L.latLngBounds([coords.oLat, coords.oLng], [coords.dLat, coords.dLng]);
       leafletMap.fitBounds(bounds.pad(0.2));
-      setTimeout(() => { leafletMap?.invalidateSize(); fetchOsrmRoute(coords.oLat, coords.oLng, coords.dLat, coords.dLng); }, 200);
+      setTimeout(() => { leafletMap?.invalidateSize(); fetchOsrmRoute(L, coords.oLat, coords.oLng, coords.dLat, coords.dLng); }, 200);
     }
   } else {
     // Pin mode
@@ -302,7 +330,7 @@ onMounted(() => {
     initLeafletMap();
   }
 });
-onBeforeUnmount(() => destroyLeafletMap());
+onBeforeUnmount(() => { unmounted = true; destroyLeafletMap(); });
 
 watch(() => props.node.attrs.provider, async (p) => {
   if (p === 'google') destroyLeafletMap();

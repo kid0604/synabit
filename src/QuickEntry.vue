@@ -31,7 +31,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { load } from '@tauri-apps/plugin-store';
 import { logger } from './utils/logger';
-import { i18n } from './i18n';
+import { i18n, setAppLocale } from './i18n';
 import synAvatar from './assets/syn-avatar.jpg';
 import { useSynEnabled } from './shared/syn/useSynEnabled';
 import { nextMode, quickEntryAction, type QuickEntryMode } from './shared/syn/quickAsk';
@@ -169,7 +169,7 @@ onMounted(async () => {
     const settings = await load('settings.json', { autoSave: false } as never);
     settingsStore = settings;
     const language = await settings.get<'en' | 'vi'>('appLanguage');
-    if (language) i18n.global.locale.value = language;
+    if (language) await setAppLocale(language);
 
     vaultPath.value = (await settings.get<string>('vaultPath')) || '';
     await readLiveSettings();

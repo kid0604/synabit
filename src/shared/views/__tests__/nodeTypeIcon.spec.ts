@@ -1,8 +1,8 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll } from 'vitest';
 import { nextTick } from 'vue';
 import {
   iconBodyForNodeType, iconForNodeType, setChosenIcons, chosenIconName,
-  iconNamed, ICON_NAMES, SUGGESTED_ICONS,
+  iconNamed, ICON_NAMES, SUGGESTED_ICONS, loadIconCatalog,
 } from '../nodeTypeIcon';
 
 describe('an icon as drawable shapes', () => {
@@ -27,6 +27,18 @@ describe('an icon as drawable shapes', () => {
  * exists for exactly those. Two invented kinds were two identical squares in
  * every list, table and graph.
  */
+describe('the library fetched on demand', () => {
+  afterEach(() => setChosenIcons([]));
+
+  it('applies a choice outside the built-in set once the library lands', async () => {
+    setChosenIcons([['animal', 'rabbit']]);
+    await loadIconCatalog();
+
+    expect(chosenIconName('animal')).toBe('rabbit');
+    expect(iconForNodeType('animal')).toBe(iconNamed('rabbit'));
+  });
+});
+
 describe('an icon a kind was given', () => {
   afterEach(() => setChosenIcons([]));
 
@@ -91,6 +103,9 @@ describe('an icon a kind was given', () => {
  * every name this app puts in front of somebody has to exist.
  */
 describe('the names a kind can be stored against', () => {
+  // Most of the library is fetched on demand; these are about the whole of it.
+  beforeAll(() => loadIconCatalog());
+
   it('offers the whole library, aliases included', () => {
     // Around 1,700 icons under around 1,900 names: the extra names are
     // Lucide's own trail of renames, and keeping them is what lets a schema

@@ -94,6 +94,7 @@ import { toDrawio, toExcalidraw } from './exporters';
 import { itemFrom, libraryPath, listLibraries, parseLibrary, saveLibrary, trashLibrary, LIBRARY_DIR, type LibraryItem, type ShapeLibrary } from './shapeLibraries';
 import { isDarkPaper, paint } from './ink';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { forgetViewport, recallViewport, rememberViewport } from './viewportMemory';
 import {
   assetDataUri,
@@ -186,6 +187,9 @@ const isAppActive = ref(true);
 // project link, a sync — is taken in before the user touches it.
 onActivated(() => { isAppActive.value = true; void refreshFromDisk(); });
 onDeactivated(() => { isAppActive.value = false; void flushSave(); });
+// The board list, re-read on the way back when the vault changed while hidden
+// rather than on every change behind another screen.
+const boardsReload = useVaultReload(() => store.loadBoards());
 
 // ── VueFlow Core ────────────────────────────────────────────
 const {
@@ -2618,6 +2622,9 @@ onMounted(async () => {
       if (isAppActive.value) await refreshFromDisk();
       return;
     }
+    // Hidden: the list is read once when the screen comes back, and the open
+    // board is refreshed from disk then anyway (`onActivated` above).
+    if (!isAppActive.value) { boardsReload.whenShown(); return; }
     await store.loadBoards();
     if (isAppActive.value) await refreshFromDisk();
     // Something else in the vault changed: live frames may have new answers.

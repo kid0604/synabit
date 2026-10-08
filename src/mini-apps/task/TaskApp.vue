@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, watch, toRef } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
+import { useVaultReload } from '../../composables/useVaultReload';
 import { useNodeService } from '../../composables/useNodeService';
 import { useSettings } from '../../composables/useSettings';
 import { CheckCircle2, Plus } from 'lucide-vue-next';
@@ -326,11 +327,10 @@ const openPerson = (transferredTo: string) => {
 defineExpose({ openEditById, openProjectById, refresh });
 
 // ── Lifecycle & Event Bus ──────────────────────────────────────────
-let _debounceTimer: ReturnType<typeof setTimeout> | null = null;
-const debouncedLoad = (fn: () => void, ms = 300) => {
-  if (_debounceTimer) clearTimeout(_debounceTimer);
-  _debounceTimer = setTimeout(fn, ms);
-};
+// Coalesces rapid-fire events, and waits for the screen to be shown again
+// when it is hidden.
+const vault = useVaultReload(() => loadTasks(() => loadFinanceConfig()));
+const debouncedLoad = (fn: () => unknown) => vault.schedule(fn);
 
 onMounted(() => {
   loadTasks(() => loadFinanceConfig());
