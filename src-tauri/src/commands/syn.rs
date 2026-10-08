@@ -525,12 +525,7 @@ pub async fn send_message_inner<R: tauri::Runtime>(
     // Retrieval put somebody else's words in the prompt: a feed article's
     // summary, or text out of a file. That is the same reading as the tools
     // that fetch them, and the run is treated the same way. See `syn::taint`.
-    if gathered
-        .retrieval
-        .context_chunks
-        .iter()
-        .any(|chunk| crate::syn::taint::untrusted_source(&chunk.source_type))
-    {
+    if gathered.read_untrusted {
         run.read_untrusted = true;
     }
     // Nothing, when the count is already in the prompt. A turn with tools would
@@ -751,6 +746,21 @@ struct Gathered {
     memories: usize,
     /// How long retrieval took, or `None` when it is switched off.
     retrieval_ms: Option<u64>,
+    /// Whether retrieval put somebody else's words in the prompt.
+    read_untrusted: bool,
+}
+
+/// Whether retrieval put somebody else's words in the prompt.
+///
+/// A file counts when the index holds words read out of it — its text, or a
+/// caption or transcript made of it — and when that cannot be told. A photo
+/// with none is a name and an extension. See `taint::untrusted_source`.
+fn retrieved_untrusted(db: &crate::db::DbBridge, chunks: &[crate::models::syn::ContextChunk]) -> bool {
+    chunks.iter().any(|chunk| {
+        crate::syn::taint::untrusted_source(&chunk.source_type, || {
+            db.file_text_joined(&chunk.source_id).map_or(true, |text| !text.trim().is_empty())
+        })
+    })
 }
 
 /// Step 4: retrieval, memory, skills, the thread, the count and the timeline.
@@ -884,7 +894,11 @@ fn gather<R: tauri::Runtime>(
         )
     };
 
-    Ok(Gathered { retrieval, context, remembered, skill_index, chosen_skill, thread_block, counted, timeline_block, memories, retrieval_ms })
+    // Asked here, under the lock: whether a file had words read out of it is a
+    // question for the index.
+    let read_untrusted = retrieved_untrusted(&db, &retrieval.context_chunks);
+
+    Ok(Gathered { retrieval, context, remembered, skill_index, chosen_skill, thread_block, counted, timeline_block, memories, retrieval_ms, read_untrusted })
 }
 
 /// Steps 5 and 6: the system prompt, assembled from its parts, then the
@@ -3419,12 +3433,43 @@ mod send_steps {
         assert_eq!(run.resumed_from.as_deref(), Some(stopped.id.as_str()));
     }
 
+    fn chunk(id: &str, source_type: &str, title: &str) -> crate::models::syn::ContextChunk {
+        crate::models::syn::ContextChunk {
+            source_id: id.into(),
+            source_type: source_type.into(),
+            title: title.into(),
+            content: String::new(),
+            relevance_score: 1.0,
+            metadata: None,
+        }
+    }
+
     #[test]
     fn retrieved_feed_and_file_text_are_somebody_elses_words() {
-        assert!(crate::syn::taint::untrusted_source("feed_article"));
-        assert!(crate::syn::taint::untrusted_source("file"));
-        assert!(!crate::syn::taint::untrusted_source("note"));
-        assert!(!crate::syn::taint::untrusted_source("finance"));
+        let db = crate::db::DbBridge::new_in_memory_full().expect("db");
+        db.store_file_text("Files/hop-dong.md", &["Điều 4. Bên B thanh toán".to_string()]).expect("text");
+
+        assert!(retrieved_untrusted(&db, &[chunk("Feeds/a.md", "feed_article", "Tin")]));
+        assert!(retrieved_untrusted(&db, &[chunk("Files/hop-dong.md", "file", "hop-dong.pdf")]));
+        assert!(!retrieved_untrusted(&db, &[chunk("Notes/a.md", "note", "A"), chunk("x", "finance", "Tháng 9")]));
+    }
+
+    /// The Telegram turn this was found by: a photo, then "lưu vào file daily
+    /// hôm nay". Retrieval brought back photos sent from the phone months
+    /// earlier — the word "photo" is in their names — and the daily note was
+    /// refused `update_node`, in this message and in every one after it.
+    #[test]
+    fn a_photo_with_no_words_in_it_is_not_somebody_elses_words() {
+        let db = crate::db::DbBridge::new_in_memory_full().expect("db");
+        let photos = [
+            chunk("Files/213c.md", "file", "1777869634-photo_2026-05-04_11-39-51.jpg"),
+            chunk("Files/852d.md", "file", "1777869634-photo_2026-05-04_11-39-46.jpg"),
+        ];
+        assert!(!retrieved_untrusted(&db, &photos));
+
+        // A caption that read the words in a screenshot is words all the same.
+        db.store_file_text("Files/852d.md", &["Ảnh chụp tin nhắn: chuyển khoản ngay".to_string()]).expect("text");
+        assert!(retrieved_untrusted(&db, &photos));
     }
 
     /// A thread made is a thread reported made.
