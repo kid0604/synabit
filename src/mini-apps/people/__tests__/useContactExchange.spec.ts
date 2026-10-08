@@ -173,7 +173,7 @@ describe('committing an import', () => {
 
     // One bad row does not cost somebody the other nineteen hundred.
     expect(report.added).toBe(2);
-    expect(report.failed).toEqual([{ title: 'Bình', error: 'Error: disk full' }]);
+    expect(report.failed).toEqual([{ title: 'Bình', error: 'disk full' }]);
     expect(writes.map(w => w.title)).toEqual(['An', 'Cường']);
   });
 

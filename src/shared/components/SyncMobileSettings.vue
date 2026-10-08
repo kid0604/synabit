@@ -69,6 +69,7 @@
 import { ref, onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useAppStore } from '../../stores/useAppStore';
+import {  } from '../localDay';
 
 const appStore = useAppStore();
 const policy = ref(appStore.syncCellularPolicy);
@@ -100,7 +101,10 @@ async function updatePolicy() {
 
 onMounted(async () => {
   try {
-    // Format YYYY-MM-DD
+    // The UTC day, on purpose: `sync_full` files its byte counts under
+    // `Utc::now()`'s date (commands/sync.rs), and asking for the local day
+    // would read an empty row for the first hours of every morning here.
+    // eslint-disable-next-line no-restricted-syntax
     const today = new Date().toISOString().split('T')[0];
     const data = await invoke<any>('sync_metrics', { date: today });
     if (data && data.metrics) {

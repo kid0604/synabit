@@ -11,6 +11,7 @@ import { computed, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import type { AuditEntry, Grant } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * Whether a grant still counts.
@@ -29,7 +30,7 @@ export function useSynAudit(vaultPath: () => string) {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
 
-  const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+  const asMessage = (e: unknown) => errorText(e);
 
   const load = async () => {
     isLoading.value = true;

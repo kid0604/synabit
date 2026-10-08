@@ -25,7 +25,7 @@ const failed = ref(false);
 /** The chosen version could not be read: said, not left loading. */
 const readFailed = ref(false);
 const box = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(box);
+const keepFocus = useModalFocus(box, () => emit('close'));
 
 onMounted(async () => {
   try {

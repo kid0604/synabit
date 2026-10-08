@@ -18,7 +18,7 @@ const emit = defineEmits<{ (e: 'pick', id: string): void; (e: 'close'): void }>(
 const { t } = useI18n();
 
 const dialogRef = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(dialogRef);
+const keepFocus = useModalFocus(dialogRef, () => emit('close'));
 
 const choices = computed(() => {
   const list = TEMPLATES.map((tpl) => {

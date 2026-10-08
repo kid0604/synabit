@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, Monitor, HardDrive, Check, CalendarClock, Sparkles } from 'lucide-vue-next';
+import { Settings, FileText, CheckSquare, Globe, X, FolderOpen, Cloud, RefreshCw, Lock, Shield, Trash2, Server, Unplug, HardDrive, Check, CalendarClock, Sparkles } from 'lucide-vue-next';
 import TrashPanel from './TrashPanel.vue';
 import AppDialog from './AppDialog.vue';
 import { useSettings } from '../../composables/useSettings';
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
 
 const LockScreenVerify = defineAsyncComponent(() => import('./LockScreen.vue'));
-const DeviceManager = defineAsyncComponent(() => import('./DeviceManager.vue'));
 // How the vault is read into moments, and how to start the timeline again.
 // Loaded when its tab is opened: it is a rare visit, and it brings the media
 // surrogates with it.
@@ -38,6 +37,7 @@ import { useVaultArchive, formatBytes } from '../../composables/useVaultArchive'
 import { UI_SCALES } from '../../utils/uiScale';
 import { rovingIndex } from '../../utils/roving';
 import { when } from '../../utils/when';
+import { errorText } from '../errorText';
 
 
 const {
@@ -177,7 +177,7 @@ const openLogFolder = async () => {
   }
 };
 
-type TabType = 'general' | 'notes' | 'tasks' | 'timeline' | 'security' | 'devices' | 'about';
+type TabType = 'general' | 'notes' | 'tasks' | 'timeline' | 'security' | 'about';
 
 const props = defineProps<{
   initialTab?: TabType;
@@ -317,7 +317,7 @@ async function runExport() {
       size: formatBytes(summary.bytes),
     });
   } catch (e) {
-    archiveError.value = String(e);
+    archiveError.value = errorText(e);
     logger.error('Vault export failed', e);
   }
 }
@@ -335,7 +335,7 @@ async function runImport() {
         })
       : t('settings.general.backup_imported', { files: summary.files });
   } catch (e) {
-    archiveError.value = String(e);
+    archiveError.value = errorText(e);
     logger.error('Vault import failed', e);
   }
 }
@@ -348,7 +348,7 @@ async function runDiagnosticsExport() {
     if (bytes === null) return;
     archiveMessage.value = t('settings.general.diagnostics_saved', { size: formatBytes(bytes) });
   } catch (e) {
-    archiveError.value = String(e);
+    archiveError.value = errorText(e);
     logger.error('Diagnostics export failed', e);
   }
 }
@@ -501,7 +501,7 @@ const checkE2eeStatus = async () => {
     // at its defaults, which paint the panel as "not set up yet" — the one
     // reading most likely to make somebody generate a second key for a vault
     // that already has one.
-    e2eeError.value = String(e);
+    e2eeError.value = errorText(e);
   }
 };
 
@@ -563,11 +563,6 @@ const setupE2ee = () => {
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'security' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-text-secondary dark:text-text-secondary-dark hover:bg-white/60 dark:hover:bg-[#252525] hover:text-text dark:hover:text-white']">
                 <Lock class="w-4 h-4 opacity-70 shrink-0" />
                 <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.security') }}</span>
-              </button>
-              <button @click="settingsTab = 'devices'" :aria-label="$t('settings.tabs.devices')" :title="$t('settings.tabs.devices')" :aria-current="settingsTab === 'devices' ? 'page' : undefined" 
-                :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'devices' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-text-secondary dark:text-text-secondary-dark hover:bg-white/60 dark:hover:bg-[#252525] hover:text-text dark:hover:text-white']">
-                <Monitor class="w-4 h-4 opacity-70 shrink-0" />
-                <span class="hidden sm:inline md:inline">{{ $t('settings.tabs.devices', 'Devices') }}</span>
               </button>
               <button @click="settingsTab = 'about'" :aria-label="$t('settings.tabs.about')" :title="$t('settings.tabs.about')" :aria-current="settingsTab === 'about' ? 'page' : undefined" 
                 :class="['flex-1 md:w-full text-center md:text-left px-3 py-2 rounded-lg text-[13px] font-medium transition-all flex items-center justify-center md:justify-start gap-1.5 md:gap-2.5 whitespace-nowrap', settingsTab === 'about' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-text-secondary dark:text-text-secondary-dark hover:bg-white/60 dark:hover:bg-[#252525] hover:text-text dark:hover:text-white']">
@@ -1259,11 +1254,6 @@ const setupE2ee = () => {
                 <TimelineSettings :vault-path="vaultPath" />
               </div>
 
-              <!-- === DEVICES TAB === -->
-              <div v-else-if="settingsTab === 'devices'" class="space-y-6">
-                <DeviceManager />
-              </div>
-              
               <!-- === ABOUT TAB === -->
               <div v-else-if="settingsTab === 'about'" class="space-y-6">
                 <section>

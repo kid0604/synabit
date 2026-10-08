@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import { isAppOwned, GOVERNED } from '../../../shared/fieldRegistry';
 import { kindOf, type FieldKind } from '../../../shared/fieldValue';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * A type the vault contains, as the vault reports it.
@@ -102,7 +103,7 @@ export function useObservedTypes() {
       types.value = await invoke<ObservedType[]>('list_observed_types');
     } catch (e) {
       logger.error('[Things] Could not read the vault’s types', e);
-      error.value = String(e);
+      error.value = errorText(e);
       types.value = [];
     } finally {
       loading.value = false;

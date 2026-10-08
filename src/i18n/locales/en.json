@@ -25,7 +25,6 @@
       "notes": "Notes",
       "tasks": "Tasks",
       "security": "Security",
-      "devices": "Devices",
       "about": "About",
       "timeline": "Timeline",
       "syn": "Syn (AI)"
@@ -212,56 +211,6 @@
       "sent": "Sent",
       "received": "Received"
     },
-    "devices": {
-      "paired": "Paired devices",
-      "disconnections": "Disconnections: {n}",
-      "disconnections_hint": "How many times you have disconnected a device. This is a record, not a security setting — it does not change any key.",
-      "refresh": "Refresh device list",
-      "loading": "Loading devices…",
-      "empty": "No paired devices",
-      "empty_hint": "Pair another device to keep your data in sync across them.",
-      "add": "Add device",
-      "unknown": "Unknown device",
-      "last_seen": "Last seen: {when}",
-      "paired_on": "Paired {date}",
-      "disconnect_hint": "Stop this device syncing",
-      "confirm_title": "Disconnect this device?",
-      "confirm_message": "“{name}” will stop receiving and sending changes. It keeps the copy of your data it already has, and disconnecting does not make that copy unreadable.",
-      "revoked": "“{name}” will no longer sync. It still holds the copy it already had.",
-      "never": "Never",
-      "just_now": "Just now",
-      "minutes_ago": "{n} min ago",
-      "hours_ago": "{n} h ago",
-      "days_ago": "{n} d ago"
-    },
-    "pairing": {
-      "title": "Pair device",
-      "subtitle": "Connect another device to sync",
-      "close": "Close pairing",
-      "choose": "Choose how to pair this device with another one running Synabit.",
-      "generate": "Show a code",
-      "generate_desc": "Show a code on this device and type it on the other one",
-      "enter": "Type a code",
-      "enter_desc": "Type the code shown on the other device",
-      "generating": "Making a pairing code…",
-      "show_code": "Type this code on the other device",
-      "copy": "Copy code",
-      "copied": "Copied",
-      "expires_in": "Expires in {time}",
-      "waiting": "Waiting for the other device…",
-      "success": "Device paired",
-      "success_desc": "Your devices will now sync automatically.",
-      "enter_8": "Type the 8-character code shown on the other device",
-      "char_n": "Character {n}",
-      "pairing": "Pairing…",
-      "done": "Done",
-      "enter_all": "Please type all 8 characters",
-      "expired": "The pairing code has expired",
-      "start_failed": "Could not start pairing",
-      "enter_code": "Please type a pairing code",
-      "pair_failed": "Could not pair the device",
-      "remove_failed": "Could not remove the device"
-    },
     "e2ee": {
       "title": "Secure your data",
       "save_title": "Save your recovery phrase",
@@ -286,7 +235,8 @@
       "verify_placeholder": "Paste or type your 12 words here",
       "confirm_finish": "Confirm and finish",
       "enter_phrase": "Please type your recovery phrase",
-      "mismatch": "That does not match the recovery phrase. Check it and try again."
+      "mismatch": "That does not match the recovery phrase. Check it and try again.",
+      "copied": "Copied"
     }
   },
   "chat": {
@@ -4981,8 +4931,6 @@
       "server": "Sync server",
       "synced_at": "Synced {time}",
       "kept_aside": "{count} file kept aside — click to see | {count} files kept aside — click to see",
-      "merged": "{count} file merged automatically | {count} files merged automatically",
-      "and_more": "and {count} more…",
       "timed_out": "Sync took too long and was stopped",
       "cancelled": "Sync cancelled",
       "errors": "{count} error | {count} errors",
@@ -5077,13 +5025,11 @@
       "turn_off": "Turn simple mode off"
     },
     "sync_errors": {
-      "unavailable": "This isn't available in this version of Synabit yet.",
       "no_key": "Set up encryption on this device before syncing.",
       "not_connected": "This device isn't connected to a sync server yet.",
       "offline": "Couldn't reach the other device or server. Check the connection and try again.",
       "upgrade": "The other side runs a different version of Synabit. Update both, then try again.",
-      "quota": "There's no more room on the sync server.",
-      "bad_code": "That code didn't work. It may have expired — make a new one and try again."
+      "quota": "There's no more room on the sync server."
     },
     "links": {
       "open_failed": "Couldn't open that link."

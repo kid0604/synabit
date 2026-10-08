@@ -21,6 +21,7 @@ import UndoToast from '../../../shared/components/UndoToast.vue';
 import { useUndoableAction } from '../../../composables/useUndoableAction';
 import { confirmDelete } from '../../../composables/useConfirmDelete';
 import { blankRoutine, daysInWords, toggleDay, whenInWords, type Routine, type RoutineView } from '../routines';
+import { errorText } from '../../../shared/errorText';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{ 'open-conversation': [id: string] }>();
@@ -32,7 +33,7 @@ const editing = ref<Routine | null>(null);
 const error = ref<string | null>(null);
 const started = ref<string | null>(null);
 
-const message = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+const message = (e: unknown) => errorText(e);
 
 const load = async () => {
   try {

@@ -64,6 +64,45 @@ function onPopState() {
   if (top) top.dismiss();
 }
 
+/**
+ * Whether the router is part way through a navigation.
+ *
+ * A dialog whose button both closes it and opens another app — a picker, a
+ * search result — would otherwise have its `history.back()` race the router's
+ * `pushState`. When the route's chunk is already loaded the push lands first
+ * and the back undoes it; when it is not, the back lands first and the
+ * router's own `popstate` handling cancels the push. Either way the click
+ * looks ignored. The router reports its navigations here (router/index.ts),
+ * and a close that happens during one leaves its entry where it is.
+ */
+let navigating = false;
+
+/** For the router: a navigation has begun (`true`) or settled (`false`). */
+export function noteNavigation(inFlight: boolean): void {
+  navigating = inFlight;
+}
+
+/**
+ * Take a closed layer's history entry back off — later, and only if it is
+ * still the one on top.
+ *
+ * Later, by one task, so that a router push started by the same click has
+ * begun (and said so through `noteNavigation`) or already finished. Only if on
+ * top, because once anything has been pushed over our entry, going back would
+ * undo that instead. An entry left buried is harmless: it holds the same URL
+ * as the one beneath it, so the press that eventually consumes it goes where
+ * the user expects anyway.
+ */
+function retireEntry(id: number) {
+  window.setTimeout(() => {
+    if (navigating) return;
+    const state = window.history.state as { synabitLayer?: number } | null;
+    if (state?.synabitLayer !== id) return;
+    selfInflictedPops++;
+    window.history.back();
+  }, 0);
+}
+
 function ensureListening() {
   if (listening) return;
   listening = true;
@@ -104,6 +143,7 @@ export function useBackGuard(isOpen: Ref<boolean>, dismiss: () => void): BackGua
   const release = () => {
     if (!layer) return;
     const index = layers.indexOf(layer);
+    const id = layer.id;
     layer = null;
     if (index === -1) {
       // Already taken off the stack by `onPopState`, which means the back
@@ -115,10 +155,7 @@ export function useBackGuard(isOpen: Ref<boolean>, dismiss: () => void): BackGua
     // out of order leaves its entry behind, which costs one back press that
     // appears to do nothing — rare, and better than removing an entry that
     // belongs to a layer still on screen.
-    if (index === layers.length) {
-      selfInflictedPops++;
-      window.history.back();
-    }
+    if (index === layers.length) retireEntry(id);
   };
 
   watch(
@@ -155,15 +192,13 @@ export function useBackGuard(isOpen: Ref<boolean>, dismiss: () => void): BackGua
   };
 
   onUnmounted(() => {
-    // Unmounting with the layer still open: take it off the stack so back does
-    // not call into a dismiss that no longer belongs to anything, but leave
-    // history alone — the component is going away for its own reasons and
-    // navigating during teardown is how you get a loop.
-    if (layer) {
-      const index = layers.indexOf(layer);
-      if (index !== -1) layers.splice(index, 1);
-      layer = null;
-    }
+    // Unmounting with the layer still open is how most dialogs close: the
+    // caller mounts them with `v-if` and drops them, so `isOpen` never turns
+    // false. That is a close like any other and gets the same tidy-up. It used
+    // to leave history alone, for fear of navigating during a teardown that a
+    // navigation caused — `retireEntry` only goes back when our own entry is
+    // still on top and no navigation is under way, which rules that case out.
+    release();
   });
 
   return { detach };

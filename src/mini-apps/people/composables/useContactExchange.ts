@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * Bringing an address book in, and taking one out.
@@ -214,7 +215,7 @@ export function useContactExchange(ns: any, vaultPath: () => string) {
                 }
             } catch (e) {
                 logger.error(`Failed to import ${contact.title}`, e);
-                report.failed.push({ title: contact.title, error: String(e) });
+                report.failed.push({ title: contact.title, error: errorText(e) });
             }
             progress.value = { done: progress.value.done + 1, total: writable.length };
         }

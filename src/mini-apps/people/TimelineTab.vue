@@ -2,13 +2,18 @@
 import { ref, computed, toRef, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { invoke } from '@tauri-apps/api/core';
+// Finance's own formatter. A ledger amount is minor units of the vault's
+// currency (PeopleApp reads which), and this tab used to print it as US
+// dollars in major units — a 150.000 ₫ dinner read "$150,000.00", a $15 one
+// "$1,500.00".
+import { formatCurrency } from '../finance/currency';
 import { useNodeService } from '../../composables/useNodeService';
 import { confirmDelete } from '../../composables/useConfirmDelete';
 import { Clock, Plus, PhoneCall, MessageSquare, Coffee, Gift, Users, Smile, Meh, Frown, ThumbsUp, X, CheckSquare, FileText, Zap, Filter, CreditCard, Repeat, Briefcase, Link2, CalendarHeart, Flower2 } from 'lucide-vue-next';
 import { useRelationshipHealth } from './composables/useRelationshipHealth';
 import { logger } from '../../utils/logger';
 import { useI18n } from 'vue-i18n';
-import { localDay } from '../../shared/localDay';
+import { localDay, todayIso } from '../../shared/localDay';
 import Worldline from '../../shared/components/Worldline.vue';
 
 const props = defineProps<{
@@ -197,7 +202,7 @@ const filterOptions = computed(() => [
 const showAddForm = ref(false);
 const newInteraction = ref({
     type: 'meeting',
-    date: new Date().toISOString().split('T')[0],
+    date: todayIso(),
     note: '',
     mood: ''
 });
@@ -259,12 +264,9 @@ const formatDate = (dateStr: string) => {
     return d.toLocaleDateString(locale.value, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 
-const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount);
-};
 
 const resetForm = () => {
-    newInteraction.value = { type: 'meeting', date: new Date().toISOString().split('T')[0], note: '', mood: '' };
+    newInteraction.value = { type: 'meeting', date: todayIso(), note: '', mood: '' };
     showAddForm.value = false;
 };
 

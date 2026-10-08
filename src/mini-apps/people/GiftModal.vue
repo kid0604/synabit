@@ -2,6 +2,7 @@
 import AppDialog from '../../shared/components/AppDialog.vue';
 import { ref } from 'vue';
 import { X, Gift, ArrowUpRight, ArrowDownLeft } from 'lucide-vue-next';
+import { todayIso } from '../../shared/localDay';
 
 defineProps<{
     person: any;
@@ -11,7 +12,7 @@ const emit = defineEmits(['close', 'save']);
 
 const form = ref({
     description: '',
-    date: new Date().toISOString().split('T')[0],
+    date: todayIso(),
     direction: 'given' as 'given' | 'received',
     occasion: '',
 });

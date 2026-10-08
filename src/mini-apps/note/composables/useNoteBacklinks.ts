@@ -116,7 +116,7 @@ export function useNoteBacklinks(
             }
             
             currentBacklinks.value = [...backlinks, ...outgoingProjects];
-        } catch (e) { logger.error(String(e)); currentBacklinks.value = []; }
+        } catch (e) { logger.error(e); currentBacklinks.value = []; }
     } else { currentBacklinks.value = []; }
   });
 

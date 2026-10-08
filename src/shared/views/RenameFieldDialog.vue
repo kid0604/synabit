@@ -26,6 +26,7 @@ import { useI18n } from 'vue-i18n';
 import { Loader2, ArrowRight } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import AppDialog from '../components/AppDialog.vue';
+import { errorText } from '../errorText';
 
 interface RenamePlan {
   renaming: number;
@@ -86,7 +87,7 @@ watch(target, async next => {
     });
   } catch (e) {
     logger.error('[Things] Could not preview the merge', e);
-    failed.value = String(e);
+    failed.value = errorText(e);
   }
 });
 
@@ -106,7 +107,7 @@ const apply = async () => {
     emit('done', target.value);
   } catch (e) {
     logger.error('[Things] Could not merge the field', e);
-    failed.value = String(e);
+    failed.value = errorText(e);
   } finally {
     busy.value = false;
   }

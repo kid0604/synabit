@@ -3,6 +3,7 @@ import { BUILT_IN_APPS, appById } from '../shared/appRegistry';
 import { redirectTarget } from '../shared/appAccess';
 import { useAppStore } from '../stores/useAppStore';
 import { simpleModePass } from '../shared/simpleMode';
+import { noteNavigation } from '../composables/useBackGuard';
 
 /**
  * One route per mini-app, generated from the registry.
@@ -70,5 +71,20 @@ router.beforeEach((to) => {
   );
   return target ? { name: target } : true;
 });
+
+/**
+ * Tell the back guard when a navigation is under way, so a dialog that closes
+ * and opens another app on one click does not spend a `history.back()` that
+ * would undo the navigation. See `noteNavigation` in useBackGuard.
+ *
+ * Registered after the guard above so it only hears navigations that guard
+ * let through; `afterEach` runs for a cancelled or redirected one too, and
+ * `onError` for one that threw, so the flag cannot stick.
+ */
+router.beforeEach(() => {
+  noteNavigation(true);
+});
+router.afterEach(() => noteNavigation(false));
+router.onError(() => noteNavigation(false));
 
 export default router;

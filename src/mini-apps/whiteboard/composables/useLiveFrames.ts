@@ -4,6 +4,7 @@ import type { WBNode, WhiteboardData } from '../boardFile';
 import { CARD_SIZE } from '../vaultCards';
 import { logger } from '../../../utils/logger';
 import { dayAt, dayOf, inFrame, kanbanLayout, laneAt, propertyChange, timelineLayout, type Lane, type LiveLayout, type TimeScale } from '../liveLayouts';
+import { errorText } from '../../../shared/errorText';
 
 /** The field a layout sorts by, as the frame names it or by default. */
 export function layoutField(frame: WBNode): string | null {
@@ -108,7 +109,7 @@ export function useLiveFrames(ctx: {
       rows = await ask(query, field);
     } catch (err) {
       logger.error('A live frame could not ask its question', err as string);
-      ctx.onError(String(err));
+      ctx.onError(errorText(err));
       return false;
     }
     const b = board();
@@ -238,7 +239,7 @@ export function useLiveFrames(ctx: {
         });
       } catch (err) {
         logger.error('Could not change the item from the board', err as string);
-        (ctx.onMoveFailed ?? ctx.onError)(String(err));
+        (ctx.onMoveFailed ?? ctx.onError)(errorText(err));
       }
     }
     const changed = await refreshFrame(frame);

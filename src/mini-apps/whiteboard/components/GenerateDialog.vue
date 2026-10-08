@@ -22,7 +22,7 @@ const source = ref<{ id: string; title: string } | null>(null);
 const picking = ref(false);
 const input = ref<HTMLTextAreaElement | null>(null);
 const box = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(box);
+const keepFocus = useModalFocus(box, () => emit('close'));
 onMounted(() => nextTick(() => input.value?.focus()));
 
 const ready = computed(() => request.value.trim().length > 0);

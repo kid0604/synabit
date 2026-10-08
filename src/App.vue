@@ -124,7 +124,6 @@ const SettingsModal = defineAsyncComponent(() => import('./shared/components/Set
 const E2eeOnboarding = defineAsyncComponent(() => import('./shared/components/E2eeOnboarding.vue'));
 const LockScreen = defineAsyncComponent(() => import('./shared/components/LockScreen.vue'));
 const SetupPinModal = defineAsyncComponent(() => import('./shared/components/SetupPinModal.vue'));
-const SyncConflictToast = defineAsyncComponent(() => import('./shared/components/SyncConflictToast.vue'));
 import AppNotice from './shared/components/AppNotice.vue';
 import DeleteConfirmHost from './shared/components/DeleteConfirmHost.vue';
 const SafeRequestCard = defineAsyncComponent(() => import('./mini-apps/safe/SafeRequestCard.vue'));
@@ -488,7 +487,6 @@ const refreshQuickCapCount = async () => {
 // capture arrives even when the user never opens that tab.
 const { drainCaptures } = useCaptureIntake();
 let stopCaptureListener: (() => void) | null = null;
-let stopComposeListener: (() => void) | null = null;
 
 watch(
     vaultPath,
@@ -513,18 +511,16 @@ const syncConflictCount = computed(() => syncState.syncConflicts.value.length);
 const showSyncConflicts = ref(false);
 let lastAutoSyncTriggerTime = 0;
 
-// The Android back button closes the topmost layer rather than the app. Every
-// dismissible thing owned by this component is registered here, after all of
-// them exist; see useBackGuard for why this cooperates with Tauri's back
-// handling instead of replacing it.
+// The Android back button closes the topmost layer rather than the app; see
+// useBackGuard for why this cooperates with Tauri's back handling instead of
+// replacing it.
 //
-// E2EE onboarding and the recovery modal are deliberately absent: both are
-// flows where leaving half way puts the vault in a state the user cannot see,
-// and a stray back press is exactly how that happens.
-useBackGuard(showSettingsModal, () => { showSettingsModal.value = false; });
-useBackGuard(showSetupPinModal, () => { showSetupPinModal.value = false; });
+// Settings, the PIN setup and the sync-conflict notice are `AppDialog`s, which
+// register themselves — on the same rule as Escape, so E2EE onboarding, which
+// cannot be dismissed at all, is not closed by Back either. Registering them
+// here as well would push two history entries per dialog. Only the More menu,
+// which is not a dialog, is left to do here.
 const hiddenAppsGuard = useBackGuard(showHiddenAppsMenu, () => { showHiddenAppsMenu.value = false; });
-useBackGuard(showSyncConflicts, () => { showSyncConflicts.value = false; });
 
 /**
  * Open an app the sidebar is not showing.
@@ -633,7 +629,7 @@ const selectVault = async () => {
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
             afterVaultChosen();
         }
-    } catch(err) { logger.error(String(err)); }
+    } catch(err) { logger.error(err); }
 };
 
 const clearVault = () => {
@@ -1217,16 +1213,14 @@ onMounted(async () => {
     if (vaultPath.value) void drainCaptures();
   });
 
-  // "Let me write something" — from the Android launcher shortcut, and from
-  // the desktop global hotkey. Three entry points, one destination.
+  // "Let me write something" — from the Android launcher shortcut, as a deep
+  // link. The desktop hotkey used to land here too, through a
+  // `quickcap:compose` event; it opens the quick-entry window instead now
+  // (`surface_quick_entry` in lib.rs), and nothing sends that event any more.
   const openCompose = () => {
     activeTool.value = 'quickcap';
     callWhenReady(() => quickCapAppRef.value, 'focusCompose');
   };
-
-  // The hotkey has already raised and focused the window by the time this
-  // arrives; all that is left is to land in the right place.
-  stopComposeListener = await listen('quickcap:compose', openCompose);
 
   // Both deep-link paths are needed: `getCurrent` for a cold start, where the
   // URL arrived before anything was listening, and `onOpenUrl` for a shortcut
@@ -1520,7 +1514,6 @@ let ledgerSweepTimer: ReturnType<typeof setTimeout> | undefined;
 
 onUnmounted(() => {
   stopCaptureListener?.();
-  stopComposeListener?.();
   window.matchMedia('(prefers-color-scheme: dark)').removeEventListener('change', applyTheme);
   document.removeEventListener('click', followExternalLink);
   document.removeEventListener('auxclick', followExternalLink);
@@ -1950,10 +1943,6 @@ onUnmounted(() => {
         </template>
       </component>
 
-      <!-- Sync Conflict Toast (floating bottom-right). Once, and out here
-           rather than in the content slot: it teleports to body, so a second
-           copy was a second listener stacking the same toast on this one. -->
-      <SyncConflictToast />
       <Teleport to="#app-toasts">
         <AppNotice />
       </Teleport>

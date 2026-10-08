@@ -13,9 +13,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
 import type { Memory, MemoryBudget, Proposal } from '../types';
+import { errorText } from '../../../shared/errorText';
+import { todayIso } from '../../../shared/localDay';
 
-/** Today, as the `YYYY-MM-DD` string every date on a memory is written in. */
-export const today = () => new Date().toISOString().slice(0, 10);
+/**
+ * Today, as the `YYYY-MM-DD` string every date on a memory is written in — the
+ * reader's day, not UTC's, or a memory confirmed before seven in the morning
+ * in Hà Nội is confirmed yesterday.
+ */
+export const today = () => todayIso();
 
 /**
  * Past its own review date, so worth asking about again.
@@ -69,6 +75,9 @@ export const confirmedPatch = (memory: Memory, now = today()): Record<string, un
   if (!memory.review_after) return patch;
   const gap = Math.round((dayOf(memory.review_after) - dayOf(memory.last_confirmed)) / DAY_MS);
   patch.review_after = Number.isFinite(gap) && gap > 0
+    // Arithmetic on days, not a moment: `dayOf` reads a day as UTC midnight,
+    // so UTC is the zone that gives the same day back.
+    // eslint-disable-next-line no-restricted-syntax
     ? new Date(dayOf(now) + gap * DAY_MS).toISOString().slice(0, 10)
     : null;
   return patch;
@@ -88,7 +97,7 @@ export function useSynMemory(vaultPath: () => string) {
   const error = ref<string | null>(null);
 
   const ns = useNodeService();
-  const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+  const asMessage = (e: unknown) => errorText(e);
 
   const load = async () => {
     isLoading.value = true;

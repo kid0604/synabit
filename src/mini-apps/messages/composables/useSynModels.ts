@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { OllamaStatus, ModelInfo } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 export function useSynModels() {
   const models = ref<ModelInfo[]>([]);
@@ -168,7 +169,7 @@ export function useSynModels() {
       return true;
     } catch (e) {
       logger.error('[Syn] Failed to pull model', e);
-      pullError.value = String(e);
+      pullError.value = errorText(e);
       return false;
     } finally {
       pullingModel.value = false;

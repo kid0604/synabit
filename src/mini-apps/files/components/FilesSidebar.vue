@@ -47,15 +47,15 @@ async function deleteCollection(saved: { id: string; name: string }) {
 
     <div v-if="store.textProgress.value" class="mx-4 mb-3 px-3 py-2 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-xs">
       <span class="font-medium text-emerald-700 dark:text-emerald-300">
-        {{ $t('file.reading_text') }} · {{ $t('file.reading_remaining', { count: store.textProgress.value.remaining.toLocaleString() }) }}
+        {{ $t('file.reading_text') }} · {{ $t('file.reading_remaining', { count: store.textProgress.value.remaining.toLocaleString($i18n.locale) }) }}
       </span>
     </div>
 
     <div v-if="store.scanProgress.value" class="mx-4 mb-3 px-3 py-2 rounded-xl bg-accent/10 text-xs">
       <div class="flex items-center justify-between gap-2">
         <span class="font-medium text-accent dark:text-accent-dark truncate">
-          {{ $t('file.scan_files', { count: store.scanProgress.value.indexed.toLocaleString() }) }}
-          <span v-if="store.scanProgress.value.hashed" class="opacity-70">· {{ $t('file.scan_read', { count: store.scanProgress.value.hashed.toLocaleString() }) }}</span>
+          {{ $t('file.scan_files', { count: store.scanProgress.value.indexed.toLocaleString($i18n.locale) }) }}
+          <span v-if="store.scanProgress.value.hashed" class="opacity-70">· {{ $t('file.scan_read', { count: store.scanProgress.value.hashed.toLocaleString($i18n.locale) }) }}</span>
         </span>
         <button @click="store.stopScanning" class="text-accent dark:text-accent-dark hover:underline font-semibold cursor-pointer flex-shrink-0">{{ $t('file.scan_stop') }}</button>
       </div>

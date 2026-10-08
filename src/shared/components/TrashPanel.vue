@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n';
 import { logger } from '../../utils/logger';
 import AppDialog from './AppDialog.vue';
 import ConfirmModal from './ConfirmModal.vue';
+import { errorText } from '../errorText';
 
 interface TrashEntry {
   trash_path: string;
@@ -46,7 +47,7 @@ const load = async () => {
     entries.value = await invoke<TrashEntry[]>('list_trash', { vaultPath: props.vaultPath });
   } catch (e) {
     logger.error('Failed to list the trash', e);
-    error.value = String(e);
+    error.value = errorText(e);
   } finally {
     loading.value = false;
   }

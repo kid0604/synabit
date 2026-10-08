@@ -1,4 +1,5 @@
-import { onBeforeUnmount, onMounted, type Ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, type Ref } from 'vue';
+import { useBackGuard } from '../../../composables/useBackGuard';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -8,9 +9,16 @@ const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select
  * of the dialog into the board behind it, and closing one left focus on the
  * page itself, so a keyboard user started again from the top.
  *
+ * `dismiss`, when given, is what Android's Back does — the same as the
+ * dialog's Escape. The board's dialogs are mounted only while open, so the
+ * claim on Back lasts exactly as long as the component, and one opened from
+ * inside another (the source picker in Generate) sits above it and closes
+ * first.
+ *
  * Returns the handler for the dialog's `keydown`.
  */
-export function useModalFocus(box: Ref<HTMLElement | null>) {
+export function useModalFocus(box: Ref<HTMLElement | null>, dismiss?: () => void) {
+  if (dismiss) useBackGuard(ref(true), dismiss);
   let before: HTMLElement | null = null;
   onMounted(() => { before = document.activeElement as HTMLElement | null; });
   onBeforeUnmount(() => {

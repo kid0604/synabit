@@ -2,8 +2,9 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import { serverFrom, type ConnectorDraft, type ConnectorView, type ConnectorTested } from '../connector';
+import { errorText } from '../../../shared/errorText';
 
-const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+const asMessage = (e: unknown) => errorText(e);
 
 /**
  * Syn's connectors, as the settings screen drives them.

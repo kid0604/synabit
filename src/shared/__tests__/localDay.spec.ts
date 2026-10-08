@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { asShown, localDay } from '../localDay';
+import { asShown, localDay, localDateKey, todayIso } from '../localDay';
 
 describe('localDay', () => {
   it('reads the day of a UTC stamp in the reader’s zone', () => {
@@ -40,5 +40,22 @@ describe('A table cell, as a person reads it', () => {
     for (const cell of ['2026-09-20', 'Gặp Khánh ở quán quen', 'Hà Nội', '13', '9.28', '', '2026']) {
       expect(asShown(cell), cell).toBe(cell);
     }
+  });
+});
+
+describe('the local calendar day', () => {
+  /**
+   * 06:30 on 14 September in Hà Nội is 23:30 on the 13th in UTC. The day the
+   * person is living is the 14th, and that is the one a form should offer.
+   * Built from local fields, so it holds in whatever zone the test runs.
+   */
+  it('is the day on the wall clock, not the day in UTC', () => {
+    expect(localDateKey(new Date(2026, 8, 14, 6, 30))).toBe('2026-09-14');
+    expect(localDateKey(new Date(2026, 0, 1, 0, 0))).toBe('2026-01-01');
+    expect(localDateKey(new Date(2026, 11, 31, 23, 59))).toBe('2026-12-31');
+  });
+
+  it('gives today in the same shape', () => {
+    expect(todayIso()).toBe(localDateKey(new Date()));
   });
 });

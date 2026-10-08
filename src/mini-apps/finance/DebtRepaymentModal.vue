@@ -5,6 +5,7 @@ import { X, Wallet, FileText, CheckCircle2 } from 'lucide-vue-next';
 import AppDialog from '../../shared/components/AppDialog.vue';
 import type { Debt, FinanceAccount, Transaction } from './types';
 import { formatAmountInput, formatCurrency, formatMinorForInput, parseAmountInput } from './currency';
+import { todayIso } from '../../shared/localDay';
 
 const { t } = useI18n();
 
@@ -29,8 +30,7 @@ const markCompleted = ref(false);
 const remainingAmount = props.debt.totalAmount - props.debt.paidAmount;
 
 onMounted(() => {
-    const today = new Date();
-    date.value = today.toISOString().split('T')[0];
+    date.value = todayIso();
     
     // Default account to the same account used when creating
     accountId.value = props.debt.accountId || (props.accounts.length > 0 ? props.accounts[0].id : '');

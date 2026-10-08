@@ -1,3 +1,4 @@
+import { errorText } from '../shared/errorText';
 import { ref, onUnmounted } from 'vue'
 import { check, type Update } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
@@ -130,7 +131,7 @@ export function useAppUpdate() {
         return false
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = errorText(e)
       console.error('[Update] Check failed:', message)
 
       if (!silent) {
@@ -183,7 +184,7 @@ export function useAppUpdate() {
       console.log('[Update] Relaunching app...')
       await relaunch()
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
+      const message = errorText(e)
       console.error('[Update] Download/install failed:', message)
       error.value = message
       isDownloading.value = false

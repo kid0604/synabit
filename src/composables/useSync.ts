@@ -11,20 +11,7 @@ import { syncErrorKey } from '../shared/syncErrorText';
 export type SyncAdapterId = 'none' | 'local' | 'server';
 export type SyncTriggerReason = 'manual' | 'server_push' | 'periodic_timer' | 'app_foreground' | 'initial_connect' | 'watcher_create_delete' | 'watcher_modified' | 'queued_retry';
 
-export type SyncPhase = 'checking' | 'pulling' | 'applying' | 'pushing' | 'assets' | 'complete' | 'error';
 export type SyncStatus = 'idle' | 'checking' | 'pulling' | 'applying' | 'pushing' | 'waiting_for_assets' | 'partial' | 'success' | 'offline' | 'error' | 'upgrade_required';
-
-export interface SyncProgressEvent {
-  runId: string;
-  vaultId: string;
-  provider: string;
-  phase: SyncPhase;
-  completedItems: number;
-  totalItems?: number;
-  bytesTransferred: number;
-  totalBytes?: number;
-  currentFile?: string;
-}
 
 /**
  * A file kept aside because another device's version took its place.
@@ -37,19 +24,10 @@ export interface SyncConflictInfo {
   kept_as: string;
 }
 
-export interface QuotaInfo {
-  currentBytes: number;
-  limitBytes: number;
-}
-
-
 // --- Shared Singleton State ---
 const syncStatus = ref<SyncStatus>('idle');
 const syncError = ref('');
-const syncProgress = ref<SyncProgressEvent | null>(null);
-const syncErrors = ref<string[]>([]);
 const syncConflicts = ref<SyncConflictInfo[]>([]);
-const quotaWarning = ref<QuotaInfo | null>(null);
 
 let isInitialized = false;
 let instanceCount = 0;
@@ -68,6 +46,10 @@ let activeVaultType: Ref<SyncAdapterId> | null = null;
 
 async function setupEventListeners() {
   try {
+    // The only sync event the backend sends. Progress, conflicts and quota used
+    // to have listeners of their own, for events nothing emitted: a conflict
+    // arrives in `sync_full`'s result (below), and a full server is one of the
+    // errors that call rejects with.
     const unlistenPush = await listen('sync-server-push', () => {
       logger.info('[Sync] Received push notification. Triggering sync...');
       if (syncStatus.value === 'idle' || syncStatus.value === 'success' || syncStatus.value === 'partial' || syncStatus.value === 'error') {
@@ -78,41 +60,6 @@ async function setupEventListeners() {
       }
     });
     unlistenFns.push(unlistenPush);
-
-    const unlistenProgress = await listen<SyncProgressEvent>('sync-progress', (event) => {
-      syncProgress.value = event.payload;
-      
-      // Map progress phase to UI syncStatus
-      const phase = event.payload.phase;
-      if (phase === 'checking') syncStatus.value = 'checking';
-      else if (phase === 'pulling') syncStatus.value = 'pulling';
-      else if (phase === 'applying') syncStatus.value = 'applying';
-      else if (phase === 'pushing') syncStatus.value = 'pushing';
-      else if (phase === 'assets') syncStatus.value = 'waiting_for_assets';
-      
-      if (phase === 'error' && event.payload.currentFile) {
-        syncErrors.value = [event.payload.currentFile];
-      }
-      
-      if (phase === 'complete' || phase === 'error') {
-        setTimeout(() => {
-          if (syncProgress.value?.runId === event.payload.runId) {
-            syncProgress.value = null;
-          }
-        }, 2000);
-      }
-    });
-    unlistenFns.push(unlistenProgress);
-
-    const unlistenConflict = await listen<SyncConflictInfo>('sync-conflict', (event) => {
-      syncConflicts.value.push(event.payload);
-    });
-    unlistenFns.push(unlistenConflict);
-
-    const unlistenQuota = await listen<QuotaInfo>('sync-quota-exceeded', (event) => {
-      quotaWarning.value = event.payload;
-    });
-    unlistenFns.push(unlistenQuota);
   } catch (e) {
     logger.error('Failed to setup sync event listeners:', e);
   }
@@ -350,11 +297,8 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
     isSyncing,
     syncStatus,
     syncError,
-    syncProgress,
-    syncErrors,
     syncConflicts,
     dismissConflicts,
-    quotaWarning,
     sync: doSync,
     cancelSync,
     setupAutoSync,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ref, nextTick, defineComponent, h } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
-import { useBackGuard, backGuardDepth } from '../useBackGuard';
+import { useBackGuard, backGuardDepth, noteNavigation } from '../useBackGuard';
 
 /**
  * The back gesture on Android is handled by consuming history entries, so these
@@ -214,5 +214,47 @@ describe('useBackGuard', () => {
     wrapper.unmount();
 
     expect(backGuardDepth()).toBe(0);
+  });
+
+  /**
+   * The general form of the More menu's case: a dialog whose button closes it
+   * and opens another app. The router reports the navigation, and the close
+   * leaves its entry where it is rather than undo it.
+   */
+  it('does not spend a press while the router is navigating', async () => {
+    const isOpen = ref(true);
+    mountGuard(isOpen);
+    await nextTick();
+
+    const back = vi.spyOn(window.history, 'back');
+    try {
+      noteNavigation(true);
+      isOpen.value = false;
+      await nextTick();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(back).not.toHaveBeenCalled();
+      expect(backGuardDepth()).toBe(0);
+    } finally {
+      noteNavigation(false);
+      back.mockRestore();
+    }
+  });
+
+  /** Nor once something else has been pushed over its entry. */
+  it('leaves its entry alone once another is on top of it', async () => {
+    const isOpen = ref(true);
+    mountGuard(isOpen);
+    await nextTick();
+
+    const back = vi.spyOn(window.history, 'back');
+    try {
+      isOpen.value = false;
+      window.history.pushState({ route: 'elsewhere' }, '');
+      await nextTick();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(back).not.toHaveBeenCalled();
+    } finally {
+      back.mockRestore();
+    }
   });
 });

@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useNodeService } from '../../../composables/useNodeService';
 import { logger } from '../../../utils/logger';
 import type { Skill, SkillTrial, SkillUsage } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * May the user turn this on yet?
@@ -53,7 +54,7 @@ export function useSynSkills(vaultPath: () => string) {
   const error = ref<string | null>(null);
 
   const ns = useNodeService();
-  const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+  const asMessage = (e: unknown) => errorText(e);
 
   const load = async () => {
     isLoading.value = true;

@@ -1,5 +1,6 @@
 import type { WBNode } from './boardFile';
 import { CARD_SIZE, today } from './vaultCards';
+import { todayIso } from '../../shared/localDay';
 
 /**
  * How a live frame lays out its answers.
@@ -81,6 +82,9 @@ export function dayOf(value: string | null | undefined): string | null {
 
 const DAY = 864e5;
 const toDay = (iso: string) => Math.round(Date.parse(iso) / DAY);
+// Day numbers count UTC midnights (`Date.parse` of a bare date is UTC), so
+// UTC is the zone that turns one back into the same day.
+// eslint-disable-next-line no-restricted-syntax
 const fromDay = (n: number) => new Date(n * DAY).toISOString().slice(0, 10);
 
 /** Where a time line's days fall across the frame. */
@@ -99,7 +103,7 @@ export function timelineLayout(
   const dated = rows.map((r) => ({ id: r.id, day: dayOf(r.value) })).filter((r): r is { id: string; day: string } => !!r.day);
   const undated = rows.filter((r) => !dayOf(r.value));
   const days = dated.map((r) => toDay(r.day));
-  let d0 = days.length ? Math.min(...days) : toDay(new Date().toISOString().slice(0, 10));
+  let d0 = days.length ? Math.min(...days) : toDay(todayIso());
   let d1 = days.length ? Math.max(...days) : d0 + 7;
   if (d1 - d0 < 7) { d0 -= 1; d1 = d0 + 8; }
   // Wide enough that the cards of a busy stretch are not all stacked.

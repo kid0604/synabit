@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { Shield, Key, ArrowRight, Copy, Check, AlertCircle } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import AppDialog from './AppDialog.vue';
+import { errorText } from '../errorText';
 
 const { t } = useI18n();
 
@@ -28,7 +29,7 @@ const generateNew = async () => {
     recoveryPhrase.value = result.recovery_phrase;
     step.value = 'show-phrase';
   } catch (err) {
-    error.value = String(err);
+    error.value = errorText(err);
   } finally {
     loading.value = false;
   }
@@ -45,7 +46,7 @@ const restoreFromPhrase = async () => {
     await invoke('restore_e2ee_from_phrase', { phrase: restoreInput.value.trim().toLowerCase() });
     emit('done');
   } catch (err) {
-    error.value = String(err);
+    error.value = errorText(err);
   } finally {
     loading.value = false;
   }
@@ -188,7 +189,7 @@ const finishSetup = () => {
           <button @click="copyPhrase" class="w-full px-4 py-2.5 border border-border-subtle dark:border-border-subtle-dark text-text-secondary dark:text-text-secondary-dark hover:bg-gray-100 dark:hover:bg-[#333] rounded-xl text-[13px] font-medium transition-all flex items-center justify-center gap-2">
             <Copy v-if="!copied" class="w-4 h-4" />
             <Check v-else class="w-4 h-4 text-green-500" />
-            {{ copied ? $t('settings.pairing.copied') : $t('settings.e2ee.copy_phrase') }}
+            {{ copied ? $t('settings.e2ee.copied') : $t('settings.e2ee.copy_phrase') }}
           </button>
           
           <button @click="startVerify" class="btn-primary w-full h-11">

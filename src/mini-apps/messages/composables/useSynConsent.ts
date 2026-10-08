@@ -22,6 +22,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { ConsentAnswer, ConsentAsk } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 export interface ConsentEvent {
   run_id: string;
@@ -150,7 +151,7 @@ export function useSynConsent(vaultPath: () => string) {
       return wasAsked;
     } catch (e) {
       logger.error('[Syn] Could not record the answer', e);
-      error.value = (e as { message?: string })?.message ?? String(e);
+      error.value = errorText(e);
       return false;
     } finally {
       answering.value = false;

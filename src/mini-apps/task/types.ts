@@ -1,5 +1,6 @@
 import { i18n } from '../../i18n';
 import { isValidDateString, isValidTimeString, type FieldIssue } from './validation';
+import { todayIso } from '../../shared/localDay';
 
 // ── Task Types & Constants ──────────────────────────────────────────
 
@@ -92,12 +93,7 @@ export const URGENCY_THRESHOLD_DAYS = 3;
 
 // ── Helper Functions ────────────────────────────────────────────────
 
-export const getTodayStr = (): string => {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60000;
-  const localNow = new Date(now.getTime() - offset);
-  return localNow.toISOString().split('T')[0];
-};
+export const getTodayStr = (): string => todayIso();
 
 export const getPriorityClass = (priority: string): string => {
   switch (priority) {

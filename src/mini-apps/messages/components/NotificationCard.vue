@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { CheckSquare, Calendar, Gift, MessageSquare, ArrowRight, Hourglass, Split, TriangleAlert, Scale } from 'lucide-vue-next';
 
 const props = defineProps<{
@@ -33,10 +34,12 @@ const getIcon = (type: string) => {
  */
 const isNotice = computed(() => String(props.notification?.subtype ?? '').startsWith('syn_'));
 
+const { locale } = useI18n();
+
 const formatTime = (isoString?: string) => {
     if (!isoString) return '';
     const d = new Date(isoString);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' · ' + d.toLocaleDateString();
+    return d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit' }) + ' · ' + d.toLocaleDateString(locale.value);
 };
 </script>
 

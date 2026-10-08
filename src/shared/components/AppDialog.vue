@@ -24,10 +24,17 @@
  *   callers mount it with `v-if` and `:show="true"`, so it never sees `show`
  *   turn false; unmounting is the same moment for them.
  *
+ * * **Android's Back closes it**, as Escape does and only when Escape would
+ *   (`dismissible`). Without this, Back with a dialog open went to the route
+ *   underneath or left the app. It goes through `useBackGuard`, whose stack is
+ *   shared with the shell's other layers, so the dialog opened last closes
+ *   first — a confirmation asked from inside Settings goes before Settings.
+ *
  * `unstyled` drops the panel's own look for a caller that draws its own
  * surface; the behaviour stays.
  */
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { useBackGuard } from '../../composables/useBackGuard';
 
 const props = withDefaults(
   defineProps<{
@@ -89,6 +96,11 @@ onBeforeUnmount(() => {
 function dismiss() {
   if (props.dismissible) emit('close');
 }
+
+// Registered in setup, before the caller's own guards could be: a dialog
+// mounted open joins the stack at once, so nothing opened from inside it can
+// get under it.
+useBackGuard(computed(() => props.show && props.dismissible), dismiss);
 
 /** Whether the press that ends in this click began on the scrim itself. */
 let pressedOnScrim = false;

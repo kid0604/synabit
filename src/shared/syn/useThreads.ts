@@ -19,6 +19,7 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../utils/logger';
+import { errorText } from '../errorText';
 
 /** Whose move it is. Mirrors `syn::thread::State`. */
 export type ThreadState = 'mine' | 'yours' | 'world' | 'resting' | 'closed';
@@ -96,7 +97,7 @@ export function useThreads(vaultPath: () => string) {
   const error = ref<string | null>(null);
   const isLoading = ref(false);
 
-  const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+  const asMessage = (e: unknown) => errorText(e);
 
   const load = async () => {
     isLoading.value = true;

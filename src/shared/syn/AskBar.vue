@@ -32,6 +32,7 @@ import { useI18n } from 'vue-i18n';
 import { X, CornerDownLeft, Loader2, ArrowUpRight, GitBranch, Plus, Check, Zap, ListChecks } from 'lucide-vue-next';
 
 import { logger } from '../../utils/logger';
+import { useBackGuard } from '../../composables/useBackGuard';
 import { describeFocus, type SynFocus } from './focus';
 import { useThreads, openThreads, type Thread } from './useThreads';
 import { tidyComposerText } from './composerText';
@@ -43,6 +44,7 @@ import type { ConsentAnswer, SynMessage } from '../../mini-apps/messages/types';
 import { useSynChat } from '../../mini-apps/messages/composables/useSynChat';
 import RunProgress from './RunProgress.vue';
 import PlanList from './PlanList.vue';
+import { errorText } from '../errorText';
 
 const props = defineProps<{
   open: boolean;
@@ -261,7 +263,7 @@ const ask = async (said?: string) => {
   } catch (e: unknown) {
     if (opening !== openings) return;
     logger.error('[Syn] The ask bar could not start a conversation', e);
-    failed.value = (e as { message?: string })?.message ?? String(e);
+    failed.value = errorText(e);
     busy.value = false;
     return;
   }
@@ -436,6 +438,28 @@ const onThreadTitleEnter = (event: KeyboardEvent) => {
   event.preventDefault();
   void startAndChoose();
 };
+
+/**
+ * Android's Back, on the same ladder as Escape: the thread picker, then a
+ * running answer, then the bar.
+ *
+ * The picker is a layer of its own, registered after the bar's, so it sits
+ * above it and goes first. Stopping an answer leaves the bar open, but the
+ * press that stopped it has already used up the bar's history entry — so the
+ * claim is dropped for one tick and made again, and the next Back closes the
+ * bar as it should.
+ */
+const backArmed = ref(true);
+useBackGuard(computed(() => props.open && backArmed.value), () => {
+  if (!busy.value) {
+    close();
+    return;
+  }
+  void stop();
+  backArmed.value = false;
+  void nextTick(() => { backArmed.value = true; });
+});
+useBackGuard(pickingThread, () => { pickingThread.value = false; });
 
 const onKeydown = (event: KeyboardEvent) => {
   // A key that belongs to the input method — Telex, VNI, pinyin — is the IME's

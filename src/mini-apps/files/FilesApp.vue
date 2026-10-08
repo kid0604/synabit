@@ -727,7 +727,7 @@ onUnmounted(() => {
 
         <!-- Selection -->
         <div v-if="store.selectionSize.value > 1" class="w-full bg-accent/10 text-accent dark:text-accent-dark px-4 md:px-8 py-2.5 text-sm flex items-center gap-3 flex-wrap">
-          <span class="font-semibold">{{ $t('file.selected_count', { count: store.selectionSize.value.toLocaleString() }) }}</span>
+          <span class="font-semibold">{{ $t('file.selected_count', { count: store.selectionSize.value.toLocaleString($i18n.locale) }) }}</span>
 
           <input v-if="isBulkTagging" ref="bulkTagRef" v-model="bulkTagInput"
             @keydown.enter="applyBulkTag" @keydown.esc="isBulkTagging = false; bulkTagInput = ''" @blur="applyBulkTag"

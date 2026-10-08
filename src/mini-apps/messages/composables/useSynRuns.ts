@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import type { Run, RunSummary, PromptPreview } from '../types';
 import type { SynFocus } from '../../../shared/syn/focus';
+import { errorText } from '../../../shared/errorText';
 
 export function useSynRuns(vaultPath: () => string) {
   const runs = ref<RunSummary[]>([]);
@@ -24,7 +25,7 @@ export function useSynRuns(vaultPath: () => string) {
   const isLoading = ref(false);
   const error = ref<string | null>(null);
 
-  const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+  const asMessage = (e: unknown) => errorText(e);
 
   const loadRuns = async () => {
     isLoading.value = true;

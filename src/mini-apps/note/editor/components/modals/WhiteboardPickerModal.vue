@@ -78,7 +78,7 @@ const emit = defineEmits<{
                 {{ board.tags.slice(0, 3).join(', ') }}
               </span>
               <span class="text-xs text-gray-500 dark:text-gray-400">
-                {{ board.updated_at ? new Date(board.updated_at).toLocaleDateString() : '' }}
+                {{ board.updated_at ? new Date(board.updated_at).toLocaleDateString($i18n.locale) : '' }}
               </span>
             </div>
           </div>

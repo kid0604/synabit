@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { X, RefreshCw, Plus, Trash2, AlertCircle, Bell, BellOff } from 'lucide-vue-next';
 import type { Subscription } from '../subscriptions';
 import { paletteFor } from '../subscriptions';
@@ -30,8 +31,10 @@ const submit = () => {
     name.value = '';
 };
 
+const { locale } = useI18n();
+
 const when = (seconds: number) =>
-    seconds > 0 ? new Date(seconds * 1000).toLocaleString() : '';
+    seconds > 0 ? new Date(seconds * 1000).toLocaleString(locale.value) : '';
 
 const field = 'w-full bg-gray-50 dark:bg-surface-hover-dark border border-gray-200 dark:border-[#444] '
     + 'rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent text-black dark:text-white';

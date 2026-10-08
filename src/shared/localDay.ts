@@ -46,9 +46,20 @@ export function asShown(cell: string): string {
   return /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(cell) ? localDay(cell) : cell;
 }
 
+/**
+ * The calendar day a moment falls on, where the reader is: `YYYY-MM-DD`.
+ *
+ * Not `date.toISOString().slice(0, 10)`, which is the day in UTC — in Hà Nội,
+ * from midnight to seven in the morning, that is yesterday. A dozen forms
+ * defaulted their date field that way and offered a gift, a debt or a meeting
+ * dated the day before; a lint rule now refuses the pattern and points here.
+ */
+export function localDateKey(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 /** Today, as the vault writes a day: `YYYY-MM-DD`, in the reader's own zone. */
 export function todayIso(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  return localDateKey(new Date());
 }

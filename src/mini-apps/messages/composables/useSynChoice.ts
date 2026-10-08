@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { AmbiguousChoice } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 export interface ChoiceEvent {
   run_id: string;
@@ -98,7 +99,7 @@ export function useSynChoice(vaultPath: () => string) {
       });
     } catch (e) {
       logger.error('[Syn] Could not record which one was meant', e);
-      error.value = (e as { message?: string })?.message ?? String(e);
+      error.value = errorText(e);
       return null;
     }
     const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;

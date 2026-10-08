@@ -1,6 +1,14 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { mount, flushPromises } from '@vue/test-utils';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 import AppDialog from '../AppDialog.vue';
+import { backGuardDepth } from '../../../composables/useBackGuard';
+
+/**
+ * Every dialog mounted here is unmounted after its test: an open dialog holds
+ * a place on the back guard's stack, which is module state and would
+ * otherwise carry into the next test.
+ */
+const mounted: VueWrapper[] = [];
 
 const open = async (props: Record<string, unknown> = {}) => {
   const wrapper = mount(AppDialog, {
@@ -8,6 +16,7 @@ const open = async (props: Record<string, unknown> = {}) => {
     slots: { default: '<input id="first" /><button id="second">Save</button>' },
     attachTo: document.body,
   });
+  mounted.push(wrapper);
   await flushPromises();
   return wrapper;
 };
@@ -22,7 +31,28 @@ const pressAndRelease = (down: HTMLElement, clickTarget: HTMLElement) => {
 
 beforeEach(() => {
   document.body.innerHTML = '';
+  window.history.replaceState(null, '', '/');
 });
+
+afterEach(async () => {
+  while (mounted.length) {
+    const w = mounted.pop()!;
+    // Some tests unmount their own; doing it twice throws.
+    try { w.unmount(); } catch { /* already gone */ }
+  }
+  expect(backGuardDepth()).toBe(0);
+  // Let any history step a closing dialog set in motion land before the next test.
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+});
+
+/** Android's Back, as the WebView delivers it: a step back through history. */
+function pressBack(): Promise<void> {
+  return new Promise((resolve) => {
+    window.addEventListener('popstate', () => resolve(), { once: true });
+    window.history.back();
+  });
+}
 
 describe('the dialog shell', () => {
   it('announces itself as a named modal dialog', async () => {
@@ -94,5 +124,66 @@ describe('the dialog shell', () => {
     await w.setProps({ show: false });
     await flushPromises();
     expect(document.activeElement).toBe(opener);
+  });
+});
+
+describe('the dialog and the back gesture', () => {
+  it('closes on Back, as it does on Escape', async () => {
+    const w = await open();
+    expect(backGuardDepth()).toBe(1);
+    await pressBack();
+    expect(w.emitted('close')).toHaveLength(1);
+    expect(backGuardDepth()).toBe(0);
+  });
+
+  it('does not claim Back when it must be answered', async () => {
+    await open({ dismissible: false });
+    expect(backGuardDepth()).toBe(0);
+  });
+
+  it('does not claim Back while it is closed', async () => {
+    const w = await open({ show: false });
+    expect(backGuardDepth()).toBe(0);
+    await w.setProps({ show: true });
+    expect(backGuardDepth()).toBe(1);
+    await w.setProps({ show: false });
+    expect(backGuardDepth()).toBe(0);
+  });
+
+  /**
+   * A question asked from inside Settings is a dialog over a dialog. Back must
+   * take the question away and leave Settings where it was.
+   */
+  it('closes the one on top first', async () => {
+    const under = await open({ ariaLabel: 'Settings' });
+    const over = await open({ ariaLabel: 'Are you sure?', elevated: true });
+    expect(backGuardDepth()).toBe(2);
+
+    await pressBack();
+    expect(over.emitted('close')).toHaveLength(1);
+    expect(under.emitted('close')).toBeUndefined();
+    // The caller closes it by dropping it, as most callers do with `v-if`.
+    over.unmount();
+    expect(backGuardDepth()).toBe(1);
+
+    await pressBack();
+    expect(under.emitted('close')).toHaveLength(1);
+  });
+
+  /**
+   * Most callers mount the dialog with `v-if` and `:show="true"`, so closing it
+   * by its button unmounts it while `show` is still true. Its history entry has
+   * to go with it, or the next Back is spent on nothing.
+   */
+  it('takes its history entry away when it is dropped while open', async () => {
+    const w = await open();
+    const back = vi.spyOn(window.history, 'back');
+    try {
+      w.unmount();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(back).toHaveBeenCalledTimes(1);
+    } finally {
+      back.mockRestore();
+    }
   });
 });

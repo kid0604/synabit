@@ -4,6 +4,7 @@ import { stampElement } from '../boardFile';
 import type { WBEdge, WBNode, WhiteboardData } from '../boardFile';
 import { CARD_SIZE } from '../vaultCards';
 import { STICKY_SIZE } from '../sticky';
+import { errorText } from '../../../shared/errorText';
 
 export type AssistAction = 'summarize' | 'expand' | 'cluster' | 'tasks' | 'sketch' | 'generate';
 
@@ -168,7 +169,7 @@ export function useBoardAssist(ctx: {
       else if (action === 'generate') placeDiagram(answer, area);
     } catch (err) {
       if (mine !== asked) return;
-      ctx.notify(failure(String(err)), 'error');
+      ctx.notify(failure(errorText(err)), 'error');
     } finally {
       if (mine === asked) busy.value = null;
     }

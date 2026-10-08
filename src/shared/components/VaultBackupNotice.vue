@@ -18,6 +18,7 @@ import { useI18n } from 'vue-i18n';
 import { isMobileOS } from '../platformScope';
 import { useVaultArchive, lastExportedAt, backupReminderReason, daysSince as daysSinceExport, formatBytes } from '../../composables/useVaultArchive';
 import { logger } from '../../utils/logger';
+import { errorText } from '../errorText';
 
 const props = defineProps<{ vaultPath: string }>();
 
@@ -58,7 +59,7 @@ async function runExport() {
     setTimeout(() => { dismissed.value = true; }, 2500);
   } catch (e) {
     logger.error('Vault export from the reminder failed', e);
-    done.value = String(e);
+    done.value = errorText(e);
   }
 }
 </script>

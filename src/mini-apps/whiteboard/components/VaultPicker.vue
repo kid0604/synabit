@@ -15,7 +15,7 @@ import { PICKABLE_KINDS } from '../vaultCards';
  */
 const emit = defineEmits<{ (e: 'pick', item: { id: string; kind: string; title: string }): void; (e: 'close'): void }>();
 const boxRef = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(boxRef);
+const keepFocus = useModalFocus(boxRef, () => emit('close'));
 const { t } = useI18n();
 const nodes = useNodeService();
 

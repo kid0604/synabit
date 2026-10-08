@@ -33,6 +33,7 @@ import { CAP_COLOURS, colourClass, deriveTitle, extractTags, removeTagFromConten
 import { makeThumbnail, thumbnailNameFor } from '../../shared/thumbnails';
 import { useQuickCapWriter } from './useQuickCapWriter';
 import { useAudioCapture, formatDuration } from './useAudioCapture';
+import { todayIso } from '../../shared/localDay';
 
 const bus = useEventBus();
 const ns = useNodeService();
@@ -895,7 +896,7 @@ const promoteToEvent = async (caps: NodeMetadata[]) => {
     if (!body) return;
 
     const title = deriveTitle(body);
-    const day = new Date().toISOString().slice(0, 10);
+    const day = todayIso();
     const safeName = title.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 40);
     const relPath = `Events/${safeName}_${Date.now()}.md`;
 

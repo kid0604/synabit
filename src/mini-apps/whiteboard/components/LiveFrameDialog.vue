@@ -14,7 +14,7 @@ const emit = defineEmits<{
   (e: 'close'): void;
 }>();
 const boxRef = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(boxRef);
+const keepFocus = useModalFocus(boxRef, () => emit('close'));
 const { t } = useI18n();
 
 const title = ref('');

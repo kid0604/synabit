@@ -11,7 +11,7 @@ import { logger } from '../../utils/logger';
  */
 export function feedErrorKey(e: unknown, fallback: string): { key: string; params?: Record<string, string> } {
   const raw = typeof e === 'string' ? e : (e as { message?: string } | null)?.message ?? '';
-  logger.warn('[Feeds] ' + (raw || String(e)));
+  logger.warn('[Feeds]', raw || e);
   if (/Not a usable URL|URL has no host/i.test(raw)) return { key: 'feeds.error_url_invalid' };
   if (/Refusing to fetch|private network|on this machine/i.test(raw)) return { key: 'feeds.error_url_private' };
   const status = raw.match(/HTTP (\d{3})/);

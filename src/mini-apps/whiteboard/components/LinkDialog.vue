@@ -13,7 +13,7 @@ const text = ref(props.link ?? '');
 const wrong = ref(false);
 const input = ref<HTMLInputElement | null>(null);
 const box = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(box);
+const keepFocus = useModalFocus(box, () => emit('close'));
 onMounted(() => nextTick(() => { input.value?.focus(); input.value?.select(); }));
 
 function save() {

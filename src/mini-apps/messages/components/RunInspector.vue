@@ -29,6 +29,7 @@ import { captureFocus } from '../../../shared/syn/focus';
 import SynStats from './SynStats.vue';
 import type { RunState, RunStep, Reversal, Memory, Skill, ToolCard, Run, Capability } from '../types';
 import { capabilityLabel } from '../composables/useSynConsent';
+import { errorText } from '../../../shared/errorText';
 
 const props = defineProps<{
   vaultPath: string;
@@ -52,7 +53,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{ close: []; use: [name: string] }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const route = useRoute();
 
 const {
@@ -181,7 +182,7 @@ const loadTools = async () => {
   try {
     tools.value = await invoke<ToolCard[]>('syn_list_tools', { vaultPath: props.vaultPath });
   } catch (e) {
-    toolError.value = (e as { message?: string })?.message ?? String(e);
+    toolError.value = errorText(e);
   }
 };
 
@@ -213,7 +214,7 @@ const setCapability = async (capability: Capability, allowed: boolean, key: stri
     // would show a switch that this screen says is off and that one does not.
     await loadAudit();
   } catch (e) {
-    toolError.value = (e as { message?: string })?.message ?? String(e);
+    toolError.value = errorText(e);
   } finally {
     switching.value = null;
   }
@@ -360,7 +361,7 @@ const stateLabel = (state: RunState) => t(`syn.run_state_${state}`);
 
 const when = (iso: string) => {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString();
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString(locale.value);
 };
 
 const duration = (ms: number) => (ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`);

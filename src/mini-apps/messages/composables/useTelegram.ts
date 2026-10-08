@@ -2,6 +2,7 @@ import { ref, onMounted, onUnmounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
+import { errorText } from '../../../shared/errorText';
 
 /** What `syn::telegram::Status` serialises to. */
 export interface TelegramStatus {
@@ -26,7 +27,7 @@ export interface PairingLink {
 /** Sent by Rust whenever something this screen shows has changed. */
 export const TELEGRAM_STATUS_EVENT = 'telegram-status';
 
-const asMessage = (e: unknown) => (e as { message?: string })?.message ?? String(e);
+const asMessage = (e: unknown) => errorText(e);
 
 /**
  * The Telegram bot, as the settings screen drives it.

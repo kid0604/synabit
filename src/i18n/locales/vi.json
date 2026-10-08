@@ -25,7 +25,6 @@
       "notes": "Ghi chú",
       "tasks": "Công việc",
       "security": "Bảo mật",
-      "devices": "Thiết bị",
       "about": "Thông tin",
       "timeline": "Dòng thời gian",
       "syn": "Syn (AI)"
@@ -212,56 +211,6 @@
       "sent": "Đã gửi",
       "received": "Đã nhận"
     },
-    "devices": {
-      "paired": "Thiết bị đã ghép nối",
-      "disconnections": "Số lần ngắt kết nối: {n}",
-      "disconnections_hint": "Số lần bạn đã ngắt kết nối một thiết bị. Đây chỉ là con số ghi lại, không phải cài đặt bảo mật — nó không đổi khóa nào cả.",
-      "refresh": "Tải lại danh sách thiết bị",
-      "loading": "Đang tải thiết bị…",
-      "empty": "Chưa ghép nối thiết bị nào",
-      "empty_hint": "Ghép nối thêm thiết bị để dữ liệu luôn khớp giữa các máy.",
-      "add": "Thêm thiết bị",
-      "unknown": "Thiết bị không rõ tên",
-      "last_seen": "Lần cuối thấy: {when}",
-      "paired_on": "Ghép nối ngày {date}",
-      "disconnect_hint": "Ngừng đồng bộ thiết bị này",
-      "confirm_title": "Ngắt kết nối thiết bị này?",
-      "confirm_message": "“{name}” sẽ không nhận và gửi thay đổi nữa. Nó vẫn giữ bản dữ liệu đã có, và việc ngắt kết nối không làm bản đó không đọc được.",
-      "revoked": "“{name}” sẽ không đồng bộ nữa. Nó vẫn giữ bản đã có.",
-      "never": "Chưa bao giờ",
-      "just_now": "Vừa xong",
-      "minutes_ago": "{n} phút trước",
-      "hours_ago": "{n} giờ trước",
-      "days_ago": "{n} ngày trước"
-    },
-    "pairing": {
-      "title": "Ghép nối thiết bị",
-      "subtitle": "Kết nối thêm một thiết bị để đồng bộ",
-      "close": "Đóng ghép nối",
-      "choose": "Chọn cách ghép nối thiết bị này với một máy khác đang chạy Synabit.",
-      "generate": "Hiện mã",
-      "generate_desc": "Hiện mã trên thiết bị này rồi nhập mã đó ở máy kia",
-      "enter": "Nhập mã",
-      "enter_desc": "Nhập mã đang hiện trên thiết bị kia",
-      "generating": "Đang tạo mã ghép nối…",
-      "show_code": "Nhập mã này trên thiết bị kia",
-      "copy": "Sao chép mã",
-      "copied": "Đã sao chép",
-      "expires_in": "Hết hạn sau {time}",
-      "waiting": "Đang chờ thiết bị kia…",
-      "success": "Đã ghép nối thiết bị",
-      "success_desc": "Từ giờ các thiết bị của bạn sẽ tự đồng bộ.",
-      "enter_8": "Nhập mã 8 ký tự đang hiện trên thiết bị kia",
-      "char_n": "Ký tự thứ {n}",
-      "pairing": "Đang ghép nối…",
-      "done": "Xong",
-      "enter_all": "Vui lòng nhập đủ 8 ký tự",
-      "expired": "Mã ghép nối đã hết hạn",
-      "start_failed": "Không bắt đầu ghép nối được",
-      "enter_code": "Vui lòng nhập mã ghép nối",
-      "pair_failed": "Không ghép nối được thiết bị",
-      "remove_failed": "Không gỡ được thiết bị"
-    },
     "e2ee": {
       "title": "Bảo vệ dữ liệu của bạn",
       "save_title": "Lưu cụm từ khôi phục",
@@ -286,7 +235,8 @@
       "verify_placeholder": "Dán hoặc nhập 12 từ của bạn vào đây",
       "confirm_finish": "Xác nhận và hoàn tất",
       "enter_phrase": "Vui lòng nhập cụm từ khôi phục",
-      "mismatch": "Không khớp với cụm từ khôi phục. Hãy kiểm tra rồi thử lại."
+      "mismatch": "Không khớp với cụm từ khôi phục. Hãy kiểm tra rồi thử lại.",
+      "copied": "Đã sao chép"
     }
   },
   "chat": {
@@ -4981,8 +4931,6 @@
       "server": "Máy chủ đồng bộ",
       "synced_at": "Đã đồng bộ {time}",
       "kept_aside": "{count} tệp được giữ riêng — bấm để xem | {count} tệp được giữ riêng — bấm để xem",
-      "merged": "Đã tự gộp {count} tệp | Đã tự gộp {count} tệp",
-      "and_more": "và {count} tệp khác…",
       "timed_out": "Đồng bộ quá lâu nên đã dừng",
       "cancelled": "Đã huỷ đồng bộ",
       "errors": "{count} lỗi | {count} lỗi",
@@ -5077,13 +5025,11 @@
       "turn_off": "Tắt chế độ đơn giản"
     },
     "sync_errors": {
-      "unavailable": "Phiên bản Synabit này chưa có tính năng này.",
       "no_key": "Hãy thiết lập mã hoá trên thiết bị này trước khi đồng bộ.",
       "not_connected": "Thiết bị này chưa kết nối với máy chủ đồng bộ.",
       "offline": "Không kết nối được với thiết bị hoặc máy chủ kia. Hãy kiểm tra kết nối rồi thử lại.",
       "upgrade": "Bên kia đang dùng phiên bản Synabit khác. Hãy cập nhật cả hai rồi thử lại.",
-      "quota": "Máy chủ đồng bộ đã hết chỗ.",
-      "bad_code": "Mã này không dùng được, có thể đã hết hạn. Hãy tạo mã mới rồi thử lại."
+      "quota": "Máy chủ đồng bộ đã hết chỗ."
     },
     "links": {
       "open_failed": "Không mở được liên kết này."

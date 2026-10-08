@@ -56,7 +56,7 @@ const emit = defineEmits<{
   (e: 'ask', id: string): void;
 }>();
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const ns = useNodeService();
 
 const editing = ref(false);
@@ -119,7 +119,7 @@ const onWaitingFor = (value: string) => {
 
 const when = (iso: string) => {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString();
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString(locale.value);
 };
 </script>
 

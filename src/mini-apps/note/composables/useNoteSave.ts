@@ -65,7 +65,7 @@ export function useNoteSave(
         window.dispatchEvent(new CustomEvent('synabit-block-refresh', {
           detail: { nodeId: note.id }
         }));
-    } catch(e) { logger.error("Failed to save note:", String(e)); }
+    } catch(e) { logger.error("Failed to save note:", e); }
   };
 
   const saveNoteForTab = (rawTabId: string) => {

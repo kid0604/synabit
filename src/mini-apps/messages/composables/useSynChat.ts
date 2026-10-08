@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { PlanStep, RunProgress, SynStreamToken, SynMessage, SynToolCallEvent, Tempo } from '../types';
 import type { SynFocus } from '../../../shared/syn/focus';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * What the backend says when the switch is off.
@@ -236,7 +237,7 @@ export function useSynChat() {
       turn.stops = [];
       return response;
     } catch (e: any) {
-      const said = e?.message || String(e);
+      const said = errorText(e);
       // "Syn is off" is not a failure, and logging it as one puts a chosen
       // state in the error log beside real ones. The backend refuses with a
       // fixed sentence — `commands::syn::SWITCHED_OFF`, pinned by a Rust test

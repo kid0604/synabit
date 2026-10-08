@@ -411,7 +411,7 @@ const fetchFullText = () => extractArticle(true);
           </div>
           <div v-if="article.readTimeMinutes" class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-4">
             <span>{{ article.readTimeMinutes }} {{ t('feeds.read_time_min') }}</span>
-            <span v-if="article.wordCount">· {{ article.wordCount.toLocaleString() }} {{ t('feeds.words') }}</span>
+            <span v-if="article.wordCount">· {{ article.wordCount.toLocaleString($i18n.locale) }} {{ t('feeds.words') }}</span>
           </div>
           <a v-if="article.url" @click.prevent="openOriginal" class="inline-flex items-center gap-1.5 text-sm text-accent dark:text-accent-dark hover:underline font-medium mb-6 pb-6 border-b border-border dark:border-border-dark transition-colors cursor-pointer">
             {{ t('feeds.view_original') }} →

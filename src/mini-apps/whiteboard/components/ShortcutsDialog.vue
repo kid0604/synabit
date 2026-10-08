@@ -52,7 +52,7 @@ const groups: { title: string; rows: [string, string][] }[] = [
 
 const box = ref<HTMLElement | null>(null);
 const closeBtn = ref<HTMLButtonElement | null>(null);
-const keepFocus = useModalFocus(box);
+const keepFocus = useModalFocus(box, () => emit('close'));
 onMounted(() => nextTick(() => closeBtn.value?.focus()));
 </script>
 

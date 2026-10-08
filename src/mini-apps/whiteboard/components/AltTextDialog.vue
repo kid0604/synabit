@@ -15,7 +15,7 @@ const { t } = useI18n();
 const text = ref(props.alt ?? '');
 const input = ref<HTMLTextAreaElement | null>(null);
 const box = ref<HTMLElement | null>(null);
-const keepFocus = useModalFocus(box);
+const keepFocus = useModalFocus(box, () => emit('close'));
 onMounted(() => nextTick(() => { input.value?.focus(); input.value?.select(); }));
 
 function onKey(e: KeyboardEvent) {

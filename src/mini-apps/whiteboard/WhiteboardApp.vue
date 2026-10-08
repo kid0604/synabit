@@ -114,6 +114,7 @@ import type { NavEntry } from '../../stores/useNavigationStore';
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
 import '@vue-flow/node-resizer/dist/style.css';
+import { errorText } from '../../shared/errorText';
 
 // ── Props & Services ────────────────────────────────────────
 const props = defineProps<{ vaultPath: string }>();
@@ -2407,7 +2408,7 @@ const live = useLiveFrames({
     void undoCardMove.run(
       t('whiteboard.live.moved', { title, value }),
       () => {},
-      () => { undo().catch((err) => showAppNotice(t('whiteboard.live.move_failed', { error: String(err) }), 'error')); },
+      () => { undo().catch((err) => showAppNotice(t('whiteboard.live.move_failed', { error: errorText(err) }), 'error')); },
     );
   },
   onMoveFailed: (error) => showAppNotice(t('whiteboard.live.move_failed', { error }), 'error'),

@@ -15,6 +15,7 @@ import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { logger } from '../../../utils/logger';
 import type { CeilingKind, RoundBuckets, RunState, SynStats } from '../types';
+import { errorText } from '../../../shared/errorText';
 
 /** Buckets in the order a person reads them: fewest rounds first. */
 export const ROUND_BUCKETS: (keyof RoundBuckets)[] = [
@@ -71,7 +72,7 @@ export function useSynStats(vaultPath: () => string) {
       stats.value = await invoke<SynStats>('syn_stats', { vaultPath: vaultPath() });
     } catch (e) {
       logger.error('[Syn] Failed to count runs', e);
-      error.value = (e as { message?: string })?.message ?? String(e);
+      error.value = errorText(e);
       stats.value = null;
     } finally {
       isLoading.value = false;

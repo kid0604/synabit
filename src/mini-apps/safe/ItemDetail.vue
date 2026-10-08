@@ -19,6 +19,7 @@ import SynAccess from './SynAccess.vue';
 import type { FieldView, ItemView, SafeApi } from './api';
 import { kindInfo } from './kinds';
 import { useSafeError } from './useSafeError';
+import { localDateKey } from '../../shared/localDay';
 
 const props = defineProps<{ api: SafeApi; item: ItemView }>();
 const emit = defineEmits<{ (e: 'edit'): void; (e: 'changed'): void; (e: 'error', err: unknown): void }>();
@@ -156,7 +157,7 @@ async function copyLink() {
  */
 const ns = useNodeService();
 async function createTask() {
-  const due = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+  const due = localDateKey(new Date(Date.now() + 7 * 86_400_000));
   try {
     await ns.writeNode({
       relPath: `Tasks/${crypto.randomUUID()}.md`,

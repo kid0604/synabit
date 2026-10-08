@@ -15,6 +15,7 @@ import { logger } from '../../utils/logger';
 import LedgerNote from './components/LedgerNote.vue';
 import AppDialog from '../../shared/components/AppDialog.vue';
 import ConfirmModal from '../../shared/components/ConfirmModal.vue';
+import { errorText } from '../../shared/errorText';
 
 const props = defineProps<{
   vaultPath: string;
@@ -207,7 +208,7 @@ const confirmRestore = async () => {
     emit('close');
   } catch (e) {
     logger.error('Could not restore that version', e);
-    error.value = String(e);
+    error.value = errorText(e);
   } finally {
     restoring.value = false;
   }

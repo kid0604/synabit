@@ -11,6 +11,8 @@ import GiftModal from './GiftModal.vue';
 import OverviewTab from './OverviewTab.vue';
 import NotesTab from './NotesTab.vue';
 import TimelineTab from './TimelineTab.vue';
+import { loadFinanceSetup } from '../finance/ledger';
+import { currentCurrency } from '../finance/currency';
 import GraphTab from './GraphTab.vue';
 import AppHeader from '../../shared/components/AppHeader.vue';
 import UndoToast from '../../shared/components/UndoToast.vue';
@@ -208,7 +210,24 @@ let financeLoaded = false;
 const loadFinance = async (force = false) => {
     if (financeLoaded && !force) return;
     financeLoaded = true;
-    await Promise.all([fetchDebts(), fetchTransactions()]);
+    await Promise.all([fetchDebts(), fetchTransactions(), fetchCurrency()]);
+};
+
+/**
+ * The vault's currency, which the amounts below are counted in.
+ *
+ * A ledger row holds minor units of the vault's currency and nothing else, so
+ * the timeline cannot show one without knowing which currency that is. Finance
+ * and QuickCap set this when they open; somebody who goes straight to People
+ * has opened neither.
+ */
+const fetchCurrency = async () => {
+    try {
+        const setup = await loadFinanceSetup();
+        if (setup) currentCurrency.value = setup.currency;
+    } catch (e) {
+        logger.error('Failed to read the finance currency', e);
+    }
 };
 
 const fetchDebts = async () => {

@@ -4,6 +4,7 @@ import { logger } from '../../../utils/logger';
 import { isAppOwned, appOwnedKeys, GOVERNED } from '../../../shared/fieldRegistry';
 import { folderForType } from '../../../shared/nodeRoutes';
 import { kindOf, toText, valueOf, asFieldKind, type FieldKind } from '../../../shared/fieldValue';
+import { errorText } from '../../../shared/errorText';
 
 /**
  * A field the kind is shaped to hold, and how to draw it while it is empty.
@@ -162,7 +163,7 @@ export function useThingsNode() {
     } catch (e) {
       if (mine !== token) return;
       logger.error('[Things] Could not open node', e);
-      error.value = String(e);
+      error.value = errorText(e);
       node.value = null;
     } finally {
       if (mine === token) loading.value = false;
@@ -304,7 +305,7 @@ export function useThingsNode() {
       return relPath;
     } catch (e) {
       logger.error('[Things] Could not create node', e);
-      error.value = String(e);
+      error.value = errorText(e);
       return null;
     } finally {
       saving.value = false;
@@ -365,7 +366,7 @@ export function useThingsNode() {
       clean = current;
     } catch (e) {
       logger.error('[Things] Could not save node', e);
-      error.value = String(e);
+      error.value = errorText(e);
     } finally {
       saving.value = false;
     }

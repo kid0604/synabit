@@ -18,6 +18,7 @@ import type { EditValue, FieldKind, ItemEdit, ItemKind, ItemView, SafeApi, TotpE
 import { CONCEALED, FIELD_KINDS, kindInfo } from './kinds';
 import PasswordGenerator from './PasswordGenerator.vue';
 import { useSafeError } from './useSafeError';
+import { localDateKey } from '../../shared/localDay';
 
 const props = defineProps<{ api: SafeApi; item: ItemView | null; kind: ItemKind }>();
 const emit = defineEmits<{ (e: 'saved', item: ItemView): void; (e: 'close'): void }>();
@@ -41,7 +42,10 @@ const kind = ref<ItemKind>(props.item?.kind ?? props.kind);
 const title = ref(props.item?.title ?? '');
 const notes = ref(props.item?.notes ?? '');
 /** `YYYY-MM-DD`, or empty for none; the item keeps Unix seconds. */
-const expires = ref(props.item?.expires_at ? new Date(props.item.expires_at * 1000).toISOString().slice(0, 10) : '');
+// Read back in the zone it is saved in (local midnight, below). Cut from
+// `toISOString()` it was the UTC day, so east of Greenwich every expiry the
+// editor reopened showed the day before, and saving moved it back a day.
+const expires = ref(props.item?.expires_at ? localDateKey(new Date(props.item.expires_at * 1000)) : '');
 /** An existing setup is never sent here; the choice is keep, remove or replace. */
 const hasTotp = ref(!!props.item?.totp);
 const totpInput = ref('');

@@ -5,6 +5,7 @@ import { X, Wallet, Users, FileText } from 'lucide-vue-next';
 import AppDialog from '../../shared/components/AppDialog.vue';
 import type { Debt, FinanceAccount, Transaction } from './types';
 import { formatAmountInput, formatMinorForInput, parseAmountInput } from './currency';
+import { todayIso } from '../../shared/localDay';
 
 const { t } = useI18n();
 
@@ -43,8 +44,7 @@ onMounted(() => {
         accountId.value = props.editingDebt.accountId || '';
         note.value = props.editingDebt.note || '';
     } else {
-        const today = new Date();
-        startDate.value = today.toISOString().split('T')[0];
+        startDate.value = todayIso();
         
         // Suggest a default account
         if (props.accounts.length > 0) {

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { useAppLockStore, pinErrorKey } from '../../stores/useAppLockStore';
 import { useI18n } from 'vue-i18n';
 import AppDialog from './AppDialog.vue';
+import { errorText } from '../errorText';
 
 const { t } = useI18n();
 
@@ -140,7 +141,7 @@ async function handleStepComplete() {
     // The backend's refusals are codes (a PIN already set, a wrong current
     // PIN, too many tries); anything else is shown as it came.
     const key = pinErrorKey(e);
-    errorMessage.value = key ? t(key) : String(e);
+    errorMessage.value = key ? t(key) : errorText(e);
     triggerShake();
     pin.value = [];
   } finally {

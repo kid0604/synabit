@@ -66,6 +66,23 @@ export default [
         { object: 'window', property: 'confirm', message: 'Use ConfirmModal, or useUndoableAction for deletes.' },
         { object: 'window', property: 'alert', message: 'Show the message in the app.' },
       ],
+      'no-restricted-syntax': ['error',
+        // A Tauri command rejects with `{ code, message }`, and `String()` of
+        // that is "[object Object]" — which is what a dozen error lines showed.
+        {
+          selector: "CallExpression[callee.name='String'][arguments.length=1][arguments.0.type='Identifier'][arguments.0.name=/^(e|err|error)$/]",
+          message: 'String(e) of a command error is "[object Object]". Use errorText(e) from src/shared/errorText.ts, or pass e to the logger as it is.',
+        },
+        // The UTC date, not the user's: before 07:00 in Vietnam it is yesterday.
+        {
+          selector: "CallExpression[callee.property.name=/^(slice|substring|substr)$/][callee.object.type='CallExpression'][callee.object.callee.property.name='toISOString'][arguments.0.value=0][arguments.1.value=10]",
+          message: "toISOString() is UTC, so this is yesterday's date in the early morning east of Greenwich. Use todayIso() / localDateKey() from src/shared/localDay.ts for a calendar day.",
+        },
+        {
+          selector: "MemberExpression[property.value=0][object.type='CallExpression'][object.callee.property.name='split'][object.arguments.0.value='T'][object.callee.object.type='CallExpression'][object.callee.object.callee.property.name='toISOString']",
+          message: "toISOString() is UTC, so this is yesterday's date in the early morning east of Greenwich. Use todayIso() / localDateKey() from src/shared/localDay.ts for a calendar day.",
+        },
+      ],
       'no-restricted-imports': ['error', {
         paths: [{
           name: '@tauri-apps/plugin-dialog',
@@ -76,8 +93,15 @@ export default [
     }
   },
   {
-    // Tests mock the dialog plugin wholesale to prove it is no longer called.
-    files: ['**/__tests__/**'],
-    rules: { 'no-restricted-imports': 'off' },
+    // Tests mock the dialog plugin wholesale to prove it is no longer called,
+    // and build UTC dates on purpose to pin down what the code does with them.
+    files: ['**/__tests__/**', '**/*.spec.ts'],
+    rules: { 'no-restricted-imports': 'off', 'no-restricted-syntax': 'off' },
+  },
+  {
+    // The two places that turn an error into words are where `String(error)`
+    // is the right last resort, after everything better has been tried.
+    files: ['src/shared/errorText.ts', 'src/utils/said.ts'],
+    rules: { 'no-restricted-syntax': 'off' },
   }
 ]
