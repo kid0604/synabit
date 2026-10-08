@@ -235,12 +235,18 @@ pub fn query_for(instant: &Instant) -> Query {
 ///
 /// Read from the vault, minus the ones that are storage rather than something
 /// anybody keeps — the same list `list_schemas` hides for the same reason.
+///
+/// Nor the types of an app locked with the PIN: a count of them is the answer
+/// put straight into the prompt, and Syn does not answer about a locked app.
+/// See `syn::locks`.
 pub fn countable_types(db: &DbBridge) -> AppResult<Vec<String>> {
+    let locks = crate::syn::locks::current();
     Ok(db
         .observed_schemas(1)?
         .into_iter()
         .map(|(node_type, _, _)| node_type)
         .filter(|t| !crate::syn::tools::is_internal_type(t))
+        .filter(|t| !locks.hides_type(t))
         .collect())
 }
 
@@ -255,9 +261,13 @@ pub fn sample(result: &crate::db::QueryResult) -> String {
     if result.rows.is_empty() {
         return String::new();
     }
+    // A protected note is counted — the number is the database's — but not
+    // named. See `syn::locks`.
+    let hidden = crate::syn::locks::Hidden::without_db();
     let titles: Vec<&str> = result
         .rows
         .iter()
+        .filter(|r| !hidden.hides(None, &r.id, Some(&r.node_type)))
         .take(SHOWN)
         .map(|r| r.title.as_str())
         .collect();

@@ -294,6 +294,9 @@ pub fn change_app_lock(
 
 #[tauri::command]
 pub fn get_app_lock_config(app: tauri::AppHandle) -> Result<AppLockConfig, String> {
+    // The front end asks this on start, so Syn learns the app here — which a
+    // phone needs before it can read what is locked. See `syn::locks`.
+    crate::syn::locks::know_handle(&app);
     Ok(read_config(&app))
 }
 

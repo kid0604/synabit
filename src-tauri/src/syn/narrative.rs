@@ -77,6 +77,26 @@ pub fn sources_for(
     let open = when::iso(when::open_end());
     let mut rows: Vec<(String, String, String, String, String)> = Vec::new();
 
+    // A note locked with the app PIN is not retold, and its title is not
+    // named as somebody's evidence. Notes only: this is the People app's own
+    // page, opened by somebody who got past that app's lock if it has one, so
+    // a locked People app is not a reason to retell less of it. See
+    // `syn::locks`.
+    let hidden = crate::syn::locks::Hidden::without_db();
+    let kept: Vec<Event> = items
+        .iter()
+        .filter(|item| {
+            !hidden.hides_ref(&item.node_id)
+                && !item.container_node.as_deref().is_some_and(|c| hidden.hides_ref(c))
+        })
+        .cloned()
+        .map(|mut item| {
+            item.links.retain(|link| !hidden.hides_ref(&link.node_id));
+            item
+        })
+        .collect();
+    let items = kept.as_slice();
+
     for item in items.iter().filter(|item| item.kind != "interaction") {
         let date = if item.happened_from == item.happened_to {
             item.happened_from.clone()
@@ -101,7 +121,7 @@ pub fn sources_for(
         rows.push((date, item.node_id.clone(), item.node_type.clone(), item.title.clone(), what));
     }
 
-    for node in interactions {
+    for node in interactions.iter().filter(|n| !hidden.hides_ref(&n.id)) {
         let date = node.properties.get("date").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let kind = node
             .properties

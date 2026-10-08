@@ -20,6 +20,7 @@ pub mod gate;
 pub mod footing;
 pub mod family_safe;
 pub mod instructions;
+pub mod locks;
 pub mod connector;
 pub mod memory;
 pub mod narrative;

@@ -260,13 +260,38 @@ fn kind_words(kind: &str) -> &str {
 /// more there are and where to read them, rather than growing without limit.
 const SHOWN: usize = 40;
 
+/// Leave out what the app lock keeps from Syn: events from a protected note
+/// or of a locked app's type, and links naming one. See `syn::locks`.
+pub fn without_locked(
+    items: &mut Vec<Event>,
+    hidden: &crate::syn::locks::Hidden,
+    db: Option<&crate::db::DbBridge>,
+) {
+    if hidden.is_empty() {
+        return;
+    }
+    items.retain(|item| {
+        !hidden.hides(db, &item.node_id, Some(&item.node_type))
+            && !item.container_node.as_deref().is_some_and(|c| hidden.hides(db, c, None))
+    });
+    for item in items.iter_mut() {
+        item.links.retain(|link| !hidden.hides(db, &link.node_id, None));
+    }
+}
+
 /// The prompt section for a question about a time.
+///
+/// Whatever the app lock protects is left out here rather than by the caller,
+/// so the block cannot be built with it in.
 pub fn block(
     asked: &Asked,
     items: &[Event],
     names: &std::collections::HashMap<String, String>,
 ) -> String {
     let open = when::iso(when::open_end());
+    let mut kept = items.to_vec();
+    without_locked(&mut kept, &crate::syn::locks::Hidden::without_db(), None);
+    let items = kept.as_slice();
     // The first forty as given, which is the store's order: most precisely
     // known first. Sorted by date before the cut, a vault with fifty
     // relationships going on for years would fill the list with them and
@@ -427,6 +452,50 @@ mod tests {
         let written = block(&asked, &items, &Default::default());
         assert!(written.contains("[[Đi khám]]"), "{written}");
         assert!(written.contains("…and 11 more"), "{written}");
+    }
+
+    /// A day note locked with the app PIN is not in the block, and neither is a
+    /// locked app's kind; a link naming the locked note is dropped from an open
+    /// one. See `syn::locks`.
+    #[test]
+    fn the_block_leaves_out_what_the_app_lock_protects() {
+        let asked = span_in("tuần trước", today()).unwrap();
+        let event = |node_id: &str, node_type: &str, title: &str, links: Vec<store::EventLink>| Event {
+            id: node_id.into(),
+            kind: "note".into(),
+            node_id: node_id.into(),
+            node_type: node_type.into(),
+            title: title.into(),
+            node_title: String::new(),
+            links,
+            magnitude: 0.0,
+            container_node: None,
+            props: serde_json::Value::Null,
+            happened_from: "2026-09-09".into(),
+            happened_to: "2026-09-09".into(),
+            precision: "day".into(),
+            time_source: "frontmatter".into(),
+            source: "derived".into(),
+            shape: crate::timeline::derive::Shape::Occasion,
+        };
+        let items = vec![
+            event("Notes/diary.md", "note", "Nhật ký bí mật", Vec::new()),
+            event("Events/party.md", "event", "Tiệc", Vec::new()),
+            event("Notes/open.md", "note", "Đi khám", vec![
+                store::EventLink { node_id: "Notes/diary.md".into(), role: "with".into(), label: None },
+            ]),
+        ];
+        let names: std::collections::HashMap<String, String> =
+            [("Notes/diary.md".to_string(), "Nhật ký bí mật".to_string())].into();
+
+        let open = block(&asked, &items, &names);
+        assert!(open.contains("Nhật ký bí mật") && open.contains("[[Tiệc]]"), "{open}");
+
+        let locks = crate::syn::locks::Locks::new(vec!["calendar".into()], vec!["Notes/diary.md".into()]);
+        let locked = crate::syn::locks::with_locks(locks, || block(&asked, &items, &names));
+        assert!(locked.contains("[[Đi khám]]"), "{locked}");
+        assert!(!locked.contains("Nhật ký bí mật"), "{locked}");
+        assert!(!locked.contains("Tiệc"), "{locked}");
     }
 
     #[test]

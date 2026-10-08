@@ -345,11 +345,15 @@ impl SecretManager {
         app_handle: Option<&tauri::AppHandle>,
         change: impl FnOnce(&mut AppSecrets),
     ) -> Result<(), String> {
-        read_modify_write(
+        let written = read_modify_write(
             || Self::try_load_secrets(app_handle),
             |secrets| Self::save_secrets(app_handle, secrets),
             change,
-        )
+        );
+        // Syn keeps the app lock's lists in memory (`syn::locks`). Any write
+        // may have changed them, so the next reader reads them again.
+        crate::syn::locks::forget();
+        written
     }
 
     fn save_secrets(
@@ -541,6 +545,23 @@ impl SecretManager {
             secrets.auto_lock_timeout_secs,
             secrets.app_lock_active,
         )
+    }
+
+    /// What the app lock protects, for Syn: `Ok(None)` when no PIN is set —
+    /// the lock screen guards nothing then, and neither does this — and `Err`
+    /// when the store could not be read, which the caller must not mistake for
+    /// "nothing protected" and keep. See `syn::locks`.
+    pub fn try_app_lock_lists(
+        app_handle: Option<&tauri::AppHandle>,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>, String> {
+        let secrets = Self::try_load_secrets(app_handle)?;
+        if secrets.app_lock_hash.is_none() {
+            return Ok(None);
+        }
+        Ok(Some((
+            secrets.protected_apps.unwrap_or_default(),
+            secrets.protected_notes.unwrap_or_default(),
+        )))
     }
 
     pub fn update_app_lock_config(

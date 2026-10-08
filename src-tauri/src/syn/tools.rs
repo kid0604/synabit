@@ -262,6 +262,24 @@ pub struct ToolContext<'a, R: tauri::Runtime> {
     pub model: Option<&'a crate::syn::taint::Taint>,
 }
 
+/// What the app lock keeps from this call, or `None` when nothing does: the
+/// caller is the app itself rather than a model, or nothing is locked.
+///
+/// The lists are read from memory (`locks::current`, which reads the keychain
+/// once and again only after a change); resolving the protected notes' other
+/// names is one small query.
+fn locked_for<R: tauri::Runtime>(ctx: &ToolContext<'_, R>) -> AppResult<Option<crate::syn::locks::Hidden>> {
+    if ctx.model.is_none() {
+        return Ok(None);
+    }
+    crate::syn::locks::know_handle_of(ctx.app);
+    let locks = crate::syn::locks::current();
+    if locks.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(crate::syn::locks::Hidden::resolve(locks, &*lock(ctx)?)))
+}
+
 /// The database, for the length of one tool call.
 fn lock<'a, R: tauri::Runtime>(
     ctx: &ToolContext<'a, R>,
@@ -1445,6 +1463,19 @@ pub fn execute_tool<R: tauri::Runtime>(
         }
     }
 
+    // The app lock: a model may not read or change a protected note, nor
+    // anything of a protected app. Checked here, once, so every tool — and
+    // every recipe step, which arrives here too — meets it without knowing it
+    // exists. The app's own code (`model: None`) is the user acting and is not
+    // held to it. See `syn::locks`.
+    let hidden = locked_for(ctx)?;
+    if let Some(hidden) = &hidden {
+        if let Some(why) = hidden.refuse(&*lock(ctx)?, name, args) {
+            log::warn!("[Syn Tools] Refused `{name}`: it reaches something locked with the app PIN");
+            return Ok(crate::syn::locks::refusal_json(&why));
+        }
+    }
+
     let result = match name {
         // Generic — these reach every type in the vault, including ones this
         // app has never heard of.
@@ -1519,6 +1550,13 @@ pub fn execute_tool<R: tauri::Runtime>(
         "write_spreadsheet" => tool_write_spreadsheet(ctx, args),
 
         _ => return Err(AppError::General(format!("Unknown tool: {}", name))),
+    };
+
+    // What came back, without anything locked in it. A listing loses the
+    // locked rows; a result that is about one thing locked becomes a refusal.
+    let result = match (result, &hidden) {
+        (Ok(out), Some(hidden)) => Ok(hidden.filter_result(&*lock(ctx)?, out)),
+        (other, _) => other,
     };
 
     // Whatever a stranger wrote is now in the run, and it stays there. Set on
@@ -2777,7 +2815,8 @@ where
 /// offering it back as though it were would be quoting itself on work the user
 /// stopped.
 fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
-    look_back(ctx.vault_path, args, ctx.run_id)
+    let hidden = locked_for(ctx)?;
+    look_back(ctx.vault_path, args, ctx.run_id, hidden.as_ref())
 }
 
 /// The reading, without the runtime.
@@ -2802,10 +2841,15 @@ fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppR
 /// another, which is `word_hits`, the rule `recall` ranks memories by. Ties go
 /// to the words matched in the goal — what was asked is what a run is about —
 /// and then to the newer run.
+///
+/// A run that touched a note locked with the app PIN — named it in a call, or
+/// in a result — is left out whole when `hidden` is given: its answer may well
+/// quote the note, from before it was locked. See `syn::locks`.
 fn look_back(
     vault_path: &str,
     args: &Value,
     this_run: Option<&str>,
+    hidden: Option<&crate::syn::locks::Hidden>,
 ) -> AppResult<String> {
     let query = args
         .get("query")
@@ -2877,6 +2921,14 @@ fn look_back(
         // what it is saying now, and returning it would have the model quoting
         // a half-written answer back at itself.
         .filter(|run| this_run != Some(run.id.as_str()))
+        .filter(|run| {
+            hidden.is_none_or(|hidden| {
+                !run.steps.iter().any(|step| {
+                    hidden.mentioned_in(&step.preview)
+                        || step.args.as_ref().is_some_and(|a| hidden.mentioned_in(&a.to_string()))
+                })
+            })
+        })
         .filter_map(|run| match &asked {
             None => Some(((0, 0), run)),
             Some(words) => {
@@ -2967,6 +3019,11 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
                 .query_row("SELECT stable_id FROM nodes WHERE id = ?1", [node.as_str()], |r| r.get::<_, Option<String>>(0))
                 .ok()
                 .flatten();
+            if ctx.model.is_some()
+                && crate::syn::locks::Hidden::resolve(crate::syn::locks::current(), &db).hides(Some(&db), &node, None)
+            {
+                return Ok(crate::syn::locks::refusal_json(crate::syn::locks::LOCKED));
+            }
             let mut names = vec![node.as_str()];
             if let Some(identity) = identity.as_deref().filter(|id| *id != node.as_str()) {
                 names.push(identity);
@@ -2979,6 +3036,13 @@ fn tool_timeline<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppRe
         }
         None => store.query(span, today)?,
     };
+    // Nothing from a locked note or app, and no name of one beside an event.
+    // `execute_tool` would drop a locked row on its own, but not a locked
+    // note's title standing as somebody's evidence in an open one.
+    if ctx.model.is_some() {
+        let hidden = crate::syn::locks::Hidden::resolve(crate::syn::locks::current(), &db);
+        crate::timeline::asked::without_locked(&mut items, &hidden, Some(&db));
+    }
     // What to call everyone and everywhere the page names. One lookup, not one
     // per event. See `timeline::store::names_in`.
     let called = crate::timeline::store::names_in(&db, &items);
@@ -5448,6 +5512,13 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
 fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
     let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
+    // Found by its title, so the check on the call's arguments in
+    // `execute_tool` never saw its path. Before anything is written.
+    if let Some(hidden) = locked_for(ctx)? {
+        if hidden.hides_ref(rel_board_path(ctx, &path).trim_start_matches("File: ")) {
+            return Ok(crate::syn::locks::refusal_json(crate::syn::locks::LOCKED));
+        }
+    }
     let mut board: crate::syn::board::Board;
 
     let changes: Vec<crate::syn::board::Change> = serde_json::from_value(
@@ -5511,7 +5582,7 @@ mod tests {
 
     fn look_back_for_test(vault: &str, args: serde_json::Value) -> serde_json::Value {
         serde_json::from_str(
-            &look_back(vault, &args, None).expect("reads"),
+            &look_back(vault, &args, None, None).expect("reads"),
         )
         .expect("json")
     }
@@ -7140,6 +7211,71 @@ mod tests {
         let state = handle.state::<crate::db::DbState>();
         let ctx = ToolContext { db: &state, vault_path, app: handle, run_id: None, model };
         serde_json::from_str(&execute_tool(&ctx, tool, &args).expect("the tool runs")).expect("JSON")
+    }
+
+    /// The app lock reaches every tool through `execute_tool`: a protected
+    /// note, and anything of a locked app, is absent from what a model reads
+    /// and refused when a model names it — while the app's own calls, and
+    /// everything unlocked, are as they were.
+    #[test]
+    fn a_model_cannot_read_or_change_what_the_app_lock_protects() {
+        let (_holder, vault_path, app) = phase_f_vault();
+        let handle = app.handle();
+        let created = |node_type: &str, title: &str, content: &str| -> String {
+            let out = call_as(handle, &vault_path, None, "create_node", serde_json::json!({
+                "node_type": node_type, "title": title, "content": content,
+            }));
+            out["id"].as_str().expect("created").to_string()
+        };
+        let diary = created("note", "Diary", "the marigold plan is secret");
+        let garden = created("note", "Garden", "marigold seeds on the balcony");
+        let mai = created("person", "Mai", "marigold neighbour");
+
+        let taint = crate::syn::taint::Taint::new();
+        let model = Some(&taint);
+        let locks = crate::syn::locks::Locks::new(vec!["people".into()], vec![diary.clone()]);
+        crate::syn::locks::with_locks(locks, || {
+            // Searched for: only what is not locked, and the count agrees.
+            let found = call_as(handle, &vault_path, model, "query_nodes", serde_json::json!({ "query": "marigold" }));
+            let ids: Vec<&str> = found["results"].as_array().unwrap().iter().filter_map(|r| r["id"].as_str()).collect();
+            assert_eq!(ids, [garden.as_str()], "{found}");
+            assert_eq!(found["total_matches"], 1);
+            assert!(!found.to_string().contains("Diary"), "no title of a locked note: {found}");
+
+            // A locked app's kind, asked for by name, is empty.
+            let people = call_as(handle, &vault_path, model, "query_nodes", serde_json::json!({ "query": "type:person" }));
+            assert_eq!(people["results"].as_array().unwrap().len(), 0, "{people}");
+            let kinds = call_as(handle, &vault_path, model, "list_schemas", serde_json::json!({}));
+            assert!(!kinds.to_string().contains("\"person\""), "{kinds}");
+
+            // Read directly: refused, saying it is locked and nothing else.
+            for id in [&diary, &mai] {
+                let read = call_as(handle, &vault_path, model, "get_node", serde_json::json!({ "node_id": id }));
+                assert_eq!(read["locked"], true, "{read}");
+                assert!(!read.to_string().contains("marigold"), "{read}");
+            }
+            let open = call_as(handle, &vault_path, model, "get_node", serde_json::json!({ "node_id": garden }));
+            assert!(open["content"].as_str().unwrap().contains("marigold"), "{open}");
+
+            // Not changed, not trashed.
+            let changed = call_as(handle, &vault_path, model, "update_node", serde_json::json!({
+                "node_id": diary, "properties": { "mood": "tired" },
+            }));
+            assert_eq!(changed["locked"], true, "{changed}");
+            let trashed = call_as(handle, &vault_path, model, "trash_node", serde_json::json!({ "node_id": diary }));
+            assert_eq!(trashed["locked"], true, "{trashed}");
+            let swept = call_as(handle, &vault_path, model, "delete_kind", serde_json::json!({ "node_type": "note" }));
+            assert_eq!(swept["locked"], true, "a whole kind with a locked note in it: {swept}");
+
+            // The app's own code is the person acting, and is not held to it.
+            let own = call_as(handle, &vault_path, None, "get_node", serde_json::json!({ "node_id": diary }));
+            assert!(own["content"].as_str().unwrap().contains("secret"), "{own}");
+            assert!(own.get("mood").is_none() && own["properties"].get("mood").is_none(), "unchanged: {own}");
+        });
+
+        // Unlocked, the same model reads it.
+        let read = call_as(handle, &vault_path, model, "get_node", serde_json::json!({ "node_id": diary }));
+        assert!(read["content"].as_str().unwrap().contains("secret"), "{read}");
     }
 
     /// A month the way the Finance app leaves one: minor units, stamped, with

@@ -702,6 +702,11 @@ pub fn retrieve_context(
     // What each passage is centred on. See `passages`.
     let centred_on = passage_terms(&terms);
 
+    // What the app lock keeps from Syn: a protected note, or anything of a
+    // locked app, never reaches the prompt — not its passages, not its title,
+    // not as a neighbour of something that does. See `syn::locks`.
+    let hidden = crate::syn::locks::Hidden::now(db);
+
     let terms_joined = terms.join(" ");
     let mut all_chunks: Vec<ContextChunk> = Vec::new();
     let mut seen_ids: HashSet<String> = HashSet::new();
@@ -766,6 +771,9 @@ pub fn retrieve_context(
                 if result.item_type == crate::syn::memory::MEMORY_TYPE {
                     continue;
                 }
+                if hidden.hides(Some(db), &result.id, Some(&result.item_type)) {
+                    continue;
+                }
                 if seen_ids.contains(&result.id) {
                     continue;
                 }
@@ -799,7 +807,7 @@ pub fn retrieve_context(
 
     // Step 3: Search feed articles (separate FTS5 table)
     // Only search feeds if we have enough specific terms (not just vault-related words)
-    if config.include_feeds {
+    if config.include_feeds && !hidden.locks().app_locked("feeds") {
         if non_vault_terms.len() >= 2 {
             let feed_query = non_vault_terms.join(" ");
             let feed_results = db.search_feed_articles_for_rag(&feed_query, 3);
@@ -833,7 +841,7 @@ pub fn retrieve_context(
 
     // Step 4: Search finance nodes (excluded from main FTS, use direct SQL)
     // Only search finance if we have enough specific terms
-    if config.include_finance {
+    if config.include_finance && !hidden.locks().app_locked("finance") {
         if non_vault_terms.len() >= 2 {
             let finance_results = db.search_finance_nodes_for_rag(&non_vault_terms, 3);
             log::info!(
@@ -940,6 +948,9 @@ pub fn retrieve_context(
         for source_id in &expansion_ids {
             let related = db.get_related_nodes_for_rag(source_id, 3);
             for (rel_id, rel_title, rel_type) in &related {
+                if hidden.hides(Some(db), rel_id, Some(rel_type)) {
+                    continue;
+                }
                 if seen_ids.contains(rel_id) {
                     continue;
                 }
@@ -1672,6 +1683,47 @@ mod tests {
         let found = retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval");
         let ids: Vec<&str> = found.sources.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ids, ["Notes/splunk.md"], "nothing about knowledge or structure");
+    }
+
+    /// A note locked with the app PIN, and anything of a locked app, never
+    /// reaches the prompt; everything else is retrieved as before.
+    #[test]
+    fn what_the_app_lock_protects_is_not_retrieved() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        // Enough else in the vault that the words are rare in it.
+        for i in 0..20 {
+            index(&db, &format!("Notes/other{i}.md"), &format!("Other {i}"), "groceries and errands this week");
+        }
+        db.upsert_search_entry(
+            "Notes/diary.md", "note", "Diary", "", "marigold balcony secret plans", "{}", None,
+            "2026-08-01T00:00:00Z", "Notes/diary.md",
+        );
+        db.upsert_search_entry(
+            "Notes/garden.md", "note", "Garden", "", "marigold balcony seeds planted", "{}", None,
+            "2026-08-01T00:00:00Z", "Notes/garden.md",
+        );
+        db.upsert_search_entry(
+            "People/mai.md", "person", "Mai", "", "marigold balcony neighbour", "{}", None,
+            "2026-08-01T00:00:00Z", "People/mai.md",
+        );
+        let q = "marigold balcony";
+        let ids = |found: &crate::models::syn::RetrievalResult| -> Vec<String> {
+            let mut ids: Vec<String> = found.context_chunks.iter().map(|c| c.source_id.clone()).collect();
+            ids.sort();
+            ids
+        };
+
+        let open = retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval");
+        assert_eq!(ids(&open), ["Notes/diary.md", "Notes/garden.md", "People/mai.md"]);
+
+        let locked = crate::syn::locks::with_locks(
+            crate::syn::locks::Locks::new(vec!["people".into()], vec!["Notes/diary.md".into()]),
+            || retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval"),
+        );
+        assert_eq!(ids(&locked), ["Notes/garden.md"]);
+        let said = format_context(&locked);
+        assert!(!said.contains("Diary") && !said.contains("secret"), "{said}");
+        assert!(!said.contains("Mai"), "{said}");
     }
 
     /// Without a name the vault has, `kiến` and `trúc` are searched as the one
