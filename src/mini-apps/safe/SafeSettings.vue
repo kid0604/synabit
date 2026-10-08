@@ -10,11 +10,12 @@
  */
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { open as openFile, save } from '@tauri-apps/plugin-dialog';
+import { open as openFile } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-vue-next';
 import AppDialog from '../../shared/components/AppDialog.vue';
 import { safeCode, type CliStatus, type SafeApi, type Settings, type SshStatus } from './api';
 import PasswordStrength from './PasswordStrength.vue';
+import { pickSavePath } from '../../shared/pickedPath';
 import { useSafeError } from './useSafeError';
 
 const props = defineProps<{ api: SafeApi }>();
@@ -115,7 +116,7 @@ function hideWords() {
 }
 
 async function saveKit() {
-  const path = await save({ defaultPath: 'Synabit Safe Emergency Kit.html', filters: [{ name: 'HTML', extensions: ['html'] }] });
+  const path = await pickSavePath('Synabit Safe Emergency Kit.html', [{ name: 'HTML', extensions: ['html'] }]);
   if (!path) return;
   try {
     await props.api.saveEmergencyKit(path, wordsPassword.value || undefined);
@@ -224,7 +225,7 @@ const exportPasswordAgain = ref('');
 async function exportSealed() {
   error.value = '';
   notice.value = '';
-  const path = await save({ defaultPath: 'Synabit Safe.safe-export', filters: [{ name: t('safe.exchange.exports'), extensions: ['safe-export'] }] });
+  const path = await pickSavePath('Synabit Safe.safe-export', [{ name: t('safe.exchange.exports'), extensions: ['safe-export'] }]);
   if (!path) return;
   try {
     const n = await props.api.exportSealed(path, exportPassword.value);
@@ -242,7 +243,7 @@ const phrase = computed(() => t('safe.exchange.plain_phrase'));
 async function exportPlain() {
   error.value = '';
   notice.value = '';
-  const path = await save({ defaultPath: 'Synabit Safe.csv', filters: [{ name: 'CSV', extensions: ['csv'] }] });
+  const path = await pickSavePath('Synabit Safe.csv', [{ name: 'CSV', extensions: ['csv'] }]);
   if (!path) return;
   try {
     const n = await props.api.exportPlain(path, plainPassword.value, typedKey.value || undefined);

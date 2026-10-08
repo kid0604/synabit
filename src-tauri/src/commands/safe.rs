@@ -6,9 +6,10 @@
 //! none, because the copy happens here. Everything else carries titles,
 //! usernames and hosts at most.
 //!
-//! Every command also checks who is asking. `syn::browser::may_call` already
-//! keeps the browsing webview to one command; this keeps Safe to the app's own
-//! windows by name, so that a webview added later is not let in by default.
+//! Every command also checks who is asking. `app_shell::may_call` already
+//! holds each webview to an allowlist — Quick Access to the four commands it
+//! uses — and this keeps Safe to the app's own windows by name as well, so a
+//! webview added there later is not let into Safe by default.
 
 use std::path::PathBuf;
 use std::time::Duration;

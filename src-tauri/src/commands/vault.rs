@@ -243,7 +243,11 @@ pub fn resolve_mobile_vault_path(app_handle: tauri::AppHandle) -> AppResult<Stri
         ))
     })?;
 
-    Ok(target.to_string_lossy().to_string())
+    // A phone has no picker: the app decides, so this is where its vault is
+    // opened. See `app_shell::vault`.
+    let target = target.to_string_lossy().to_string();
+    crate::app_shell::vault::global().choose(&target)?;
+    Ok(target)
 }
 
 // ---------------------------------------------------------------------------
@@ -268,36 +272,46 @@ fn staging_file(app_handle: &tauri::AppHandle, label: &str) -> AppResult<PathBuf
     Ok(dir.join(format!("{label}-{}.zip", uuid::Uuid::new_v4())))
 }
 
-/// Open a destination the user chose.
+/// Open a file the person picked in a dialog.
 ///
-/// `target` is whatever the file dialog returned: an ordinary path on desktop,
-/// a `content://` URI on Android. The filesystem plugin resolves both, which is
-/// why this needs no Android code of its own.
+/// A `FilePath` rather than a string, and from `app_shell::dialogs` rather
+/// than the webview: an ordinary path on desktop, a `content://` URI on
+/// Android, which the filesystem plugin resolves alike. It does not consult
+/// the plugin's scope — its Rust API never does — which is why the path must
+/// not be one a page could name.
 fn open_chosen(
     app_handle: &tauri::AppHandle,
-    target: &str,
+    target: tauri_plugin_fs::FilePath,
     options: tauri_plugin_fs::OpenOptions,
 ) -> AppResult<std::fs::File> {
-    use std::str::FromStr;
     use tauri_plugin_fs::FsExt;
-
-    let path = tauri_plugin_fs::FilePath::from_str(target)
-        .map_err(|e| AppError::General(format!("'{target}' is not a usable location: {e}")))?;
-
+    let shown = target.to_string();
     app_handle
         .fs()
-        .open(path, options)
-        .map_err(|e| AppError::General(format!("could not open '{target}': {e}")))
+        .open(target, options)
+        .map_err(|e| AppError::General(format!("could not open '{shown}': {e}")))
 }
 
-/// Open a user-chosen destination for writing, truncating anything there.
+/// Open a picked destination for writing, truncating anything there.
 ///
-/// Shared with the diagnostics export so that both go through the same
-/// resolution of a `content://` URI and cannot drift apart in how they treat
-/// what a file dialog hands back.
+/// A string, for the table export: `app_shell::gate` has already held it to a
+/// path `pick_save_path` returned (`CHOSEN_ARGS`), and it is parsed back here.
 pub(crate) fn open_chosen_for_write(
     app_handle: &tauri::AppHandle,
     target: &str,
+) -> AppResult<std::fs::File> {
+    use std::str::FromStr;
+    let path = tauri_plugin_fs::FilePath::from_str(target)
+        .map_err(|e| AppError::General(format!("'{target}' is not a usable location: {e}")))?;
+    open_picked_for_write(app_handle, path)
+}
+
+/// The same, for a dialog a command opened itself. Shared by the backup and
+/// the diagnostics export so that every writer resolves a `content://` URI
+/// the same way.
+pub(crate) fn open_picked_for_write(
+    app_handle: &tauri::AppHandle,
+    target: tauri_plugin_fs::FilePath,
 ) -> AppResult<std::fs::File> {
     open_chosen(
         app_handle,
@@ -310,16 +324,25 @@ pub(crate) fn open_chosen_for_write(
     )
 }
 
-/// Pack the vault into a zip at a location the user picked.
+/// Pack the vault into a zip, at a place the person picks in a dialog this
+/// command opens. `None` when they closed it.
+///
+/// The dialog is here rather than in the screen so the destination is never
+/// a string a page could choose: see `app_shell::dialogs`.
 #[tauri::command]
 pub async fn export_vault_archive(
     app_handle: tauri::AppHandle,
     vault_path: String,
-    destination: String,
-) -> AppResult<crate::vault_archive::ArchiveSummary> {
+) -> AppResult<Option<crate::vault_archive::ArchiveSummary>> {
     if vault_path.trim().is_empty() {
         return Err(AppError::General("no vault is open".into()));
     }
+    let zip = [crate::app_shell::dialogs::Filter::new("Zip", &["zip"])];
+    let Some(destination) =
+        crate::app_shell::dialogs::ask_save(&app_handle, &suggested_archive_name(), &zip).await
+    else {
+        return Ok(None);
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
         let staged = staging_file(&app_handle, "export")?;
@@ -331,7 +354,7 @@ pub async fn export_vault_archive(
             drop(file);
 
             let mut staged_read = std::fs::File::open(&staged)?;
-            let mut destination_file = open_chosen_for_write(&app_handle, &destination)?;
+            let mut destination_file = open_picked_for_write(&app_handle, destination)?;
             std::io::copy(&mut staged_read, &mut destination_file)?;
             Ok::<_, AppError>(summary)
         })();
@@ -343,18 +366,23 @@ pub async fn export_vault_archive(
     })
     .await
     .map_err(|e| AppError::General(format!("the export did not finish: {e}")))?
+    .map(Some)
 }
 
-/// Unpack a zip the user picked into the vault.
+/// Unpack a zip the person picks in a dialog this command opens into the
+/// vault. `None` when they closed it.
 #[tauri::command]
 pub async fn import_vault_archive(
     app_handle: tauri::AppHandle,
     vault_path: String,
-    source: String,
-) -> AppResult<crate::vault_archive::RestoreSummary> {
+) -> AppResult<Option<crate::vault_archive::RestoreSummary>> {
     if vault_path.trim().is_empty() {
         return Err(AppError::General("no vault is open".into()));
     }
+    let zip = [crate::app_shell::dialogs::Filter::new("Zip", &["zip"])];
+    let Some(source) = crate::app_shell::dialogs::ask_open(&app_handle, &zip).await else {
+        return Ok(None);
+    };
 
     tauri::async_runtime::spawn_blocking(move || {
         let staged = staging_file(&app_handle, "import")?;
@@ -362,7 +390,7 @@ pub async fn import_vault_archive(
         let outcome = (|| {
             let mut chosen = open_chosen(
                 &app_handle,
-                &source,
+                source,
                 tauri_plugin_fs::OpenOptions::new().read(true).to_owned(),
             )?;
             let mut staged_write = std::fs::File::create(&staged)?;
@@ -383,6 +411,7 @@ pub async fn import_vault_archive(
     })
     .await
     .map_err(|e| AppError::General(format!("the restore did not finish: {e}")))?
+    .map(Some)
 }
 
 /// Let the restored vault register under the identity it was backed up with.
@@ -405,7 +434,6 @@ fn forget_restored_vault_mapping(app_handle: &tauri::AppHandle, vault_path: &str
 }
 
 /// The filename to offer in the save dialog.
-#[tauri::command]
 pub fn suggested_archive_name() -> String {
     crate::vault_archive::suggested_archive_name(chrono::Local::now())
 }
@@ -416,7 +444,7 @@ pub fn suggested_archive_name() -> String {
 /// opener plugin's `openPath` with a scope of `**`, so anything that got a
 /// script into the window could launch any file on the disk — and, being able
 /// to write into the vault, could write a `.command` there first. Here the
-/// vault is the one the backend was told about, not one the caller names, the
+/// vault is the one the app has open, not one the caller names, the
 /// path must stay inside it after `..` and links are resolved, and only the
 /// kinds of file a receipt or an attachment is are opened.
 const OPENABLE: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tiff", "pdf"];
@@ -446,15 +474,11 @@ pub(crate) fn vault_file_to_open(vault: &Path, rel_path: &str) -> AppResult<Path
 /// Open a file from the vault in the system's own viewer. See `vault_file_to_open`.
 #[tauri::command]
 pub fn open_vault_file(app: tauri::AppHandle, rel_path: String) -> AppResult<()> {
-    use tauri::Manager;
     use tauri_plugin_opener::OpenerExt;
-    let vault = {
-        let chat_state = app.state::<crate::chat_engine::ChatEngineState>();
-        let active = chat_state.active_vault_path.lock().unwrap_or_else(|e| e.into_inner());
-        active.clone()
-    }
-    .ok_or_else(|| AppError::InvalidPath("No vault is open".to_string()))?;
-    let target = vault_file_to_open(Path::new(&vault), &rel_path)?;
+    let vault = crate::app_shell::vault::global()
+        .current()
+        .ok_or_else(|| AppError::InvalidPath("No vault is open".to_string()))?;
+    let target = vault_file_to_open(&vault.canonical, &rel_path)?;
     app.opener()
         .open_path(target.to_string_lossy(), None::<&str>)
         .map_err(|e| AppError::General(format!("Could not open {rel_path}: {e}")))

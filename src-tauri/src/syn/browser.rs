@@ -38,34 +38,10 @@
 //! # What a page in here can reach
 //!
 //! One command, `syn_browser_content`, which takes a string and returns
-//! nothing. `may_call` is the whole door and `only_one_door_is_open` pins it.
-//!
-//! ## Why the capability file is not what closes it
-//!
-//! It was believed to be, and it is not. `capabilities/default.json` has no
-//! `remote` field, so its grants apply to local app URLs only — true, checked
-//! in `tauri-utils`' own source, and pinned by a test. But that governs the
-//! **ACL**, and `webview/mod.rs` consults the ACL only for plugin commands or
-//! for an app that ships its own ACL manifest:
-//!
-//! ```text
-//! if (plugin_command.is_some() || has_app_acl_manifest) && invoke.acl.is_none()
-//! ```
-//!
-//! Synabit's 256 commands are neither. `gen/schemas/acl-manifests.json` has no
-//! `__app-acl__` key, so `has_app_acl_manifest` is false, the check is skipped,
-//! and the command runs. And the core scripts — `__TAURI_INTERNALS__.invoke`
-//! and the invoke key it must carry — are injected into **every** webview, with
-//! no branch on whether the page came off the internet.
-//!
-//! So for a stretch, any page this window visited could call `trash_node`.
-//!
-//! The proper repair is an app ACL manifest, which would make the capability
-//! files mean what they were being read to mean. That is 256 commands each
-//! needing a permission and a grant, and until somebody does it this is the
-//! lock: refuse at the one place every invoke passes through, by name, and let
-//! exactly one command past. `permissions/` arriving later makes this
-//! redundant rather than wrong.
+//! nothing. The capability files do not close the rest — the app's own
+//! commands skip the ACL entirely — so the lock is the invoke gate in
+//! `app_shell::gate`, which gives this webview exactly that one command.
+//! `only_one_door_is_open` pins it.
 
 use crate::error::{AppError, AppResult};
 
@@ -352,40 +328,15 @@ pub fn reader_script(nonce: &str) -> String {
 /// The only command a page in the browsing window may call.
 ///
 /// It takes a string and returns nothing. It cannot read the vault, write a
-/// file, or reach any of the other 255.
+/// file, or reach any of the app's other commands: see `app_shell::may_call`.
 pub const THE_ONE_DOOR: &str = "syn_browser_content";
-
-/// Whether this webview may call this command.
-///
-/// Checked at `invoke_handler`, which every call passes through — the app's own
-/// commands do not go through the ACL at all (see this module's header), so
-/// there is no other place that sees them all.
-///
-/// Keyed on the **webview** label rather than the window's. The browsing view
-/// is its own webview whether it sits in its own window or docked inside the
-/// main one, and a rule written against the window label would quietly stop
-/// applying the day it moved.
-///
-/// Everything else in the app is untouched: this returns true for every webview
-/// that is not the browsing one, which is the only shape that does not need 256
-/// grants written out to stay working.
-pub fn may_call(webview_label: &str, command: &str) -> bool {
-    webview_label != WINDOW || command == THE_ONE_DOOR
-}
-
-/// What a page is told when it tries anything else.
-///
-/// Said plainly rather than with a generic "not found". A page that reached for
-/// a command was either a bug in this app or something worth knowing about, and
-/// both are better read in a log than guessed at.
-pub const REFUSED: &str = "A page in the browsing window may call nothing but syn_browser_content";
 
 // ═══════════════════════════════════════════════════════════════
 //  WHERE IT SITS
 // ═══════════════════════════════════════════════════════════════
 
 /// The app this window belongs beside.
-pub const MAIN_WINDOW: &str = "main";
+pub use crate::app_shell::MAIN_WINDOW;
 
 /// Where the app itself lives, learnt from the app itself.
 ///
@@ -443,36 +394,6 @@ pub fn stay_home<R: tauri::Runtime>(webview: &tauri::Webview<R>, url: &str) {
     if let Some(home) = home.and_then(|h| url::Url::parse(&h).ok()) {
         let _ = webview.navigate(home);
     }
-}
-
-/// The app's own window, however many webviews are inside it.
-///
-/// # Why not `get_webview_window("main")`
-///
-/// Because it stops working the moment a second webview joins that window.
-/// `tauri-2.10.3/src/window/mod.rs:1083`:
-///
-/// ```text
-/// pub(crate) fn is_webview_window(&self) -> bool {
-///     self.webviews().iter().all(|w| w.label() == self.label())
-/// }
-/// ```
-///
-/// `get_webview_window` returns `Some` only for a window whose webviews are
-/// *all* named after it. Docking the browsing pane makes that false for ever,
-/// and every `get_webview_window("main")` in the app quietly starts answering
-/// `None` — including the two that unminimise and focus the window when
-/// somebody clicks the Dock icon. Opening a browser broke the Dock icon, and
-/// said nothing.
-///
-/// A `Window` is what all of those actually wanted anyway: `show`, `hide`,
-/// `set_focus`, `inner_size` and `add_child` all live there. The
-/// `WebviewWindow` wrapper only adds the webview half, which none of them use.
-pub fn app_window<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Option<tauri::window::Window<R>> {
-    use tauri::Manager;
-    app.get_webview(MAIN_WINDOW).map(|webview| webview.window())
 }
 
 /// What Syn is told when somebody shuts the window on it.
@@ -1217,7 +1138,7 @@ mod tests {
     /// is where that stops being true loudly rather than silently.
     ///
     /// **It is not the lock on this app's own commands, and was read as one.**
-    /// Those skip the ACL entirely — see the module header — and `may_call` is
+    /// Those skip the ACL entirely — see `app_shell::gate` — and `may_call` is
     /// what stops them. This still matters, for the plugin commands the ACL
     /// does govern: `fs`, `dialog`, `opener`, `process`.
     #[test]
@@ -1246,13 +1167,11 @@ mod tests {
         assert!(checked >= 2, "only read {checked} capability files");
     }
 
-    /// The lock that actually holds.
-    ///
-    /// One command in, everything else refused — and the app's own screens
-    /// untouched, which is the only shape that does not need all 256 commands
-    /// written out somewhere to keep working.
+    /// The lock that actually holds: one command in, everything else refused.
+    /// The other webviews' rules are `app_shell::gate`'s to test.
     #[test]
     fn only_one_door_is_open() {
+        use crate::app_shell::may_call;
         assert!(may_call(WINDOW, THE_ONE_DOOR), "the page has to be able to answer");
 
         for command in [
@@ -1268,17 +1187,6 @@ mod tests {
         }
     }
 
-    /// And nothing else in the app is affected. The guard sits on the path
-    /// every invoke takes, so a rule that reached further would break the app.
-    #[test]
-    fn every_other_webview_is_left_alone() {
-        for label in ["main", "ask-bar", ""] {
-            for command in ["trash_node", "syn_send_message", THE_ONE_DOOR] {
-                assert!(may_call(label, command), "{label} lost {command}");
-            }
-        }
-    }
-
     /// Keyed on the webview, not the window.
     ///
     /// A docked browsing view lives inside the main window and keeps its own
@@ -1286,7 +1194,7 @@ mod tests {
     /// "main" and quietly stop applying the day it moved.
     #[test]
     fn the_rule_survives_the_view_being_docked() {
-        let source = include_str!("browser.rs");
+        let source = include_str!("../app_shell/gate.rs");
         assert!(
             source.contains("pub fn may_call(webview_label: &str"),
             "may_call must take the webview's label, or docking silently unlocks the door"

@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../shared/pickedPath';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
 import { errorText } from '../../../shared/errorText';
@@ -242,14 +243,11 @@ export function useContactExchange(ns: any, vaultPath: () => string) {
                 String(now.getDate()).padStart(2, '0'),
             ].join('-');
             const extension = format === 'vcard' ? 'vcf' : 'csv';
-            const destination = await save({
-                defaultPath: `synabit-contacts-${stamp}.${extension}`,
-                filters: [
-                    format === 'vcard'
-                        ? { name: 'vCard', extensions: ['vcf'] }
-                        : { name: i18n.global.t('people.file_filter_spreadsheet'), extensions: ['csv'] },
-                ],
-            });
+            const destination = await pickSavePath(`synabit-contacts-${stamp}.${extension}`, [
+                format === 'vcard'
+                    ? { name: 'vCard', extensions: ['vcf'] }
+                    : { name: i18n.global.t('people.file_filter_spreadsheet'), extensions: ['csv'] },
+            ]);
             if (!destination) return null;
             return await invoke<number>('export_contacts', {
                 vaultPath: vaultPath(),

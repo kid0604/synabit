@@ -5135,7 +5135,7 @@ fn spreadsheet_at<R: tauri::Runtime>(ctx: &ToolContext<R>, path: &str) -> AppRes
             .filter(|node| node.node_type == "file")
             .map(|node| {
                 let at = node.properties.get("path").and_then(Value::as_str).unwrap_or_default().to_string();
-                (at, crate::commands::files::allowed_roots(&db, ctx.vault_path))
+                (at, crate::commands::files::allowed_roots_in(&db, ctx.vault_path))
             })
     };
 

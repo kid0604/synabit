@@ -19,6 +19,7 @@ import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { save } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../pickedPath';
 import { writeTextFile } from '@tauri-apps/plugin-fs';
 import { type } from '@tauri-apps/plugin-os';
 import { toCsv, toSheetRows, viewGrid } from '../export';
@@ -1513,10 +1514,12 @@ async function exportAs(kind: 'csv' | 'xlsx') {
   exportError.value = '';
   const name = (props.table.name || view.value.name || t('rich_table.export.file')).replace(/[\\/:*?"<>|]/g, ' ').trim();
   try {
-    const path = await save({
-      defaultPath: `${name}.${kind}`,
-      filters: [kind === 'csv' ? { name: 'CSV', extensions: ['csv'] } : { name: 'Excel', extensions: ['xlsx'] }],
-    });
+    // The CSV is written here, through the fs plugin, so its own dialog is the
+    // grant; the workbook is written by Rust, which only writes where a dialog
+    // it opened was answered. See `shared/pickedPath.ts`.
+    const path = kind === 'csv'
+      ? await save({ defaultPath: `${name}.csv`, filters: [{ name: 'CSV', extensions: ['csv'] }] })
+      : await pickSavePath(`${name}.xlsx`, [{ name: 'Excel', extensions: ['xlsx'] }]);
     if (!path) return;
     const { cols, rows } = exportShape();
     if (kind === 'csv') {

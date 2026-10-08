@@ -1899,8 +1899,28 @@ pub fn read_local_file_content(
 ///
 /// Read once and returned by value because the caller has to drop the database
 /// lock before doing anything slow with the answer.
+///
+/// The vault is the one the app has open, not the caller's `vault_path`: that
+/// argument came from the webview, and naming `/` as the vault once made every
+/// file on the disk "inside" it. The gate already refuses a call naming another
+/// vault; this does not lean on that. A caller naming some other folder gets
+/// the sources and nothing else.
 pub(crate) fn allowed_roots(db: &crate::db::DbBridge, vault_path: &str) -> Vec<String> {
-    let mut roots = vec![vault_path.to_string()];
+    let vault = crate::app_shell::vault::global()
+        .current()
+        .filter(|open| open.is(vault_path))
+        .map(|open| open.canonical.to_string_lossy().into_owned());
+    roots_with(db, vault)
+}
+
+/// The same, for a vault Rust supplied itself — Syn's tool context, which is
+/// handed its vault by the app rather than by a webview.
+pub(crate) fn allowed_roots_in(db: &crate::db::DbBridge, vault_path: &str) -> Vec<String> {
+    roots_with(db, Some(vault_path.to_string()))
+}
+
+fn roots_with(db: &crate::db::DbBridge, vault: Option<String>) -> Vec<String> {
+    let mut roots: Vec<String> = vault.into_iter().collect();
     if let Ok(sources) = db.get_all_file_sources() {
         for source in sources {
             roots.push(source.path);

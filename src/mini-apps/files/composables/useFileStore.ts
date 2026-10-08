@@ -2,6 +2,7 @@ import { ref, computed, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
+import { pickFolder } from '../../../shared/pickedPath';
 import { i18n } from '../../../i18n';
 
 // The repo's convention for composables: `useI18n()` needs a component setup
@@ -402,12 +403,8 @@ export function useFileStore(vaultPath: () => string) {
 
   const addNewSource = async () => {
     try {
-      const selectedPath = await open({
-        directory: true,
-        multiple: false,
-        title: t('file.pick_folder_title')
-      });
-      if (selectedPath && typeof selectedPath === 'string') {
+      const selectedPath = await pickFolder(t('file.pick_folder_title'));
+      if (selectedPath) {
         const folderName = selectedPath.split(/[\\/]/).filter(Boolean).pop() || t('file.unknown_folder');
         await invoke('add_file_source', { vaultPath: vaultPath(), path: selectedPath, name: folderName });
         await fetchSources();

@@ -79,7 +79,7 @@ use crate::error::{AppError, AppResult};
 
 /// The label of the webview holding the page.
 ///
-/// The same label the separate window used, deliberately: `browser::may_call`
+/// The same label the separate window used, deliberately: `app_shell::may_call`
 /// — the lock that stops a page calling this app's commands — is keyed on the
 /// **webview** label precisely so that moving the browser inside the main
 /// window does not silently unlock it.
@@ -333,9 +333,9 @@ fn announce<R: tauri::Runtime>(app: &tauri::AppHandle<R>, share: f64) {
 pub fn arrange<R: tauri::Runtime>(app: &tauri::AppHandle<R>, wanted: Option<f64>) -> AppResult<Layout> {
     use tauri::Manager;
 
-    // `get_webview_window` is deliberately not used — see `browser::app_window`
+    // `get_webview_window` is deliberately not used — see `app_shell::app_window`
     // for what a second webview does to it, and what that broke.
-    let main = crate::syn::browser::app_window(app)
+    let main = crate::app_shell::app_window(app)
         .ok_or_else(|| AppError::General("There is no main window to arrange".into()))?;
 
     let size = main
@@ -419,7 +419,7 @@ pub fn open<R: tauri::Runtime>(
         .map_err(|e| AppError::General(format!("No data directory: {e}")))?
         .join(crate::syn::browser::JAR);
 
-    let main = crate::syn::browser::app_window(app)
+    let main = crate::app_shell::app_window(app)
         .ok_or_else(|| AppError::General("There is no main window to sit in".into()))?;
 
     let builder = tauri::webview::WebviewBuilder::new(PANE, tauri::WebviewUrl::External(target))
@@ -695,7 +695,7 @@ pub fn close<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     // is `WryWebViewParent`: a plain `NSView` that draws nothing and answers
     // nothing. Text would stop showing an I-beam *in the app*, which is the
     // same bug this pair of functions exists to fix, pointed the other way.
-    if let Some(main) = app.get_webview(crate::syn::browser::MAIN_WINDOW) {
+    if let Some(main) = app.get_webview(crate::app_shell::MAIN_WINDOW) {
         if let Err(e) = main.set_focus() {
             log::warn!("[Syn] The app would not take its focus back: {e}");
         }
@@ -932,14 +932,14 @@ mod tests {
     }
 
     /// The pane is the same webview label the separate window used, and that is
-    /// load-bearing: `browser::may_call` keys the lock on the webview label so
+    /// load-bearing: `app_shell::may_call` keys the lock on the webview label so
     /// that moving the browser inside the main window cannot silently unlock
     /// it. A different label here would open the door quietly.
     #[test]
     fn the_pane_is_still_the_webview_the_lock_is_written_about() {
         assert_eq!(PANE, crate::syn::browser::WINDOW);
-        assert!(!crate::syn::browser::may_call(PANE, "trash_node"));
-        assert!(crate::syn::browser::may_call(PANE, crate::syn::browser::THE_ONE_DOOR));
+        assert!(!crate::app_shell::may_call(PANE, "trash_node"));
+        assert!(crate::app_shell::may_call(PANE, crate::syn::browser::THE_ONE_DOOR));
     }
 
     /// And it is built with every guard the separate window has. These are not

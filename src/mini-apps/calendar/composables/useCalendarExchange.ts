@@ -1,6 +1,7 @@
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open } from '@tauri-apps/plugin-dialog';
+import { pickSavePath } from '../../../shared/pickedPath';
 import { formatDateString } from '../helpers';
 import { logger } from '../../../utils/logger';
 import { i18n } from '../../../i18n';
@@ -59,10 +60,9 @@ export function useCalendarExchange(ns: any) {
             // still reads as yesterday, and a file named for the wrong day is
             // the same mistake this app spent a whole pass removing.
             const stamp = formatDateString(new Date());
-            const destination = await save({
-                defaultPath: `synabit-calendar-${stamp}.ics`,
-                filters: [{ name: 'iCalendar', extensions: ['ics'] }],
-            });
+            const destination = await pickSavePath(`synabit-calendar-${stamp}.ics`, [
+                { name: 'iCalendar', extensions: ['ics'] },
+            ]);
             if (!destination) return null;
             return await invoke<number>('export_calendar_ics', { destination });
         } finally {

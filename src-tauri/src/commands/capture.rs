@@ -384,7 +384,7 @@ pub fn drop_queued_capture(state: tauri::State<'_, DbState>, id: String) -> AppR
 ///
 /// So the event says only that something is waiting, and the text is fetched
 /// with a command. Commands from the browsing pane are refused wholesale by
-/// `syn::browser::may_call`, so the question can only ever be read by the app.
+/// `app_shell::may_call`, so the question can only ever be read by the app.
 /// It is the same split the capture queue already uses: `capture-queued` says
 /// there is something, and the drain comes and gets it.
 ///

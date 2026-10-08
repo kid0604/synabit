@@ -113,8 +113,6 @@ import { runBeforeQuit } from './composables/useBeforeQuit';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
 import { useNodeService } from './composables/useNodeService';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { open } from '@tauri-apps/plugin-dialog';
-import { documentDir } from '@tauri-apps/api/path';
 
 import { defineAsyncComponent } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
@@ -617,15 +615,14 @@ const selectVault = async () => {
             return;
         }
 
-        const defaultPath = await documentDir().catch(() => undefined);
-        const selected = await open({ 
-            title: i18n.global.t('shell.welcome.pick_folder'), 
-            defaultPath,
-            directory: true, 
-            multiple: false 
+        // Rust opens the dialog and the folder, so the vault is the person's
+        // answer to a dialog and never a path this window names. See
+        // `app_shell::vault`.
+        const selected = await invoke<string | null>('pick_vault_folder', {
+            title: i18n.global.t('shell.welcome.pick_folder'),
         });
         if (selected) {
-            await appStore.setVaultPath(selected as string, 'local');
+            await appStore.setVaultPath(selected, 'local');
             invoke('start_vault_watcher', { vaultPath: vaultPath.value }).catch(logger.error);
             afterVaultChosen();
         }

@@ -247,9 +247,11 @@ describe('exporting', () => {
   it('does not treat a closed dialog as a failure', async () => {
     const { ns } = fakeNodeService();
     const exchange = exchangeFor(ns);
+    // The dialog is Rust's (`pick_save_path`), and closing it answers null.
+    vi.mocked(core.invoke).mockResolvedValue(null);
 
     await expect(exchange.exportContacts('vcard')).resolves.toBeNull();
-    expect(core.invoke).not.toHaveBeenCalled();
+    expect(vi.mocked(core.invoke).mock.calls.map(([cmd]) => cmd)).toEqual(['pick_save_path']);
     // And the button is usable again afterwards.
     expect(exchange.busy.value).toBe(false);
   });

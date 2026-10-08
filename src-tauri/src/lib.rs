@@ -1,3 +1,4 @@
+pub mod app_shell;
 pub mod calendar;
 pub mod commands;
 pub mod db;
@@ -232,8 +233,8 @@ fn surface_main_window(app: &tauri::AppHandle) -> Option<tauri::window::Window> 
     // `app_window`, not `get_webview_window`: the latter answers `None` as soon
     // as a second webview joins the window, which docking the browsing pane
     // does — and this is the code that brings the app back when somebody clicks
-    // the Dock icon. See `syn::browser::app_window`.
-    let window = syn::browser::app_window(app)?;
+    // the Dock icon. See `app_shell::app_window`.
+    let window = app_shell::app_window(app)?;
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
@@ -415,7 +416,7 @@ fn hide_to_background(app: tauri::AppHandle) {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        if let Some(window) = syn::browser::app_window(app) {
+        if let Some(window) = app_shell::app_window(app) {
             let _ = window.hide();
         }
     }
@@ -689,7 +690,7 @@ pub fn run() {
             // Where the app lives, learnt from the app rather than written down:
             // it is `tauri://localhost` in a bundle and `http://localhost:1420`
             // in development.
-            if let Some(main) = app.get_webview(crate::syn::browser::MAIN_WINDOW) {
+            if let Some(main) = app.get_webview(crate::app_shell::MAIN_WINDOW) {
                 if let Ok(url) = main.url() {
                     crate::syn::browser::note_home(url.as_str());
                 }
@@ -707,18 +708,25 @@ pub fn run() {
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 
-            // The vault the app last had open, granted before the window can
-            // ask for a file in it — `start_vault_watcher` grants it again, but
-            // the front end does not wait for that before drawing thumbnails.
-            let last_vault = app
+            // The vault the app last had open: opened, and granted, before the
+            // window can ask for a file in it. The front end does not wait for
+            // `start_vault_watcher` before reading notes or drawing
+            // thumbnails, and the invoke gate refuses a vault that is not open.
+            // See `app_shell::vault` for why Rust's own record comes first.
+            let recorded = app
                 .state::<crate::db::DbState>()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get_kv("vault_path")
                 .ok()
                 .flatten();
-            if let Some(vault) = last_vault {
-                crate::watcher::grant_vault_access(app.handle(), &vault);
+            let remembered = app
+                .path()
+                .app_data_dir()
+                .ok()
+                .and_then(|dir| crate::app_shell::vault::remembered_by_front_end(&dir));
+            if let Some(open) = crate::app_shell::vault::restore(recorded, remembered) {
+                crate::watcher::grant_vault_access(app.handle(), &open.given);
             }
 
             // The timeline lives in its own file beside the cache
@@ -854,20 +862,13 @@ pub fn run() {
 
             Ok(())
         })
-        // Every invoke in the app passes through here, which is the point.
-        //
-        // The app's own 256 commands do not go through Tauri's ACL at all —
-        // that check runs for plugin commands, or for an app shipping its own
-        // ACL manifest, and this is neither. Meanwhile `__TAURI_INTERNALS__`
-        // and a valid invoke key are injected into *every* webview, remote
-        // pages included. So a page in the browsing window could call
-        // `trash_node`, and for a stretch it could.
-        //
-        // See `syn::browser::may_call` for the rule and why it is keyed on the
-        // webview rather than the window. Wrapping the generated handler rather
-        // than guarding 256 command bodies: one place, one rule, and a new
-        // command is covered the day it is added instead of the day somebody
-        // remembers.
+        // Every invoke in the app passes through here, which is the point:
+        // the app's own commands skip Tauri's ACL, and every webview — remote
+        // pages in the browsing pane included — is handed the means to call
+        // them. `app_shell::gate` is the rule: which webview may call what,
+        // with which vault, writing where. Wrapping the generated handler
+        // rather than guarding each command body: one place, one rule, and a
+        // new command is covered the day it is added.
         .invoke_handler({
             // Boxed for its type: `generate_handler!` expands to a closure the
             // compiler cannot name a runtime for on its own once it is bound
@@ -1034,15 +1035,18 @@ pub fn run() {
             commands::vault::export_vault_archive,
             commands::tables::export_table_xlsx,
             commands::vault::import_vault_archive,
-            commands::vault::suggested_archive_name,
             // Diagnostics
             commands::diagnostics::diagnostics_info,
-            commands::diagnostics::suggested_diagnostics_name,
             commands::diagnostics::export_diagnostics,
             // Editor
             commands::paste::paste_as_plain_text,
             // Watcher
             watcher::start_vault_watcher,
+            // File dialogs opened by Rust, so a path written to is one picked.
+            // See `app_shell::dialogs`.
+            app_shell::dialogs::pick_vault_folder,
+            app_shell::dialogs::pick_save_path,
+            app_shell::dialogs::pick_folder,
             // Whiteboards
             whiteboards::scan_whiteboards,
             whiteboards::create_whiteboard,
@@ -1239,18 +1243,11 @@ pub fn run() {
             open_app_log_folder,
                 ]);
             move |invoke| {
-                if !crate::syn::browser::may_call(
-                    invoke.message.webview_ref().label(),
-                    invoke.message.command(),
-                ) {
-                    log::warn!(
-                        "[Syn] A page in the browsing window reached for `{}`",
-                        invoke.message.command()
-                    );
-                    invoke.resolver.reject(crate::syn::browser::REFUSED);
+                if let Err(refused) = crate::app_shell::gate::check(&invoke) {
                     // Handled: refused, rather than falling through to "not
-                    // found". A page told the command does not exist would be
-                    // told something untrue about this app.
+                    // found". A caller told the command does not exist would
+                    // be told something untrue about this app.
+                    invoke.resolver.reject(refused);
                     return true;
                 }
                 commands(invoke)

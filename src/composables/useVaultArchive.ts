@@ -6,13 +6,13 @@
  * finds them. Both must record the same "last exported" timestamp, or the
  * reminder would keep firing after an export done from the other one.
  *
- * The file dialog returns an ordinary path on desktop and a `content://` URI on
- * Android. Neither is inspected here — the Rust side resolves both.
+ * Each command opens its own dialog, so no path crosses from this window: a
+ * command that wrote wherever it was told was a way for any script in the
+ * window to overwrite any file. Cancelling comes back as null.
  */
 
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { open, save } from '@tauri-apps/plugin-dialog';
 import { load } from '@tauri-apps/plugin-store';
 import { logger } from '../utils/logger';
 
@@ -91,17 +91,8 @@ export function useVaultArchive() {
   async function exportVault(vaultPath: string): Promise<ArchiveSummary | null> {
     busy.value = true;
     try {
-      const defaultPath = await invoke<string>('suggested_archive_name');
-      const destination = await save({
-        defaultPath,
-        filters: [{ name: 'Zip', extensions: ['zip'] }],
-      });
-      if (!destination) return null;
-
-      const summary = await invoke<ArchiveSummary>('export_vault_archive', {
-        vaultPath,
-        destination,
-      });
+      const summary = await invoke<ArchiveSummary | null>('export_vault_archive', { vaultPath });
+      if (!summary) return null;
       await recordExport();
       return summary;
     } finally {
@@ -112,17 +103,7 @@ export function useVaultArchive() {
   async function importVault(vaultPath: string): Promise<RestoreSummary | null> {
     busy.value = true;
     try {
-      const source = await open({
-        multiple: false,
-        directory: false,
-        filters: [{ name: 'Zip', extensions: ['zip'] }],
-      });
-      if (!source) return null;
-
-      return await invoke<RestoreSummary>('import_vault_archive', {
-        vaultPath,
-        source: source as string,
-      });
+      return await invoke<RestoreSummary | null>('import_vault_archive', { vaultPath });
     } finally {
       busy.value = false;
     }
@@ -132,13 +113,7 @@ export function useVaultArchive() {
   async function exportDiagnostics(): Promise<number | null> {
     busy.value = true;
     try {
-      const defaultPath = await invoke<string>('suggested_diagnostics_name');
-      const destination = await save({
-        defaultPath,
-        filters: [{ name: 'Text', extensions: ['txt'] }],
-      });
-      if (!destination) return null;
-      return await invoke<number>('export_diagnostics', { destination });
+      return await invoke<number | null>('export_diagnostics');
     } finally {
       busy.value = false;
     }

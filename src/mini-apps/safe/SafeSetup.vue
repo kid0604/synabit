@@ -9,9 +9,9 @@
  */
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { save } from '@tauri-apps/plugin-dialog';
 import { AlertTriangle, Check, Dices, Eye, EyeOff, KeyRound, Loader2, ShieldCheck } from 'lucide-vue-next';
 import type { SafeApi } from './api';
+import { pickSavePath } from '../../shared/pickedPath';
 import PasswordStrength from './PasswordStrength.vue';
 import { useSafeError } from './useSafeError';
 
@@ -78,10 +78,7 @@ const acknowledged = ref(false);
 
 async function saveKit() {
   error.value = '';
-  const path = await save({
-    defaultPath: 'Synabit Safe Emergency Kit.html',
-    filters: [{ name: 'HTML', extensions: ['html'] }],
-  });
+  const path = await pickSavePath('Synabit Safe Emergency Kit.html', [{ name: 'HTML', extensions: ['html'] }]);
   if (!path) return;
   try {
     await props.api.saveEmergencyKit(path);

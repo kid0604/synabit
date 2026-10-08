@@ -102,6 +102,10 @@ mod desktop {
         vault_path: String,
     ) -> AppResult<()> {
         use tauri::Manager;
+        // Before the old watcher is torn down: a refused call changes nothing.
+        // This is what opens a vault the gate then holds every call to, so it
+        // checks for itself — see `app_shell::vault::ActiveVault::claim`.
+        crate::app_shell::vault::global().claim(&vault_path)?;
         let mut watcher_lock = state.watcher.lock().unwrap_or_else(|e| e.into_inner());
         let mut debounce_lock = state.debounce.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -493,6 +497,8 @@ pub mod mobile_stub {
         vault_path: String,
     ) -> AppResult<()> {
         use tauri::Manager;
+        // See the desktop version.
+        crate::app_shell::vault::global().claim(&vault_path)?;
         // Update ChatEngineState
         let chat_state: tauri::State<'_, crate::chat_engine::ChatEngineState> = app_handle.state();
         let mut active_vault = chat_state
