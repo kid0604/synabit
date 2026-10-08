@@ -9,6 +9,7 @@ logger.info("main.ts imports done");
 import App from "./App.vue";
 import QuickEntry from "./QuickEntry.vue";
 import SafeQuick from "./SafeQuick.vue";
+import { installGlobalErrorLogging } from "./utils/globalErrors";
 
 /**
  * The quick-entry window mounts a different root.
@@ -35,6 +36,8 @@ toasts.className = 'app-toasts';
 document.body.appendChild(toasts);
 
 const app = createApp(isQuickEntry ? QuickEntry : isSafeQuick ? SafeQuick : App);
+// Before anything is installed or mounted, so an error in setup is caught too.
+installGlobalErrorLogging(app, isQuickEntry ? 'quick-entry' : isSafeQuick ? 'safe-quick' : 'main');
 app.use(createPinia());
 if (!isQuickEntry && !isSafeQuick) app.use(router);
 app.use(i18n);
