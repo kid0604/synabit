@@ -172,14 +172,18 @@ fn writing_two_thousand_contacts_stays_inside_the_budget() {
             "Imported from a phone export.",
         );
 
-        std::fs::write(&abs_path, &text).expect("write person");
-        let node_id = crate::sync::core::identity::get_or_assign_node_id(&vault, &abs_path)
-            .expect("node id");
+        // As `write_node_inner` does it: identity stamped in memory, one
+        // atomic write.
+        let (node_id, stamped) = crate::sync::core::identity::resolve_node_id_in_content(
+            &vault, &abs_path, &text, None,
+        )
+        .expect("node id");
+        let written = stamped.unwrap_or(text);
+        crate::path_utils::write_atomic(&abs_path, written.as_bytes()).expect("write person");
 
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
         db.upsert_document_path(&vault_id, &node_id, &rel_path)
             .expect("document path");
-        let written = std::fs::read_to_string(&abs_path).expect("read back");
         crate::commands::nodes::crdt_apply_safe(&db, &vault_id, &node_id, &written)
             .expect("crdt");
         let node = crate::utils::node_parser::parse_file_to_node(&vault_path, &abs_path)

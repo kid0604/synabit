@@ -1259,7 +1259,7 @@ pub fn create_block_reference(
         BlockMarker::Inserted(content) => content,
     };
 
-    std::fs::write(&abs_path, &new_content)
+    path_utils::write_atomic(&abs_path, new_content.as_bytes())
         .map_err(|e| crate::error::AppError::General(format!("Failed to write file: {}", e)))?;
 
     // Update DB with new file content
@@ -2358,20 +2358,22 @@ pub(crate) fn write_node_inner<R: tauri::Runtime>(
     // back rather than a new one, so nothing splits.
     let known_id = db.get_node_id_by_path(&vault_id, &rel_path).ok().flatten();
 
-    // We write to disk first so that get_or_assign_node_id can work
-    std::fs::write(&abs_path, &file_content)?;
-
+    // Stamp the identity into the content in memory and write the file once,
+    // atomically. Writing it plain and letting identity resolution rewrite it
+    // after is two truncating writes of the user's note, and a crash in either
+    // leaves half a file — or a whole one with no identity, which sync then
+    // splits into a second document.
     let vault_path_obj = std::path::Path::new(&vault_path);
-    let node_id = crate::sync::core::identity::get_or_assign_node_id_with_hint(
+    let (node_id, stamped) = crate::sync::core::identity::resolve_node_id_in_content(
         vault_path_obj,
         &abs_path,
+        &file_content,
         known_id.as_deref(),
     )?;
+    let final_file_content = stamped.unwrap_or(file_content);
+    path_utils::write_atomic(&abs_path, final_file_content.as_bytes())?;
 
     db.upsert_document_path(&vault_id, &node_id, &rel_path)?;
-
-    // Now that get_or_assign_node_id has potentially injected a UUID, read the injected content
-    let final_file_content = std::fs::read_to_string(&abs_path).unwrap_or(file_content);
 
     // --- Phase 1: CRDT Bridge ---
     if crate::sync::core::finance_document::is_structured(&rel_path) {
@@ -2460,7 +2462,12 @@ fn update_node_mentions(
                 &new_title,
                 Some(&node_id),
             );
-            if updated != content && std::fs::write(&file_path, updated).is_ok() {
+            // Atomic: this rewrites notes the user is not even looking at, and
+            // a rename touching dozens of them is dozens of chances to be cut
+            // off halfway through one.
+            if updated != content
+                && path_utils::write_atomic(&file_path, updated.as_bytes()).is_ok()
+            {
                 // Update DB synchronously for the linked file to avoid watcher race conditions
                 if let Some(parsed_node) =
                     crate::utils::node_parser::parse_file_to_node(&vault_path, &file_path)
@@ -2605,7 +2612,7 @@ pub fn rename_node_file(
     let yaml_str = frontmatter.trim_start_matches("---\n");
     let file_content = format!("---\n{}---\n{}", yaml_str, node.content);
 
-    std::fs::write(&old_abs, file_content)?;
+    path_utils::write_atomic(&old_abs, file_content.as_bytes())?;
 
     // Update DB and Mentions
     {
@@ -2731,7 +2738,7 @@ pub fn create_node_file(
 
     if !path.exists() {
         let content = new_note_frontmatter(&title, &node_type, None, date);
-        std::fs::write(&path, content)?;
+        path_utils::write_atomic(&path, content.as_bytes())?;
 
         // Sync DB immediately
         if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &path)
@@ -2827,7 +2834,7 @@ pub fn open_daily_note(
 
     let title = date_str.clone();
     let content = new_note_frontmatter(&title, "note", Some(&tag), Some(today.date_naive()));
-    std::fs::write(&path, content)?;
+    path_utils::write_atomic(&path, content.as_bytes())?;
 
     // Sync DB immediately to avoid race condition with frontend scanVault
     if let Some(parsed_node) = crate::utils::node_parser::parse_file_to_node(&vault_path, &path) {
@@ -3026,7 +3033,9 @@ pub fn save_asset(vault_path: String, filename: String, bytes: Vec<u8>) -> AppRe
         return Ok(format!("assets/{}", safe_filename));
     }
 
-    std::fs::write(&target_path, bytes)?;
+    // Atomic above all here: the name is the content's hash and an existing
+    // file is trusted as-is, so a half-written asset would never be repaired.
+    path_utils::write_atomic(&target_path, &bytes)?;
     Ok(format!("assets/{}", safe_filename))
 }
 

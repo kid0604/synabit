@@ -181,12 +181,9 @@ pub fn record_detailed(
     entries.truncate(KEEP_ENTRIES);
 
     let path = path(vault_path)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&entries)?)?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to write the audit log: {e}"))
-    })
+    let bytes = serde_json::to_string_pretty(&entries)?;
+    crate::path_utils::write_atomic(&path, bytes.as_bytes())
+        .map_err(|e| AppError::General(format!("Failed to write the audit log: {e}")))
 }
 
 /// Record and swallow, for the call sites that must not fail because of it.

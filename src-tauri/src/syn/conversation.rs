@@ -57,18 +57,6 @@ fn read_conversation_file(path: &Path) -> AppResult<ConversationFile> {
     Ok(conv)
 }
 
-/// Atomically write content to a file by writing to a temp file first, then renaming.
-fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
-    let tmp_path = path.with_extension("json.tmp");
-    std::fs::write(&tmp_path, content)?;
-    std::fs::rename(&tmp_path, path).map_err(|e| {
-        // Clean up temp file on rename failure
-        let _ = std::fs::remove_file(&tmp_path);
-        AppError::General(format!("Failed to rename temp file: {}", e))
-    })?;
-    Ok(())
-}
-
 /// Write a conversation file to disk (pretty-printed JSON).
 ///
 /// Through `vault_json`, which keeps the `metadata` the sync layer stamped and
@@ -124,7 +112,7 @@ fn read_index(syn_dir: &Path) -> Option<SynIndex> {
 fn write_index(syn_dir: &Path, index: &SynIndex) -> AppResult<()> {
     let path = index_path(syn_dir);
     let json = serde_json::to_string_pretty(index)?;
-    atomic_write(&path, &json)?;
+    crate::path_utils::write_atomic(&path, json.as_bytes())?;
     Ok(())
 }
 

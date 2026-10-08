@@ -291,9 +291,7 @@ fn trust_map(vault_path: &str) -> HashMap<String, String> {
 
 fn save_trust(vault_path: &str, map: &HashMap<String, String>) -> AppResult<()> {
     let path = trust_path(vault_path)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(map)?)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(map)?.as_bytes())?;
     Ok(())
 }
 
@@ -350,9 +348,7 @@ fn pins(vault_path: &str) -> HashMap<String, ReadOnlyPin> {
 
 fn save_pins(vault_path: &str, map: &HashMap<String, ReadOnlyPin>) -> AppResult<()> {
     let path = pin_path(vault_path)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(map)?)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(map)?.as_bytes())?;
     Ok(())
 }
 

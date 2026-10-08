@@ -170,7 +170,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let written = (|| {
         let mut file = std::fs::File::create(&tmp)?;
         file.write_all(bytes)?;
-        file.sync_all()
+        flush_to_disk(&file)
     })();
     if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
@@ -194,6 +194,29 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             }
         }
     }
+}
+
+/// Hand the file's bytes to the disk before the rename makes them visible.
+///
+/// On Apple platforms `sync_all` is `F_FULLFSYNC`, which also empties the
+/// drive's own cache: about 6 ms a file, so importing two thousand contacts
+/// went from under two seconds to over twelve. A plain `fsync` there is what
+/// SQLite itself uses by default on Apple, and it is enough for what this
+/// function promises — the rename never exposes a half-written file after a
+/// crash or a killed process. What it gives up is only the last moments before
+/// a power cut, which the drive's cache may still be holding.
+fn flush_to_disk(file: &std::fs::File) -> std::io::Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        use std::os::unix::io::AsRawFd;
+        // SAFETY: the descriptor belongs to `file`, which outlives this call.
+        if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+            return Ok(());
+        }
+        return Err(std::io::Error::last_os_error());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    file.sync_all()
 }
 
 #[cfg(test)]

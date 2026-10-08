@@ -307,12 +307,9 @@ pub fn load(vault_path: &str) -> Ledger {
 
 fn save(vault_path: &str, ledger: &Ledger) -> AppResult<()> {
     let path = ledger_path(vault_path)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(ledger)?)?;
-    std::fs::rename(&tmp, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to write the consent ledger: {e}"))
-    })
+    let bytes = serde_json::to_string_pretty(ledger)?;
+    crate::path_utils::write_atomic(&path, bytes.as_bytes())
+        .map_err(|e| AppError::General(format!("Failed to write the consent ledger: {e}")))
 }
 
 /// What to do about a capability, right now.

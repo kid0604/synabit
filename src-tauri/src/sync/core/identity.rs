@@ -297,6 +297,44 @@ pub fn get_or_assign_node_id_with_hint(
     file_path: &Path,
     known_id: Option<&str>,
 ) -> AppResult<String> {
+    let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext != "md" && ext != "json" && ext != "canvas" {
+        // Assets or unknown files: use relative path as ID for now
+        return Ok(crate::path_utils::to_relative(
+            file_path,
+            vault_path.to_string_lossy().as_ref(),
+        ));
+    }
+
+    let content = std::fs::read_to_string(file_path)
+        .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
+    let (id, rewritten) = resolve_node_id_in_content(vault_path, file_path, &content, known_id)?;
+    if let Some(rewritten) = rewritten {
+        // Atomic, because this rewrites a file the user owns: a crash between
+        // truncate and fill would cost them the whole note to gain one line.
+        crate::path_utils::write_atomic(file_path, rewritten.as_bytes()).map_err(|e| {
+            AppError::General(format!("Failed to write injected node_id to {}: {}", ext, e))
+        })?;
+    }
+    Ok(id)
+}
+
+/// The identity `content` carries, and — only when it carries none — the
+/// content rewritten to carry one, without touching the disk.
+///
+/// Split out so a writer that is about to save a file anyway can stamp the id
+/// into what it writes and save once. Writing first and letting identity
+/// resolution rewrite the file after is two writes of the same file, with a
+/// window between them where the file on disk has no identity at all.
+///
+/// `file_path` is used only for its extension and, where the document cannot
+/// hold an id, as the path-derived fallback identity.
+pub fn resolve_node_id_in_content(
+    vault_path: &Path,
+    file_path: &Path,
+    content: &str,
+    known_id: Option<&str>,
+) -> AppResult<(String, Option<String>)> {
     let mint = || {
         known_id
             .map(|s| s.to_string())
@@ -305,38 +343,16 @@ pub fn get_or_assign_node_id_with_hint(
     let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
     if ext == "md" {
-        let content = std::fs::read_to_string(file_path)
-            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
-
-        // Simple regex to extract node_id from frontmatter
-        if let Some(caps) = NODE_ID_RE.captures(&content) {
-            if let Some(id_match) = caps.get(1) {
-                return Ok(id_match.as_str().to_string());
-            }
-        }
-
-        // Try fallback to synabit_id just in case
-        if let Some(caps) = LEGACY_ID_RE.captures(&content) {
-            if let Some(id_match) = caps.get(1) {
-                return Ok(id_match.as_str().to_string());
-            }
+        if let Some(id) = markdown_frontmatter_id(content) {
+            return Ok((id, None));
         }
 
         // No ID found, we need to inject it.
         let new_id = mint();
-        let new_content = inject_markdown_id(&content, &new_id);
-        std::fs::write(file_path, new_content).map_err(|e| {
-            AppError::General(format!(
-                "Failed to write injected node_id to markdown: {}",
-                e
-            ))
-        })?;
-
-        Ok(new_id)
+        let new_content = inject_markdown_id(content, &new_id);
+        Ok((new_id, Some(new_content)))
     } else if ext == "json" || ext == "canvas" {
-        let content = std::fs::read_to_string(file_path)
-            .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
-        let mut json_val: Value = serde_json::from_str(&content)
+        let mut json_val: Value = serde_json::from_str(content)
             .map_err(|e| AppError::General(format!("Failed to parse JSON for identity: {}", e)))?;
 
         let root_obj = match json_val.as_object_mut() {
@@ -353,30 +369,25 @@ pub fn get_or_assign_node_id_with_hint(
                     file_path,
                     vault_path.to_string_lossy().as_ref(),
                 );
-                return Ok(rel_path);
+                return Ok((rel_path, None));
             }
         };
 
         if let Some(meta) = root_obj.get_mut("metadata") {
             if let Some(node_id) = meta.get("node_id").and_then(|v| v.as_str()) {
-                return Ok(node_id.to_string());
+                return Ok((node_id.to_string(), None));
             }
             if let Some(meta_obj) = meta.as_object_mut() {
                 let new_id = mint();
                 meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
-                std::fs::write(file_path, serde_json::to_string_pretty(&json_val).unwrap())
-                    .map_err(|e| {
-                        AppError::General(format!(
-                            "Failed to write injected node_id to json: {}",
-                            e
-                        ))
-                    })?;
-                return Ok(new_id);
+                let rendered = serde_json::to_string_pretty(&json_val)
+                    .map_err(|e| AppError::General(format!("Failed to render JSON: {}", e)))?;
+                Ok((new_id, Some(rendered)))
             } else {
-                return Err(AppError::General(format!(
+                Err(AppError::General(format!(
                     "JSON metadata field is not an object in {}",
                     file_path.display()
-                )));
+                )))
             }
         } else {
             // No metadata object, create it
@@ -384,17 +395,49 @@ pub fn get_or_assign_node_id_with_hint(
             let mut meta_obj = serde_json::Map::new();
             meta_obj.insert("node_id".to_string(), Value::String(new_id.clone()));
             root_obj.insert("metadata".to_string(), Value::Object(meta_obj));
-            std::fs::write(file_path, serde_json::to_string_pretty(&json_val).unwrap()).map_err(
-                |e| AppError::General(format!("Failed to write injected node_id to json: {}", e)),
-            )?;
-            return Ok(new_id);
+            let rendered = serde_json::to_string_pretty(&json_val)
+                .map_err(|e| AppError::General(format!("Failed to render JSON: {}", e)))?;
+            Ok((new_id, Some(rendered)))
         }
     } else {
         // Assets or unknown files: use relative path as ID for now
         let rel_path =
             crate::path_utils::to_relative(file_path, vault_path.to_string_lossy().as_ref());
-        Ok(rel_path)
+        Ok((rel_path, None))
     }
+}
+
+/// The YAML frontmatter of a Markdown file: what sits between an opening `---`
+/// on the first line and the next line that is `---` on its own. `None` when
+/// the file has no such block — including one that opens a fence and never
+/// closes it, which is a horizontal rule, not metadata.
+///
+/// Identity is read from here and nowhere else. A note about this app, or any
+/// YAML pasted into a code block, has `node_id: …` lines in its body; matching
+/// the whole file takes the first of those as the note's identity, and two
+/// notes quoting the same snippet become one document to sync.
+fn frontmatter_block(content: &str) -> Option<&str> {
+    let rest = content
+        .strip_prefix("---\n")
+        .or_else(|| content.strip_prefix("---\r\n"))?;
+    let mut offset = 0;
+    for line in rest.split_inclusive('\n') {
+        if line.trim_end() == "---" {
+            return Some(&rest[..offset]);
+        }
+        offset += line.len();
+    }
+    None
+}
+
+/// The `node_id` (or legacy `synabit_id`) in a Markdown file's frontmatter.
+fn markdown_frontmatter_id(content: &str) -> Option<String> {
+    let block = frontmatter_block(content)?;
+    NODE_ID_RE
+        .captures(block)
+        .or_else(|| LEGACY_ID_RE.captures(block))
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 /// Give a file a brand-new identity, replacing whatever it carries.
@@ -413,14 +456,23 @@ pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<St
     if ext == "md" {
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| AppError::General(format!("Failed to read file for identity: {}", e)))?;
-        let updated = if NODE_ID_LINE_RE.is_match(&content) {
+        // Only a `node_id` line in the frontmatter is the file's identity; one
+        // in the body is text, and rewriting it would edit the user's note.
+        let in_frontmatter = frontmatter_block(&content).and_then(|block| {
+            let start = block.as_ptr() as usize - content.as_ptr() as usize;
+            // `\s*$` reaches over the line break when the line is the last in
+            // the block, so the replaced span stops where the id does.
             NODE_ID_LINE_RE
-                .replace(&content, format!("node_id: {}", new_id).as_str())
-                .to_string()
-        } else {
-            inject_markdown_id(&content, &new_id)
+                .find(block)
+                .map(|m| (start + m.start(), start + m.start() + m.as_str().trim_end().len()))
+        });
+        let updated = match in_frontmatter {
+            Some((from, to)) => {
+                format!("{}node_id: {}{}", &content[..from], new_id, &content[to..])
+            }
+            None => inject_markdown_id(&content, &new_id),
         };
-        std::fs::write(file_path, updated)
+        crate::path_utils::write_atomic(file_path, updated.as_bytes())
             .map_err(|e| AppError::General(format!("Failed to write fresh node_id: {}", e)))?;
         return Ok(new_id);
     }
@@ -444,7 +496,7 @@ pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<St
 
         let rendered = serde_json::to_string_pretty(&json_val)
             .map_err(|e| AppError::General(format!("Failed to render JSON: {}", e)))?;
-        std::fs::write(file_path, rendered)
+        crate::path_utils::write_atomic(file_path, rendered.as_bytes())
             .map_err(|e| AppError::General(format!("Failed to write fresh node_id: {}", e)))?;
         return Ok(new_id);
     }
@@ -458,7 +510,7 @@ pub fn assign_fresh_node_id(vault_path: &Path, file_path: &Path) -> AppResult<St
 
 /// Helper to inject `node_id` into Markdown frontmatter
 fn inject_markdown_id(content: &str, node_id: &str) -> String {
-    if content.starts_with("---\n") || content.starts_with("---\r\n") {
+    if frontmatter_block(content).is_some() {
         // Has frontmatter, inject after the first line
         let first_nl = content.find('\n').unwrap() + 1;
         let mut new_content = content.to_string();
@@ -883,5 +935,50 @@ pub mod tests {
             id_again, "known-id",
             "an existing id must win over the hint"
         );
+    }
+
+    #[test]
+    fn a_node_id_in_the_body_is_not_the_notes_identity() {
+        // A note documenting the format quotes it in a code block. That line is
+        // text; the file has no identity yet and must be given its own.
+        let temp_dir = TempDir::new().unwrap();
+        let vault_path = temp_dir.path();
+        let path = vault_path.join("note.md");
+        let body = "---\ntitle: Note\n---\n\n```yaml\nnode_id: x\n```\n";
+        std::fs::write(&path, body).unwrap();
+
+        let id = get_or_assign_node_id(vault_path, &path).unwrap();
+        assert_ne!(id, "x", "an id quoted in the body was taken as the note's");
+        let written = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            written.starts_with(&format!("---\nnode_id: {}\ntitle: Note\n---\n", id)),
+            "the new id belongs in the frontmatter: {written}"
+        );
+        assert!(written.contains("```yaml\nnode_id: x\n```"), "the body is untouched");
+
+        // And now that it has one, the same file resolves to it, not to `x`.
+        assert_eq!(get_or_assign_node_id(vault_path, &path).unwrap(), id);
+    }
+
+    #[test]
+    fn a_fresh_identity_replaces_the_frontmatter_line_and_not_the_body() {
+        let temp_dir = TempDir::new().unwrap();
+        let vault_path = temp_dir.path();
+        let path = vault_path.join("note.md");
+        std::fs::write(&path, "---\nnode_id: old\n---\n\nnode_id: quoted\n").unwrap();
+
+        let id = assign_fresh_node_id(vault_path, &path).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!("---\nnode_id: {}\n---\n\nnode_id: quoted\n", id)
+        );
+    }
+
+    #[test]
+    fn an_unclosed_fence_is_not_frontmatter() {
+        assert_eq!(frontmatter_block("---\nnode_id: x\nno closing fence\n"), None);
+        assert_eq!(frontmatter_block("---\nnode_id: x\n---"), Some("node_id: x\n"));
+        assert_eq!(frontmatter_block("---\r\nnode_id: x\r\n---\r\nbody"), Some("node_id: x\r\n"));
+        assert_eq!(markdown_frontmatter_id("text\n---\nnode_id: x\n---\n"), None);
     }
 }

@@ -308,9 +308,7 @@ pub fn approve_here(vault_path: &str, routine: &Routine) -> AppResult<()> {
     let mut map = approvals(vault_path);
     map.insert(routine.id.clone(), fingerprint(routine));
     let path = approvals_path(vault_path)?;
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&map)?)?;
-    std::fs::rename(&tmp, &path)?;
+    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(&map)?.as_bytes())?;
     Ok(())
 }
 

@@ -154,7 +154,9 @@ pub fn decline(vault_path: &str, body: &str) -> AppResult<()> {
     );
     list.truncate(KEEP_DECLINED);
     let path = declined_path(vault_path)?;
-    atomic_write(&path, &serde_json::to_string_pretty(&list)?)
+    // Atomic, so a crash leaves the old list rather than half the new one.
+    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(&list)?.as_bytes())?;
+    Ok(())
 }
 
 /// Unicode case folding, not `eq_ignore_ascii_case`.
@@ -165,18 +167,6 @@ pub fn decline(vault_path: &str, body: &str) -> AppResult<()> {
 /// are two memories.
 fn folded(text: &str) -> String {
     text.trim().to_lowercase()
-}
-
-/// Write through a temp file, so a crash leaves the old queue rather than half
-/// the new one.
-fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to rename temp proposal file: {e}"))
-    })?;
-    Ok(())
 }
 
 /// Everything waiting to be reviewed, newest first.
@@ -229,7 +219,9 @@ fn save(vault_path: &str, queue: &[Proposal]) -> AppResult<()> {
         }
     }
     let path = queue_path(vault_path)?;
-    atomic_write(&path, &serde_json::to_string_pretty(&out)?)
+    // Atomic, so a crash leaves the old queue rather than half the new one.
+    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(&out)?.as_bytes())?;
+    Ok(())
 }
 
 /// Add proposals, dropping any that repeat something already queued.

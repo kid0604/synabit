@@ -24,7 +24,7 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 
 /// The stamp: RFC 3339 in UTC with fixed millisecond precision, so two stamps
 /// compare correctly as strings — which is how the sync layer compares them.
@@ -37,7 +37,8 @@ pub fn now_stamp() -> String {
 pub fn write<T: Serialize + ?Sized>(path: &Path, value: &T) -> AppResult<()> {
     let existing = std::fs::read_to_string(path).ok();
     let rendered = render(existing.as_deref(), serde_json::to_value(value)?, &now_stamp())?;
-    atomic_write(path, &rendered)
+    crate::path_utils::write_atomic(path, rendered.as_bytes())?;
+    Ok(())
 }
 
 /// The pure half of [`write`].
@@ -59,18 +60,6 @@ fn render(existing: Option<&str>, mut value: Value, stamp: &str) -> AppResult<St
         object.insert("metadata".to_string(), Value::Object(metadata));
     }
     Ok(serde_json::to_string_pretty(&value)?)
-}
-
-fn atomic_write(path: &Path, content: &str) -> AppResult<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        AppError::General(format!("Failed to write {}: {e}", path.display()))
-    })
 }
 
 #[cfg(test)]
