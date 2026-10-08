@@ -138,6 +138,133 @@ async fn a_delete_loses_to_an_unpublished_local_edit() {
 }
 
 #[tokio::test]
+async fn a_remote_delete_lands_in_the_trash_and_can_be_restored() {
+    // A tombstone is an instruction from somewhere else, perhaps a misclick on
+    // a phone. It must leave the note recoverable here, exactly as a delete
+    // made here does.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let trashed = format!(".trash/{NOTE}");
+
+    a.write(NOTE, "# Plan\n\nWorth keeping.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let id = b.node_id(NOTE).expect("B has the note under an identity");
+
+    a.delete(NOTE);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(!b.exists(NOTE), "B should have obeyed the tombstone");
+    assert!(
+        b.body(&trashed).unwrap_or_default().contains("Worth keeping."),
+        "the tombstone destroyed the note instead of trashing it"
+    );
+    let listed =
+        crate::commands::trash::list_trash(b.vault_path().to_string_lossy().to_string()).unwrap();
+    assert_eq!(listed.len(), 1, "the Trash panel should offer it: {listed:?}");
+    assert_eq!(listed[0].original_path, NOTE);
+
+    // The trash is not part of the vault sync publishes.
+    let before = mailbox.len();
+    b.sync_ok().await;
+    assert_eq!(mailbox.len(), before, "B published something out of its trash");
+
+    assert_eq!(b.restore(&trashed), NOTE);
+    assert_eq!(b.node_id(NOTE).as_deref(), Some(id.as_str()));
+    b.sync_ok().await;
+    a.sync_ok().await;
+
+    assert!(
+        a.body(NOTE).unwrap_or_default().contains("Worth keeping."),
+        "B's restore did not reach A: {:?}",
+        a.body(NOTE)
+    );
+    assert_eq!(a.node_id(NOTE).as_deref(), Some(id.as_str()));
+}
+
+#[tokio::test]
+async fn a_note_restored_from_the_trash_comes_back_everywhere_as_itself() {
+    // Restoring once minted a new identity, to stay clear of the tombstone.
+    // The text came back; the history and every link to the note did not.
+    const REF: &str = "Notes/ref.md";
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+    let trashed = format!(".trash/{NOTE}");
+
+    a.write(NOTE, "# Plan\n\nFirst draft.\n");
+    a.sync_ok().await;
+    let text = a.read(NOTE).unwrap();
+    a.write(NOTE, &text.replace("First draft.", "Second draft."));
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let id = a.node_id(NOTE).expect("A's note has an identity");
+    let a_vault = a.vault_id();
+    let history = a.with_db(|db| db.get_crdt_doc(&a_vault, &id).unwrap().oplog_vv());
+
+    a.trash(NOTE);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    assert!(!b.exists(NOTE), "precondition: the delete reached B");
+
+    // A note that links to it is re-read while it is gone, so its link can
+    // only be recorded against a placeholder.
+    a.write(REF, "See [[plan]].\n");
+    a.scan();
+
+    assert_eq!(a.restore(&trashed), NOTE);
+    assert_eq!(
+        a.node_id(NOTE).as_deref(),
+        Some(id.as_str()),
+        "the restore minted a new identity"
+    );
+    let linking = a.with_db(|db| db.nodes_linking_to(&id).unwrap());
+    assert_eq!(linking.len(), 1, "the link to it did not come back: {linking:?}");
+    assert_eq!(linking[0].0, REF);
+
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    assert!(
+        b.body(NOTE).unwrap_or_default().contains("Second draft."),
+        "B did not get the restored note back: {:?}",
+        b.body(NOTE)
+    );
+    assert_eq!(b.node_id(NOTE).as_deref(), Some(id.as_str()));
+    let b_vault = b.vault_id();
+    let b_history = b.with_db(|db| db.get_crdt_doc(&b_vault, &id).unwrap().oplog_vv());
+    assert!(
+        b_history.includes_vv(&history),
+        "B has the note without the history it had before the delete"
+    );
+}
+
+#[tokio::test]
+async fn a_restore_whose_identity_came_back_live_takes_a_new_one() {
+    // Sync can bring a trashed document back while its copy sits in the trash.
+    // Two files under one identity are one document to sync, so the restored
+    // copy is the one that steps aside.
+    const LIVE: &str = "Notes/plan-again.md";
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let a = &devices[0];
+
+    a.write(NOTE, "# Plan\n\nThe copy in the trash.\n");
+    a.sync_ok().await;
+    let id = a.node_id(NOTE).expect("an identity");
+
+    a.trash(NOTE);
+    a.write(LIVE, &format!("---\nnode_id: {id}\n---\n# Plan\n\nThe live copy.\n"));
+    a.scan();
+
+    assert_eq!(a.restore(&format!(".trash/{NOTE}")), NOTE);
+    let restored_id = a.node_id(NOTE).expect("the restored copy has an identity");
+    assert_ne!(restored_id, id, "two files now claim one identity");
+    assert_eq!(a.node_id(LIVE).as_deref(), Some(id.as_str()));
+    let _ = &devices[1];
+}
+
+#[tokio::test]
 async fn emptying_a_vault_on_purpose_succeeds_on_the_second_try() {
     // The guard must delay a real "delete everything", not block it forever.
     let (mailbox, devices) = vault_with_devices(&["a", "b"]);

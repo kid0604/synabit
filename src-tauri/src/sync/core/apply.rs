@@ -249,7 +249,7 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
 /// What happened when a remote tombstone was applied locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteOutcome {
-    /// The file matched its last synced state and was removed.
+    /// The file matched its last synced state and was moved to the trash.
     Removed,
     /// The file carried edits this device never published, so the edit wins and
     /// the file stays. The next sync republishes it as an upsert.
@@ -268,10 +268,11 @@ pub enum DeleteOutcome {
 
 /// Apply a remote tombstone.
 ///
-/// Deleting is the one operation that destroys user data on the strength of a
-/// remote instruction, so it is deliberately conservative: a file whose content
-/// no longer matches the baseline recorded at its last successful sync is
-/// treated as unpublished local work and is kept.
+/// Deleting is the one operation that takes user data away on the strength of
+/// a remote instruction, so it is deliberately conservative: a file whose
+/// content no longer matches the baseline recorded at its last successful sync
+/// is treated as unpublished local work and is kept, and one that does match
+/// goes to the vault's trash rather than being unlinked.
 pub fn apply_delete_payload<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     vault: &Path,
@@ -337,20 +338,39 @@ pub fn apply_delete_payload<R: tauri::Runtime>(
             return Ok(DeleteOutcome::KeptLocalEdit);
         }
 
-        fs::remove_file(&local_path)?;
+        // Into the trash, exactly as a delete made here goes: a remote
+        // instruction is the last thing that should be able to destroy a note
+        // outright, and the other device's user may have deleted the wrong one.
+        // `.trash/` is a dot directory, which neither the scan nor sync's
+        // file walk enters, so the moved file is not a new document to push.
+        //
+        // An attachment goes where the Files app puts what it deletes: the
+        // Trash panel parses everything else in there as a note, and restoring
+        // a picture through the note writer would wrap it in frontmatter.
+        let vault_str = vault.to_string_lossy();
+        if crate::sync::utils::is_syncable_document(&payload.rel_path) {
+            let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            crate::commands::trash::apply_trash(&db, &vault_str, &payload.rel_path)?;
+        } else {
+            crate::commands::trash::trash_asset(&vault_str, &local_path)?;
+        }
         outcome = DeleteOutcome::Removed;
         result.deleted += 1;
-        info!("DELETE applied: {}", payload.rel_path);
+        info!("DELETE applied: {} (moved to the trash)", payload.rel_path);
     }
 
     // Clean up bookkeeping in both cases. Note the `nodes` and search rows are
     // keyed by relative path (see `node_parser::parse_file_to_node`), not by the
     // sync `node_id`, so they need the path rather than the id.
+    //
+    // The CRDT document stays, as it does for a delete made here: it is the
+    // note's version history, and a restore from the trash brings the note
+    // back under the same id. Kept, it carries on the lineage every other
+    // device shares rather than starting an unrelated one from the file.
     {
         let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
         db.delete_document_path(vault_id, &payload.node_id)?;
         db.delete_document_baseline(vault_id, provider_id, &payload.rel_path)?;
-        db.delete_crdt_doc(vault_id, &payload.node_id)?;
         db.delete_node(&payload.rel_path)?;
         db.delete_search_entry(&payload.rel_path);
     }

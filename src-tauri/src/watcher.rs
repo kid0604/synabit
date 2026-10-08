@@ -68,14 +68,31 @@ mod desktop {
         }
     }
 
-    fn should_ignore(path_str: &str) -> bool {
-        path_str.contains(".DS_Store")
-            || path_str.contains(".git")
-            || path_str.contains(".synabit_sync_manifest.json")
-            || path_str.ends_with('~')
-            || path_str.contains(".Trash")
-            || path_str.ends_with(".tmp") // Prevent looping on atomic_write temp files
-            || path_str.contains(".db") // Prevent looping on db writes
+    /// Whether an event is about something no listener of the vault wants.
+    ///
+    /// Judged on whole path components and on the extension, never on
+    /// substrings: `contains(".git")` also swallowed `Notes/.github.md` and
+    /// `a.gitignore-notes.md`, and `contains(".db")` swallowed `schema.dbml`,
+    /// so edits to perfectly ordinary notes were never reported.
+    fn should_ignore(path: &std::path::Path) -> bool {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        if name == ".DS_Store" || name == ".synabit_sync_manifest.json" || name.ends_with('~') {
+            return true;
+        }
+        // `tmp`: `write_atomic`'s temp file, which would otherwise loop every
+        // save back in as a change. The rest: a database and its journals,
+        // rewritten constantly by the app itself.
+        if matches!(
+            path.extension().and_then(|e| e.to_str()),
+            Some("tmp" | "db" | "db-wal" | "db-shm" | "db-journal")
+        ) {
+            return true;
+        }
+        path.components()
+            .any(|c| matches!(c.as_os_str().to_str(), Some(".git" | ".Trash")))
     }
 
     #[tauri::command]
@@ -179,7 +196,7 @@ mod desktop {
                     let dominated_by_ignored = event
                         .paths
                         .iter()
-                        .all(|p| should_ignore(&p.to_string_lossy()));
+                        .all(|p| should_ignore(p));
                     if dominated_by_ignored {
                         return;
                     }
@@ -190,7 +207,7 @@ mod desktop {
                     let mut state = ds.lock().unwrap_or_else(|e| e.into_inner());
 
                     for p in event.paths {
-                        if !should_ignore(&p.to_string_lossy()) {
+                        if !should_ignore(&p) {
                             let rel_path = path_utils::to_relative(&p, &watch_vault_path);
                             if is_create_delete {
                                 state.created_deleted_paths.insert(rel_path);
@@ -239,6 +256,46 @@ mod desktop {
     #[derive(Default)]
     pub struct SourceWatcherState {
         watchers: Mutex<Vec<RecommendedWatcher>>,
+        /// The running poll thread's debounce, kept so the next call can tell
+        /// that thread to stop. Dropping the watchers stops the events, not
+        /// the thread: without this every call left one more thread waking
+        /// five times a second for the life of the app.
+        debounce: Mutex<Option<Arc<Mutex<SourceDebounce>>>>,
+    }
+
+    /// Stop the poll thread `slot` holds, if any, and start its replacement.
+    ///
+    /// Apart from the command so a test can count the threads it leaves.
+    fn restart_source_poll(
+        slot: &Mutex<Option<Arc<Mutex<SourceDebounce>>>>,
+        emit: impl Fn(Vec<String>) + Send + 'static,
+    ) -> (Arc<Mutex<SourceDebounce>>, std::thread::JoinHandle<()>) {
+        let mut slot = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(old) = slot.take() {
+            old.lock().unwrap_or_else(|e| e.into_inner()).shutdown = true;
+        }
+
+        let quiet = Arc::new(Mutex::new(SourceDebounce::default()));
+        let poll = quiet.clone();
+        let thread = std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_millis(200));
+            let mut state = poll.lock().unwrap_or_else(|e| e.into_inner());
+            if state.shutdown {
+                break;
+            }
+            let Some(last) = state.last else { continue };
+            if last.elapsed() < Duration::from_secs(2) {
+                continue;
+            }
+            let changed: Vec<String> = state.folders.drain().collect();
+            state.last = None;
+            drop(state);
+            if !changed.is_empty() {
+                emit(changed);
+            }
+        });
+        *slot = Some(quiet.clone());
+        (quiet, thread)
     }
 
     /// Watch every registered source folder, replacing whatever was watched
@@ -258,25 +315,9 @@ mod desktop {
         // One debounce shared by every folder: a copy into one of them lands as
         // a burst of events, and re-scanning once after the burst is what the
         // reader wants rather than once per file.
-        let quiet = Arc::new(Mutex::new(SourceDebounce::default()));
-        let poll = quiet.clone();
         let poll_handle = app_handle.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(Duration::from_millis(200));
-            let mut state = poll.lock().unwrap_or_else(|e| e.into_inner());
-            if state.shutdown {
-                break;
-            }
-            let Some(last) = state.last else { continue };
-            if last.elapsed() < Duration::from_secs(2) {
-                continue;
-            }
-            let changed: Vec<String> = state.folders.drain().collect();
-            state.last = None;
-            drop(state);
-            if !changed.is_empty() {
-                let _ = poll_handle.emit("file-source-changed", changed);
-            }
+        let (quiet, _poll) = restart_source_poll(&state.debounce, move |changed| {
+            let _ = poll_handle.emit("file-source-changed", changed);
         });
 
         for path in &paths {
@@ -292,7 +333,7 @@ mod desktop {
                     if event
                         .paths
                         .iter()
-                        .all(|p| should_ignore(&p.to_string_lossy()))
+                        .all(|p| should_ignore(p))
                     {
                         return;
                     }
@@ -341,6 +382,72 @@ mod desktop {
         shutdown: bool,
         modified_paths: HashSet<String>,
         created_deleted_paths: HashSet<String>,
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::path::Path;
+
+        #[test]
+        fn notes_that_merely_contain_an_ignored_word_are_reported() {
+            for kept in [
+                "/v/Notes/.github.md",
+                "/v/Notes/a.gitignore-notes.md",
+                "/v/Notes/schema.dbml",
+                "/v/Notes/my.db notes.md",
+                "/v/Notes/Trash talk.md",
+                "/v/Notes/tmp.md",
+            ] {
+                assert!(!should_ignore(Path::new(kept)), "{kept} was ignored");
+            }
+        }
+
+        #[test]
+        fn the_noise_is_still_ignored() {
+            for noise in [
+                "/v/.git/index",
+                "/v/sub/.git/objects/ab/cd",
+                "/v/.Trash/old.md",
+                "/v/.DS_Store",
+                "/v/Notes/.DS_Store",
+                "/v/.synabit_sync_manifest.json",
+                "/v/Notes/plan.md~",
+                "/v/Notes/.plan.md.3f2a.tmp",
+                "/v/.synabit/vault_cache.db",
+                "/v/.synabit/vault_cache.db-wal",
+                "/v/.synabit/vault_cache.db-shm",
+            ] {
+                assert!(should_ignore(Path::new(noise)), "{noise} was reported");
+            }
+        }
+
+        /// Re-pointing the watcher at a new set of folders must stop the poll
+        /// thread the previous set started, not leave it running beside the
+        /// new one.
+        #[test]
+        fn restarting_the_source_poll_stops_the_one_before() {
+            let slot = Mutex::new(None);
+            let threads: Vec<_> = (0..3)
+                .map(|_| restart_source_poll(&slot, |_| {}).1)
+                .collect();
+
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !(threads[0].is_finished() && threads[1].is_finished())
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+
+            assert!(
+                threads[0].is_finished() && threads[1].is_finished(),
+                "a replaced poll thread is still running"
+            );
+            assert!(!threads[2].is_finished(), "the current poll thread stopped");
+
+            let current = slot.lock().unwrap().take().expect("the current poll");
+            current.lock().unwrap().shutdown = true;
+        }
     }
 }
 

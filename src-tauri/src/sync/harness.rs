@@ -512,7 +512,12 @@ impl HarnessDevice {
 
         let adapter = Arc::new(HarnessAdapter::new(mailbox, device_id));
 
-        let vault_root = vault.path().join("vault");
+        // Canonical, as a vault picked in a dialog is. The temp directory sits
+        // behind a symlink on macOS (`/var` → `/private/var`), and the note
+        // writer resolves its target through it, so a vault named by the
+        // symlinked path indexes what it writes under absolute ids.
+        let vault_root =
+            std::fs::canonicalize(vault.path().join("vault")).expect("canonical vault");
         Self {
             name: name.to_string(),
             device_id: device_id.to_string(),
@@ -555,6 +560,45 @@ impl HarnessDevice {
 
     pub fn delete(&self, rel_path: &str) {
         std::fs::remove_file(self.vault_root.join(rel_path)).expect("delete file");
+    }
+
+    /// Delete through the app's trash, as the delete button does.
+    pub fn trash(&self, rel_path: &str) -> String {
+        let vault_path = self.vault_root.to_string_lossy().to_string();
+        let state = self.handle.state::<DbState>();
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        crate::commands::trash::apply_trash(&db, &vault_path, rel_path)
+            .unwrap_or_else(|e| panic!("[{}] trash failed: {}", self.name, e))
+    }
+
+    /// Put a trashed file back, as the Trash panel does. Returns where it went.
+    pub fn restore(&self, trash_path: &str) -> String {
+        let vault_path = self.vault_root.to_string_lossy().to_string();
+        crate::commands::trash::restore_from_trash(
+            self.handle.clone(),
+            self.handle.state::<DbState>(),
+            vault_path,
+            trash_path.to_string(),
+        )
+        .unwrap_or_else(|e| panic!("[{}] restore failed: {}", self.name, e))
+    }
+
+    /// The identity this device's vault is registered under.
+    pub fn vault_id(&self) -> String {
+        let vault_path = self.vault_root.to_string_lossy().to_string();
+        crate::sync::core::identity::load_or_register_vault_identity(&self.handle, &vault_path)
+            .expect("vault identity")
+            .vault_id
+            .to_string()
+    }
+
+    /// The `node_id` a file's frontmatter carries, if any.
+    pub fn node_id(&self, rel_path: &str) -> Option<String> {
+        let text = self.read(rel_path)?;
+        text.lines()
+            .take_while(|l| !l.is_empty())
+            .find_map(|l| l.strip_prefix("node_id: "))
+            .map(|s| s.trim().to_string())
     }
 
     pub fn rename(&self, from_rel: &str, to_rel: &str) {

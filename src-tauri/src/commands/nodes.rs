@@ -205,8 +205,17 @@ pub(crate) fn scan_vault_into_db<R: tauri::Runtime>(
                         .unwrap_or_default()
                         .as_millis() as i64;
 
+                    // Any change, not only a newer one. A file put back from a
+                    // backup, an archive or a sync tool keeps the older time it
+                    // was saved at, and "newer than what we indexed" read that
+                    // as nothing to do — the index went on describing the text
+                    // the restore replaced. Both sides are this file's own
+                    // modification time in the same unit, so they only differ
+                    // when the file was written by something other than the
+                    // write that recorded `ts`; the app's own writes re-parse
+                    // after writing and record the new time themselves.
                     let needs_update = match existing_timestamps.get(&rel_path) {
-                        Some(&ts) => timestamp > ts,
+                        Some(&ts) => timestamp != ts,
                         None => true,
                     };
 
@@ -3331,6 +3340,72 @@ mod scan_benchmark {
         handle
     }
 
+    fn mtime_ms(path: &Path) -> i64 {
+        std::fs::metadata(path)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64
+    }
+
+    /// A file put back from a backup or by git keeps an older modification
+    /// time than the one indexed. It is still different text, and the scan has
+    /// to read it.
+    #[test]
+    fn a_file_whose_time_went_backwards_is_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_string_lossy().to_string();
+        let file = dir.path().join("Notes/plan.md");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "---\ntitle: Plan\ntype: note\n---\n\nbản mới\n").unwrap();
+
+        let handle = app_with_db(DbBridge::new_in_memory_full().unwrap());
+        let db_state = handle.state::<crate::db::DbState>();
+        scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+        // Once more, so the row records the time of the file as identity
+        // resolution left it rather than as it was first written.
+        scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+
+        let indexed = mtime_ms(&file);
+        std::fs::write(&file, "---\ntitle: Plan\ntype: note\n---\n\nbản sao lưu\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis((indexed - 86_400_000) as u64),
+            )
+            .unwrap();
+
+        let report = scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+
+        assert_eq!(report.indexed, 1, "the restored file was not read again");
+        let db = db_state.lock().unwrap();
+        let node = db.get_node("Notes/plan.md").unwrap().unwrap();
+        assert!(node.content.contains("bản sao lưu"), "got {:?}", node.content);
+    }
+
+    /// An unchanged file is not read again: `!=` must not turn every scan into
+    /// a full re-index.
+    #[test]
+    fn an_untouched_file_is_not_read_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().to_string_lossy().to_string();
+        let file = dir.path().join("Notes/plan.md");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "---\ntitle: Plan\ntype: note\n---\n\nnội dung\n").unwrap();
+
+        let handle = app_with_db(DbBridge::new_in_memory_full().unwrap());
+        let db_state = handle.state::<crate::db::DbState>();
+        scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+        scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+
+        let report = scan_vault_into_db(&handle, db_state.inner(), &vault).unwrap();
+        assert_eq!(report.indexed, 0);
+    }
+
     /// The bug a user reported: "Used by" said "not used by any node" for every
     /// file in the vault, including files plainly embedded in notes.
     ///
@@ -3364,9 +3439,9 @@ mod scan_benchmark {
             properties: serde_json::json!({}),
             created_at: "2026-01-01 00:00:00".into(),
             updated_at: "2026-01-01 00:00:00".into(),
-            // Far in the future, so the scan is certain to skip the file —
-            // exactly as it does for a note nobody has touched.
-            timestamp: i64::MAX,
+            // The file's own modification time, so the scan skips it exactly
+            // as it does a note nobody has touched.
+            timestamp: mtime_ms(&dir.path().join("Notes/kien-truc.md")),
             blocks: None,
         })
         .unwrap();

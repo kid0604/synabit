@@ -3214,9 +3214,10 @@ fn tool_restore_node<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> A
     Ok(serde_json::json!({
         "success": true,
         "restored_to": restored,
-        // Restoring drops `node_id` on purpose — see `restore_from_trash`. The
-        // file comes back as a new document, so its history does not.
-        "_note": "The node is back in the vault. Its edit history before deletion is not.",
+        // Restoring keeps the node's identity, so its history and links come
+        // back with it — except when a live note already holds that identity;
+        // see `restore_from_trash`.
+        "_note": "The node is back in the vault under its own identity, so its edit history and links return with it — unless another note already held that identity, in which case it came back as a new node.",
     })
     .to_string())
 }

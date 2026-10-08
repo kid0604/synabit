@@ -14,20 +14,27 @@
 //! - a rename within one filesystem is atomic, so there is no window where
 //!   the note exists in neither place.
 //!
-//! # What this deliberately does not do
+//! A delete that arrives from another device lands here too
+//! (`sync::core::apply::apply_delete_payload`), so the Trash panel holds what
+//! was deleted anywhere, not only what was deleted on this device.
 //!
-//! There is no `restore` here, and that is a design decision rather than an
-//! omission. Sync detects a deletion by noticing that a tracked path no
-//! longer holds a file (`sync::core::change::detect_deletions`), so the
-//! moment this runs, a tombstone is on its way to every other device.
-//! Restoring afterwards would be a race against that tombstone, and the
-//! tombstone would sometimes win.
+//! # Restoring, and why it is not a race with sync
 //!
-//! The undo the user actually gets is upstream of here: the front end holds
-//! the deletion for a few seconds and touches nothing at all until the
-//! window closes. Undo is cancelling a timer, so there is nothing to race.
-//! If the app quits inside that window the deletion simply never happens,
-//! which is the safe direction to fail in.
+//! Sync detects a deletion by noticing that a tracked path no longer holds a
+//! file (`sync::core::change::detect_deletions`), so once a sync has run, a
+//! tombstone for the document is on its way to every other device.
+//! `restore_from_trash` brings the file back under the identity it already
+//! carries anyway, because a tombstone and a later upsert of the same document
+//! are not competing: every device replays the mailbox in sequence order, so
+//! the restore — pushed after the tombstone — is applied after it everywhere.
+//! A restore before any sync ran never let the path look empty, and no
+//! tombstone is sent at all. See `restore_from_trash` for the one case where
+//! the identity cannot come back.
+//!
+//! The quick undo the user gets is upstream of here: the front end holds the
+//! deletion for a few seconds and touches nothing at all until the window
+//! closes. Undo is cancelling a timer. If the app quits inside that window the
+//! deletion simply never happens, which is the safe direction to fail in.
 
 use std::path::{Path, PathBuf};
 
@@ -71,6 +78,25 @@ fn free_trash_path(vault: &Path, rel_path: &str) -> PathBuf {
     base
 }
 
+/// Date a file in the trash by when it arrived there.
+///
+/// The trash has no record of its own: `list_trash` reports a file's
+/// modification time as when it was deleted, and `purge_trash` ages files out
+/// by it. A rename keeps the time of the last edit, so a note untouched for
+/// two months arrived already past the 30-day purge and was destroyed at the
+/// next launch — a trash that empties itself of exactly the old notes nobody
+/// would notice going. Best effort: failing to stamp is no reason to fail the
+/// delete, which has already happened.
+fn stamp_deleted_now(path: &Path) {
+    let stamped = std::fs::File::options()
+        .write(true)
+        .open(path)
+        .and_then(|f| f.set_modified(std::time::SystemTime::now()));
+    if let Err(e) = stamped {
+        log::warn!("trash: could not date '{}': {}", path.display(), e);
+    }
+}
+
 /// Move a node into the vault's trash and drop it from the index.
 ///
 /// Returns the trash-relative path, so a caller can tell the user where the
@@ -106,6 +132,7 @@ pub(crate) fn apply_trash(
         // Same filesystem, so this is a rename rather than a copy: atomic,
         // and instant regardless of how large an attachment the cap carries.
         std::fs::rename(&abs_path, &target)?;
+        stamp_deleted_now(&target);
     }
 
     logged("trash node", rel_path, db.delete_node(rel_path));
@@ -172,6 +199,7 @@ pub(crate) fn trash_asset(vault_path: &str, abs_path: &Path) -> AppResult<String
         std::fs::copy(abs_path, &target)?;
         std::fs::remove_file(abs_path)?;
     }
+    stamp_deleted_now(&target);
 
     // Where it landed, not where it was headed. `free_trash_path` steps aside
     // for a name already taken, so on the second delete of the same file these
@@ -333,20 +361,22 @@ fn restore_target(vault: &Path, trash_path: &str) -> AppResult<String> {
     Ok(crate::commands::nodes::free_node_path(vault, original))
 }
 
-/// Put something back, as a new node rather than the one that was deleted.
+/// Put something back, as the node it was.
 ///
-/// The identity is deliberately not restored with it. Sync spots a deletion by
-/// noticing a tracked path no longer holds a file, so a tombstone for the old
-/// document left this device the moment it was trashed; bringing the same
-/// `node_id` back would be a race against that tombstone, and the tombstone
-/// would sometimes win — the file would reappear here and vanish again when
-/// the next device synced.
+/// The file keeps the `node_id` it carried into the trash, which is what its
+/// version history, its backlinks and its sync document are all keyed by. A
+/// restore that dropped it — as this once did, to stay clear of the tombstone
+/// — brought back the text and orphaned everything else: the history stayed
+/// filed under an id nothing held, and every link to the note pointed at it.
+/// The tombstone was never a threat; see the module comment.
 ///
-/// Dropping `node_id` sidesteps the race entirely. What comes back is a new
-/// document holding the old content: the tombstone stays true, because the
-/// thing it describes really is gone, and the restored file is an ordinary
-/// creation that every device accepts. The cost is the old version history,
-/// which is a smaller thing to lose than the file.
+/// The one exception is an identity something else now holds. Sync may have
+/// brought the document back while this copy sat in the trash — another
+/// device kept an edit the delete would have destroyed, and republished it —
+/// so the note is already live under that id. Two files claiming one id are
+/// one document to sync, overwriting each other's queued work, so this copy
+/// comes back as a new document instead: the live one owns the history and
+/// the links.
 #[tauri::command]
 pub fn restore_from_trash<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
@@ -378,14 +408,43 @@ pub fn restore_from_trash<R: tauri::Runtime>(
         .as_ref()
         .map(|n| n.node_type.clone())
         .unwrap_or_else(|| "note".to_string());
+    let carried_id = parsed.as_ref().and_then(|n| {
+        n.properties
+            .get("node_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_string)
+    });
+
+    // Before the lock: this takes the same mutex itself.
+    let vault_id =
+        crate::sync::core::identity::load_or_register_vault_identity(&app_handle, &vault_path)?
+            .vault_id
+            .to_string();
+    let taken = carried_id.as_deref().is_some_and(|id| {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        identity_in_use(&db, &vault_id, vault, id, &target_rel)
+    });
+    if taken {
+        log::warn!(
+            "trash: '{}' carries an identity a live note now holds; restoring it as a new one",
+            trash_path
+        );
+    }
 
     // Through the ordinary write, so the index, the search entry, the edges
-    // and the CRDT document are all set up the way any other file's are.
-    // `node_id: null` removes the old identity; a fresh one is assigned on the
-    // way through. The body is left alone — `None` means "keep what is there".
-    // `write_node_inner` rather than the command it wraps: the command is
-    // fixed to one runtime, and this has to be callable from the assistant's
-    // tools, which are generic so they can be tested at all.
+    // and the CRDT document are all set up the way any other file's are. An
+    // empty property set keeps what the file says, `node_id` included; `null`
+    // removes it so a fresh one is minted. The body is left alone — `None`
+    // means "keep what is there". `write_node_inner` rather than the command
+    // it wraps: the command is fixed to one runtime, and this has to be
+    // callable from the assistant's tools, which are generic so they can be
+    // tested at all.
+    let properties = if taken {
+        serde_json::json!({ "node_id": null })
+    } else {
+        serde_json::json!({})
+    };
     crate::commands::nodes::write_node_inner(
         &app_handle,
         &state,
@@ -393,12 +452,89 @@ pub fn restore_from_trash<R: tauri::Runtime>(
         target_rel.clone(),
         title,
         node_type,
-        serde_json::json!({ "node_id": null }),
+        properties,
         None,
     )?;
 
+    // Links to the note by its id need nothing: edges are recorded against
+    // stable ids, and trashing removed only the note's own outgoing ones. But
+    // a note re-indexed while this one was gone resolved its link to a
+    // placeholder, and nothing re-reads it now that the target is back.
+    {
+        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(node) = db.get_node(&target_rel).ok().flatten() {
+            logged(
+                "re-link restored node",
+                &target_rel,
+                db.adopt_ghost_edges(&names_links_use(&node), node.stable_id())
+                    .map(|_| ()),
+            );
+        }
+    }
+
     log::info!("trash: restored '{}' as '{}'", trash_path, target_rel);
     Ok(target_rel)
+}
+
+/// Whether a live file other than `rel_path` already holds identity `id`.
+///
+/// Asked of both places an identity is recorded — the sync path map and the
+/// index — and believed only when the file named is still on disk, so a row
+/// left over from something deleted outside the app cannot cost the restored
+/// note its history.
+fn identity_in_use(
+    db: &crate::db::DbBridge,
+    vault_id: &str,
+    vault: &Path,
+    id: &str,
+    rel_path: &str,
+) -> bool {
+    let live = |path: &str| path != rel_path && vault.join(path).is_file();
+    let mapped = db
+        .get_path_by_node_id(vault_id, id)
+        .ok()
+        .flatten()
+        .is_some_and(|p| live(&p));
+    if mapped {
+        return true;
+    }
+    let indexed: Vec<String> = db
+        .conn()
+        .prepare("SELECT id FROM nodes WHERE stable_id = ?1")
+        .and_then(|mut stmt| {
+            stmt.query_map([id], |row| row.get::<_, String>(0))
+                .map(|rows| rows.flatten().collect())
+        })
+        .unwrap_or_default();
+    indexed.iter().any(|p| live(p))
+}
+
+/// The names a link to `node` could have been written with, spelled the way
+/// the resolver spells a placeholder for one it could not find: lowercased,
+/// and `ghost:`-prefixed by `adopt_ghost_edges`. See
+/// `graph_parser::NodeResolver::resolve`.
+fn names_links_use(node: &crate::models::node::NodeMetadata) -> Vec<String> {
+    let path = node.id.to_lowercase();
+    let without_ext = path
+        .rsplit_once('.')
+        .map(|(stem, _)| stem.to_string())
+        .unwrap_or_else(|| path.clone());
+    let file_stem = without_ext
+        .rsplit_once('/')
+        .map(|(_, name)| name.to_string())
+        .unwrap_or_else(|| without_ext.clone());
+    let file_name = path.rsplit('/').next().unwrap_or_default().to_string();
+    let mut names = vec![
+        node.title.to_lowercase(),
+        path,
+        without_ext,
+        file_stem,
+        file_name,
+    ];
+    names.retain(|n| !n.trim().is_empty());
+    names.sort();
+    names.dedup();
+    names
 }
 
 /// Remove one thing from the trash for good.
@@ -466,6 +602,30 @@ mod tests {
             db.get_nodes_by_type("quickcap").unwrap().is_empty(),
             "a trashed cap must not come back on the next read"
         );
+    }
+
+    /// A note last edited long ago is deleted today. The trash ages things by
+    /// when they arrived, or the 30-day purge takes it at the next launch.
+    #[test]
+    fn an_old_note_is_dated_by_when_it_was_trashed() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = DbBridge::new_in_memory_full().unwrap();
+        let vault = dir.path().to_string_lossy().to_string();
+        seed_file(dir.path(), "Notes/old.md", "viết từ lâu");
+        let ninety_days = std::time::Duration::from_secs(90 * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(dir.path().join("Notes/old.md"))
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - ninety_days)
+            .unwrap();
+
+        apply_trash(&db, &vault, "Notes/old.md").unwrap();
+
+        assert_eq!(purge_trash(vault.clone(), 30).unwrap(), 0, "purged on arrival");
+        let listed = list_trash(vault).unwrap();
+        let age_ms = chrono::Utc::now().timestamp_millis() - listed[0].deleted_at;
+        assert!(age_ms < 60_000, "dated {age_ms} ms ago");
     }
 
     /// A cap whose file is already gone still has to leave the index, or it
