@@ -1,3 +1,4 @@
+pub mod adopt;
 pub mod finance_document;
 pub mod node_document;
 pub mod apply;

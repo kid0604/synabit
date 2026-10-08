@@ -2424,6 +2424,278 @@ async fn what_one_device_read_from_a_note_is_not_read_again_on_another() {
     }
 }
 
+// ---------------------------------------------------------------------------
+// A device whose history is gone but whose files are not
+//
+// The CRDT history of every note lives only in the database. Deleting
+// `vault_cache.db`, restoring an archive into a new vault, or copying the vault
+// folder to another machine all leave the files with no history behind them,
+// and the scan then rebuilds one from the bytes — an independent insert of the
+// whole text. Merged with the real history, two inserts of the same text are
+// two copies of it.
+// ---------------------------------------------------------------------------
+
+const KEPT: &str = "---\ntitle: Plan\ntags:\n- work\n---\n# Plan\n\nHello world.\nSecond line.\n";
+
+/// Run every device until nothing moves, a fixed number of rounds.
+async fn settle_all(devices: &[&HarnessDevice]) {
+    for _ in 0..3 {
+        for dev in devices {
+            dev.sync_ok().await;
+        }
+    }
+}
+
+#[tokio::test]
+async fn deleting_the_cache_does_not_duplicate_every_note() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+    assert_eq!(b.read(NOTE).as_deref(), Some(original.as_str()), "B never got the note");
+
+    // vault_cache.db is deleted; the app reopens the vault and scans it.
+    b.forget_cache();
+    b.scan();
+
+    b.sync_ok().await;
+    a.sync_ok().await;
+    settle_all(&[a, b]).await;
+
+    for (name, dev) in [("A", a), ("B", b)] {
+        assert_eq!(
+            dev.read(NOTE).as_deref(),
+            Some(original.as_str()),
+            "{name}'s note changed after B lost its cache"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_edit_made_after_losing_the_cache_arrives_once() {
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+
+    b.forget_cache();
+    b.scan();
+    // Written before B has synced again: the edit has no history of its own
+    // that shares anything with A's.
+    let edited = original.replace("Second line.", "Second line, revised.");
+    b.write(NOTE, &edited);
+
+    b.sync_ok().await;
+    a.sync_ok().await;
+    settle_all(&[a, b]).await;
+
+    for (name, dev) in [("A", a), ("B", b)] {
+        assert_eq!(
+            dev.read(NOTE).as_deref(),
+            Some(edited.as_str()),
+            "{name} does not hold B's edit exactly once"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_copied_vault_joining_on_a_new_device_duplicates_nothing() {
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.write("Notes/other.md", "Just a body, no frontmatter.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+    let other = a.read("Notes/other.md").expect("A has the other note");
+
+    // The folder is copied (or an archive restored) onto a machine that has
+    // never synced, which then joins the same vault.
+    let c = HarnessDevice::new("c", &mailbox);
+    c.copy_vault_from(a);
+    c.scan();
+
+    c.sync_ok().await;
+    settle_all(&[a, b, &c]).await;
+
+    for (name, dev) in [("A", a), ("B", b), ("C", &c)] {
+        assert_eq!(
+            dev.read(NOTE).as_deref(),
+            Some(original.as_str()),
+            "{name}'s note changed after C joined"
+        );
+        assert_eq!(
+            dev.read("Notes/other.md").as_deref(),
+            Some(other.as_str()),
+            "{name}'s other note changed after C joined"
+        );
+    }
+}
+
+#[tokio::test]
+async fn edits_on_both_sides_of_a_lost_cache_both_survive() {
+    // B loses its cache and edits the note before syncing again; meanwhile A
+    // edits a different line. B's file has no history, but the version it was
+    // edited from is one A's history went through, so the two edits merge.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+
+    b.forget_cache();
+    b.scan();
+    b.write(NOTE, &original.replace("Second line.", "Second line, from B."));
+
+    a.write(NOTE, &original.replace("Hello world.", "Hello world, from A."));
+    a.sync_ok().await;
+
+    b.sync_ok().await;
+    settle_all(&[a, b]).await;
+
+    let want = original
+        .replace("Hello world.", "Hello world, from A.")
+        .replace("Second line.", "Second line, from B.");
+    for (name, dev) in [("A", a), ("B", b)] {
+        assert_eq!(dev.read(NOTE).as_deref(), Some(want.as_str()), "{name} lost an edit");
+    }
+}
+
+#[tokio::test]
+async fn an_old_copy_of_the_vault_takes_the_newer_text_without_a_conflict() {
+    // Restoring an old archive: every note it holds is a version the vault has
+    // since moved past. Nothing on the new device is newer, so nothing is set
+    // aside and nothing is rolled back.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+
+    let c = HarnessDevice::new("c", &mailbox);
+    c.copy_vault_from(a);
+
+    let original = a.read(NOTE).expect("A has the note");
+    let newer = original.replace("Second line.", "Second line, revised later.");
+    a.write(NOTE, &newer);
+    a.sync_ok().await;
+
+    c.scan();
+    let first = c.sync_ok().await;
+    settle_all(&[a, b, &c]).await;
+
+    assert!(first.conflicts.is_empty(), "a stale copy was set aside: {:?}", first.conflicts);
+    for (name, dev) in [("A", a), ("B", b), ("C", &c)] {
+        assert_eq!(dev.read(NOTE).as_deref(), Some(newer.as_str()), "{name} is not on the newer text");
+        let copies: Vec<String> = crate::sync::utils::collect_local_files(&dev.vault_path().to_string_lossy())
+            .into_iter()
+            .filter(|p| p.contains("(conflict"))
+            .collect();
+        assert!(copies.is_empty(), "{name} has conflict copies: {copies:?}");
+    }
+}
+
+#[tokio::test]
+async fn frontmatter_laid_out_differently_still_counts_as_the_same_note() {
+    // A wrote `tags: [a, b]`; B rebuilt it from the document as a block list.
+    // A copy of A's folder joining must see the same note, not a different one.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, "---\ntitle: Plan\ntags: [a, b]\n---\nBody.\n");
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let on_a = a.read(NOTE).unwrap();
+    let on_b = b.read(NOTE).unwrap();
+
+    let c = HarnessDevice::new("c", &mailbox);
+    c.copy_vault_from(a);
+    c.scan();
+    let first = c.sync_ok().await;
+    settle_all(&[a, b, &c]).await;
+
+    assert!(first.conflicts.is_empty(), "{:?}", first.conflicts);
+    assert_eq!(a.read(NOTE).unwrap(), on_a);
+    assert_eq!(b.read(NOTE).unwrap(), on_b);
+    assert_eq!(c.read(NOTE).unwrap(), on_a, "C's copy was rewritten");
+    for (name, dev) in [("A", a), ("B", b), ("C", &c)] {
+        assert_eq!(dev.body(NOTE).as_deref(), Some("Body.\n"), "{name}");
+        let text = dev.read(NOTE).unwrap();
+        assert_eq!(frontmatter_field(&text, "title").as_deref(), Some("Plan"), "{name}");
+    }
+}
+
+#[tokio::test]
+async fn an_edit_with_nothing_to_merge_from_is_set_aside_not_lost() {
+    // The cache is gone and the file was changed before the app saw it again,
+    // so the rebuilt history starts from text the vault never had. There is no
+    // common version to merge from: the vault's text keeps the path and B's
+    // goes beside it, on both devices, as a note of its own.
+    let (_mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+
+    b.forget_cache();
+    b.write(NOTE, &original.replace("Second line.", "Rewritten elsewhere."));
+    b.scan();
+
+    let first = b.sync_ok().await;
+    assert_eq!(first.conflicts.len(), 1, "{:?}", first.conflicts);
+    let kept = first.conflicts[0].kept_as.clone();
+    settle_all(&[a, b]).await;
+
+    for (name, dev) in [("A", a), ("B", b)] {
+        assert_eq!(dev.read(NOTE).as_deref(), Some(original.as_str()), "{name}");
+        let aside = dev.read(&kept).unwrap_or_else(|| panic!("{name} lacks {kept}"));
+        assert!(aside.contains("Rewritten elsewhere."), "{name}: {aside}");
+        assert!(!aside.contains("Hello world.\nSecond line.\n"), "{name}: {aside}");
+        let id = |t: &str| frontmatter_field(t, "node_id");
+        assert_ne!(id(&aside), id(&original), "{name}: the copy claims the note's identity");
+    }
+    assert_eq!(a.read(&kept), b.read(&kept), "the copy differs between devices");
+}
+
+#[tokio::test]
+async fn a_copied_vault_joining_without_a_scan_duplicates_nothing() {
+    // Same as above, but sync gets there before the scan does — sync builds the
+    // history from the file itself in that case.
+    let (mailbox, devices) = vault_with_devices(&["a", "b"]);
+    let (a, b) = (&devices[0], &devices[1]);
+
+    a.write(NOTE, KEPT);
+    a.sync_ok().await;
+    b.sync_ok().await;
+    let original = a.read(NOTE).expect("A has the note");
+
+    let c = HarnessDevice::new("c", &mailbox);
+    c.copy_vault_from(a);
+
+    c.sync_ok().await;
+    settle_all(&[a, b, &c]).await;
+
+    for (name, dev) in [("A", a), ("B", b), ("C", &c)] {
+        assert_eq!(
+            dev.read(NOTE).as_deref(),
+            Some(original.as_str()),
+            "{name}'s note changed after C joined"
+        );
+    }
+}
+
 /// Safe's files between two devices, through the real coordinator and a real
 /// (in-memory) mailbox. `safe::sync` decides each arrival from the cleartext
 /// header; these check that the decision is actually the one sync carries out.

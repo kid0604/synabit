@@ -572,6 +572,45 @@ impl HarnessDevice {
         Some(strip_frontmatter(&text))
     }
 
+    /// Throw the device's whole database away and start from an empty one, as
+    /// deleting `vault_cache.db` does. The vault on disk is untouched; every
+    /// CRDT history, baseline, cursor and the device's Loro peer id are gone.
+    pub fn forget_cache(&self) {
+        let state = self.handle.state::<DbState>();
+        let mut db = state.lock().unwrap_or_else(|e| e.into_inner());
+        *db = DbBridge::new_in_memory_full().expect("build full in-memory schema");
+    }
+
+    /// Run the vault scan the app runs on opening a vault, which is what
+    /// rebuilds the index — and the CRDT bridge — from the files on disk.
+    pub fn scan(&self) {
+        let vault_path = self.vault_root.to_string_lossy().to_string();
+        let state = self.handle.state::<DbState>();
+        crate::commands::nodes::scan_vault_into_db(&self.handle, state.inner(), &vault_path)
+            .unwrap_or_else(|e| panic!("[{}] scan failed: {}", self.name, e));
+    }
+
+    /// Copy another device's vault folder over this one's, as restoring an
+    /// archive or copying the folder to a new machine does. Only the files
+    /// travel; this device's database is left as it is.
+    pub fn copy_vault_from(&self, other: &HarnessDevice) {
+        for entry in walkdir::WalkDir::new(other.vault_path())
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().is_file())
+        {
+            let rel = entry
+                .path()
+                .strip_prefix(other.vault_path())
+                .expect("inside the vault");
+            let to = self.vault_root.join(rel);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).expect("create parent dir");
+            }
+            std::fs::copy(entry.path(), &to).expect("copy file");
+        }
+    }
+
     // ── The thing under test ────────────────────────────────
 
     /// Run one full sync, exactly as the `sync_full` command does.

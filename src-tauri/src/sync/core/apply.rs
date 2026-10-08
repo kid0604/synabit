@@ -154,6 +154,13 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
+    // Asked before anything below can record one. A path this device has never
+    // synced is where a history rebuilt from the file — after the cache was
+    // deleted, or on a copied vault — can meet the vault's own.
+    let first_contact = db
+        .get_document_baseline(vault_id, provider_id, &payload.rel_path)?
+        .is_none();
+
     // Check if file was moved/renamed locally
     let old_path_opt = db.get_path_by_node_id(vault_id, node_id)?;
     if let Some(old_path) = old_path_opt {
@@ -207,7 +214,7 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
             vault_id,
         )?;
     } else {
-        pull_markdown(
+        baseline_override = pull_markdown(
             app_handle,
             vault_path,
             &local_path,
@@ -215,6 +222,7 @@ pub fn apply_doc_payload<R: tauri::Runtime>(
             payload,
             result,
             vault_id,
+            first_contact,
         )?;
     }
 
@@ -587,19 +595,70 @@ fn settle_board(
 }
 
 /// Pull a Markdown file using CRDT merge (conflict-free character-level).
+///
+/// Returns the baseline to record instead of the file's own hash, when the
+/// file now holds something the remote copy does not.
+#[allow(clippy::too_many_arguments)]
 fn pull_markdown<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
-    _vault_path: &str,
+    vault_path: &str,
     local_path: &Path,
     node_id: &str,
     payload: &crate::sync::core::types::DocSyncPayload,
     result: &mut SyncResult,
     vault_id: &str,
-) -> AppResult<()> {
+    first_contact: bool,
+) -> AppResult<Option<String>> {
     let db_state = app_handle.state::<crate::db::DbState>();
     let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
     let doc = db.get_crdt_doc(vault_id, node_id)?;
+
+    // A document this device has never synced, holding a history that shares
+    // no author with the one arriving, is a history rebuilt from the file's
+    // bytes: the cache was deleted, an archive was restored, or the vault was
+    // copied here. Importing it would merge two independent inserts of the same
+    // text — the note, twice, on every device. The vault's history is adopted
+    // instead and the file reconciled against it; see `adopt`.
+    //
+    // Only on first contact. A path with a baseline has synced this document
+    // before, so its history is already one the vault holds, and adopting an
+    // unrelated arrival there could have two devices trading histories back
+    // and forth. That the rebuilt history is never published before this point
+    // is the coordinator's part: see `SyncCoordinator::sync`.
+    if first_contact {
+        let local_text = if local_path.exists() {
+            Some(read_text_or_empty_if_missing(local_path)?)
+        } else {
+            None
+        };
+        let peer = db.get_or_create_peer_id()?;
+        let doc_ref = &doc;
+        let adopted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::sync::core::adopt::adopt_unrelated_history(
+                doc_ref,
+                &payload.snapshot,
+                local_text.as_deref(),
+                peer,
+            )
+        }));
+        match adopted {
+            Ok(Ok(None)) => {}
+            Ok(Ok(Some(adopted))) => {
+                drop(db);
+                return settle_adopted(
+                    app_handle, vault_path, local_path, node_id, payload, result, vault_id,
+                    adopted, local_text,
+                );
+            }
+            Ok(Err(e)) => {
+                warn!("Adopting the vault's history for {} failed: {}", node_id, e);
+            }
+            Err(_panic) => {
+                warn!("Adopting the vault's history for {} panicked", node_id);
+            }
+        }
+    }
 
     // Local CRDT exists or fresh empty doc → merge
     let merge_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -657,7 +716,79 @@ fn pull_markdown<R: tauri::Runtime>(
         }
     }
 
-    Ok(())
+    Ok(None)
+}
+
+/// Put an adopted history in place and bring the file in line with it.
+#[allow(clippy::too_many_arguments)]
+fn settle_adopted<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    vault_path: &str,
+    local_path: &Path,
+    node_id: &str,
+    payload: &crate::sync::core::types::DocSyncPayload,
+    result: &mut SyncResult,
+    vault_id: &str,
+    adopted: crate::sync::core::adopt::Adopted,
+    local_text: Option<String>,
+) -> AppResult<Option<String>> {
+    use crate::sync::core::adopt::Adoption;
+
+    {
+        let db_state = app_handle.state::<crate::db::DbState>();
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        db.replace_crdt_snapshot(vault_id, node_id, &adopted.doc.export_snapshot())?;
+    }
+    info!(
+        "PULL {}: adopted the vault's history in place of one rebuilt here ({:?})",
+        payload.rel_path, adopted.outcome
+    );
+
+    let text = crate::sync::core::crdt::node_text(&adopted.doc);
+    let write = |text: &str| -> AppResult<()> {
+        if read_text_or_empty_if_missing(local_path)? != text {
+            atomic_write(local_path, text.as_bytes())
+                .map_err(|e| AppError::SyncError(format!("Write adopted {}: {}", node_id, e)))?;
+        }
+        Ok(())
+    };
+
+    match adopted.outcome {
+        // The file stays byte for byte as it is: it already says this, perhaps
+        // with its frontmatter laid out its own way.
+        Adoption::Same => Ok(None),
+        Adoption::Stale => {
+            write(&text)?;
+            Ok(None)
+        }
+        // The file now holds this device's edits, which the vault does not have
+        // yet. Recording the vault's text as the baseline is what makes them
+        // look like a change, and so get published.
+        Adoption::Merged => {
+            write(&text)?;
+            Ok(Some(crate::sync::utils::sha256_hex(adopted.remote_text.as_bytes())))
+        }
+        // Nothing to merge from. The vault's text takes the path and this
+        // device's goes beside it, without the note's identity — otherwise the
+        // scan would fold the copy back into the note it came from.
+        Adoption::Diverged => {
+            if let Some(ours) = local_text.filter(|t| !t.trim().is_empty()) {
+                let tag = format!("{:x}", chrono::Utc::now().timestamp_millis());
+                let kept = crate::sync::core::asset::conflict_path(&payload.rel_path, &tag);
+                atomic_write(
+                    &Path::new(vault_path).join(&kept),
+                    crate::sync::core::adopt::without_identity(&ours).as_bytes(),
+                )
+                .map_err(|e| AppError::SyncError(format!("Write conflict copy {}: {}", kept, e)))?;
+                result.conflicts.push(crate::sync::core::types::SyncConflict {
+                    rel_path: payload.rel_path.clone(),
+                    kept_as: kept,
+                });
+            }
+            write(&text)?;
+            Ok(None)
+        }
+    }
 }
 
 /// Fallback: reset CRDT doc and write remote content directly.

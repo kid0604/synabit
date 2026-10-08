@@ -1498,6 +1498,35 @@ impl SyncCoordinator {
             &all_files,
         )?;
         let edit_count = edits.len();
+
+        // Notes this device has never synced wait for the pull before they are
+        // published. Their history may be one the scan rebuilt from the file —
+        // the cache was deleted, or the vault was copied or restored here —
+        // and the vault may hold the real one. Published first, it would reach
+        // every other device as a second, unrelated history of the note, which
+        // a CRDT merges as a second copy of the text. Pulled first, the vault's
+        // history is adopted in its place (`pull_markdown`, `adopt`). They are
+        // still claimed now, so the pull knows which note is at which path.
+        let (held, edits): (Vec<LocalChange>, Vec<LocalChange>) = {
+            let baselines = {
+                let db = match db_state.lock() {
+                    Ok(g) => g,
+                    Err(p) => p.into_inner(),
+                };
+                db.load_document_baselines(&vault_id, &provider_id)?
+            };
+            edits
+                .into_iter()
+                .partition(|c| crate::sync::core::change::waits_for_pull(c, &baselines))
+        };
+        crate::sync::core::change::claim_documents(
+            &db_state,
+            vault_path_obj,
+            &held,
+            &vault_id,
+            &provider_id,
+        );
+
         let mut skipped = prepare_durable_outbox_operations(
             &db_state,
             vault_path_obj,
@@ -1587,6 +1616,35 @@ impl SyncCoordinator {
         .await?;
 
         result.rx_bytes = rx_bytes;
+
+        // 6. Publish the notes held back for the pull. One the vault already
+        // had, and that says what the vault says, now has a baseline that
+        // matches it and is not published again.
+        if !held.is_empty() {
+            let unpublished = crate::sync::core::change::still_unpublished(
+                app_handle,
+                vault_path_obj,
+                &vault_id,
+                &provider_id,
+                held,
+            )?;
+            if !unpublished.is_empty() {
+                result.errors.extend(prepare_durable_outbox_operations(
+                    &db_state,
+                    vault_path_obj,
+                    unpublished,
+                    e2ee_key,
+                    &vault_id,
+                    &provider_id,
+                    adapter.supports_assets(),
+                )?);
+                let pushed_late =
+                    dispatch_durable_outbox(&db_state, &vault_id, &provider_id, adapter.as_ref(), 100)
+                        .await?;
+                result.pushed += pushed_late.acknowledged;
+                result.tx_bytes += pushed_late.tx_bytes;
+            }
+        }
 
         Ok(result)
     }

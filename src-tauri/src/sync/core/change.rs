@@ -349,6 +349,7 @@ pub fn prepare_durable_outbox_operations(
             vault_id,
             provider_id,
             supports_assets,
+            true,
         ) {
             Ok(()) => {}
             // A file this target simply cannot carry is not a failure. Reporting
@@ -375,6 +376,96 @@ pub fn prepare_durable_outbox_operations(
     Ok(skipped)
 }
 
+/// A Markdown note this device has never synced with this provider.
+///
+/// Its CRDT history, if it has one, may be one rebuilt from the file — after
+/// the cache was deleted, or on a vault copied or restored here — while the
+/// vault holds the real one. Such a note is published only after this run's
+/// pull has had the chance to bring that history in (see `adopt`). Publishing
+/// it first would hand every other device a second, unrelated history of the
+/// note, and they would merge it in as a second copy of the text.
+///
+/// A note that is simply new costs nothing by waiting: it is published in the
+/// same run, after the pull rather than before it.
+pub fn waits_for_pull(
+    change: &LocalChange,
+    baselines: &std::collections::HashMap<String, String>,
+) -> bool {
+    !change.is_delete
+        && change.rel_path.to_ascii_lowercase().ends_with(".md")
+        && !baselines.contains_key(&change.rel_path)
+}
+
+/// Do everything publishing a document does except publish it: give it its
+/// identity, point its path mapping at it, and bring its CRDT in line with the
+/// file.
+///
+/// For the notes [`waits_for_pull`] holds back. The pull still needs to know
+/// which document is at which path — a note arriving from another device at
+/// a path this one holds a different note at is set aside by that mapping,
+/// not written over the top.
+pub fn claim_documents(
+    db_state: &crate::db::DbState,
+    vault: &Path,
+    changes: &[LocalChange],
+    vault_id: &str,
+    provider_id: &str,
+) {
+    for change in changes {
+        if let Err(e) =
+            prepare_one_operation(db_state, vault, change, &[0u8; 32], vault_id, provider_id, false, false)
+        {
+            // Reported when the note is published after the pull, which runs
+            // the same steps again.
+            log::debug!("sync: could not claim {} before the pull: {}", change.rel_path, e);
+        }
+    }
+}
+
+/// Which of the held-back notes still need publishing once the pull is done.
+///
+/// One the pull never touched has no baseline and is published. One whose
+/// history the pull adopted, and whose file said nothing the vault did not,
+/// carries nothing of this device's and is left alone. Anything carrying
+/// this device's own operations is published — and that is asked of the
+/// document, not of the baseline: a later entry in the same pull merges
+/// ordinarily and records the merged file as the baseline, which would make
+/// edits nobody else has yet look published.
+pub fn still_unpublished<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    vault: &Path,
+    vault_id: &str,
+    provider_id: &str,
+    held: Vec<LocalChange>,
+) -> AppResult<Vec<LocalChange>> {
+    let db_state = app_handle.state::<DbState>();
+    let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+    let baselines = db.load_document_baselines(vault_id, provider_id)?;
+    let peer = db.get_or_create_peer_id()?;
+
+    let mut out = Vec::new();
+    for change in held {
+        let path = vault.join(&change.rel_path);
+        if !path.exists() {
+            continue;
+        }
+        let hash = file_sha256(&path);
+        let ours_in_it = match db.get_node_id_by_path(vault_id, &change.rel_path)? {
+            Some(node_id) => db
+                .get_crdt_doc(vault_id, &node_id)?
+                .oplog_vv()
+                .get(&peer)
+                .is_some_and(|c| *c > 0),
+            None => true,
+        };
+        if ours_in_it || baselines.get(&change.rel_path) != Some(&hash) {
+            out.push(LocalChange { new_hash: hash, ..change });
+        }
+    }
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn prepare_one_operation(
     db_state: &crate::db::DbState,
     vault: &Path,
@@ -383,7 +474,11 @@ fn prepare_one_operation(
     vault_id: &str,
     provider_id: &str,
     supports_assets: bool,
+    publish: bool,
 ) -> AppResult<()> {
+    if !publish && (change.is_delete || !crate::sync::utils::is_syncable_document(&change.rel_path)) {
+        return Ok(());
+    }
     {
         let doc_hash = *blake3::hash(change.rel_path.as_bytes()).as_bytes();
         let timestamp = chrono::Utc::now().timestamp_millis();
@@ -581,6 +676,10 @@ fn prepare_one_operation(
         if !_delta.is_empty() {
             let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
             db.save_crdt_delta(vault_id, &actual_node_id, _delta)?;
+        }
+
+        if !publish {
+            return Ok(());
         }
 
         let snapshot = doc.export_snapshot();

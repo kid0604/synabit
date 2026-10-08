@@ -197,7 +197,7 @@ pub fn node_text(doc: &LoroDoc) -> String {
 }
 
 /// Every frontmatter field, as JSON-encoded values.
-fn read_fields(doc: &LoroDoc) -> std::collections::BTreeMap<String, String> {
+pub(super) fn read_fields(doc: &LoroDoc) -> std::collections::BTreeMap<String, String> {
     let mut fields = std::collections::BTreeMap::new();
     let map = doc.get_map(FRONTMATTER);
     for (key, value) in map.get_value().into_map().unwrap_or_default().iter() {
