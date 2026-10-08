@@ -267,7 +267,7 @@ pub struct MigrationReport {
 /// pass dies halfway, the worst case is a file that exists twice over — once
 /// as a node and once still inside the person — which the next pass resolves.
 /// The other order would lose them.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_people_storage(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,

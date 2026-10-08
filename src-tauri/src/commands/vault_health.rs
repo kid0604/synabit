@@ -113,7 +113,7 @@ pub fn group_by_identity(notes: Vec<ScannedNote>) -> Vec<DuplicateGroup> {
 }
 
 /// Every note in the vault that shares its identity with another.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn find_duplicate_notes(vault_path: String) -> AppResult<Vec<DuplicateGroup>> {
     let base = Path::new(&vault_path);
     if !base.exists() {

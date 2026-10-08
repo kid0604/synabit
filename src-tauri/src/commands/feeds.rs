@@ -2435,7 +2435,7 @@ pub struct OpmlImportResult {
 /// and its title, and running discovery over a two-hundred-feed export would
 /// hold the dialog open for minutes to learn what the file just said. The
 /// first refresh fills in the rest.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn feed_import_opml(
     vault_path: String,
     opml_content: String,

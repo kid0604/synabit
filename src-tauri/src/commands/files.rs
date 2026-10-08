@@ -143,7 +143,7 @@ fn drop_indexed_files_under(
 /// The indexing goes through the same batch path a scan uses, so an imported
 /// file gets a content identity exactly like every other file — which is what
 /// lets importing the same photo twice produce one item rather than two.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_files(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -701,7 +701,7 @@ pub(crate) fn index_for_search(db: &crate::db::DbBridge, node_id: &str, meta: &F
     );
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_directory(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -743,7 +743,7 @@ pub struct TextProgress {
 /// Runs to completion in batches, reporting after each one, and holds the
 /// database lock only while writing. A vault of a thousand PDFs takes minutes;
 /// nothing about the app should be waiting on it, and nothing is.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn extract_file_text(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -1718,7 +1718,7 @@ fn withdraw_file_metadata(vault_path: &str, node_id: &str) {
 }
 
 /// Bring the index back in line with what is on disk.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reindex_sources(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -2162,7 +2162,7 @@ pub struct ExportAnnotation {
     pub note: String,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn export_annotated_pdf(
     _app_handle: tauri::AppHandle,
     vault_path: String,

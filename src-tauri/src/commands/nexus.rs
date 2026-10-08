@@ -1,4 +1,4 @@
-use crate::db::DbState;
+use crate::db::{DbReadPool, DbState};
 use crate::error::AppResult;
 use crate::models::nexus::NexusItem;
 use serde::Serialize;
@@ -48,15 +48,18 @@ fn left_out_of_nexus(item_type: &str, path: &str) -> bool {
         || path.starts_with("Syn\\")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_nexus_item(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     id: String,
 ) -> AppResult<NexusItem> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
+    pool.read(&state, |db| nexus_item(db, id))
+}
 
+fn nexus_item(db: &crate::db::DbBridge, id: String) -> AppResult<NexusItem> {
     // Fast path: targeted single-table query by ID prefix
     if let Some(r) = db.get_nexus_item_by_id(&id)? {
         let title = if r.title.is_empty() {
@@ -116,10 +119,12 @@ pub fn get_nexus_item(
 
 /// FTS5-powered universal search across all item types.
 /// Supports advanced query syntax: is:, #tag, "phrase", -exclude, in:title, status:, date:
-#[tauri::command]
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
 pub fn search_nexus(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     query: String,
     page: Option<u32>,
@@ -128,8 +133,9 @@ pub fn search_nexus(
 ) -> AppResult<crate::search::SearchResponse> {
     let mut parsed = crate::search::parse_query(&query);
     parsed.case_sensitive = case_sensitive.unwrap_or(false);
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.search_fts(&parsed, page.unwrap_or(1), per_page.unwrap_or(50))
+    pool.read(&state, |db| {
+        db.search_fts(&parsed, page.unwrap_or(1), per_page.unwrap_or(50))
+    })
 }
 
 /// How many matches the graph filter will draw.
@@ -149,50 +155,50 @@ const GRAPH_FILTER_LIMIT: u32 = 5000;
 /// differently. Ranking and snippets are built and then dropped, which is the
 /// price — and not entirely waste, since the case-sensitive post-filter reads
 /// the snippet to decide what stays.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_nexus_ids(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     query: String,
     case_sensitive: Option<bool>,
 ) -> AppResult<Vec<String>> {
     let mut parsed = crate::search::parse_query(&query);
     parsed.case_sensitive = case_sensitive.unwrap_or(false);
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    let response = db.search_fts(&parsed, 1, GRAPH_FILTER_LIMIT)?;
+    let response = pool.read(&state, |db| db.search_fts(&parsed, 1, GRAPH_FILTER_LIMIT))?;
     Ok(response.results.into_iter().map(|r| r.id).collect())
 }
 
 /// FTS5-powered search scoped to notes only.
 /// Used by the Note mini-app sidebar search.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_notes(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     query: String,
 ) -> AppResult<crate::search::SearchResponse> {
     // Force type filter to "note" regardless of user input
     let mut parsed = crate::search::parse_query(&query);
     parsed.type_filter = Some("note".to_string());
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.search_fts(&parsed, 1, 100)
+    pool.read(&state, |db| db.search_fts(&parsed, 1, 100))
 }
 
 /// FTS5-powered search scoped to files only.
 /// Used by the File Manager mini-app search.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_files(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     query: String,
 ) -> AppResult<crate::search::SearchResponse> {
     let mut parsed = crate::search::parse_query(&query);
     parsed.type_filter = Some("file".to_string());
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.search_fts(&parsed, 1, 200)
+    pool.read(&state, |db| db.search_fts(&parsed, 1, 200))
 }
 
 /// FTS5-powered search scoped to quickcaps only.
@@ -201,27 +207,27 @@ pub fn search_files(
 /// Quickcaps are deliberately absent from the Nexus item list and the graph —
 /// they are fleeting notes, not knowledge — but they are still indexed, so
 /// they stay findable. This is the scoped entry point that makes that true.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_quickcaps(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
     query: String,
 ) -> AppResult<crate::search::SearchResponse> {
     let mut parsed = crate::search::parse_query(&query);
     parsed.type_filter = Some("quickcap".to_string());
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.search_fts(&parsed, 1, 200)
+    pool.read(&state, |db| db.search_fts(&parsed, 1, 200))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_nexus_graph_data(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     _vault_path: String,
 ) -> AppResult<GraphData> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    graph_data(&db)
+    pool.read(&state, graph_data)
 }
 
 /// The graph, from a plain connection so a test can build one.
@@ -415,9 +421,10 @@ pub fn list_observed_types(
 ///
 /// Both halves return the same `QueryResult`, which is what lets one view draw
 /// either — see `timeline::query`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn run_node_query(
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, DbReadPool>,
     timeline: tauri::State<'_, crate::timeline::TimelineState>,
     vault_path: Option<String>,
     query: String,
@@ -426,7 +433,7 @@ pub fn run_node_query(
 ) -> AppResult<crate::db::QueryResult> {
     let mut asked = crate::query::parse(&query);
     asked.offset = offset.unwrap_or(0);
-    answer(&state, &timeline, vault_path.as_deref(), &asked, None)
+    answer(&state, &pool, &timeline, vault_path.as_deref(), &asked, None)
 }
 
 /// One question answered, whichever table answers it.
@@ -436,6 +443,7 @@ pub fn run_node_query(
 /// is the last argument: whether there is anywhere to spend money.
 fn answer(
     state: &tauri::State<'_, DbState>,
+    pool: &DbReadPool,
     timeline: &tauri::State<'_, crate::timeline::TimelineState>,
     vault_path: Option<&str>,
     asked: &crate::query::Query,
@@ -444,8 +452,11 @@ fn answer(
     let today = chrono::Local::now().date_naive();
 
     if asked.source_of() == crate::query::Source::Nodes {
+        // The query itself on a reader. What is withheld is not: `quiet` is
+        // cached against the writer's change count, which a reader's never
+        // matches, so the words are read where that count is kept.
+        let found = pool.read(state, |db| db.run_node_query(asked))?;
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        let found = db.run_node_query(asked)?;
         let words = VaultWords::of(&db, vault_path.unwrap_or(""))?;
         return crate::pipeline::run_around(
             asked,

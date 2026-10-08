@@ -706,6 +706,7 @@ pub fn run() {
                 }
             };
             log::info!("Database initialized successfully.");
+            app.manage(db::DbReadPool::open_beside(&db, db::READERS));
             app.manage(std::sync::Mutex::new(db));
 
             // The vault the app last had open: opened, and granted, before the

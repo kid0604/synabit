@@ -108,306 +108,337 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
                 }
             };
 
-            let msg_dir = Path::new(&vault_path).join("Messages");
-            let _ = std::fs::create_dir_all(&msg_dir);
-
-            // Routines first, and without waiting on them: a run takes as long
-            // as it takes, and the reminders below are due this minute.
-            start_due_routines(&app_handle, &vault_path);
-
-            let db_state: tauri::State<'_, DbState> = app_handle.state();
-            let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-
-            let now = Local::now();
-            // This machine's zone, by name. Asked once a tick rather than
-            // once an event: it is a file read on most platforms.
-            let here = iana_time_zone::get_timezone().unwrap_or_default();
-            let today_str = now.format("%Y-%m-%d").to_string();
-
-            // Back far enough to catch up on anything missed while the
-            // machine was asleep; the delivery record stops it repeating.
-            let window_to = now.naive_local();
-            let window_from = window_to
-                - chrono::Duration::try_days(reminders::CATCH_UP_DAYS)
-                    .unwrap_or_else(chrono::Duration::zero);
-
-            let seen_since = (now
-                - chrono::Duration::try_days(reminders::CATCH_UP_DAYS + 1)
-                    .unwrap_or_else(chrono::Duration::zero))
-            .timestamp();
-            let mut notified_set = db.delivered_reminders(seen_since).unwrap_or_default();
-            let mut delivered: Vec<String> = Vec::new();
-
-            // Decisions leave the list when reflection is off for this vault.
-            let active_nodes = crate::timeline::reflect::keep_if_on(
-                Some(&vault_path),
-                db.get_active_tasks_and_events().unwrap_or_default(),
-            );
-            // Subscribed calendars are a cache, not files, so they never reach
-            // the loop as nodes. Only the ones the user asked to be reminded
-            // about: a holidays feed announcing every holiday at midnight is
-            // noise, and only they know which kind of calendar this is.
-            let subscribed = db.subscribed_events_to_remind().unwrap_or_default();
-
-            let mut new_messages: Vec<ChatMessage> = Vec::new();
-            // What rang the computer, to be sent to a paired phone as well —
-            // handed over once the database lock is gone, since sending takes
-            // it again. See `syn::telegram::remind`.
-            let mut for_the_phone: Vec<reminders::PlannedReminder> = Vec::new();
-            let sender = ChatSender {
-                id: "system".to_string(),
-                name: "Synabit System".to_string(),
-                role: "bot".to_string(),
-            };
-
-            // 1. Whatever has come due since the last look.
-            //
-            // What to announce and when is worked out in
-            // `calendar::reminders`, which the phone's scheduler also uses.
-            // Deciding it here as well is how the two would come to disagree
-            // about when a reminder is.
-            for due in reminders::plan_with(&active_nodes, &subscribed, window_from, window_to, &here) {
-                let key = due.delivery_key();
-                if notified_set.contains(&key) {
-                    continue;
-                }
-
-                let (title, text, subtype) = match due.target_type {
-                    "task" => (
-                        if due.overdue {
-                            format!("Task Overdue: {}", due.title)
-                        } else {
-                            format!("Task Due Today: {}", due.title)
-                        },
-                        "Don't forget to complete your task!".to_string(),
-                        "task_due",
-                    ),
-                    "person" if due.offset == "touch" => (
-                        format!("Keep in touch: {}", due.title),
-                        if due.overdue {
-                            format!("It has been a while since you spoke to {}", due.title)
-                        } else {
-                            format!("Time to catch up with {}", due.title)
-                        },
-                        "keep_in_touch",
-                    ),
-                    "person" => (
-                        format!("Birthday Reminder: {}", due.title),
-                        match due.offset.as_str() {
-                            "0m" => format!("Today is {}'s birthday!", due.title),
-                            "1d" => format!("Tomorrow is {}'s birthday!", due.title),
-                            other => format!("{}'s birthday is in {}", due.title, other),
-                        },
-                        "birthday_upcoming",
-                    ),
-                    "decision" => (
-                        format!("Look back: {}", due.title),
-                        "What actually happened?".to_string(),
-                        "decision_review",
-                    ),
-                    _ => (
-                        format!("Upcoming Event: {}", due.title),
-                        if due.offset == "0m" {
-                            format!("Happening now: {}", due.title)
-                        } else {
-                            format!("Starts in {}", due.offset)
-                        },
-                        "event_upcoming",
-                    ),
-                };
-
-                new_messages.push(ChatMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    message_type: "system".to_string(),
-                    subtype: subtype.to_string(),
-                    timestamp: now.to_rfc3339(),
-                    sender: sender.clone(),
-                    content: ChatContent {
-                        title: title.clone(),
-                        text: text.clone(),
-                        metadata: json!({
-                            "target_id": due.target_id.clone(),
-                            "target_type": due.target_type,
-                            "trigger_date": due.occurrence_date.clone(),
-                            "reminder": due.offset.clone(),
-                        }),
-                    },
-                    read_receipt: false,
-                });
-                notified_set.insert(key.clone());
-                delivered.push(key);
-
-                // What the notification says is worked out in one place, the
-                // same one the phone's scheduler calls. A third copy here is
-                // how the two platforms came to word the same reminder
-                // differently — and how a birthday would have arrived on the
-                // desktop titled "Upcoming Event".
-                let (heading, body) = crate::calendar::scheduler::headline(&due);
-                if let Err(e) = app_handle
-                    .notification()
-                    .builder()
-                    .title(&heading)
-                    .body(&body)
-                    .show()
-                {
-                    log::error!("Failed to show notification: {}", e);
-                }
-                for_the_phone.push(due);
-            }
-
-            if !delivered.is_empty() {
-                if let Err(e) = db.record_reminder_deliveries(&delivered, now.timestamp()) {
-                    log::error!("Could not record what was announced: {}", e);
-                }
-            }
-
-            // 2. Once an hour, notice things nobody asked about.
-            //
-            // Hourly rather than per tick because it reads every thread, every
-            // memory and every run still on disk, and because none of what it
-            // finds is news that decays in a minute — a thread stuck for three
-            // weeks is still stuck at ten past.
-            //
-            // Everything the sweep needs from the index is read here, inside
-            // the lock that is already held. The runs come off disk afterwards,
-            // outside it. See `syn::notice`.
-            let for_the_sweep = if now.timestamp() % 3600 < 60
-                && crate::syn::settings::load_settings(&vault_path)
-                    .map(|s| s.enabled)
-                    .unwrap_or(true)
+            // Database reads, file reads and writes, OS notifications: all of
+            // it blocking, so on a thread for that rather than on one of the
+            // async runtime's few workers. Awaited, so ticks never overlap.
+            let app = app_handle.clone();
+            if let Err(e) =
+                tauri::async_runtime::spawn_blocking(move || tick(&app, &vault_path)).await
             {
-                Some((
-                    crate::syn::thread::all(&db).unwrap_or_default(),
-                    crate::syn::memory::all(&db).unwrap_or_default(),
-                    crate::syn::skill::all(&db).unwrap_or_default(),
-                    // A month back, not the reminder loop's one-day catch-up
-                    // window: with that window a thread stuck for three weeks
-                    // would announce itself again every couple of days. See
-                    // `notice::SAID_FOR_DAYS`.
-                    db.delivered_reminders(
-                        (now
-                            - chrono::Duration::try_days(crate::syn::notice::SAID_FOR_DAYS)
-                                .unwrap_or_else(chrono::Duration::zero))
-                        .timestamp(),
-                    )
-                    .unwrap_or_default(),
-                ))
-            } else {
-                // Switched off, or not the hour. Either way the sweep does not
-                // run at all — noticing is Syn's own initiative, and the switch
-                // that turns Syn off has to reach the parts of it that speak
-                // without being spoken to first.
-                None
-            };
-            // Only worth doing now and then; a failure here costs a little
-            // disk, not a wrong reminder.
-            if now.timestamp() % 3600 < 60 {
-                let _ = db.prune_reminder_deliveries(now.timestamp());
-            }
-            drop(db);
-
-            // Every tick, with nothing new most of the time: that is also how
-            // a reminder the phone could not be sent last minute is tried again.
-            #[cfg(desktop)]
-            crate::syn::telegram::hand_over(&app_handle, &for_the_phone);
-            #[cfg(not(desktop))]
-            drop(for_the_phone);
-
-            // The sweep itself, with the lock released: `list_runs` parses
-            // every run file in the vault, and holding the database while
-            // reading two hundred JSON files would stall every query in the app
-            // for the duration.
-            if let Some((threads, memories, skills, already_said)) = for_the_sweep {
-                let runs = crate::syn::run::load_all(&vault_path).unwrap_or_default();
-                let found = crate::syn::notice::sweep(
-                    &threads,
-                    &memories,
-                    &runs,
-                    &skills,
-                    now.with_timezone(&chrono::Utc),
-                    &already_said,
-                );
-
-                if !found.is_empty() {
-                    log::info!("[Syn] Noticed {} thing(s) worth saying", found.len());
-                }
-
-                let mut noticed_keys: Vec<String> = Vec::new();
-                for notice in found {
-                    let mut metadata = json!({});
-                    // Only when there is a screen that can open it. A "view
-                    // details" resolving to nothing is worse than no button —
-                    // see `notice::Notice::target`.
-                    if let (Some(id), Some(kind)) = (&notice.target, notice.target_type) {
-                        metadata["target_id"] = json!(id);
-                        metadata["target_type"] = json!(kind);
-                    }
-
-                    new_messages.push(ChatMessage {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        message_type: "system".to_string(),
-                        subtype: notice.kind.subtype().to_string(),
-                        timestamp: now.to_rfc3339(),
-                        // Syn, and not "Synabit System". A reminder is the
-                        // calendar doing its job; this is a colleague saying
-                        // they noticed something, and the name is the whole
-                        // difference between the two.
-                        sender: ChatSender {
-                            id: "syn".to_string(),
-                            name: "Syn".to_string(),
-                            role: "bot".to_string(),
-                        },
-                        content: ChatContent {
-                            title: notice.title,
-                            text: notice.text,
-                            metadata,
-                        },
-                        read_receipt: false,
-                    });
-                    noticed_keys.push(notice.key);
-                }
-
-                // Deliberately no OS notification, unlike the reminders above.
-                // A reminder is time-bound and earns the interruption; a thread
-                // that has been dead for three weeks does not become urgent at
-                // 09:00. It waits in the list with an unread count, which is
-                // the difference between noticing and interrupting — and
-                // interrupting is a later nhát, with a contract behind it.
-                if !noticed_keys.is_empty() {
-                    // Recovering from a poisoned lock the way the rest of this
-                    // loop does. Skipping the record instead would mean saying
-                    // the same three things again next hour, forever.
-                    let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Err(e) = db.record_reminder_deliveries(&noticed_keys, now.timestamp()) {
-                        log::error!("Could not record what was noticed: {}", e);
-                    }
-                }
-            }
-
-            if !new_messages.is_empty() {
-                let daily_file_path = msg_dir.join(format!("{}.json", today_str));
-                let mut existing_messages: Vec<ChatMessage> = Vec::new();
-                if daily_file_path.exists() {
-                    if let Ok(content) = std::fs::read_to_string(&daily_file_path) {
-                        if let Ok(msgs) = serde_json::from_str::<Vec<ChatMessage>>(&content) {
-                            existing_messages = msgs;
-                        }
-                    }
-                }
-
-                existing_messages.extend(new_messages);
-
-                if let Ok(json_str) = serde_json::to_string_pretty(&existing_messages) {
-                    if let Err(e) = std::fs::write(&daily_file_path, json_str) {
-                        log::error!("Failed to write daily chat log: {}", e);
-                    } else {
-                        log::info!("Updated daily chat log: {}", daily_file_path.display());
-                        let _ = app_handle.emit("new-chat-message", ());
-                    }
-                }
+                log::error!("Chat Engine tick stopped: {e}");
             }
         }
     });
+}
+
+/// One minute's look: what has come due, and once an hour what Syn noticed.
+///
+/// The database lock is taken twice, briefly — once to read everything the
+/// tick needs, once to record what it announced — and never held across the
+/// planning, the notifications or the files. It used to be held from the
+/// first read to the last write, which once an hour included the sweep's
+/// inputs and every OS notification shown in between.
+fn tick(app_handle: &tauri::AppHandle, vault_path: &str) {
+    let vault_path = vault_path.to_string();
+    let msg_dir = Path::new(&vault_path).join("Messages");
+    let _ = std::fs::create_dir_all(&msg_dir);
+
+    // Routines first, and without waiting on them: a run takes as long
+    // as it takes, and the reminders below are due this minute.
+    start_due_routines(app_handle, &vault_path);
+
+    let db_state: tauri::State<'_, DbState> = app_handle.state();
+
+    let now = Local::now();
+    // This machine's zone, by name. Asked once a tick rather than
+    // once an event: it is a file read on most platforms.
+    let here = iana_time_zone::get_timezone().unwrap_or_default();
+    let today_str = now.format("%Y-%m-%d").to_string();
+
+    // Back far enough to catch up on anything missed while the
+    // machine was asleep; the delivery record stops it repeating.
+    let window_to = now.naive_local();
+    let window_from = window_to
+        - chrono::Duration::try_days(reminders::CATCH_UP_DAYS)
+            .unwrap_or_else(chrono::Duration::zero);
+
+    let seen_since = (now
+        - chrono::Duration::try_days(reminders::CATCH_UP_DAYS + 1)
+            .unwrap_or_else(chrono::Duration::zero))
+    .timestamp();
+
+    // Once an hour, and only while Syn is on; see the sweep below.
+    let sweep_due = now.timestamp() % 3600 < 60
+        && crate::syn::settings::load_settings(&vault_path)
+            .map(|s| s.enabled)
+            .unwrap_or(true);
+
+    // Everything the tick reads from the index, in one short hold.
+    // Only this loop announces reminders and the loop never overlaps
+    // itself, so nothing can record a delivery between this read and
+    // the write below.
+    let (mut notified_set, tasks_and_events, subscribed, for_the_sweep) = {
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        // Everything the sweep needs from the index, read here with the
+        // rest. The runs come off disk afterwards, outside the lock.
+        // See `syn::notice`.
+        let for_the_sweep = sweep_due.then(|| {
+            (
+                crate::syn::thread::all(&db).unwrap_or_default(),
+                crate::syn::memory::all(&db).unwrap_or_default(),
+                crate::syn::skill::all(&db).unwrap_or_default(),
+                // A month back, not the reminder loop's one-day
+                // catch-up window: with that window a thread stuck for
+                // three weeks would announce itself again every couple
+                // of days. See `notice::SAID_FOR_DAYS`.
+                db.delivered_reminders(
+                    (now - chrono::Duration::try_days(crate::syn::notice::SAID_FOR_DAYS)
+                        .unwrap_or_else(chrono::Duration::zero))
+                    .timestamp(),
+                )
+                .unwrap_or_default(),
+            )
+        });
+        (
+            db.delivered_reminders(seen_since).unwrap_or_default(),
+            db.get_active_tasks_and_events().unwrap_or_default(),
+            // Subscribed calendars are a cache, not files, so they
+            // never reach the loop as nodes. Only the ones the user
+            // asked to be reminded about: a holidays feed announcing
+            // every holiday at midnight is noise, and only they know
+            // which kind of calendar this is.
+            db.subscribed_events_to_remind().unwrap_or_default(),
+            for_the_sweep,
+        )
+    };
+    let mut delivered: Vec<String> = Vec::new();
+
+    // Decisions leave the list when reflection is off for this vault.
+    let active_nodes =
+        crate::timeline::reflect::keep_if_on(Some(&vault_path), tasks_and_events);
+
+    let mut new_messages: Vec<ChatMessage> = Vec::new();
+    // What rang the computer, to be sent to a paired phone as well —
+    // handed over once the database lock is gone, since sending takes
+    // it again. See `syn::telegram::remind`.
+    let mut for_the_phone: Vec<reminders::PlannedReminder> = Vec::new();
+    let sender = ChatSender {
+        id: "system".to_string(),
+        name: "Synabit System".to_string(),
+        role: "bot".to_string(),
+    };
+
+    // 1. Whatever has come due since the last look.
+    //
+    // What to announce and when is worked out in
+    // `calendar::reminders`, which the phone's scheduler also uses.
+    // Deciding it here as well is how the two would come to disagree
+    // about when a reminder is.
+    for due in reminders::plan_with(&active_nodes, &subscribed, window_from, window_to, &here) {
+        let key = due.delivery_key();
+        if notified_set.contains(&key) {
+            continue;
+        }
+
+        let (title, text, subtype) = match due.target_type {
+            "task" => (
+                if due.overdue {
+                    format!("Task Overdue: {}", due.title)
+                } else {
+                    format!("Task Due Today: {}", due.title)
+                },
+                "Don't forget to complete your task!".to_string(),
+                "task_due",
+            ),
+            "person" if due.offset == "touch" => (
+                format!("Keep in touch: {}", due.title),
+                if due.overdue {
+                    format!("It has been a while since you spoke to {}", due.title)
+                } else {
+                    format!("Time to catch up with {}", due.title)
+                },
+                "keep_in_touch",
+            ),
+            "person" => (
+                format!("Birthday Reminder: {}", due.title),
+                match due.offset.as_str() {
+                    "0m" => format!("Today is {}'s birthday!", due.title),
+                    "1d" => format!("Tomorrow is {}'s birthday!", due.title),
+                    other => format!("{}'s birthday is in {}", due.title, other),
+                },
+                "birthday_upcoming",
+            ),
+            "decision" => (
+                format!("Look back: {}", due.title),
+                "What actually happened?".to_string(),
+                "decision_review",
+            ),
+            _ => (
+                format!("Upcoming Event: {}", due.title),
+                if due.offset == "0m" {
+                    format!("Happening now: {}", due.title)
+                } else {
+                    format!("Starts in {}", due.offset)
+                },
+                "event_upcoming",
+            ),
+        };
+
+        new_messages.push(ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            message_type: "system".to_string(),
+            subtype: subtype.to_string(),
+            timestamp: now.to_rfc3339(),
+            sender: sender.clone(),
+            content: ChatContent {
+                title: title.clone(),
+                text: text.clone(),
+                metadata: json!({
+                    "target_id": due.target_id.clone(),
+                    "target_type": due.target_type,
+                    "trigger_date": due.occurrence_date.clone(),
+                    "reminder": due.offset.clone(),
+                }),
+            },
+            read_receipt: false,
+        });
+        notified_set.insert(key.clone());
+        delivered.push(key);
+
+        // What the notification says is worked out in one place, the
+        // same one the phone's scheduler calls. A third copy here is
+        // how the two platforms came to word the same reminder
+        // differently — and how a birthday would have arrived on the
+        // desktop titled "Upcoming Event".
+        let (heading, body) = crate::calendar::scheduler::headline(&due);
+        if let Err(e) = app_handle
+            .notification()
+            .builder()
+            .title(&heading)
+            .body(&body)
+            .show()
+        {
+            log::error!("Failed to show notification: {}", e);
+        }
+        for_the_phone.push(due);
+    }
+
+    // The second and last hold of the tick's own.
+    {
+        let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        if !delivered.is_empty() {
+            if let Err(e) = db.record_reminder_deliveries(&delivered, now.timestamp()) {
+                log::error!("Could not record what was announced: {}", e);
+            }
+        }
+        // Only worth doing now and then; a failure here costs a little
+        // disk, not a wrong reminder.
+        if now.timestamp() % 3600 < 60 {
+            let _ = db.prune_reminder_deliveries(now.timestamp());
+        }
+    }
+
+    // 2. Once an hour, notice things nobody asked about.
+    //
+    // Hourly rather than per tick because it reads every thread, every
+    // memory and every run still on disk, and because none of what it
+    // finds is news that decays in a minute — a thread stuck for three
+    // weeks is still stuck at ten past. Switched off, or not the hour,
+    // the sweep does not run at all (`for_the_sweep` is `None`) —
+    // noticing is Syn's own initiative, and the switch that turns Syn
+    // off has to reach the parts of it that speak without being spoken
+    // to first.
+
+    // Every tick, with nothing new most of the time: that is also how
+    // a reminder the phone could not be sent last minute is tried again.
+    #[cfg(desktop)]
+    crate::syn::telegram::hand_over(app_handle, &for_the_phone);
+    #[cfg(not(desktop))]
+    drop(for_the_phone);
+
+    // The sweep itself, with the lock released: `list_runs` parses
+    // every run file in the vault, and holding the database while
+    // reading two hundred JSON files would stall every query in the app
+    // for the duration.
+    if let Some((threads, memories, skills, already_said)) = for_the_sweep {
+        let runs = crate::syn::run::load_all(&vault_path).unwrap_or_default();
+        let found = crate::syn::notice::sweep(
+            &threads,
+            &memories,
+            &runs,
+            &skills,
+            now.with_timezone(&chrono::Utc),
+            &already_said,
+        );
+
+        if !found.is_empty() {
+            log::info!("[Syn] Noticed {} thing(s) worth saying", found.len());
+        }
+
+        let mut noticed_keys: Vec<String> = Vec::new();
+        for notice in found {
+            let mut metadata = json!({});
+            // Only when there is a screen that can open it. A "view
+            // details" resolving to nothing is worse than no button —
+            // see `notice::Notice::target`.
+            if let (Some(id), Some(kind)) = (&notice.target, notice.target_type) {
+                metadata["target_id"] = json!(id);
+                metadata["target_type"] = json!(kind);
+            }
+
+            new_messages.push(ChatMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                message_type: "system".to_string(),
+                subtype: notice.kind.subtype().to_string(),
+                timestamp: now.to_rfc3339(),
+                // Syn, and not "Synabit System". A reminder is the
+                // calendar doing its job; this is a colleague saying
+                // they noticed something, and the name is the whole
+                // difference between the two.
+                sender: ChatSender {
+                    id: "syn".to_string(),
+                    name: "Syn".to_string(),
+                    role: "bot".to_string(),
+                },
+                content: ChatContent {
+                    title: notice.title,
+                    text: notice.text,
+                    metadata,
+                },
+                read_receipt: false,
+            });
+            noticed_keys.push(notice.key);
+        }
+
+        // Deliberately no OS notification, unlike the reminders above.
+        // A reminder is time-bound and earns the interruption; a thread
+        // that has been dead for three weeks does not become urgent at
+        // 09:00. It waits in the list with an unread count, which is
+        // the difference between noticing and interrupting — and
+        // interrupting is a later nhát, with a contract behind it.
+        if !noticed_keys.is_empty() {
+            // Recovering from a poisoned lock the way the rest of this
+            // loop does. Skipping the record instead would mean saying
+            // the same three things again next hour, forever.
+            let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Err(e) = db.record_reminder_deliveries(&noticed_keys, now.timestamp()) {
+                log::error!("Could not record what was noticed: {}", e);
+            }
+        }
+    }
+
+    if !new_messages.is_empty() {
+        let daily_file_path = msg_dir.join(format!("{}.json", today_str));
+        let mut existing_messages: Vec<ChatMessage> = Vec::new();
+        if daily_file_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&daily_file_path) {
+                if let Ok(msgs) = serde_json::from_str::<Vec<ChatMessage>>(&content) {
+                    existing_messages = msgs;
+                }
+            }
+        }
+
+        existing_messages.extend(new_messages);
+
+        if let Ok(json_str) = serde_json::to_string_pretty(&existing_messages) {
+            if let Err(e) = std::fs::write(&daily_file_path, json_str) {
+                log::error!("Failed to write daily chat log: {}", e);
+            } else {
+                log::info!("Updated daily chat log: {}", daily_file_path.display());
+                let _ = app_handle.emit("new-chat-message", ());
+            }
+        }
+    }
 }
 
 

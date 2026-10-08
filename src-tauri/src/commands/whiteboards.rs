@@ -88,7 +88,7 @@ fn forget_board(db: &DbBridge, rel_path: &str) {
 /// listed from its row instead of being read, parsed and re-linked again:
 /// re-indexing rebuilds the link resolver from every node, and doing that per
 /// board, per save, held the database for the whole scan.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_whiteboards(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,

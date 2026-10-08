@@ -64,7 +64,7 @@ fn plan(
 }
 
 /// What renaming `from` to `to` would do. Changes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_rename_property(
     state: tauri::State<'_, DbState>,
     node_type: String,
@@ -80,7 +80,7 @@ pub fn preview_rename_property(
 /// app, so each node keeps its identity, its document path and its place in
 /// the CRDT log. A bulk edit that took a shortcut around that would be a bulk
 /// edit that quietly detached 127 files from sync.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_property<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     state: tauri::State<'_, DbState>,
@@ -165,7 +165,7 @@ fn carriers(state: &DbState, node_type: &str, key: &str) -> AppResult<Vec<String
 }
 
 /// What deleting a key would cost, in nodes. Changes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_delete_property(
     state: tauri::State<'_, DbState>,
     node_type: String,
@@ -186,7 +186,7 @@ pub fn preview_delete_property(
 /// The values are recoverable one node at a time: every write goes through the
 /// CRDT log, so `list_node_versions` still holds what was there. That is worth
 /// knowing and is not the same as an undo.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_property<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     state: tauri::State<'_, DbState>,
@@ -234,7 +234,7 @@ pub struct KindPlan {
 }
 
 /// What deleting a kind would cost, in nodes. Changes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preview_delete_kind(
     state: tauri::State<'_, DbState>,
     node_type: String,
@@ -256,7 +256,7 @@ pub fn preview_delete_kind(
 /// to tell which half. And the trash, not `unlink`: a kind deleted by mistake
 /// is a hundred files somebody still wants, and they are all still there under
 /// `.trash/` — which is the vault's own, shared by every app.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_kind(
     state: tauri::State<'_, DbState>,
     vault_path: String,
@@ -293,7 +293,7 @@ pub fn delete_kind(
 /// cost of staying put is a folder whose name no longer matches, which makes
 /// the vault a little harder to read outside the app and nothing harder inside
 /// it. Nothing infers a type from a folder — the parser reads frontmatter.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn retype_kind<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     state: tauri::State<'_, DbState>,

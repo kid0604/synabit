@@ -92,6 +92,14 @@ pub fn attach(conn: &Connection, path: &Path, now: u64) -> AppResult<()> {
     ensure_schema(conn)
 }
 
+/// Attach `state.db` to a read-only connection, as the writer's [`attach`] did
+/// to its own. Nothing is checked, built or moved aside here: the writer opened
+/// first and did all of that, and this connection could not write if it tried.
+pub fn attach_read_only(conn: &Connection, path: &Path) -> rusqlite::Result<()> {
+    conn.execute("ATTACH DATABASE ?1 AS state", [path.to_string_lossy()])
+        .map(|_| ())
+}
+
 fn attach_checked(conn: &Connection, path: &Path) -> AppResult<()> {
     let open = |e: rusqlite::Error| AppError::General(format!("State DB Open Error: {e}"));
     conn.execute("ATTACH DATABASE ?1 AS state", [path.to_string_lossy()])

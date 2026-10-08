@@ -61,10 +61,13 @@ pub(crate) fn delete_node_edges_for(db: &crate::db::DbBridge, rel_path: &str) ->
     )
 }
 
-/// Build a NodeResolver from all nodes in the DB
+/// Build a NodeResolver from all nodes in the DB.
+///
+/// Reads only the columns a link resolves against; see `get_resolver_rows`.
+/// Still O(vault) per call, so a caller indexing many nodes in one go builds
+/// it once and passes it down rather than calling this per node.
 pub(crate) fn build_resolver(db: &crate::db::DbBridge) -> NodeResolver {
-    let all_nodes = db.get_all_nodes().unwrap_or_default();
-    NodeResolver::new(&all_nodes)
+    NodeResolver::from_rows(db.get_resolver_rows().unwrap_or_default())
 }
 /// Returns whether the search index now reflects the node.
 fn sync_node_to_search(db: &crate::db::DbBridge, node: &NodeMetadata) -> bool {
@@ -108,22 +111,32 @@ fn sync_node_to_search(db: &crate::db::DbBridge, node: &NodeMetadata) -> bool {
     }
 }
 
+/// Seconds of walking and parsing on a large vault, so on a blocking thread:
+/// a plain command runs on the main thread, where it froze the window, and an
+/// async one would hold one of the runtime's few workers for as long.
 #[tauri::command]
-pub fn scan_all_nodes(
+pub async fn scan_all_nodes(
     app_handle: tauri::AppHandle,
-    state: tauri::State<'_, DbState>,
     vault_path: String,
 ) -> AppResult<ScanReport> {
-    let report = scan_vault_into_db(&app_handle, state.inner(), &vault_path)?;
-    // Moments still kept inside notes — from before they had files of their
-    // own, or synced in from a device that has not caught up — go to theirs.
-    // After the scan, because it reads what the scan indexed. A failure here
-    // leaves the moments where they were, still read from there, and is no
-    // reason to fail opening the vault.
-    if let Err(e) = crate::timeline::moments::move_out_of_notes(&app_handle, state.inner(), &vault_path) {
-        log::warn!("moments: could not move them out of notes: {e}");
-    }
-    Ok(report)
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri::Manager;
+        let state = app_handle.state::<DbState>();
+        let report = scan_vault_into_db(&app_handle, state.inner(), &vault_path)?;
+        // Moments still kept inside notes — from before they had files of
+        // their own, or synced in from a device that has not caught up — go to
+        // theirs. After the scan, because it reads what the scan indexed. A
+        // failure here leaves the moments where they were, still read from
+        // there, and is no reason to fail opening the vault.
+        if let Err(e) =
+            crate::timeline::moments::move_out_of_notes(&app_handle, state.inner(), &vault_path)
+        {
+            log::warn!("moments: could not move them out of notes: {e}");
+        }
+        Ok(report)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::General(format!("vault scan stopped: {e}")))?
 }
 
 /// The vault scan itself, with Tauri's command plumbing peeled off.
@@ -426,7 +439,7 @@ pub(crate) fn reindex_node_at(db: &crate::db::DbBridge, vault_path: &str, abs_pa
 /// its search entry behind for good. Asking about the id instead answers the
 /// question that was actually being asked, and answers it for types that do not
 /// exist yet.
-fn is_disk_backed_id(id: &str) -> bool {
+pub(crate) fn is_disk_backed_id(id: &str) -> bool {
     matches!(
         Path::new(id).extension().and_then(|e| e.to_str()),
         Some("md") | Some("json") | Some("canvas")
@@ -528,7 +541,7 @@ fn remove_orphaned_nodes(
     removed
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_specific_nodes(
     app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -612,22 +625,25 @@ pub fn scan_specific_nodes(
     Ok(report)
 }
 
-#[tauri::command]
+// The reads every screen makes on opening go to `DbReadPool`, and run off the
+// main thread, so a scan batch or a sync apply holding the writer does not
+// hold up drawing the screen.
+#[tauri::command(async)]
 pub fn get_node(
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::db::DbReadPool>,
     id: String,
 ) -> AppResult<Option<crate::models::node::NodeMetadata>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.get_node(&id)
+    pool.read(&state, |db| db.get_node(&id))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_nodes(
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::db::DbReadPool>,
     node_type: String,
 ) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.get_nodes_by_type(&node_type)
+    pool.read(&state, |db| db.get_nodes_by_type(&node_type))
 }
 
 /// How many caps are still waiting, ignoring the ones put away on purpose.
@@ -642,13 +658,13 @@ pub fn count_inbox_caps(state: tauri::State<'_, DbState>) -> AppResult<i64> {
 /// Use `get_node` for the one node the user actually opens. Reaching for
 /// `get_nodes` to populate a list sends the whole vault's text across for the
 /// sake of a few lines of preview.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_node_summaries(
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::db::DbReadPool>,
     node_type: String,
 ) -> AppResult<Vec<crate::models::node::NodeSummary>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
-    db.get_node_summaries_by_type(&node_type)
+    pool.read(&state, |db| db.get_node_summaries_by_type(&node_type))
 }
 
 /// The events that land on the days between `from` and `to`, already expanded.
@@ -792,7 +808,7 @@ pub fn get_tasks_in_range(
 ///
 /// Subscribed calendars are searched too when nothing narrows to a person:
 /// a shared calendar is still a place a meeting can be.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_event_occurrences(
     state: tauri::State<'_, DbState>,
     query: Option<String>,
@@ -852,15 +868,15 @@ pub fn get_event_series(
     db.get_event_series(&root_id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_linked_nodes(
     state: tauri::State<'_, DbState>,
+    pool: tauri::State<'_, crate::db::DbReadPool>,
     target_title: String,
     target_id: Option<String>,
 ) -> AppResult<Vec<crate::models::node::NodeMetadata>> {
-    let db = state.lock().unwrap_or_else(|e| e.into_inner());
     let id_str = target_id.unwrap_or_default();
-    db.get_linked_nodes(&target_title, &id_str)
+    pool.read(&state, |db| db.get_linked_nodes(&target_title, &id_str))
 }
 
 #[tauri::command]
@@ -2450,10 +2466,18 @@ fn update_node_mentions(
     new_title: String,
     node_id: String,
 ) -> AppResult<()> {
-    let linked_nodes = {
+    // One resolver for the whole pass, built after the renamed node's own row
+    // was written. Rewriting a link changes a note's body, never its title or
+    // path, so nothing below would change what this one resolves; rebuilding it
+    // per linked note read the whole vault once for each.
+    let (linked_nodes, resolver) = {
         let db = state.lock().unwrap_or_else(|e| e.into_inner());
-        db.get_linked_nodes(&old_title, &node_id)
-            .unwrap_or_default()
+        let linked = db.get_linked_nodes(&old_title, &node_id).unwrap_or_default();
+        let resolver = (!linked.is_empty()).then(|| build_resolver(&db));
+        (linked, resolver)
+    };
+    let Some(resolver) = resolver else {
+        return Ok(());
     };
 
     let vault_dir = Path::new(&vault_path);
@@ -2515,7 +2539,6 @@ fn update_node_mentions(
                         &parsed_node.id,
                     );
 
-                    let resolver = build_resolver(&db);
                     sync_node_edges(&db, &parsed_node, &resolver);
                 }
             }
@@ -2939,7 +2962,7 @@ pub(crate) fn is_already_archived(node_id: &str, dir_name: &str) -> bool {
     normalised.starts_with(&format!("{dir_name}/archived/"))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn archive_done_nodes(
     _app_handle: tauri::AppHandle,
     state: tauri::State<'_, DbState>,
@@ -4590,5 +4613,117 @@ mod existing_body_tests {
     fn a_file_whose_frontmatter_is_broken_still_yields_something() {
         let (_d, p) = write_temp("a.md", "---\nthis: [is: not: yaml\n---\nthe body\n");
         assert!(existing_body(&p, "md").contains("the body"));
+    }
+}
+
+/// The resolver read from five columns has to answer exactly as the one built
+/// from whole nodes did, and the reason for the change has to stay measurable.
+#[cfg(test)]
+mod resolver_rows {
+    use super::*;
+    use crate::db::DbBridge;
+
+    fn node(id: &str, node_type: &str, title: &str, props: serde_json::Value, at: &str) -> NodeMetadata {
+        NodeMetadata {
+            id: id.to_string(),
+            node_type: node_type.to_string(),
+            title: title.to_string(),
+            content: "body".to_string(),
+            properties: props,
+            created_at: at.to_string(),
+            updated_at: at.to_string(),
+            timestamp: 0,
+            blocks: None,
+        }
+    }
+
+    /// Every shape `NodeResolver::new` treats differently: an identity and
+    /// none, a blank one, a file node with an asset path and one whose path is
+    /// not a string, two notes after one title, and a row whose properties are
+    /// not JSON at all — which must not fail the whole query.
+    #[test]
+    fn answers_every_lookup_as_the_whole_node_resolver_does() {
+        let db = DbBridge::new_in_memory_full().unwrap();
+        for n in [
+            node("Notes/Meeting.md", "note", "Meeting", serde_json::json!({"node_id": "uuid-meeting"}), "2026-01-03"),
+            node("Old/Meeting.md", "note", "Meeting", serde_json::json!({"node_id": "uuid-old"}), "2026-01-01"),
+            node("Notes/Plain.md", "note", "Plain.md", serde_json::json!({}), "2026-01-02"),
+            node("Notes/Blank.md", "note", "Blank", serde_json::json!({"node_id": "  "}), "2026-01-02"),
+            node("f-1", "file", "so-do.png", serde_json::json!({"path": "/vault/assets/So-Do.png", "node_id": "uuid-file"}), "2026-01-02"),
+            node("f-2", "file", "odd", serde_json::json!({"path": 42}), "2026-01-02"),
+            node("Tasks/Path.md", "task", "Path", serde_json::json!({"path": "/elsewhere/x.png"}), "2026-01-02"),
+        ] {
+            db.upsert_node(&n).unwrap();
+        }
+        db.conn()
+            .execute(
+                "INSERT INTO nodes (id, node_type, title, content, properties, created_at, updated_at, timestamp, stable_id)
+                 VALUES ('f-bad', 'note', 'bad', '', '{not json', '2026-01-02', '2026-01-02', 0, 'f-bad')",
+                [],
+            )
+            .unwrap();
+
+        let whole = NodeResolver::new(&db.get_all_nodes().unwrap());
+        let slim = build_resolver(&db);
+        for target in [
+            "Meeting", "meeting", "Notes/Meeting.md", "Old/Meeting.md", "Plain", "Plain.md",
+            "Blank", "Notes/Blank.md", "so-do.png", "assets/so-do.png", "/vault/assets/so-do.png",
+            "odd", "f-2", "x.png", "/elsewhere/x.png", "Path", "bad", "f-bad", "uuid-old",
+            "uuid-file", "nothing-here",
+        ] {
+            assert_eq!(
+                slim.resolve(target, "wikilink"),
+                whole.resolve(target, "wikilink"),
+                "{target}"
+            );
+        }
+        assert_eq!(slim.resolve("Meeting", "wikilink"), "uuid-meeting", "newest keeps the title");
+        assert_eq!(slim.resolve("bad", "wikilink"), "f-bad", "a malformed row still resolves");
+    }
+
+    /// What one save paid for the resolver before and after, on a vault of
+    /// ordinary notes in a database on disk.
+    ///
+    ///     cargo test --lib resolver_cost -- --ignored --nocapture
+    #[test]
+    #[ignore = "timing probe, not a pass/fail assertion"]
+    fn resolver_cost_on_five_thousand_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = rusqlite::Connection::open(dir.path().join("bench.db")).unwrap();
+        let db = DbBridge::init_with_conn(conn).unwrap();
+        let body: String = (0..60)
+            .map(|i| format!("Dòng {i} của một ghi chú bình thường, có [[liên kết]] và #thẻ. "))
+            .collect();
+        db.conn().execute_batch("BEGIN").unwrap();
+        for i in 0..5_000 {
+            let mut n = node(
+                &format!("Notes/ghi-chu-{i}.md"),
+                "note",
+                &format!("Ghi chú {i}"),
+                serde_json::json!({
+                    "node_id": uuid::Uuid::new_v4().to_string(),
+                    "tags": ["mot", "hai"],
+                    "status": "todo",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }),
+                &format!("2026-01-01 00:00:{:02}", i % 60),
+            );
+            n.content = body.clone();
+            db.upsert_node(&n).unwrap();
+        }
+        db.conn().execute_batch("COMMIT").unwrap();
+
+        const RUNS: u32 = 20;
+        let started = std::time::Instant::now();
+        for _ in 0..RUNS {
+            std::hint::black_box(NodeResolver::new(&db.get_all_nodes().unwrap()));
+        }
+        let whole = started.elapsed() / RUNS;
+        let started = std::time::Instant::now();
+        for _ in 0..RUNS {
+            std::hint::black_box(build_resolver(&db));
+        }
+        let slim = started.elapsed() / RUNS;
+        println!("resolver on 5k notes — whole nodes: {whole:?}, five columns: {slim:?}");
     }
 }

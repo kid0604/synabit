@@ -221,6 +221,63 @@ pub(crate) fn read_and_parse_vault_metadata(vault_json_path: &Path) -> AppResult
     Ok(parsed)
 }
 
+/// What `vault.json` looked like when an identity was last resolved from it.
+///
+/// Size, modification time and, where there is one, the inode: a restore or a
+/// sync that replaces the file changes at least one, and so does a vault path
+/// that is a symlink now pointing somewhere else.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VaultJsonStamp {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    inode: u64,
+}
+
+fn vault_json_stamp(raw_vault_path: &str) -> Option<VaultJsonStamp> {
+    let meta = std::fs::metadata(Path::new(raw_vault_path).join(".synabit").join("vault.json")).ok()?;
+    #[cfg(unix)]
+    let inode = std::os::unix::fs::MetadataExt::ino(&meta);
+    #[cfg(not(unix))]
+    let inode = 0;
+    Some(VaultJsonStamp {
+        len: meta.len(),
+        modified: meta.modified().ok(),
+        inode,
+    })
+}
+
+/// Identities already resolved, registered and migrated, keyed by the
+/// database they were registered in and the path as the caller spelled it.
+///
+/// Every save asks for the vault's identity, and answering from scratch is two
+/// canonicalizations, a read and parse of `vault.json`, a mapping insert with
+/// its conflict reads, and the legacy-migration check — most of it under the
+/// database lock. None of that changes between two saves. An entry is trusted
+/// only while `vault.json` carries the same stamp and the database still maps
+/// the id to the same root, so a restore (`forget_sync_vault_at_root`), a move
+/// (`rebind_sync_vault_canonical_root`) or a different vault at the same path
+/// all fall through to the full path. Only identities whose legacy migration
+/// is finished are kept, so the migration still runs until it is.
+static IDENTITY_CACHE: LazyLock<std::sync::Mutex<IdentityCache>> = LazyLock::new(Default::default);
+
+type IdentityCache = std::collections::HashMap<(usize, String), (VaultJsonStamp, VaultIdentity)>;
+
+fn cached_vault_identity(
+    db: &crate::db::DbBridge,
+    key: &(usize, String),
+) -> Option<VaultIdentity> {
+    let stamp = vault_json_stamp(&key.1)?;
+    let identity = {
+        let cache = IDENTITY_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        match cache.get(key) {
+            Some((cached, identity)) if *cached == stamp => identity.clone(),
+            _ => return None,
+        }
+    };
+    let root = db.get_sync_vault_by_id(&identity.vault_id.to_string()).ok()??;
+    (Path::new(&root.canonical_root) == identity.canonical_path).then_some(identity)
+}
+
 pub fn load_or_register_vault_identity<R: tauri::Runtime>(
     app_handle: &tauri::AppHandle<R>,
     raw_vault_path: &str,
@@ -228,6 +285,21 @@ pub fn load_or_register_vault_identity<R: tauri::Runtime>(
     if raw_vault_path.trim().is_empty() {
         return Err(AppError::General("vault_path must not be empty".into()));
     }
+
+    let db_state = app_handle.state::<DbState>();
+    let cache_key = (
+        db_state.inner() as *const DbState as usize,
+        raw_vault_path.to_string(),
+    );
+    {
+        let db = db_state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(identity) = cached_vault_identity(&db, &cache_key) {
+            return Ok(identity);
+        }
+    }
+    // Taken before the file is read below, so a write landing in between
+    // leaves a stamp that no longer matches rather than one that hides it.
+    let stamp_before = vault_json_stamp(raw_vault_path);
 
     let raw_path = Path::new(raw_vault_path);
     let canonical_path = std::fs::canonicalize(raw_path).map_err(|e| {
@@ -257,7 +329,6 @@ pub fn load_or_register_vault_identity<R: tauri::Runtime>(
     let vault_id_str = metadata.vault_id.to_string();
     let now = chrono::Utc::now().timestamp_millis();
 
-    let db_state = app_handle.state::<DbState>();
     let mut db = db_state.lock().unwrap_or_else(|e| e.into_inner());
 
     let record = crate::db::sync_vault::SyncVaultRecord {
@@ -274,7 +345,23 @@ pub fn load_or_register_vault_identity<R: tauri::Runtime>(
         canonical_path,
     };
 
-    crate::db::legacy_sync_migration::migrate_legacy_sync_state_for_vault(&mut db, &identity)?;
+    let decision =
+        crate::db::legacy_sync_migration::migrate_legacy_sync_state_for_vault(&mut db, &identity)?;
+
+    let finished = !matches!(
+        decision,
+        crate::db::legacy_sync_migration::LegacyMigrationDecision::BootstrapRequired { .. }
+    );
+    // A file that was just published by this call has no "before" stamp; the
+    // next call stamps and caches it instead.
+    if let (true, Some(stamp)) = (finished, stamp_before) {
+        if vault_json_stamp(raw_vault_path).as_ref() == Some(&stamp) {
+            IDENTITY_CACHE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(cache_key, (stamp, identity.clone()));
+        }
+    }
 
     Ok(identity)
 }
@@ -787,6 +874,56 @@ pub mod tests {
             .unwrap();
         assert!(mapping.is_some());
         assert_eq!(mapping.unwrap().vault_id, id1.vault_id.to_string());
+    }
+
+    /// The cached answer is only an answer while what it was read from is
+    /// unchanged: the mapping in the database and the file on disk.
+    #[test]
+    fn a_cached_identity_gives_way_to_a_forgotten_mapping_or_a_replaced_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let raw = temp_dir.path().to_str().unwrap();
+        let app_handle = create_test_app_handle();
+
+        let first = load_or_register_vault_identity(&app_handle, raw).unwrap();
+        let again = load_or_register_vault_identity(&app_handle, raw).unwrap();
+        assert_eq!(first, again);
+
+        // A restore forgets the mapping; the next call has to put it back
+        // rather than answer from memory with a vault the database lost.
+        {
+            let db_state = app_handle.state::<DbState>();
+            let db = db_state.lock().unwrap();
+            assert!(db
+                .forget_sync_vault_at_root(&first.canonical_path.to_string_lossy())
+                .unwrap());
+        }
+        let restored = load_or_register_vault_identity(&app_handle, raw).unwrap();
+        assert_eq!(restored, first);
+        assert_eq!(snapshot_sync_vault_rows(&app_handle).len(), 1, "registered again");
+
+        // The archive brings a different identity with it, written the way
+        // anything replacing the file writes it: a new file renamed over.
+        {
+            let db_state = app_handle.state::<DbState>();
+            let db = db_state.lock().unwrap();
+            db.forget_sync_vault_at_root(&first.canonical_path.to_string_lossy())
+                .unwrap();
+        }
+        let other = uuid::Uuid::new_v4();
+        let dir = first.canonical_path.join(".synabit");
+        std::fs::write(
+            dir.join("vault.json.tmp"),
+            serde_json::to_string(&VaultMetadata {
+                schema_version: VAULT_METADATA_SCHEMA_VERSION,
+                vault_id: other,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(dir.join("vault.json.tmp"), dir.join("vault.json")).unwrap();
+
+        let replaced = load_or_register_vault_identity(&app_handle, raw).unwrap();
+        assert_eq!(replaced.vault_id, other);
     }
 
     #[test]

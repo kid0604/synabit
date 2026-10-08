@@ -625,6 +625,45 @@ impl DbBridge {
         Ok(nodes)
     }
 
+    /// What a `NodeResolver` needs to know about every node, and nothing else.
+    ///
+    /// The resolver is rebuilt on every save, and building it from
+    /// `get_all_nodes` read the full body of every note in the vault and parsed
+    /// every properties blob, under the lock, to use five short strings from
+    /// each. Same order as `get_all_nodes`, which decides who keeps a title two
+    /// nodes share.
+    ///
+    /// `stable_id` is the column `upsert_node` fills from
+    /// `NodeMetadata::stable_id`. The path is extracted only where it is read:
+    /// `file` rows whose properties are valid JSON and hold a string there.
+    /// The index on that path already keeps malformed JSON out of `file` rows;
+    /// the guard is there so that one bad blob can never fail the whole query.
+    pub fn get_resolver_rows(&self) -> AppResult<Vec<crate::utils::graph_parser::ResolverRow>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached(
+                "SELECT id, node_type, title, stable_id,
+                        CASE WHEN node_type = 'file' AND json_valid(properties) THEN
+                            CASE WHEN json_type(properties, '$.path') = 'text'
+                                 THEN json_extract(properties, '$.path') END
+                        END
+                 FROM nodes ORDER BY updated_at DESC",
+            )
+            .map_err(|e| AppError::General(format!("DB Query Error (resolver rows): {}", e)))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(crate::utils::graph_parser::ResolverRow {
+                    id: row.get(0)?,
+                    node_type: row.get(1)?,
+                    title: row.get(2)?,
+                    stable_id: row.get(3)?,
+                    file_path: row.get(4)?,
+                })
+            })
+            .map_err(|e| AppError::General(format!("DB Map Error (resolver rows): {}", e)))?;
+        Ok(rows.flatten().collect())
+    }
+
     /// What types exist in this vault, and which frontmatter keys each one uses.
     ///
     /// The vault describing itself. There is no schema anywhere to read — a

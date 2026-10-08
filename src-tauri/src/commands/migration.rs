@@ -199,7 +199,7 @@ pub(crate) fn apply_writes(
 /// Caps whose bytes are already correct never reach the writer at all —
 /// `migrate_cap` returns `None` for them — so on every launch after the
 /// first this walks the list and writes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_quickcap_storage(
     state: tauri::State<'_, DbState>,
     vault_path: String,
@@ -246,7 +246,7 @@ pub fn migrate_quickcap_storage(
 /// A file already in the target shape never reaches the writer: every
 /// transform returns `None` for it. On the second launch this walks the list
 /// and writes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_finance_storage(
     state: tauri::State<'_, DbState>,
     vault_path: String,
@@ -331,7 +331,7 @@ pub fn migrate_finance_storage(
 /// own copy and they converge only because they all compute the same bytes. A
 /// note that already has a `date`, or whose title is not a date, never reaches
 /// the writer, so a second run writes nothing.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn migrate_daily_note_dates(
     state: tauri::State<'_, DbState>,
     vault_path: String,

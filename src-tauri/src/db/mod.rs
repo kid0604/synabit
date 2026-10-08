@@ -15,6 +15,8 @@ pub mod metrics;
 mod nexus;
 mod nodes;
 mod rag;
+mod read_pool;
+pub use read_pool::{DbReadPool, READERS};
 pub mod reminders;
 pub mod subscriptions;
 mod schema;
@@ -28,6 +30,15 @@ mod whiteboards;
 use rusqlite::Connection;
 use std::sync::Mutex;
 
+/// One connection to the cache database.
+///
+/// The app holds two kinds. `DbState` is the one writer: every write, and
+/// every read that has not been moved, goes through its mutex, and with one
+/// writer SQLite never has to arbitrate between two. `DbReadPool` holds a few
+/// read-only connections beside it for the reads the interface waits on —
+/// search, a node, a list, backlinks, a query — which WAL lets run while the
+/// writer works. A read belongs on the pool only if it writes nothing and
+/// caches nothing against its connection; see `read_pool`.
 pub struct DbBridge {
     conn: Connection,
 }

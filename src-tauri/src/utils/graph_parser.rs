@@ -295,19 +295,65 @@ pub struct NodeResolver {
     stable_ids: std::collections::HashSet<String>,
 }
 
+/// The five things about a node that a link can be resolved against.
+///
+/// Everything else on a node — its body above all — is irrelevant here, and
+/// building a resolver used to read all of it: every note's full text and every
+/// properties blob parsed, on every save. `DbBridge::get_resolver_rows` reads
+/// exactly these columns instead.
+#[derive(Debug, Clone)]
+pub struct ResolverRow {
+    /// The node's key: a vault-relative path, or a UUID for a `file` node.
+    pub id: String,
+    pub node_type: String,
+    pub title: String,
+    /// `NodeMetadata::stable_id`. Empty falls back to `id`, as it does there.
+    pub stable_id: String,
+    /// `properties.path` when it is a string, read for `file` nodes only.
+    pub file_path: Option<String>,
+}
+
+impl ResolverRow {
+    pub fn from_node(node: &crate::models::node::NodeMetadata) -> Self {
+        ResolverRow {
+            id: node.id.clone(),
+            node_type: node.node_type.clone(),
+            title: node.title.clone(),
+            stable_id: node.stable_id().to_string(),
+            file_path: (node.node_type == "file")
+                .then(|| node.properties.get("path").and_then(|v| v.as_str()))
+                .flatten()
+                .map(str::to_string),
+        }
+    }
+}
+
 impl NodeResolver {
     /// Build resolver from all nodes — O(N) once, then O(1) per resolve
     pub fn new(all_nodes: &[crate::models::node::NodeMetadata]) -> Self {
+        Self::from_rows(all_nodes.iter().map(ResolverRow::from_node))
+    }
+
+    /// The same, from only the columns it reads.
+    ///
+    /// Order matters: where two nodes claim one title or filename, the first
+    /// one seen keeps it. Callers pass rows in the order `get_all_nodes`
+    /// returns them, most recently updated first.
+    pub fn from_rows(rows: impl IntoIterator<Item = ResolverRow>) -> Self {
         let mut title_map = std::collections::HashMap::new();
         let mut path_map = std::collections::HashMap::new();
         let mut id_map = std::collections::HashMap::new();
         let mut filename_map = std::collections::HashMap::new();
         let mut stable_ids = std::collections::HashSet::new();
 
-        for node in all_nodes {
+        for node in rows {
             // Every lookup answers with the node's stable identity, whatever
             // the caller used to ask for it.
-            let id = node.stable_id().to_string();
+            let id = if node.stable_id.trim().is_empty() {
+                node.id.clone()
+            } else {
+                node.stable_id.clone()
+            };
             stable_ids.insert(id.clone());
             id_map.insert(node.id.clone(), id.clone());
 
@@ -322,7 +368,7 @@ impl NodeResolver {
 
             // For file nodes: map filename from properties.path
             if node.node_type == "file" {
-                if let Some(p) = node.properties.get("path").and_then(|v| v.as_str()) {
+                if let Some(p) = node.file_path.as_deref() {
                     let file_path = std::path::Path::new(p);
                     if let Some(fname) = file_path.file_name().and_then(|s| s.to_str()) {
                         let fname_lower = fname.to_lowercase();
