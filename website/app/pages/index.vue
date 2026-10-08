@@ -26,7 +26,7 @@ useSeoMeta({
       </p>
       
       <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-        <UButton size="xl" color="primary" class="relative group overflow-hidden">
+        <UButton size="xl" color="primary" to="https://github.com/kid0604/synabit/releases/latest" target="_blank" class="relative group overflow-hidden">
           <span class="absolute inset-0 bg-white/20 group-hover:bg-white/0 transition-colors" />
           <span class="relative flex items-center gap-2">
             Download for Free
@@ -51,14 +51,14 @@ useSeoMeta({
         <div class="relative overflow-hidden rounded-2xl bg-white/50 dark:bg-slate-900/50 ring-1 ring-slate-200 dark:ring-white/10 p-8 backdrop-blur-md group hover:ring-cyan-500/30 transition-all duration-300">
           <UIcon name="i-heroicons-lock-closed" class="w-10 h-10 text-cyan-400 mb-6" />
           <h3 class="text-xl font-semibold text-slate-900 dark:text-white mb-3">100% Local & Private</h3>
-          <p class="text-slate-600 dark:text-slate-400">Your data belongs to you. Stored locally inside an encrypted database. Zero telemetry.</p>
+          <p class="text-slate-600 dark:text-slate-400">Your data belongs to you: plain Markdown files in a folder you choose, readable by any editor. Zero telemetry. Use your OS disk encryption (FileVault, BitLocker, LUKS) for encryption at rest.</p>
         </div>
 
         <!-- Feature 3 -->
         <div class="relative overflow-hidden rounded-2xl bg-white/50 dark:bg-slate-900/50 ring-1 ring-slate-200 dark:ring-white/10 p-8 backdrop-blur-md group hover:ring-cyan-500/30 transition-all duration-300">
           <UIcon name="i-heroicons-arrow-path-rounded-square" class="w-10 h-10 text-cyan-400 mb-6" />
-          <h3 class="text-xl font-semibold text-slate-900 dark:text-white mb-3">Serverless P2P Sync</h3>
-          <p class="text-slate-600 dark:text-slate-400">Custom peer-to-peer technology securely transfers your data across devices over LAN.</p>
+          <h3 class="text-xl font-semibold text-slate-900 dark:text-white mb-3">End-to-end Encrypted Sync</h3>
+          <p class="text-slate-600 dark:text-slate-400">Notes are encrypted on your device before they leave it. A mailbox server relays them between your devices so an offline device can catch up, and it never holds a key.</p>
         </div>
 
         <!-- Feature 4 -->
@@ -66,7 +66,7 @@ useSeoMeta({
           <div class="absolute inset-0 bg-gradient-to-tl from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
           <UIcon name="i-heroicons-cpu-chip" class="w-10 h-10 text-cyan-400 mb-6" />
           <h3 class="text-2xl font-semibold text-slate-900 dark:text-white mb-3">Local AI Powered</h3>
-          <p class="text-slate-600 dark:text-slate-400 max-w-md">Integrate with your local LLMs (like Ollama) to brainstorm, summarize, and assist you right inside your workspace without compromising privacy.</p>
+          <p class="text-slate-600 dark:text-slate-400 max-w-md">Syn works with local models through Ollama, so your notes never leave the machine. Cloud models (Anthropic, OpenAI, Gemini) are optional, and the app shows what each one sends.</p>
         </div>
       </div>
     </UContainer>

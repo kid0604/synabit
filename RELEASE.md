@@ -23,7 +23,18 @@ Upload file này lên **Google Play Console** > **App bundle explorer** (hoặc 
 
 ## 2. Desktop (Windows / macOS / Linux)
 
-Để đóng gói ứng dụng cho nền tảng máy tính:
+**Bản phát hành chính thức đi qua CI, không build tay.** Workflow `.github/workflows/release.yml` chỉ build sau khi commit được tag đã qua toàn bộ `checks.yml`, và ký file cập nhật cho updater.
+
+```bash
+git tag v0.9.20
+git push origin v0.9.20
+```
+
+CI tạo một GitHub Release dạng **draft**. Kiểm tra file đính kèm rồi bấm *Publish*: chỉ khi đó `releases/latest/download/latest.json` mới trỏ tới bản mới và updater trong app mới thấy nó.
+
+Bản macOS hiện chưa được ký Developer ID hay notarize, nên lần mở đầu tiên người dùng phải chuột phải → Open.
+
+Build tay bên dưới chỉ để thử trên máy mình:
 
 ```bash
 npm run build:desktop
