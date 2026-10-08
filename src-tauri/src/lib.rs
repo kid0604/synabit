@@ -475,8 +475,81 @@ fn init_rustls() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
 
+/// Send every panic to the log file as well as to stderr.
+///
+/// A bundled app has no terminal, so the default hook's message goes nowhere a
+/// user can find it, and a panic on a background thread — a sync task, the
+/// watcher — just stops that work with no trace. The default hook still runs
+/// after, so development output is unchanged.
+///
+/// Installed before the log plugin exists; `log` drops records until a logger
+/// is set, which costs only panics from the first moments of startup.
+fn install_panic_logger() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("(non-string panic payload)");
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown location".to_string());
+        let thread = std::thread::current();
+        // `capture` honours RUST_BACKTRACE, so this is free unless someone
+        // asked for backtraces.
+        let backtrace = std::backtrace::Backtrace::capture();
+        let backtrace = match backtrace.status() {
+            std::backtrace::BacktraceStatus::Captured => format!("\n{backtrace}"),
+            _ => String::new(),
+        };
+        log::error!(
+            "panic on thread '{}' at {}: {}{}",
+            thread.name().unwrap_or("<unnamed>"),
+            location,
+            message,
+            backtrace
+        );
+        default_hook(info);
+    }));
+}
+
+/// The database could not be opened even after setting the damaged one aside.
+///
+/// Say so in a native dialog and quit, rather than panic with a message only a
+/// terminal would show, or carry on with no database for every command to trip
+/// over. The dialog is non-blocking because setup runs on the main thread,
+/// which the blocking variant must not be called from; quitting waits for the
+/// user's click instead.
+fn fail_startup_on_database(app: &tauri::AppHandle, error: &crate::error::AppError) {
+    use tauri::Manager;
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    log::error!("Synabit cannot start: the database could not be opened: {error}");
+    for window in app.webview_windows().values() {
+        let _ = window.hide();
+    }
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map(|d| d.display().to_string())
+        .unwrap_or_else(|_| "the app data folder".to_string());
+    let handle = app.clone();
+    app.dialog()
+        .message(format!(
+            "Synabit could not open its database and has to close.\n\n{error}\n\n\
+             Your notes are untouched — they are files in your vault. Any damaged \
+             database has been kept beside the new one in {data_dir}."
+        ))
+        .title("Synabit cannot start")
+        .kind(MessageDialogKind::Error)
+        .show(move |_| handle.exit(1));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    install_panic_logger();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -511,7 +584,16 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
                 .max_file_size(10_000_000) // 10 MB
-                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
+                // Five old files and the current one: 60 MB at most. Keeping
+                // every rotated file grows without bound, and nobody reads a
+                // log from three months ago.
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
+                // Loro narrates every merge at INFO — version vectors, each
+                // text drain — which was all but every line in the file and
+                // drowned the app's own. Its warnings and errors still come
+                // through.
+                .level_for("loro_internal", log::LevelFilter::Warn)
+                .level_for("loro", log::LevelFilter::Warn)
                 .filter(|metadata| {
                     // Filter out noisy iroh transport logs that flood the file
                     let target = metadata.target();
@@ -612,7 +694,16 @@ pub fn run() {
                     crate::syn::browser::note_home(url.as_str());
                 }
             }
-            let db = DbBridge::init(app.handle()).expect("Failed to initialize database");
+            // `init` already sets a damaged database aside and starts fresh;
+            // an error here means even that failed. Nothing below can run
+            // without a database, so stop setup and let the dialog quit.
+            let db = match DbBridge::init(app.handle()) {
+                Ok(db) => db,
+                Err(e) => {
+                    fail_startup_on_database(app.handle(), &e);
+                    return Ok(());
+                }
+            };
             log::info!("Database initialized successfully.");
             app.manage(std::sync::Mutex::new(db));
 

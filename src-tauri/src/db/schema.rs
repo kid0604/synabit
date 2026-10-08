@@ -11,6 +11,42 @@ const FTS_SCHEMA_VERSION: &str = "7";
 /// Same idea for the feed article index, which has a schema of its own.
 const FEEDS_FTS_SCHEMA_VERSION: &str = "3";
 
+/// Whether an open failure is another connection holding the database rather
+/// than anything wrong with the file. Matched on SQLite's own wording, because
+/// the schema code carries its errors as text.
+fn is_contention(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("database is locked") || m.contains("database table is locked") || m.contains("busy")
+}
+
+/// Rename `db_path` and its `-wal` / `-shm` companions to
+/// `<name>.corrupt-<now>` (and `-wal.corrupt-<now>`, …), returning where they
+/// went. The WAL moves with the database because it holds committed pages the
+/// main file does not have yet; separated from it, neither is the database.
+///
+/// A rename, never a delete — see [`DbBridge::open_or_recover`] for what in
+/// this file cannot be rebuilt from the vault.
+fn set_aside_damaged_db(
+    db_path: &std::path::Path,
+    now: u64,
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+    let mut moved = Vec::new();
+    for suffix in ["", "-wal", "-shm"] {
+        let mut from = db_path.as_os_str().to_owned();
+        from.push(suffix);
+        let from = std::path::PathBuf::from(from);
+        if !from.exists() {
+            continue;
+        }
+        let mut to = from.as_os_str().to_owned();
+        to.push(format!(".corrupt-{now}"));
+        let to = std::path::PathBuf::from(to);
+        std::fs::rename(&from, &to)?;
+        moved.push(to);
+    }
+    Ok(moved)
+}
+
 impl DbBridge {
     /// Create an in-memory database with sync schema initialized (useful for testing).
     pub fn new_in_memory() -> AppResult<Self> {
@@ -47,9 +83,82 @@ impl DbBridge {
             .map_err(|e| AppError::General(format!("Failed to create app data dir: {}", e)))?;
 
         let db_path = app_data_dir.join("vault_cache.db");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or_default();
+        Self::open_or_recover(&db_path, now)
+    }
+
+    /// Open the database at `db_path`; if it is damaged, set it aside and start
+    /// a fresh one in its place, once.
+    ///
+    /// Set aside, never deleted. Most of this database is a cache of the vault
+    /// and rebuilds from it on the next scan, but not all of it: the CRDT
+    /// version history, the capture queue in `kv_store`, feed highlights and
+    /// calendar subscriptions live only here. A damaged file may still give most
+    /// of that back to `sqlite3 .recover`; a deleted one gives back nothing.
+    ///
+    /// A database that is merely busy — a second copy of the app holding it —
+    /// is not damaged, and moving it out from under the copy using it would be
+    /// the damage. That failure is returned as it is.
+    pub(crate) fn open_or_recover(db_path: &std::path::Path, now: u64) -> AppResult<Self> {
+        let first = match Self::open_checked(db_path) {
+            Ok(db) => return Ok(db),
+            Err(e) => e,
+        };
+        let reason = first.to_string();
+        if is_contention(&reason) {
+            return Err(first);
+        }
+        log::error!("vault_cache.db at {} could not be opened: {reason}", db_path.display());
+
+        let moved = set_aside_damaged_db(db_path, now).map_err(|e| {
+            AppError::General(format!(
+                "The database could not be opened ({reason}) and could not be moved aside to start fresh: {e}"
+            ))
+        })?;
+        log::error!(
+            "Moved the damaged database aside to {} (kept, not deleted: it holds version \
+             history, the capture queue, feed highlights and calendar subscriptions that the \
+             vault cannot rebuild). Starting with a fresh database.",
+            moved.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        );
+
+        Self::open_checked(db_path).map_err(|e| {
+            AppError::General(format!(
+                "The database could not be opened ({reason}), and a fresh one could not be created either: {e}"
+            ))
+        })
+    }
+
+    /// Open, check the file is sound, then build the schema.
+    ///
+    /// `quick_check` because opening alone proves nothing: SQLite reads pages
+    /// lazily, so a file torn by a crash opens fine and fails on whichever
+    /// query first touches the torn page — mid-session, as an error nobody can
+    /// act on. It is the cheap variant (no index-to-table cross-check), which
+    /// on a cache of this size costs milliseconds at startup.
+    fn open_checked(db_path: &std::path::Path) -> AppResult<Self> {
         let conn = Connection::open(db_path)
             .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
-
+        // Another copy of the app writing at this moment is a wait, not a
+        // failure; without a timeout SQLite answers "busy" at once.
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| AppError::General(format!("DB Open Error: {}", e)))?;
+        let verdict: Vec<String> = conn
+            .prepare("PRAGMA quick_check")
+            .and_then(|mut stmt| {
+                stmt.query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<Result<_, _>>()
+            })
+            .map_err(|e| AppError::General(format!("DB Integrity Check Error: {}", e)))?;
+        if verdict.len() != 1 || verdict[0] != "ok" {
+            return Err(AppError::General(format!(
+                "DB Integrity Check Failed: {}",
+                verdict.join("; ")
+            )));
+        }
         Self::init_with_conn(conn)
     }
 
@@ -59,8 +168,12 @@ impl DbBridge {
     /// against an in-memory connection instead of a real app data directory.
     pub fn init_with_conn(mut conn: Connection) -> AppResult<Self> {
         // Enable WAL mode for better concurrent read performance and enable foreign keys
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-            .ok();
+        // Not fatal — the database works in the default journal mode, only
+        // with readers waiting on writers — but worth a line in the log, since
+        // the usual cause is a filesystem that cannot hold the `-shm` file.
+        if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;") {
+            log::warn!("Could not enable WAL mode / foreign keys on the database: {e}");
+        }
 
         // `vlower` and `vwords`, because SQLite's own `lower()` folds ASCII and
         // leaves every Vietnamese letter alone. See `db::text`.
@@ -4171,5 +4284,79 @@ mod upgrade_from_released_version_tests {
             )
             .unwrap();
         assert_eq!(entries, 1);
+    }
+}
+
+#[cfg(test)]
+mod recovery_tests {
+    use super::*;
+
+    /// A file that is not a database — what a torn write or a disk error leaves
+    /// behind — is set aside byte for byte, and a working database takes its
+    /// place.
+    #[test]
+    fn a_damaged_database_is_set_aside_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("vault_cache.db");
+        let garbage = b"this was a database once, before the power went".repeat(200);
+        std::fs::write(&db_path, &garbage).unwrap();
+
+        let db = DbBridge::open_or_recover(&db_path, 1234).expect("recovered");
+        let tables: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'kv_store'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 1, "the fresh database has the schema");
+
+        assert_eq!(
+            std::fs::read(dir.path().join("vault_cache.db.corrupt-1234")).unwrap(),
+            garbage,
+            "the damaged file is kept as it was"
+        );
+    }
+
+    /// The companions go with the database, and a missing one is no error.
+    /// Driven directly: SQLite itself discards a WAL beside a file it cannot
+    /// read as a database, so the end-to-end test above cannot show this.
+    #[test]
+    fn the_wal_is_set_aside_with_its_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("vault_cache.db");
+        std::fs::write(&db_path, b"main").unwrap();
+        std::fs::write(dir.path().join("vault_cache.db-wal"), b"wal pages").unwrap();
+
+        let moved = set_aside_damaged_db(&db_path, 7).unwrap();
+        assert_eq!(moved.len(), 2, "no -shm existed, so two files moved");
+        assert!(!db_path.exists());
+        assert_eq!(
+            std::fs::read(dir.path().join("vault_cache.db-wal.corrupt-7")).unwrap(),
+            b"wal pages"
+        );
+        assert_eq!(std::fs::read(dir.path().join("vault_cache.db.corrupt-7")).unwrap(), b"main");
+    }
+
+    #[test]
+    fn a_sound_database_is_opened_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("vault_cache.db");
+        drop(DbBridge::open_or_recover(&db_path, 1).expect("created"));
+        drop(DbBridge::open_or_recover(&db_path, 2).expect("reopened"));
+
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert!(leftovers.is_empty(), "nothing was set aside: {leftovers:?}");
+    }
+
+    #[test]
+    fn a_busy_database_is_not_mistaken_for_a_damaged_one() {
+        assert!(is_contention("DB Schema Error (files): database is locked"));
+        assert!(!is_contention("DB Integrity Check Error: file is not a database"));
     }
 }
