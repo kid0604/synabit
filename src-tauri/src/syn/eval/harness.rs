@@ -77,12 +77,37 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let started = Instant::now();
     let vault = fixture::build(task.preset, provider, model);
     let _web = super::web::serve(task.web.clone());
+    let _servers = super::connectors::start(&vault.path, &task.connectors).await;
+    let rest = if task.rest.is_empty() {
+        None
+    } else {
+        let routes = task
+            .rest
+            .iter()
+            .map(|(path, body)| (*path, crate::syn::connector::fake_rest::Answer { status: "200 OK", headers: String::new(), body: body.clone() }))
+            .chain(["/sheets/values", "/mail/send"].map(|p| (p, crate::syn::connector::fake_rest::Answer::json(serde_json::json!({ "ok": true })))))
+            .collect();
+        Some(crate::syn::connector::fake_rest::serve(routes).await)
+    };
+    super::connectors::declare(&vault, &task.declared, rest.as_ref().map(|r| r.base.as_str()));
+    for (path, text) in &task.files {
+        let at = match path.strip_prefix("@downloads/") {
+            Some(rest) => std::path::Path::new(&super::connectors::downloads(&vault)).join(rest),
+            None => std::path::Path::new(&vault.path).join(path),
+        };
+        if let Some(dir) = at.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(&at, text).expect("a task's file");
+    }
     let nodes_before = grade::nodes(&vault).iter().filter(|(_, ty, _, _, _)| !ty.starts_with("syn_")).count();
 
     let mut answers: Vec<SynMessage> = Vec::new();
     let mut seen_runs: Vec<String> = Vec::new();
     let mut error = None;
     let mut conversation = String::new();
+    // How many things the connect cards asked the person to type.
+    let mut card_questions = 0usize;
 
     'turns: for turn in &task.turns {
         if conversation.is_empty() || turn.new_conversation {
@@ -90,7 +115,12 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                 .expect("conversation")
                 .id;
         }
-        let mut message = turn.ask.to_string();
+        // `BASE` in what the person says is the REST server's address, as in
+        // a declaration: a spec to connect to is named by where it is.
+        let mut message = match rest.as_ref() {
+            Some(r) => turn.ask.replace("BASE", &r.base),
+            None => turn.ask.to_string(),
+        };
         let mut resume = None;
         for _ in 0..=MAX_ANSWERS_PER_TURN {
             let sent = crate::commands::syn::send_message_inner(
@@ -122,6 +152,67 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                     message = String::new();
                     resume = Some(last.id);
                 }
+                RunState::AwaitingApproval if last.pending_connector.is_some() => {
+                    // As the person would on the card: approved on this
+                    // device, as a local server, then answered.
+                    let id = last.pending_connector.clone().unwrap_or_default();
+                    let drafted = {
+                        let state = vault.db();
+                        let db = state.lock().unwrap_or_else(|e| e.into_inner());
+                        crate::syn::connector::manifest::all(&db)
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find_map(|f| f.manifest.ok().filter(|m| m.id == id))
+                    };
+                    // The connect card, as the person fills it: the task's values for
+                    // the inputs (`BASE` is the REST server), the key to the keychain,
+                    // the network worked out from the address, then one try.
+                    let base = rest.as_ref().map(|r| r.base.clone()).unwrap_or_default();
+                    let mut approved = false;
+                    let mut ask_counted = 0usize;
+                    if let Some(m) = drafted {
+                        let given = |name: &str| task.connect.iter().find(|(k, _)| *k == name).map(|(_, v)| v.replace("BASE", &base));
+                        let inputs: std::collections::BTreeMap<String, String> = m
+                            .inputs
+                            .iter()
+                            .filter(|i| i.kind != crate::syn::connector::manifest::InputKind::Secret)
+                            .filter_map(|i| given(&i.name).map(|v| (i.name.clone(), v)))
+                            .collect();
+                        let secret = m.auth.secret().and_then(given);
+                        if let (Some(name), Some(value)) = (m.auth.secret(), secret.as_ref()) {
+                            crate::syn::connector::declared::TEST_SECRETS
+                                .lock()
+                                .expect("secrets")
+                                .insert(crate::commands::connector::secret_slot(&m.id, name), value.clone());
+                        }
+                        ask_counted = super::connectors::asked_on_card(&m);
+                        let network = crate::syn::connector::instance::network_for(&m.with_inputs(&inputs).base_url);
+                        if let Ok(inst) = crate::syn::connector::instance::approve(
+                            &vault.path,
+                            &m,
+                            crate::syn::connector::instance::Choices { network, inputs, ..Default::default() },
+                            &chrono::Utc::now().to_rfc3339(),
+                        ) {
+                            approved = crate::commands::connector::probe(&m, &inst, secret.as_deref()).await.ok;
+                        }
+                    }
+                    card_questions += ask_counted;
+                    let _ = crate::commands::syn::syn_answer_connector(vault.path.clone(), last.id.clone(), approved).await;
+                    message = String::new();
+                    resume = Some(last.id);
+                }
+                RunState::AwaitingApproval => {
+                    // As the card's "approve all" would: every request Rust
+                    // did not flag.
+                    let approvable: Vec<String> = last
+                        .writes
+                        .as_ref()
+                        .map(|p| p.requests.iter().filter(|r| r.problems.is_empty()).map(|r| r.hash.clone()).collect())
+                        .unwrap_or_default();
+                    let _ = crate::commands::syn::syn_answer_writes(vault.path.clone(), last.id.clone(), approvable).await;
+                    message = String::new();
+                    resume = Some(last.id);
+                }
                 RunState::AwaitingChoice => {
                     let Some(first) = last.pending_choice.as_ref().and_then(|c| c.candidates.first()).cloned() else { break };
                     let _ = crate::commands::syn::syn_answer_choice(vault.path.clone(), last.id.clone(), first.id.clone()).await;
@@ -139,7 +230,8 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let top: Vec<Run> = runs.iter().filter(|r| r.parent_run_id.is_none()).cloned().collect();
     let visited = super::web::visited();
 
-    let evidence = Evidence { vault: &vault, runs: &runs, answers: &answers, visited: &visited, nodes_before };
+    let sent = rest.as_ref().map(|r| r.requests()).unwrap_or_default();
+    let evidence = Evidence { vault: &vault, runs: &runs, answers: &answers, visited: &visited, nodes_before, sent: &sent, card_questions };
     let failures: Vec<String> = task.checks.iter().filter_map(|c| grade::check(c, &evidence).err()).collect();
     let safety = grade::universal(&evidence);
 

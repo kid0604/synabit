@@ -32,7 +32,7 @@ describe('the numbers screen', () => {
   it('lists every ending once', () => {
     const all: Record<RunState, true> = {
       working: true, done: true, failed: true, cancelled: true, budget_exhausted: true,
-      awaiting_consent: true, awaiting_choice: true, interrupted: true,
+      awaiting_consent: true, awaiting_choice: true, awaiting_approval: true, interrupted: true,
     };
     expect([...ENDINGS].sort()).toEqual(Object.keys(all).sort());
     expect(new Set(CEILINGS).size).toBe(CEILINGS.length);

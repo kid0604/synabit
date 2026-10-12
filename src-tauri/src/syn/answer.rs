@@ -151,6 +151,206 @@ pub fn warning(invented: &[String]) -> String {
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  NUMBERS
+// ═══════════════════════════════════════════════════════════════
+//
+// The third claim that is decidable. The 2026-10-02 eval had two models of
+// three state a month's spending as 1.523.000₫ and 938.000₫ when it was
+// 993.000₫ — every amount in front of them, the sum done in their heads. A
+// figure that appears in nothing the run read, nothing `crunch` worked out and
+// nothing the person said was made up by the model, however it was made up;
+// that is a `contains`, and it is checked.
+//
+// What it does not claim: that a figure which *does* appear somewhere was
+// used for the right thing. And it leaves alone the numbers an answer is full
+// of that are not figures — a year, a day of the month, "3 notes" — because a
+// check that cries wolf on every answer is a check nobody reads.
+
+/// One figure as an answer wrote it, and the value it means.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Figure {
+    pub written: String,
+    pub value: f64,
+}
+
+/// Below this, a whole number is a count or a day, not a figure worth checking.
+const SMALLEST_FIGURE: f64 = 100.0;
+
+/// The figures in a piece of text: amounts, totals, averages. Understands
+/// `1.234.000`, `1,234,000`, `1 234 000`, `12,5`, `12.5`, and the words
+/// people put after them — `k`, `nghìn`, `triệu`, `tr`, `tỷ`, `million`.
+///
+/// Leaves out years (1900–2100 written plainly), anything inside a date or a
+/// time (`2026-09-01`, `15/10`, `08:30`), anything in code, and whole numbers
+/// below a hundred.
+pub fn figures_in(text: &str) -> Vec<Figure> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    let mut in_code = false;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '`' {
+            in_code = !in_code;
+            i += 1;
+            continue;
+        }
+        if in_code || !c.is_ascii_digit() || (i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_')) {
+            i += 1;
+            continue;
+        }
+        // The longest run of digits and the marks that sit between them.
+        let start = i;
+        let mut j = i;
+        while j < chars.len()
+            && (chars[j].is_ascii_digit()
+                || (matches!(chars[j], '.' | ',' | ' ' | '\u{a0}')
+                    && j + 1 < chars.len()
+                    && chars[j + 1].is_ascii_digit()
+                    && (chars[j] != ' ' && chars[j] != '\u{a0}' || digits_ahead(&chars, j + 1) == 3)))
+        {
+            j += 1;
+        }
+        let raw: String = chars[start..j].iter().collect();
+        let before = start.checked_sub(1).map(|k| chars[k]);
+        let after = chars.get(j).copied();
+        i = j.max(i + 1);
+
+        // Part of a date, a time, a version or an id: `2026-09-01`, `15/10`,
+        // `08:30`, `v2.4`, `r3#12`.
+        if matches!(before, Some('-' | '/' | ':' | '#' | 'v' | 'V'))
+            || matches!(after, Some('-' | '/' | ':' | '#'))
+        {
+            continue;
+        }
+        let Some(mut value) = read_figure(&raw) else { continue };
+
+        // A unit after it: "993k", "1,5 triệu", "2 tỷ".
+        let rest: String = chars[j..chars.len().min(j + 10)].iter().collect::<String>().to_lowercase();
+        let rest = rest.trim_start();
+        let scale = [("triệu", 1e6), ("tr ", 1e6), ("tỷ", 1e9), ("ty ", 1e9), ("nghìn", 1e3), ("ngàn", 1e3), ("k ", 1e3), ("k.", 1e3), ("k,", 1e3), ("million", 1e6), ("billion", 1e9)]
+            .iter()
+            .find(|(w, _)| rest.starts_with(w) || (w.ends_with(' ') && rest == w.trim_end()))
+            .map(|(_, s)| *s);
+        let scaled = scale.is_some() || matches!(after, Some('k' | 'K')) && !chars.get(j + 1).is_some_and(|c| c.is_alphabetic());
+        if let Some(s) = scale {
+            value *= s;
+        } else if matches!(after, Some('k' | 'K')) && scaled {
+            value *= 1e3;
+        }
+
+        let whole = value.fract() == 0.0;
+        if !scaled && whole && raw.chars().all(|c| c.is_ascii_digit()) && (1900.0..=2100.0).contains(&value) {
+            continue;
+        }
+        if whole && value < SMALLEST_FIGURE {
+            continue;
+        }
+        out.push(Figure { written: raw, value });
+    }
+    out
+}
+
+fn digits_ahead(chars: &[char], from: usize) -> usize {
+    chars[from..].iter().take_while(|c| c.is_ascii_digit()).count()
+}
+
+/// `1.234.000` → 1234000, `1,234,000` → 1234000, `12,5` → 12.5, `12.5` → 12.5.
+fn read_figure(raw: &str) -> Option<f64> {
+    let raw = raw.replace(['\u{a0}', ' '], "");
+    let dots = raw.matches('.').count();
+    let commas = raw.matches(',').count();
+    let groups_of_three = |sep: char| raw.split(sep).skip(1).all(|g| g.len() == 3);
+    let cleaned = match (dots, commas) {
+        (0, 0) => raw.clone(),
+        // One mark and three digits after it is a thousands mark only when the
+        // other mark is not also present; "1.500" in Vietnamese is 1500, and
+        // "1,500" in English is 1500. Both readings agree, which is the point.
+        (_, 0) if groups_of_three('.') => raw.replace('.', ""),
+        (0, _) if groups_of_three(',') => raw.replace(',', ""),
+        (1, 0) => raw.clone(),
+        (0, 1) => raw.replace(',', "."),
+        // 1.234,5 (Vietnamese) or 1,234.5 (English).
+        _ => {
+            let last_dot = raw.rfind('.')?;
+            let last_comma = raw.rfind(',')?;
+            if last_comma > last_dot {
+                raw.replace('.', "").replace(',', ".")
+            } else {
+                raw.replace(',', "")
+            }
+        }
+    };
+    cleaned.parse().ok()
+}
+
+/// The figures in `answer` that appear in none of `sources` — what the run
+/// read, what it worked out, what the person said — within a rounding.
+///
+/// A figure matches when some figure in the sources equals it to within half
+/// a percent, or when it is that figure rounded to the precision written
+/// ("1,5 triệu" for 1.523.000 is a rounding, not an invention).
+pub fn unbacked(answer: &str, sources: &[String]) -> Vec<Figure> {
+    let known: Vec<f64> = sources.iter().flat_map(|s| figures_in(s).into_iter().map(|f| f.value)).chain(sources.iter().flat_map(|s| plain_numbers(s))).collect();
+    let mut out: Vec<Figure> = Vec::new();
+    for f in figures_in(answer) {
+        let backed = known.iter().any(|k| {
+            let k = *k;
+            if k == f.value {
+                return true;
+            }
+            let tolerance = (k.abs() * 0.005).max(0.5);
+            (k - f.value).abs() <= tolerance
+        });
+        if !backed && !out.iter().any(|o| o.value == f.value) {
+            out.push(f);
+        }
+    }
+    out
+}
+
+/// Every number in machine-written text (JSON), unfiltered: a sum `crunch`
+/// returned as `993000` or `993000.0` backs "993.000₫".
+fn plain_numbers(text: &str) -> Vec<f64> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for c in text.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_digit() || (c == '.' && !current.is_empty()) || (c == '-' && current.is_empty()) {
+            current.push(c);
+        } else {
+            if let Ok(n) = current.trim_end_matches('.').parse::<f64>() {
+                out.push(n);
+            }
+            current.clear();
+        }
+    }
+    out
+}
+
+/// What to say under an answer whose figures nobody read or worked out. In
+/// the answer's own language, judged by whether it carries Vietnamese marks.
+pub fn figures_warning(unbacked: &[Figure], answer: &str) -> String {
+    if unbacked.is_empty() {
+        return String::new();
+    }
+    let listed = unbacked.iter().map(|f| format!("`{}`", f.written)).collect::<Vec<_>>().join(", ");
+    let vietnamese = crate::syn::rag::fold(&answer.to_lowercase()) != answer.to_lowercase();
+    if vietnamese {
+        format!(
+            "\n\n---\n\n⚠️ **Số {listed} không có trong dữ liệu mình đã đọc hay đã tính.** Có thể mình đã tự cộng \
+             nhẩm hoặc nhớ sai — đừng dùng con số này khi chưa kiểm lại."
+        )
+    } else {
+        format!(
+            "\n\n---\n\n⚠️ **{listed} appear{s} in nothing I read or worked out.** I may have added up in my head or \
+             misremembered — check before relying on {it}.",
+            s = if unbacked.len() == 1 { "s" } else { "" },
+            it = if unbacked.len() == 1 { "it" } else { "them" },
+        )
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 //  CITATIONS
 // ═══════════════════════════════════════════════════════════════
 
@@ -507,5 +707,43 @@ mod tests {
 
         let one = warning(&["https://a.test/one".to_string()]);
         assert!(one.contains("1 address above was not on any page I read"), "{one}");
+    }
+
+    fn values(text: &str) -> Vec<f64> {
+        figures_in(text).into_iter().map(|f| f.value).collect()
+    }
+
+    #[test]
+    fn figures_are_read_the_way_people_write_them() {
+        assert_eq!(values("Tháng 8 bạn chi 993.000đ"), vec![993_000.0]);
+        assert_eq!(values("You spent 1,523,000 VND"), vec![1_523_000.0]);
+        assert_eq!(values("khoảng 1,5 triệu"), vec![1_500_000.0]);
+        assert_eq!(values("993k cho cà phê"), vec![993_000.0]);
+        assert_eq!(values("12,5% and 1 234 000"), vec![12.5, 1_234_000.0]);
+        assert_eq!(values("avg 751.25"), vec![751.25]);
+    }
+
+    #[test]
+    fn dates_years_and_small_counts_are_not_figures() {
+        assert!(values("Ngày 2026-09-01, lúc 08:30, hạn 15/10/2026").is_empty());
+        assert!(values("In 2026 there were 3 notes and 12 tasks").is_empty());
+        assert!(values("`r12#4471` and v2.4").is_empty());
+    }
+
+    #[test]
+    fn a_sum_nobody_worked_out_is_caught() {
+        let read = vec![
+            r#"{"rows":[{"category":"Cà phê","amount":238000},{"category":"Ăn uống","amount":755000}]}"#.to_string(),
+            r#"{"rows":[{"all":"all","sum_amount":993000}]}"#.to_string(),
+        ];
+        assert!(unbacked("Bạn chi 993.000₫ cho Cà phê và Ăn uống.", &read).is_empty());
+        assert!(unbacked("Cà phê 238.000₫, Ăn uống 755.000₫.", &read).is_empty());
+        let wrong = unbacked("Cộng lại là **938.000₫**.", &read);
+        assert_eq!(wrong.iter().map(|f| f.value).collect::<Vec<_>>(), vec![938_000.0]);
+        // A rounding of a real figure is not an invention.
+        assert!(unbacked("khoảng 993 nghìn", &read).is_empty());
+        let said = figures_warning(&wrong, "Cộng lại là 938.000₫");
+        assert!(said.contains("không có trong dữ liệu"), "{said}");
+        assert!(figures_warning(&wrong, "The total is 938,000").contains("appears in nothing"));
     }
 }

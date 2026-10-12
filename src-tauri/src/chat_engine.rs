@@ -112,11 +112,16 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             // it blocking, so on a thread for that rather than on one of the
             // async runtime's few workers. Awaited, so ticks never overlap.
             let app = app_handle.clone();
+            let mirror_vault = vault_path.clone();
             if let Err(e) =
                 tauri::async_runtime::spawn_blocking(move || tick(&app, &vault_path)).await
             {
                 log::error!("Chat Engine tick stopped: {e}");
             }
+            // Connector mirrors this device runs, when due. Network, so here
+            // and not on the blocking thread. See `connector::mirror`.
+            let db = app_handle.state::<crate::db::DbState>();
+            crate::syn::connector::mirror::tick(&app_handle, &db, &mirror_vault).await;
         }
     });
 }
@@ -325,6 +330,7 @@ fn tick(app_handle: &tauri::AppHandle, vault_path: &str) {
         // disk, not a wrong reminder.
         if now.timestamp() % 3600 < 60 {
             let _ = db.prune_reminder_deliveries(now.timestamp());
+            let _ = crate::syn::resultset::prune(db.conn(), now.timestamp());
         }
     }
 

@@ -757,9 +757,18 @@ struct Gathered {
 /// with none is a name and an extension. See `taint::untrusted_source`.
 fn retrieved_untrusted(db: &crate::db::DbBridge, chunks: &[crate::models::syn::ContextChunk]) -> bool {
     chunks.iter().any(|chunk| {
-        crate::syn::taint::untrusted_source(&chunk.source_type, || {
+        // A note a connector's mirror wrote is that connector's words.
+        crate::syn::connector::mirror::connector_of_path(&chunk.source_id).is_some()
+            || crate::syn::taint::untrusted_source(&chunk.source_type, || {
             db.file_text_joined(&chunk.source_id).map_or(true, |text| !text.trim().is_empty())
         })
+            // A clipped page, which is a note by every other measure.
+            || (!matches!(chunk.source_type.as_str(), "file" | "feed_article" | "finance")
+                && db
+                    .get_node(&chunk.source_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|n| crate::syn::taint::from_outside(&n.properties)))
     })
 }
 
@@ -1049,6 +1058,7 @@ fn start_run<R: tauri::Runtime>(
     // Carrying on from a run that had read something is carrying on as one.
     // See `syn::taint`.
     run.read_untrusted = stopped.as_ref().is_some_and(|s| s.read_untrusted);
+    run.read_from = stopped.as_ref().map(|s| s.read_from.clone()).unwrap_or_default();
     // And from where it was: the engine replays what it had done. See
     // `run::replay`.
     run.resumed_from = stopped.as_ref().map(|s| s.id.clone());
@@ -1087,8 +1097,22 @@ fn carry_over(run: &mut Run, stopped: &Run) {
     run.plan_only |= stopped.plan_only;
     run.plan = stopped.plan.clone();
     run.read_untrusted |= stopped.read_untrusted;
+    for origin in &stopped.read_from {
+        if !run.read_from.contains(origin) {
+            run.read_from.push(origin.clone());
+        }
+    }
     run.destinations = stopped.destinations.clone();
     run.tool_groups = stopped.tool_groups.clone();
+    // The plan and what the person decided of it: the requests approved are
+    // sent from the run that carries on. See `syn::writes`.
+    if run.writes.is_none() {
+        run.writes = stopped.writes.clone();
+    }
+    // The connector it asked about, and whether the person said no to it:
+    // the replayed `connector_connect` is answered from these.
+    run.pending_connector = stopped.pending_connector.clone();
+    run.declined_connector = stopped.declined_connector.clone();
     run.resumed_from = Some(stopped.id.clone());
 }
 
@@ -2331,6 +2355,83 @@ pub async fn syn_answer_consent(
     Ok(true)
 }
 
+/// The person's answer to a plan of sends: the requests they approve, by hash.
+/// Every other request is declined; one Rust flagged cannot be approved.
+/// Returns whether there was a plan to answer. See `syn::writes`.
+#[tauri::command]
+pub async fn syn_answer_writes(vault_path: String, run_id: String, approved: Vec<String>) -> Result<bool, AppError> {
+    let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    let Some(plan) = run.writes.as_mut() else { return Ok(false) };
+    if !plan.awaiting() {
+        return Ok(false);
+    }
+    let mut yes = 0;
+    let mut no = 0;
+    for r in plan.requests.iter_mut().filter(|r| r.state == crate::syn::writes::State::Proposed) {
+        if r.problems.is_empty() && approved.contains(&r.hash) {
+            r.state = crate::syn::writes::State::Approved;
+            yes += 1;
+        } else {
+            r.state = crate::syn::writes::State::Declined;
+            no += 1;
+        }
+    }
+    // On the record, as consent is: which sends the person let go.
+    for r in plan.requests.iter().filter(|r| r.state == crate::syn::writes::State::Approved) {
+        crate::syn::audit::record_best_effort(
+            &vault_path,
+            &run_id,
+            &r.tool,
+            &crate::syn::consent::Capability::NetWrite { domain: r.connector.clone(), tool: r.operation.clone() },
+            crate::syn::audit::Outcome::Allowed,
+            run.surface,
+        );
+    }
+    run.note(run.spent.iterations, format!("The user approved {yes} of the planned sends and declined {no}."));
+    crate::syn::run::save_run(&vault_path, &run)?;
+    Ok(true)
+}
+
+/// The person's answer to a connector Syn drafted and proposed. Approving is
+/// done on the card itself, with `syn_instance_approve`, before this; this
+/// only says the person answered, so the run can carry on. Returns whether a
+/// connector was waiting. See `connector::authoring`.
+#[tauri::command]
+pub async fn syn_answer_connector(vault_path: String, run_id: String, approved: bool) -> Result<bool, AppError> {
+    let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    let Some(id) = run.pending_connector.clone() else { return Ok(false) };
+    if run.state != crate::syn::run::RunState::AwaitingApproval {
+        return Ok(false);
+    }
+    if !approved {
+        run.declined_connector = Some(id.clone());
+    }
+    run.note(
+        run.spent.iterations,
+        format!("The user {} the connector `{id}`.", if approved { "answered on" } else { "declined" }),
+    );
+    crate::syn::run::save_run(&vault_path, &run)?;
+    Ok(true)
+}
+
+/// Transactions Syn staged, waiting for the person in Finance. See `syn::staging`.
+#[tauri::command]
+pub async fn syn_staged_list(vault_path: String) -> Result<Vec<crate::syn::staging::Staged>, AppError> {
+    Ok(crate::syn::staging::list(&vault_path))
+}
+
+/// A staging's rows, as the CSV Finance's import preview reads.
+#[tauri::command]
+pub async fn syn_staged_text(vault_path: String, id: String) -> Result<String, AppError> {
+    crate::syn::staging::text_of(&vault_path, &id).map_err(AppError::General)
+}
+
+/// Imported, or set aside by the person.
+#[tauri::command]
+pub async fn syn_staged_discard(vault_path: String, id: String) -> Result<(), AppError> {
+    crate::syn::staging::discard(&vault_path, &id).map_err(AppError::General)
+}
+
 /// Open a page for the person — beside the conversation, or in their browser.
 ///
 /// The one door for *following a link*: a source chip under an answer, a link
@@ -3452,6 +3553,32 @@ mod send_steps {
         assert!(retrieved_untrusted(&db, &[chunk("Feeds/a.md", "feed_article", "Tin")]));
         assert!(retrieved_untrusted(&db, &[chunk("Files/hop-dong.md", "file", "hop-dong.pdf")]));
         assert!(!retrieved_untrusted(&db, &[chunk("Notes/a.md", "note", "A"), chunk("x", "finance", "Tháng 9")]));
+    }
+
+    /// A clipped page retrieved into the prompt is the page's words, by its
+    /// web `source`; the user's own note beside it is not.
+    #[test]
+    fn a_retrieved_clipping_is_somebody_elses_words() {
+        let db = crate::db::DbBridge::new_in_memory_full().expect("db");
+        for (id, properties) in [
+            ("Clippings/vendor.md", serde_json::json!({ "source": "https://vendor.example/onboarding" })),
+            ("Notes/mine.md", serde_json::json!({ "source": { "node": "Notes/uat.md" } })),
+        ] {
+            db.upsert_node(&crate::models::node::NodeMetadata {
+                id: id.into(),
+                node_type: "note".into(),
+                title: id.into(),
+                content: String::new(),
+                properties,
+                created_at: "2026-01-01 00:00:00".into(),
+                updated_at: "2026-01-01 00:00:00".into(),
+                timestamp: 0,
+                blocks: None,
+            })
+            .expect("seed");
+        }
+        assert!(retrieved_untrusted(&db, &[chunk("Clippings/vendor.md", "note", "Vendor")]));
+        assert!(!retrieved_untrusted(&db, &[chunk("Notes/mine.md", "note", "Mine")]));
     }
 
     /// The Telegram turn this was found by: a photo, then "lưu vào file daily

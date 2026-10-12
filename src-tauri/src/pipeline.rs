@@ -28,7 +28,7 @@
 
 use crate::db::{QueryResult, QueryRow};
 use crate::error::{AppError, AppResult};
-use crate::query::{Bucket, Opened, Operand, Query, Sequence, Stage, Tally, Test};
+use crate::query::{Arith, Bucket, Opened, Operand, Query, Sequence, Stage, Tally, Test};
 use crate::refusal::Refusal;
 use crate::search::Comparison;
 
@@ -88,6 +88,7 @@ impl Bucket {
     /// What one row is gathered under, or `None` when it cannot be.
     fn label(&self, row: &QueryRow, result: &QueryResult, dated: Option<usize>) -> Option<String> {
         match self {
+            Bucket::All => Some("all".into()),
             Bucket::Field(name) => {
                 let at = result.columns.iter().position(|c| c == name)?;
                 Some(row.cells.get(at)?.trim().to_string()).filter(|v| !v.is_empty())
@@ -188,7 +189,8 @@ pub fn run_around(
 
 fn one(stage: &Stage, result: QueryResult, around: &Around<'_>) -> AppResult<QueryResult> {
     match stage {
-        Stage::Stats { tally, by } => stats(*tally, by, result),
+        Stage::Stats { tallies, by } => stats(tallies, by, result),
+        Stage::Eval { name, expr } => evaluated(name, expr, result),
         Stage::Seq { sequence, by } => seq(*sequence, by, result, around.today),
         Stage::Where(test) => keeping(test, result),
         Stage::Explode(opened) => explode(*opened, result, around),
@@ -466,10 +468,20 @@ fn passes(test: &Test, row: &QueryRow, columns: &[String]) -> bool {
         Test::Nope(inner) => !passes(inner, row, columns),
         Test::Equals(left, right, same) => {
             let (a, b) = (read(left, row, columns), read(right, row, columns));
-            (a.eq_ignore_ascii_case(&b)) == *same
+            // `to_lowercase`, not `eq_ignore_ascii_case`: the grammar lowers what
+            // was typed, and "Ăn uống" lowered is "ăn uống", which an ASCII-only
+            // comparison never matched with the cell's "Ăn uống".
+            (a.to_lowercase() == b.to_lowercase()) == *same
         }
         Test::Compare(left, operator, right) => {
             let (a, b) = (read(left, row, columns), read(right, row, columns));
+            // An empty cell is no value: neither more nor less than anything.
+            // Compared as text it was less than every number, so `where amount
+            // < 0` kept every row with no amount, and `where due < …` every
+            // task with no date (found by a mirror's test, 2026-10-11).
+            if a.is_empty() || b.is_empty() {
+                return false;
+            }
             // Numbers as numbers, everything else as text — so `quiet > 100`
             // is arithmetic and `last > 2026-01-01` is still a date comparison,
             // which works because a day written this way sorts as it counts.
@@ -510,7 +522,49 @@ fn read(operand: &Operand, row: &QueryRow, columns: &[String]) -> String {
     }
 }
 
-fn stats(tally: Tally, by: &Bucket, result: QueryResult) -> AppResult<QueryResult> {
+/// A number in a cell, however the source wrote it: `1500000`, `1,500,000`,
+/// `1 500 000`, `-12.5`. A `.` followed by exactly three digits more than once
+/// (`1.500.000`) is the Vietnamese thousands mark and read as such.
+pub fn number_in(cell: &str) -> Option<f64> {
+    let t = cell.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if let Ok(n) = t.parse::<f64>() {
+        return Some(n);
+    }
+    let dotted_thousands = t.matches('.').count() > 1
+        && t.split('.').skip(1).all(|g| g.len() == 3 && g.chars().all(|c| c.is_ascii_digit()));
+    let cleaned: String = if dotted_thousands {
+        t.chars().filter(|c| *c != '.' && *c != ' ').collect()
+    } else {
+        t.chars().filter(|c| *c != ',' && *c != ' ' && *c != '_').collect()
+    };
+    cleaned.parse::<f64>().ok()
+}
+
+/// A number as an answer writes it: no `.0` on a whole one, at most four places.
+pub fn written(n: f64) -> String {
+    if n.fract() == 0.0 && n.abs() < 1e15 {
+        format!("{n:.0}")
+    } else {
+        let s = format!("{n:.4}");
+        s.trim_end_matches('0').trim_end_matches('.').to_string()
+    }
+}
+
+/// One heap's running figures for one tally.
+#[derive(Default)]
+struct Figures {
+    rows: i64,
+    sum: f64,
+    numbers: usize,
+    min: Option<f64>,
+    max: Option<f64>,
+    distinct: std::collections::HashSet<String>,
+}
+
+fn stats(tallies: &[Tally], by: &Bucket, result: QueryResult) -> AppResult<QueryResult> {
     let dated = dated_column(&result);
     if matches!(by, Bucket::Day | Bucket::Week | Bucket::Month | Bucket::Year) && dated.is_none() {
         // §9: refuse rather than answer a different question. Gathering by
@@ -518,62 +572,305 @@ fn stats(tally: Tally, by: &Bucket, result: QueryResult) -> AppResult<QueryResul
         // in one heap called "".
         return Err(AppError::Refused(Refusal::no_day_to_gather_by(&by.column())));
     }
+    let column_of = |name: &str| -> AppResult<usize> {
+        result.columns.iter().position(|c| c == name).ok_or_else(|| {
+            AppError::Refused(Refusal::not_a_column_of_this_answer(name, &result.columns.join(", ")))
+        })
+    };
     if let Bucket::Field(name) = by {
-        if !result.columns.iter().any(|c| c == name) {
-            return Err(AppError::Refused(Refusal::not_a_column_of_this_answer(
-                name,
-                &result.columns.join(", "),
-            )));
-        }
+        column_of(name)?;
     }
+    let reads: Vec<Option<usize>> = tallies
+        .iter()
+        .map(|t| t.field().map(column_of).transpose())
+        .collect::<AppResult<_>>()?;
 
     // Kept in the order the labels first appeared, rather than sorted: the
     // rows arrived in the order the question asked for, and `| sort` is how
     // somebody says they wanted another.
     let mut order: Vec<String> = Vec::new();
-    let mut counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let mut heaps: std::collections::HashMap<String, Vec<Figures>> = std::collections::HashMap::new();
     // Rows with nothing to gather under. A task with no status does not belong
     // in any heap of statuses — but losing it in silence is how counting by
     // status comes back as 1 when there are 3 things. So they are left out and
-    // **said**.
+    // **said**. The same for a cell a sum could not read as a number.
     let mut without = 0usize;
+    let mut not_numbers: Vec<usize> = vec![0; tallies.len()];
     for row in &result.rows {
         let Some(label) = by.label(row, &result, dated) else {
             without += 1;
             continue;
         };
-        if counts.insert(label.clone(), counts.get(&label).unwrap_or(&0) + 1).is_none() {
-            order.push(label);
+        let figures = heaps.entry(label.clone()).or_insert_with(|| {
+            order.push(label.clone());
+            tallies.iter().map(|_| Figures::default()).collect()
+        });
+        for (i, (tally, at)) in tallies.iter().zip(&reads).enumerate() {
+            let f = &mut figures[i];
+            f.rows += 1;
+            let Some(at) = at else { continue };
+            let cell = row.cells.get(*at).map(|c| c.trim()).unwrap_or("");
+            if matches!(tally, Tally::Distinct(_)) {
+                if !cell.is_empty() {
+                    f.distinct.insert(cell.to_lowercase());
+                }
+                continue;
+            }
+            match number_in(cell) {
+                Some(n) => {
+                    f.sum += n;
+                    f.numbers += 1;
+                    f.min = Some(f.min.map_or(n, |m| m.min(n)));
+                    f.max = Some(f.max.map_or(n, |m| m.max(n)));
+                }
+                None if cell.is_empty() => {}
+                None => not_numbers[i] += 1,
+            }
         }
     }
 
     let total = order.len();
-    let left_out = (without > 0).then(|| {
-        format!("{without} with no {}", by.column())
-    });
-    let note = match (result.note, left_out) {
+    let mut left_out: Vec<String> = Vec::new();
+    if without > 0 {
+        left_out.push(format!("{without} with no {}", by.column()));
+    }
+    for (tally, n) in tallies.iter().zip(&not_numbers) {
+        if *n > 0 {
+            left_out.push(format!("{n} cells of {} were not numbers and were skipped", tally.field().unwrap_or("?")));
+        }
+    }
+    let note = match (result.note, (!left_out.is_empty()).then(|| left_out.join("; "))) {
         (Some(had), Some(left)) => Some(format!("{had}; {left}")),
         (had, left) => had.or(left),
     };
+    let mut columns = vec![by.column()];
+    columns.extend(tallies.iter().map(Tally::column));
     Ok(QueryResult {
-        columns: vec![by.column(), tally.column().to_string()],
+        columns,
         rows: order
             .into_iter()
-            .map(|label| QueryRow {
-                // The id is the label: there is no node behind a heap of rows,
-                // and a view keys its rows by this.
-                id: label.clone(),
-                node_type: String::new(),
-                title: label.clone(),
-                cells: vec![label.clone(), counts[&label].to_string()],
-                open: None,
-                until: None,
+            .map(|label| {
+                let figures = &heaps[&label];
+                let mut cells = vec![label.clone()];
+                for (tally, f) in tallies.iter().zip(figures) {
+                    cells.push(match tally {
+                        Tally::Count => f.rows.to_string(),
+                        Tally::Sum(_) => written(f.sum),
+                        Tally::Avg(_) if f.numbers > 0 => written(f.sum / f.numbers as f64),
+                        Tally::Min(_) => f.min.map(written).unwrap_or_default(),
+                        Tally::Max(_) => f.max.map(written).unwrap_or_default(),
+                        Tally::Distinct(_) => f.distinct.len().to_string(),
+                        Tally::Avg(_) => String::new(),
+                    });
+                }
+                QueryRow {
+                    // The id is the label: there is no node behind a heap of rows,
+                    // and a view keys its rows by this.
+                    id: label.clone(),
+                    node_type: String::new(),
+                    title: label,
+                    cells,
+                    open: None,
+                    until: None,
+                }
             })
             .collect(),
         total,
         query_time_ms: result.query_time_ms,
         note,
     })
+}
+
+/// A value `eval` works with: a number when the cell reads as one.
+#[derive(Debug, Clone)]
+enum Worked {
+    Number(f64),
+    Text(String),
+    Nothing,
+}
+
+impl Worked {
+    fn number(&self) -> Option<f64> {
+        match self {
+            Worked::Number(n) => Some(*n),
+            Worked::Text(t) => number_in(t),
+            Worked::Nothing => None,
+        }
+    }
+    fn text(&self) -> String {
+        match self {
+            Worked::Number(n) => written(*n),
+            Worked::Text(t) => t.clone(),
+            Worked::Nothing => String::new(),
+        }
+    }
+}
+
+/// An instant in a cell, in `zone` when one is given.
+///
+/// A time that says its own offset (`…Z`, `…+07:00`) is moved into the zone. A
+/// time that does not is taken as already being in it — there is nothing to
+/// move it from — and a plain day has no hour at all.
+fn instant_in(cell: &str, zone: Option<&str>) -> Result<Option<chrono::NaiveDateTime>, String> {
+    let cell = cell.trim();
+    if cell.is_empty() {
+        return Ok(None);
+    }
+    let tz: Option<chrono_tz::Tz> = match zone {
+        Some(z) => Some(z.parse().map_err(|_| format!("'{z}' is not a time zone — write one like Asia/Ho_Chi_Minh"))?),
+        None => None,
+    };
+    if let Ok(t) = chrono::DateTime::parse_from_rfc3339(cell) {
+        return Ok(Some(match tz {
+            Some(tz) => t.with_timezone(&tz).naive_local(),
+            None => t.naive_utc(),
+        }));
+    }
+    for format in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"] {
+        if let Ok(t) = chrono::NaiveDateTime::parse_from_str(cell, format) {
+            return Ok(Some(t));
+        }
+    }
+    if let Some(day) = day_of(cell) {
+        return Ok(day.and_hms_opt(0, 0, 0));
+    }
+    Ok(None)
+}
+
+fn work(expr: &Arith, row: &QueryRow, columns: &[String]) -> Result<Worked, String> {
+    Ok(match expr {
+        Arith::Number(n) => Worked::Number(*n),
+        Arith::Text(t) => Worked::Text(t.clone()),
+        Arith::Column(name) => {
+            let at = columns
+                .iter()
+                .position(|c| c == name)
+                .ok_or_else(|| format!("'{name}' is not one of the columns ({})", columns.join(", ")))?;
+            match row.cells.get(at).map(|c| c.trim()) {
+                None | Some("") => Worked::Nothing,
+                Some(cell) => number_in(cell).map(Worked::Number).unwrap_or_else(|| Worked::Text(cell.to_string())),
+            }
+        }
+        Arith::Neg(inner) => match work(inner, row, columns)?.number() {
+            Some(n) => Worked::Number(-n),
+            None => Worked::Nothing,
+        },
+        Arith::Op(a, op, b) => {
+            let (a, b) = (work(a, row, columns)?.number(), work(b, row, columns)?.number());
+            match (a, b) {
+                (Some(a), Some(b)) => match op {
+                    '+' => Worked::Number(a + b),
+                    '-' => Worked::Number(a - b),
+                    '*' => Worked::Number(a * b),
+                    _ if b == 0.0 => Worked::Nothing,
+                    _ => Worked::Number(a / b),
+                },
+                _ => Worked::Nothing,
+            }
+        }
+        Arith::Call(name, args) => {
+            let first = work(&args[0], row, columns)?;
+            let second = args.get(1).map(|a| work(a, row, columns)).transpose()?;
+            match name.as_str() {
+                "round" => {
+                    let places = second.and_then(|s| s.number()).unwrap_or(0.0).clamp(0.0, 10.0) as i32;
+                    match first.number() {
+                        Some(n) => {
+                            let k = 10f64.powi(places);
+                            Worked::Number((n * k).round() / k)
+                        }
+                        None => Worked::Nothing,
+                    }
+                }
+                "abs" => first.number().map(|n| Worked::Number(n.abs())).unwrap_or(Worked::Nothing),
+                "lower" => Worked::Text(first.text().to_lowercase()),
+                "extract" => {
+                    let pattern = second.map(|p| p.text()).unwrap_or_default();
+                    let re = extract_pattern(&pattern)?;
+                    let text = first.text();
+                    match re.captures(&text) {
+                        None => Worked::Nothing,
+                        Some(c) => {
+                            let got = c.get(1).or_else(|| c.get(0)).map(|m| m.as_str().trim().to_string()).unwrap_or_default();
+                            match number_in(&got) {
+                                Some(n) => Worked::Number(n),
+                                None if got.is_empty() => Worked::Nothing,
+                                None => Worked::Text(got),
+                            }
+                        }
+                    }
+                }
+                clock => {
+                    let zone = second.map(|z| z.text());
+                    let Some(t) = instant_in(&first.text(), zone.as_deref())? else { return Ok(Worked::Nothing) };
+                    use chrono::{Datelike, Timelike};
+                    match clock {
+                        "hour" => Worked::Number(f64::from(t.hour())),
+                        "day" => Worked::Text(t.format("%Y-%m-%d").to_string()),
+                        "month" => Worked::Text(t.format("%Y-%m").to_string()),
+                        // Monday is 1, as ISO and every calendar in Vietnam count.
+                        "weekday" => Worked::Number(f64::from(t.weekday().number_from_monday())),
+                        other => return Err(format!("eval does not know '{other}'")),
+                    }
+                }
+            }
+        }
+    })
+}
+
+/// A pattern for `extract`, compiled once. The `regex` crate cannot backtrack
+/// without end, and a size limit keeps a pattern from being a program.
+fn extract_pattern(pattern: &str) -> Result<regex::Regex, String> {
+    static CACHE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, regex::Regex>>> = std::sync::LazyLock::new(Default::default);
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(re) = cache.get(pattern) {
+        return Ok(re.clone());
+    }
+    let re = regex::RegexBuilder::new(pattern)
+        .size_limit(1 << 16)
+        .build()
+        .map_err(|e| format!("extract: the pattern does not read: {e}"))?;
+    if cache.len() > 64 {
+        cache.clear();
+    }
+    cache.insert(pattern.to_string(), re.clone());
+    Ok(re)
+}
+
+/// `| eval name = …`: a column worked out on every row, replacing one of the
+/// same name. A row the sum cannot be worked out for gets an empty cell, and
+/// how many did is said.
+fn evaluated(name: &str, expr: &Arith, mut result: QueryResult) -> AppResult<QueryResult> {
+    let columns = result.columns.clone();
+    let at = match columns.iter().position(|c| c == name) {
+        Some(at) => at,
+        None => {
+            result.columns.push(name.to_string());
+            columns.len()
+        }
+    };
+    let mut empty = 0usize;
+    for row in &mut result.rows {
+        let value = work(expr, row, &columns).map_err(|why| AppError::Refused(Refusal::eval_cannot(&why)))?;
+        if matches!(value, Worked::Nothing) {
+            empty += 1;
+        }
+        let text = value.text();
+        if at < row.cells.len() {
+            row.cells[at] = text;
+        } else {
+            row.cells.resize(at, String::new());
+            row.cells.push(text);
+        }
+    }
+    if empty > 0 {
+        let said = format!("{empty} rows have no {name}");
+        result.note = Some(match result.note.take() {
+            Some(had) => format!("{had}; {said}"),
+            None => said,
+        });
+    }
+    Ok(result)
 }
 
 fn sorted(key: &str, descending: bool, mut result: QueryResult) -> QueryResult {

@@ -28,6 +28,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
 import KeepAsLens from './KeepAsLens.vue';
+import HowWorkedOut from './HowWorkedOut.vue';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { linkCitations } from '../citations';
@@ -939,6 +940,13 @@ const copyContent = async () => {
             </div>
           </Transition>
         </div>
+
+        <!-- How the figures were worked out: tables and crunch pipelines, from
+             what the run did. See `syn::crunch`. -->
+        <HowWorkedOut
+          v-if="message.role === 'assistant' && !isStreaming"
+          :tool-calls="message.tool_calls_log"
+        />
 
         <!-- §6.2: the assistant writes a query, it does not replace one. So
              what it asked is shown, and can be kept. -->

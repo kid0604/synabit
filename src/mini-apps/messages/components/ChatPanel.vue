@@ -10,6 +10,9 @@ import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
 import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
+import WritePlanCard from './WritePlanCard.vue';
+import ConnectorProposalCard from './ConnectorProposalCard.vue';
+import type { WritePlan } from '../composables/useSynWrites';
 import ChoiceCard from './ChoiceCard.vue';
 import NotificationCard from './NotificationCard.vue';
 import SynSetupCard from './SynSetupCard.vue';
@@ -39,6 +42,14 @@ const props = defineProps<{
   chatError?: string | null;
   /** The question a run stopped on, when one has. */
   consentAsk?: ConsentAsk | null;
+  /** A plan of sends Syn stopped on, in this conversation. See `syn::writes`. */
+  writesPlan?: WritePlan | null;
+  writesBusy?: boolean;
+  writesError?: string | null;
+  /** A connector Syn drafted and stopped on, by id. See `connector::authoring`. */
+  connectorAsk?: string | null;
+  connectorBusy?: boolean;
+  connectorError?: string | null;
   /** *Which one?* — see `syn::ambiguity`. Never both at once: a run stops on
    *  the first thing it needs, so two cards means two runs. */
   choiceAsk?: AmbiguousChoice | null;
@@ -61,6 +72,8 @@ const emit = defineEmits<{
   'open-board': [board: { id: string; path: string; title: string; data: any }];
   'notification-action': [notification: any];
   consent: [choice: ConsentAnswer];
+  writes: [approved: string[]];
+  connector: [approved: boolean];
   choice: [nodeId: string];
   /** Syn's tab of Settings, from the setup card. */
   'open-settings': [];
@@ -464,6 +477,18 @@ const handleStop = () => {
              the end of the conversation it belongs to and can be left alone. -->
         <div v-if="choiceAsk" class="px-4">
           <ChoiceCard :choice="choiceAsk" @answer="emit('choice', $event)" />
+        </div>
+        <div v-if="connectorAsk && vaultPath" class="px-4">
+          <ConnectorProposalCard
+            :vault-path="vaultPath"
+            :connector-id="connectorAsk"
+            :busy="connectorBusy"
+            :error="connectorError"
+            @answer="emit('connector', $event)"
+          />
+        </div>
+        <div v-if="writesPlan" class="px-4">
+          <WritePlanCard :plan="writesPlan" :busy="writesBusy" :error="writesError" @answer="emit('writes', $event)" />
         </div>
         <div v-if="consentAsk" class="px-4">
           <ConsentCard

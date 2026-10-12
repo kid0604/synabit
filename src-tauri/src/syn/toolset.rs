@@ -58,6 +58,15 @@ pub enum Group {
     Safe,
     /// Rich Tables inside notes: their rows, by column.
     Tables,
+    /// Working figures out over a table a tool brought back (`crunch`). Sent
+    /// once a result in the run carries a table's handle, which is the only
+    /// time it can do anything — see [`brought_by`].
+    Compute,
+    /// Planning sends to connectors (`propose_writes`). Sent whenever a
+    /// connector tool that sends is — see the engine's `select`.
+    Writes,
+    /// Syn writing a connector: `connector_draft`, `connector_connect`.
+    Authoring,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -77,6 +86,9 @@ impl Group {
             Group::Past => "past".into(),
             Group::Safe => "safe".into(),
             Group::Tables => "tables".into(),
+            Group::Compute => "compute".into(),
+            Group::Writes => "writes".into(),
+            Group::Authoring => "authoring".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -94,6 +106,9 @@ impl Group {
             "past" => Group::Past,
             "safe" => Group::Safe,
             "tables" => Group::Tables,
+            "compute" => Group::Compute,
+            "writes" => Group::Writes,
+            "authoring" => Group::Authoring,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -119,6 +134,9 @@ impl Group {
             Group::Past => "your own earlier runs, and remembered things searched by hand".into(),
             Group::Safe => "the user's Safe: names of secrets you may use with connectors, and asking the user to add one".into(),
             Group::Tables => "rich tables in notes: add, change or remove rows by column".into(),
+            Group::Compute => "totals, averages, counts and filters over a table a tool returned (crunch)".into(),
+            Group::Writes => "a plan of sends to connectors for the user to approve (propose_writes)".into(),
+            Group::Authoring => "connect to a new service: draft a connector from its API or OpenAPI spec, and ask the user to approve it".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
@@ -135,7 +153,7 @@ pub fn group_of(tool: &str) -> Group {
         return Group::Connector(rest.split("__").next().unwrap_or_default().to_string());
     }
     match tool {
-        "get_finance_summary" | "search_finance" | "get_transactions" | "create_transaction"
+        "get_finance_summary" | "search_finance" | "get_transactions" | "create_transaction" | "stage_transactions"
         | "update_transaction" | "delete_transaction" => Group::Finance,
         "search_feed_articles" | "read_feed_article" | "update_feed_article" => Group::Feeds,
         "search_files" | "read_file_text" | "read_spreadsheet" | "write_spreadsheet" => Group::Files,
@@ -146,6 +164,9 @@ pub fn group_of(tool: &str) -> Group {
         "recall" | crate::syn::tools::LOOK_BACK_TOOL => Group::Past,
         "safe_list" | "safe_health" | "safe_request" => Group::Safe,
         "table_rows" => Group::Tables,
+        name if name == crate::syn::crunch::TOOL => Group::Compute,
+        name if name == crate::syn::writes::TOOL => Group::Writes,
+        name if [crate::syn::connector::authoring::DRAFT_TOOL, crate::syn::connector::authoring::PROPOSE_TOOL, crate::syn::connector::authoring::FIND_TOOL, crate::syn::connector::authoring::TRY_TOOL].contains(&name) => Group::Authoring,
         _ => Group::Core,
     }
 }
@@ -208,7 +229,13 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "xóa hàng", "xoá dòng", "xóa dòng", "sửa hàng", "sửa dòng", "vào bảng", "trong bảng",
             "table", "tables", "row", "rows", "column", "columns",
         ],
-        Group::Core | Group::Connector(_) => &[],
+        // Never by the question's words: `crunch` can do nothing until a table
+        // exists, and a table existing is what brings it (`brought_by`).
+        Group::Authoring => &[
+            "kết nối với", "nối với", "nối syn", "tích hợp", "connector", "openapi", "kết nối tới", "connect to",
+            "integrate", "integration", "hook up",
+        ],
+        Group::Core | Group::Connector(_) | Group::Compute | Group::Writes => &[],
     }
 }
 
@@ -262,14 +289,20 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Past,
         Group::Safe,
         Group::Tables,
+        Group::Authoring,
     ] {
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);
         }
     }
     for (slug, name) in servers {
+        // "Thời tiết (Open-Meteo)" is asked for as "thời tiết": the name without
+        // what is in brackets counts as saying it.
+        let short = name.split('(').next().unwrap_or(name).trim().to_string();
         let name = shape(name);
-        if said(slug) || (!name.trim().is_empty() && asked.contains(name.trim())) {
+        let short = shape(&short);
+        let named = |n: &str| n.trim().chars().count() >= 3 && asked.contains(n.trim());
+        if said(slug) || named(&name) || named(&short) {
             groups.insert(Group::Connector(slug.clone()));
         }
     }
@@ -299,6 +332,16 @@ pub fn found(query: &str, known: &[Group]) -> Vec<Group> {
         })
         .cloned()
         .collect()
+}
+
+/// A group a tool's result makes worth sending for the rest of the run.
+///
+/// A result that filed a table says its handle; from then on `crunch` is the
+/// way to a number about it, so it is sent. Read off the result rather than
+/// off which tool ran, because any tool that returns a table — a connector,
+/// `get_transactions`, `crunch` itself — does it the same way.
+pub fn brought_by(content: &str) -> Option<Group> {
+    (content.contains("\"handle\":\"r") || content.contains("\"handle\": \"r")).then_some(Group::Compute)
 }
 
 /// Whether a tool is sent, given the groups loaded.
@@ -387,5 +430,14 @@ mod tests {
         assert!(offered("query_nodes", &loaded));
         assert!(offered("search_finance", &loaded));
         assert!(!offered("read_board", &loaded));
+    }
+
+    #[test]
+    fn a_result_with_a_table_brings_crunch() {
+        assert_eq!(brought_by(r#"{"handle":"r3","rows":3000}"#), Some(Group::Compute));
+        assert_eq!(brought_by(r#"{"results":[]}"#), None);
+        assert_eq!(group_of(crate::syn::crunch::TOOL), Group::Compute);
+        assert!(!offered(crate::syn::crunch::TOOL, &BTreeSet::from([Group::Core])));
+        assert_eq!(Group::from_name("compute"), Some(Group::Compute));
     }
 }

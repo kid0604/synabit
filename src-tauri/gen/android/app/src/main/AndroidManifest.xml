@@ -153,6 +153,22 @@
             android:resource="@xml/file_paths" />
         </provider>
         <!--
+          Syn's `android.notifications` bridge. Bound only by the system, and
+          only once the person turns notification access on in Settings,
+          after the approval card in the app has said what is kept. Keeps the
+          notifications of the apps they chose and nothing else.
+        -->
+        <service
+            android:name=".SynNotificationListener"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!--
           The quick settings tile. Exported and permission-guarded in the way
           the system requires: only the system may bind it, and it must be
           able to.

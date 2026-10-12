@@ -53,6 +53,8 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "syn_memory" => crate::syn::memory::MEMORY_FOLDER.to_string(),
         // Nor `Skills`, for the same reason.
         "syn_skill" => crate::syn::skill::SKILL_FOLDER.to_string(),
+        // Nor `Connectors`. See `connector::manifest`.
+        "syn_connector" => crate::syn::connector::manifest::CONNECTOR_FOLDER.to_string(),
         // Nor `Threads`. A thread is the user's own work rather than Syn's
         // bookkeeping — see `syn/thread.rs` — but the folder is still prefixed,
         // because somebody's own `thread` kind has first claim on the word.
@@ -94,6 +96,7 @@ pub(crate) fn is_internal_type(node_type: &str) -> bool {
             | "view"
             | "syn_memory"
             | "syn_skill"
+            | "syn_connector"
             | "moment"
     ) || node_type.starts_with("finance_")
 }
@@ -626,6 +629,136 @@ pub fn get_tool_definitions_for(settings: &crate::models::syn::SynSettings) -> V
 /// Build the complete list of tool definitions for the Ollama chat API.
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     let mut definitions = vec![
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "connector_draft".to_string(),
+                description: "Write a connector for a service the user wants Syn to reach, as a declaration (never code). Look first with connector_find: one in the library needs no draft. Two ways: give `openapi_url` alone to list the spec's operations, then call again with `operations` (\"GET /tasks\"…) chosen from that list — Rust writes the declaration; or give `yaml`. What only the user knows — a key, their account, their own server's address — is declared as `inputs` (kind secret, account or address) with a `guide`: where to get it, in steps, and a link on the service's site. Choose everything else yourself; never ask the user technical questions. The host must be one the user named, or an address input. The draft does nothing until connector_connect. Problems come back with codes; fix and call again.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["id", "name"],
+                    "properties": {
+                        "id": { "type": "string", "description": "a-z, 0-9 and _, up to 20, e.g. todoist." },
+                        "name": { "type": "string", "description": "What the user calls the service." },
+                        "about": { "type": "string", "description": "One or two sentences on what it is for, shown above the declaration." },
+                        "openapi_url": { "type": "string", "description": "Address of the service's OpenAPI spec (JSON or YAML)." },
+                        "base_url": { "type": "string", "description": "Optional: the API's address, when it is not the one the spec gives." },
+                        "operations": { "type": "array", "items": { "type": "string" }, "description": "With openapi_url: the operations to keep, as listed, e.g. \"GET /tasks\"." },
+                        "auth": { "type": "object", "description": "How it authenticates: {\"type\":\"bearer\",\"secret\":\"todoist_token\"}, header (+name), query (+name), basic (+user), or none. The user types the secret's value on the approval card; never ask for it in the chat." },
+                        "guide": { "type": "object", "description": "With openapi_url: how the user gets the key the spec asks for — {\"link\": \"https://…\", \"steps\": {\"en\": [\"…\"], \"vi\": [\"…\"]}}, from the service's own documentation." },
+                        "yaml": { "type": "string", "description": "Instead of openapi_url, for a service with documentation but no spec: the whole declaration — id, name, base_url (or \"{{input.server}}\" for the user's own server), auth, inputs: [{name, kind: secret|account|address, label: {en, vi}, example, guide: {link, steps: {en: [...], vi: [...]}}}], operations: [{name, description, effect: read|write|irreversible, call: {method, path, query}, params, result: {each: \"$\" or \"$.items[*]\"}}], with `{{param}}` placeholders. Try a read with connector_try before proposing." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "stage_transactions".to_string(),
+                description: "Turn a table — a bank statement read with read_spreadsheet or a connector — into transactions for the user to review in Finance. Nothing goes into the ledger: Finance shows them in its import preview (how each column was read, rows it already has, what it could not read) and adds them when the user confirms. You name which column is which; the values are the table's own.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["handle", "date", "amount"],
+                    "properties": {
+                        "handle": { "type": "string", "description": "The table, e.g. r1." },
+                        "date": { "type": "string", "description": "The column holding the date." },
+                        "amount": { "type": "string", "description": "The column holding the amount; negative is money out." },
+                        "note": { "type": "string", "description": "The column holding the description." },
+                        "category": { "type": "string", "description": "A column holding a category, if the table has one." },
+                        "type": { "type": "string", "description": "A column holding income/expense, if the table has one." },
+                        "account": { "type": "string", "description": "The Finance account's name, for every row." },
+                        "rules": { "type": "array", "items": { "type": "object", "properties": { "contains": { "type": "string" }, "category": { "type": "string" } } }, "description": "Categories by what the description holds, e.g. [{\"contains\":\"highlands\",\"category\":\"Ăn uống\"}]; use the user's Finance categories." },
+                        "why": { "type": "string", "description": "One line on what these are." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "connector_find".to_string(),
+                description: "Before drafting a connector: what Syn can already reach — connectors in the vault and whether each is approved here, ones Synabit ships, and connected MCP servers. Use one that fits rather than drafting another.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["need"],
+                    "properties": { "need": { "type": "string", "description": "The service, and what the user wants from it." } }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "connector_try".to_string(),
+                description: "Call one reading operation of a draft once, before proposing it, to check its path and its columns against what the user needs. Returns a few rows; nothing is kept. Not for drafts that need a secret.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["id", "operation"],
+                    "properties": {
+                        "id": { "type": "string", "description": "The draft's id." },
+                        "operation": { "type": "string", "description": "A `read` operation's name." },
+                        "args": { "type": "object", "description": "Its parameters." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "connector_connect".to_string(),
+                description: "Show the user the connect card for a connector you drafted or found: what it reads and where, and the inputs it declares — each with its guide. They type the values there (a key goes straight to this device's keychain) and press Connect; it is tried at once. You are told when it works. Never ask for a key, password or token in the chat: declare it as an input of kind secret, with a guide.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": { "id": { "type": "string", "description": "The draft's id." } }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out for `toolLabel.spec.ts`, as `crunch` is.
+                name: "propose_writes".to_string(),
+                description: "Propose every send to a connector you mean to make — creating, changing, posting, mailing — as one plan the user approves on a card. Required for a send after reading anything from outside, and for one that cannot be undone. After the user answers you are told which requests are approved; then call each exactly as proposed. Pass a table a tool returned as \"{{result:r3}}\" (a list of records) or \"{{result:r3:rows}}\" (a header row, then rows) — Rust fills it in.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["why", "requests"],
+                    "properties": {
+                        "why": { "type": "string", "description": "One sentence: what these sends are for." },
+                        "requests": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["tool", "args"],
+                                "properties": {
+                                    "tool": { "type": "string", "description": "The connector tool, e.g. connector__sheets__write_values." },
+                                    "args": { "type": "object", "description": "Its arguments, exactly as they will be sent." }
+                                }
+                            }
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out, not `crunch::TOOL`: `toolLabel.spec.ts` reads the
+                // declared names from this file, and `TOOL` alone is `delegate`'s.
+                name: "crunch".to_string(),
+                description: "Work something out over a table a tool handed you a handle for (r1, r2…): totals, averages, counts per group, filters, top N, a value per row. It computes over every row of the table — use it instead of adding or counting numbers yourself, and instead of reading from a summary's sample. Stages are joined with |. Column names in lower case.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["handle", "pipeline"],
+                    "properties": {
+                        "handle": { "type": "string", "description": "The table's handle, e.g. r1." },
+                        "pipeline": {
+                            "type": "string",
+                            "description": "Stages: `where amount > 100000 and category = \"Dining\"`, `where date >= 2026-09-01`, `stats sum(amount), count by category` (also avg, min, max, distinct; without `by` it is one total), `sort sum_amount desc`, `head 5`, `top 5 by count`, `eval md = spent_s / 28800`, `eval h = hour(time, \"Asia/Ho_Chi_Minh\")` (also day, month, weekday, round, abs, lower), `eval amount = extract(text, \"([+-][0-9,.]+)VND\")` (a number out of free text, by a pattern), `join r2 on account = id` (each row with r2's matching row beside it), `union r2` (rows of both, with `source`). Columns are named in lower case with `_` for a space: \"Số tiền\" is `số_tiền`. Example: `where date >= 2026-09-01 | stats sum(amount) by category | sort sum_amount desc`."
+                        }
+                    }
+                }),
+            },
+        },
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
@@ -1481,6 +1614,13 @@ pub fn execute_tool<R: tauri::Runtime>(
         // app has never heard of.
         "query_nodes" => tool_query_nodes(&*lock(ctx)?, args),
         "get_node" => tool_get_node(&*lock(ctx)?, args),
+        "stage_transactions" => tool_stage_transactions(ctx, args),
+        "connector_find" => Ok(crate::syn::connector::authoring::find(
+            &*lock(ctx)?,
+            ctx.vault_path,
+            args.get("need").and_then(Value::as_str).unwrap_or_default(),
+        )
+        .to_string()),
         "list_schemas" => tool_list_schemas(&*lock(ctx)?),
         "create_node" => tool_create_node(ctx, args),
         "update_node" => over_each(ctx, args, tool_update_node),
@@ -1489,6 +1629,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "draw_board" => tool_draw_board(ctx, args),
         "edit_board" => tool_edit_board(ctx, args),
         "table_rows" => tool_table_rows(ctx, args),
+        name if name == crate::syn::crunch::TOOL => tool_crunch(ctx, args),
 
         // What Syn knows about the person rather than about their vault.
         // Stored as nodes, so `trash_node` and `restore_node` already forget
@@ -1504,6 +1645,10 @@ pub fn execute_tool<R: tauri::Runtime>(
         // Not here: this one is async, and `execute_tool` is not. The engine
         // runs it before reaching this table — see `SynEngine::drive`.
         name if name == BROWSE_TOOL
+            || name == crate::syn::writes::TOOL
+            || name == crate::syn::connector::authoring::DRAFT_TOOL
+            || name == crate::syn::connector::authoring::PROPOSE_TOOL
+            || name == crate::syn::connector::authoring::TRY_TOOL
             || name == PLAN_TOOL
             || name == crate::syn::delegate::TOOL
             || name == crate::syn::toolset::FIND_TOOL => Err(AppError::General(
@@ -1536,13 +1681,16 @@ pub fn execute_tool<R: tauri::Runtime>(
         // which no node query can add up.
         "search_feed_articles" => tool_search_feed_articles(&*lock(ctx)?, args),
         "read_feed_article" => tool_read_feed_article(&*lock(ctx)?, args),
-        "search_files" => tool_search_files(&*lock(ctx)?, args),
+        "search_files" => tool_search_files(&*lock(ctx)?, args).map(|out| with_path_in_vault(ctx, args, out)),
         "read_file_text" => tool_read_file_text(&*lock(ctx)?, args),
         "timeline" => tool_timeline(ctx, args),
         "update_feed_article" => tool_update_feed_article(ctx, args),
         "get_finance_summary" => tool_get_finance_summary(&*lock(ctx)?),
         "search_finance" => tool_search_finance(&*lock(ctx)?, args),
-        "get_transactions" => tool_get_transactions(&*lock(ctx)?, args),
+        "get_transactions" => {
+            let listed = tool_get_transactions(&*lock(ctx)?, args)?;
+            with_table_of_transactions(ctx, args, listed)
+        }
         "create_transaction" => tool_create_transaction(ctx, args),
         "update_transaction" => tool_update_transaction(ctx, args),
         "delete_transaction" => tool_delete_transaction(ctx, args),
@@ -1561,9 +1709,31 @@ pub fn execute_tool<R: tauri::Runtime>(
 
     // Whatever a stranger wrote is now in the run, and it stays there. Set on
     // an answer only: a read that failed brought nothing back to believe.
-    if let (Some(taint), Ok(_)) = (ctx.model, &result) {
-        if crate::syn::taint::UNTRUSTED_READS.contains(&name) {
+    // A file search that found nothing brought nothing back either:
+    // `_returned: 0` is not a stranger's words. (The 2026-10-11 eval: a model looked for a
+    // file that was not there, and the empty answer shut every connector.)
+    if let (Some(taint), Ok(out)) = (ctx.model, &result) {
+        // Files only: a feed search is held to the old rule, which the
+        // attack tests for feeds are written against.
+        let found_nothing = name == "search_files"
+            && serde_json::from_str::<Value>(out)
+                .ok()
+                .is_some_and(|v| v.get("_returned").and_then(Value::as_u64) == Some(0) && v.get("in_notes").is_none());
+        if crate::syn::taint::UNTRUSTED_READS.contains(&name) && !found_nothing {
             taint.set();
+        }
+        // A clipped page, read whole: a note by every measure but whose words it holds.
+        if name == "get_node"
+            && serde_json::from_str::<Value>(out)
+                .ok()
+                .and_then(|v| v.get("properties").cloned())
+                .is_some_and(|p| crate::syn::taint::from_outside(&p))
+        {
+            taint.set();
+        }
+        // A note a mirror wrote, from whichever tool showed it.
+        for id in crate::syn::taint::mirrored_in(out) {
+            taint.note(crate::syn::taint::Origin::Connector(id));
         }
     }
 
@@ -2237,7 +2407,7 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
     match node {
         Some(n) => {
             // Cut at `MAX_CONTENT_CHARS` to stay within the tool result limit
-            let content: String = n.content.chars().take(MAX_CONTENT_CHARS).collect();
+            let content: String = n.content.chars().take(crate::syn::room::scaled(MAX_CONTENT_CHARS)).collect();
             let content_truncated = content.len() < n.content.len();
 
             let output = serde_json::json!({
@@ -2282,7 +2452,8 @@ fn tool_read_feed_article(db: &DbBridge, args: &Value) -> AppResult<String> {
     let body = if article.content.trim().is_empty() { &article.summary } else { &article.content };
     let text = crate::syn::web::text_of_html(body);
     let total = text.chars().count();
-    let cut = total > MAX_CONTENT_CHARS;
+    let room = crate::syn::room::scaled(MAX_CONTENT_CHARS);
+    let cut = total > room;
 
     let mut result = serde_json::json!({
         "id": article.id,
@@ -2291,12 +2462,12 @@ fn tool_read_feed_article(db: &DbBridge, args: &Value) -> AppResult<String> {
         "url": article.url,
         "published_at": article.published_at,
         "word_count": article.word_count,
-        "text": text.chars().take(MAX_CONTENT_CHARS).collect::<String>(),
+        "text": text.chars().take(room).collect::<String>(),
         "truncated": cut,
     });
     if cut {
         result["_note"] = serde_json::json!(format!(
-            "The first {MAX_CONTENT_CHARS} of {total} characters. Say that a summary covers only this part."
+            "The first {room} of {total} characters. Say that a summary covers only this part."
         ));
     }
     Ok(result.to_string())
@@ -2419,6 +2590,64 @@ fn tool_search_finance(db: &DbBridge, args: &Value) -> AppResult<String> {
 }
 
 /// 11. search_files — Search files by name, extension, tags, or linked people
+/// A search for something that is a path in this vault says so. `search_files`
+/// looks in the file index, which a CSV dropped into the vault may not be in;
+/// asked for `Imports/sao-ke.csv` by name, a run searched three ways, found
+/// nothing, and told the person the file was not there (2026-10-11 eval).
+fn with_path_in_vault<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value, out: String) -> String {
+    let query = args.get("query").and_then(Value::as_str).unwrap_or_default().trim().trim_matches(['`', '"', '\'']);
+    if query.is_empty() || !query.contains('.') {
+        return out;
+    }
+    let at_path = crate::path_utils::resolve_safe_path(ctx.vault_path, query).ok().filter(|p| p.is_file());
+    // Or a file of that name anywhere in the vault.
+    let found: Vec<std::path::PathBuf> = match at_path {
+        Some(p) => vec![p],
+        None if !query.contains(['/', '\\']) => {
+            let root = std::fs::canonicalize(ctx.vault_path).unwrap_or_else(|_| std::path::PathBuf::from(ctx.vault_path));
+            files_named(&root, query)
+        }
+        None => Vec::new(),
+    };
+    if found.is_empty() {
+        return out;
+    }
+    let Ok(mut v) = serde_json::from_str::<Value>(&out) else { return out };
+    let paths: Vec<String> = found.iter().map(|p| shown_path(ctx.vault_path, p)).collect();
+    let ext = found[0].extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let reader = if crate::syn::spreadsheet::kind_of(&ext).is_some() { "read_spreadsheet" } else { "read_file_text" };
+    v["in_vault"] = serde_json::json!({ "paths": paths, "note": format!("In the vault: read it with {reader} and its path.") });
+    v.to_string()
+}
+
+/// Files called `name` in the vault, a few, skipping hidden folders.
+fn files_named(vault: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let want = name.to_lowercase();
+    let mut out = Vec::new();
+    let mut stack = vec![vault.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            seen += 1;
+            if seen > 50_000 || out.len() >= 5 {
+                return out;
+            }
+            let p = e.path();
+            let file_name = e.file_name().to_string_lossy().to_lowercase();
+            if file_name.starts_with('.') {
+                continue;
+            }
+            if p.is_dir() {
+                stack.push(p);
+            } else if file_name == want {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
 fn tool_search_files(db: &DbBridge, args: &Value) -> AppResult<String> {
     let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let extension = args.get("extension").and_then(|v| v.as_str()).unwrap_or("");
@@ -3930,6 +4159,15 @@ fn tool_update_node<R: tauri::Runtime>(
     // to be read by the screen only — which held for the screen and for nothing
     // else. Who wrote it and when it was tried are not the model's to rewrite
     // either, or the first rule is one edit away.
+    // A declaration is changed with `connector_draft`, which says who wrote
+    // it and checks its host; never with a patch around those.
+    if ctx.model.is_some() && node.node_type == crate::syn::connector::manifest::CONNECTOR_TYPE {
+        return Ok(serde_json::json!({
+            "error": "A connector is changed with connector_draft, not update_node.",
+            "node_id": node_id,
+        })
+        .to_string());
+    }
     if ctx.model.is_some() && node.node_type == crate::syn::skill::SKILL_TYPE {
         if let Some(problem) = skill_patch_problem(&node, &patch) {
             return Ok(serde_json::json!({ "error": problem, "node_id": node_id }).to_string());
@@ -4151,17 +4389,19 @@ fn tool_update_node<R: tauri::Runtime>(
 /// the end of a long text — and the result says it was cut. Text that was
 /// never JSON is still cut as text, because there is no structure to keep.
 fn truncate_result(s: &str) -> String {
-    if s.chars().count() <= MAX_RESULT_CHARS {
+    // `MAX_RESULT_CHARS` on a small window; a share of a large one (`syn::room`).
+    let limit = crate::syn::room::scaled(MAX_RESULT_CHARS);
+    if s.chars().count() <= limit {
         return s.to_string();
     }
 
     let Ok(mut value) = serde_json::from_str::<Value>(s) else {
-        let truncated: String = s.chars().take(MAX_RESULT_CHARS).collect();
+        let truncated: String = s.chars().take(limit).collect();
         return format!("{}... (truncated)", truncated);
     };
 
     // Room for the note saying so.
-    let budget = MAX_RESULT_CHARS - 300;
+    let budget = limit - 300;
     loop {
         let size = value.to_string().chars().count();
         if size <= budget || !shrink_once(&mut value, size - budget) {
@@ -4500,6 +4740,108 @@ fn tool_get_transactions(db: &DbBridge, args: &Value) -> AppResult<String> {
     });
 
     Ok(output.to_string())
+}
+
+/// `crunch`: see `syn::crunch`.
+fn tool_stage_transactions<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let scope = crate::syn::crunch::scope_for(ctx.vault_path, ctx.run_id);
+    let conversation = ctx.run_id.and_then(|id| crate::syn::run::get_run(ctx.vault_path, id).ok()).and_then(|r| r.conversation_id);
+    let db = lock(ctx)?;
+    let out = crate::syn::staging::stage(db.conn(), ctx.vault_path, &scope, conversation.as_deref(), args, chrono::Utc::now().timestamp());
+    if out.is_ok() {
+        if let Err(e) = ctx.app.emit("syn-staged", &serde_json::json!({ "conversation_id": conversation })) {
+            log::error!("Failed to emit syn-staged: {e}");
+        }
+    }
+    Ok(match out {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "error": e }),
+    }
+    .to_string())
+}
+
+fn tool_crunch<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let handle = args.get("handle").and_then(Value::as_str).unwrap_or_default();
+    let pipeline = args.get("pipeline").and_then(Value::as_str).unwrap_or_default();
+    let scope = crate::syn::crunch::scope_for(ctx.vault_path, ctx.run_id);
+    let db = lock(ctx)?;
+    let out = crate::syn::crunch::run(
+        db.conn(),
+        &scope,
+        ctx.run_id.unwrap_or("app"),
+        handle,
+        pipeline,
+        chrono::Utc::now().timestamp(),
+    )?;
+    Ok(out.to_string())
+}
+
+/// `get_transactions` lists twenty by default, and a model asked for a
+/// month's total would add those twenty — or all of them, wrongly. So every
+/// transaction of the month the call asked about (with its `type` filter, not
+/// its `limit`) is filed as a table too, and the reply carries its handle:
+/// a total is `crunch`'s to work out. P4.1 of the 2026-10-02 eval.
+fn with_table_of_transactions<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value, listed: String) -> AppResult<String> {
+    let Some(run_id) = ctx.run_id else { return Ok(listed) };
+    let Ok(mut reply) = serde_json::from_str::<Value>(&listed) else { return Ok(listed) };
+    let month = reply.get("month").and_then(Value::as_str).unwrap_or_default().to_string();
+    let type_filter = args.get("type").and_then(Value::as_str);
+    let scope = crate::syn::crunch::scope_for(ctx.vault_path, Some(run_id));
+    let db = lock(ctx)?;
+    let all: Vec<Value> = db
+        .get_node(&format!("Finance/{month}.json"))?
+        .and_then(|n| n.properties.get("transactions").and_then(|t| t.as_array()).cloned())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|tx| type_filter.is_none_or(|f| tx.get("type").and_then(Value::as_str) == Some(f)))
+        .map(|tx| {
+            serde_json::json!({
+                "id": tx.get("id"), "type": tx.get("type"), "amount": tx.get("amount"),
+                "category": tx.get("category"), "account": tx.get("accountId"),
+                "date": tx.get("date"), "note": tx.get("note"),
+            })
+        })
+        .collect();
+    if all.is_empty() {
+        return Ok(listed);
+    }
+    let (mut columns, rows) = crate::syn::resultset::from_objects(&all);
+    for c in &mut columns {
+        if c.name == "note" {
+            c.ty = crate::syn::resultset::ColType::Text;
+        }
+    }
+    let rows_n = rows.len();
+    let handle = crate::syn::resultset::create(
+        db.conn(),
+        crate::syn::resultset::NewSet {
+            scope,
+            run_id: run_id.to_string(),
+            source: crate::syn::resultset::Source {
+                kind: "vault".into(),
+                instance: Some("finance".into()),
+                operation: Some("get_transactions".into()),
+                query: Some(format!("month {month}{}", type_filter.map(|t| format!(", type {t}")).unwrap_or_default())),
+            },
+            columns,
+            rows,
+            missing: Vec::new(),
+            exposure: crate::syn::resultset::Exposure::Full,
+            ttl_hours: 0,
+        },
+        chrono::Utc::now().timestamp(),
+    )?;
+    if let Value::Object(o) = &mut reply {
+        o.insert(
+            "table".into(),
+            serde_json::json!({
+                "handle": handle,
+                "rows": rows_n,
+                "note": format!("All {rows_n} transactions of {month} are in table {handle}. For any total, average or count, call crunch on {handle} — do not add amounts up yourself."),
+            }),
+        );
+    }
+    Ok(reply.to_string())
 }
 
 /// Helper: Write a JSON node file to disk + upsert DB + emit event.
@@ -5224,7 +5566,64 @@ fn tool_read_spreadsheet<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) 
 
     let mut out = sheet::page(&grid, window, max_rows);
     out["file"] = Value::from(shown_path(ctx.vault_path, &abs));
+    // The whole sheet as a table too, its first row the header: a statement
+    // is totalled by `crunch` and staged by `stage_transactions` from its
+    // handle, never added up from the page shown. Scenario 25.
+    if let (Some(run_id), None) = (ctx.run_id, window) {
+        if let Some(table) = sheet_table(ctx, run_id, &grid, &shown_path(ctx.vault_path, &abs))? {
+            out["table"] = table;
+        }
+    }
     Ok(out.to_string())
+}
+
+/// A sheet, its first row the header, filed as a result set.
+fn sheet_table<R: tauri::Runtime>(ctx: &ToolContext<R>, run_id: &str, sheet: &crate::syn::spreadsheet::Sheet, file: &str) -> AppResult<Option<Value>> {
+    let Some((header, body)) = sheet.cells.split_first() else { return Ok(None) };
+    if body.is_empty() {
+        return Ok(None);
+    }
+    let mut names: Vec<String> = Vec::new();
+    for (i, h) in header.iter().enumerate() {
+        let h = match h {
+            Value::String(s) => s.trim().to_string(),
+            Value::Null => String::new(),
+            other => other.to_string(),
+        };
+        names.push(if h.is_empty() || names.contains(&h) { format!("column_{}", i + 1) } else { h });
+    }
+    let items: Vec<Value> = body
+        .iter()
+        .map(|row| Value::Object(names.iter().enumerate().map(|(i, n)| (n.clone(), row.get(i).cloned().unwrap_or(Value::Null))).collect()))
+        .collect();
+    let (mut columns, rows) = crate::syn::resultset::from_objects(&items);
+    // A statement's descriptions are the bank's words, and anybody's who sent money.
+    for c in &mut columns {
+        if c.ty == crate::syn::resultset::ColType::Text {
+            c.free_text = true;
+        }
+    }
+    let n = rows.len();
+    let db = lock(ctx)?;
+    let handle = crate::syn::resultset::create(
+        db.conn(),
+        crate::syn::resultset::NewSet {
+            scope: crate::syn::crunch::scope_for(ctx.vault_path, Some(run_id)),
+            run_id: run_id.to_string(),
+            source: crate::syn::resultset::Source { kind: "file".into(), instance: Some(file.to_string()), operation: Some("read_spreadsheet".into()), query: Some(sheet.name.clone()) },
+            columns,
+            rows,
+            missing: Vec::new(),
+            exposure: crate::syn::resultset::Exposure::Full,
+            ttl_hours: 0,
+        },
+        chrono::Utc::now().timestamp(),
+    )?;
+    Ok(Some(serde_json::json!({
+        "handle": handle,
+        "rows": n,
+        "note": format!("All {n} rows of this sheet, its first row as the header, are in table {handle}: crunch it for totals; stage_transactions turns a statement into transactions for the user to review."),
+    })))
 }
 
 /// The most sheets, and rows in each, one call may write. Far past a budget or
@@ -6197,6 +6596,38 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Arithmetic over a table a tool brought back. Not a store at all, and
+        // not generic: it reads the run's own tables, which no other tool can,
+        // and it is the `compute` group's — sent only once a result in the run
+        // has filed a table, so a turn without one pays nothing for it.
+        let compute = [crate::syn::crunch::TOOL];
+        for tool in compute {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
+        // A plan of sends to connectors. Sent only when a connector that can
+        // send is offered — the `writes` group — so a turn without one pays
+        // nothing for it.
+        let writes = [crate::syn::writes::TOOL];
+        for tool in writes {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
+        // Syn writing a connector for itself: the `authoring` group, brought
+        // by asking to connect to a service. See `connector::authoring`.
+        let authoring = [crate::syn::connector::authoring::DRAFT_TOOL, crate::syn::connector::authoring::PROPOSE_TOOL, crate::syn::connector::authoring::FIND_TOOL, crate::syn::connector::authoring::TRY_TOOL];
+        for tool in authoring {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
+        // Transactions from a statement, for the person to review in Finance's
+        // import preview: in the `finance` group, beside `create_transaction`,
+        // so a turn that does not touch money pays nothing for it.
+        let staging = [crate::syn::staging::TOOL];
+        for tool in staging {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -6213,6 +6644,10 @@ mod tests {
             .chain(the_run)
             .chain(safe)
             .chain(tables)
+            .chain(compute)
+            .chain(writes)
+            .chain(authoring)
+            .chain(staging)
             .collect();
         for name in &names {
             assert!(

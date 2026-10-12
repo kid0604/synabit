@@ -44,6 +44,16 @@
 pub mod client;
 pub mod config;
 pub mod provider;
+pub mod manifest;
+pub mod instance;
+pub mod pick;
+pub mod http;
+pub mod declared;
+pub mod bundled;
+pub mod authoring;
+pub mod decode;
+pub mod device;
+pub mod mirror;
 pub mod transport_http;
 #[cfg(desktop)]
 pub mod transport_stdio;
@@ -381,7 +391,37 @@ pub struct Called {
     pub server_answered: bool,
     pub ok: bool,
     pub reversal: Reversal,
+    /// An answer too large to hand over whole that is a table — a JSON list of
+    /// records. The engine files it as a result set and puts the summary in
+    /// `content` instead (`fenced_table`), so the model works over every row
+    /// with `crunch` rather than reading the first few hundred. See
+    /// `syn::resultset`.
+    pub table: Option<Table>,
 }
+
+/// A large answer that turned out to be a table.
+#[derive(Debug)]
+pub struct Table {
+    pub server: String,
+    pub tool: String,
+    pub columns: Vec<crate::syn::resultset::Column>,
+    pub rows: Vec<Vec<Value>>,
+    /// Where in the answer the records were, when not at the top: `results`.
+    pub at: Option<String>,
+    /// How long the answer was, for the summary to say.
+    pub chars: usize,
+    /// What is known to be missing from it: pages not fetched, lists cut short.
+    pub missing: Vec<String>,
+    /// How much of it the model may see — the instance's choice.
+    pub exposure: crate::syn::resultset::Exposure,
+    /// What was asked, as the run records it, when the executor knows better
+    /// than the call's arguments (the address, without the secret).
+    pub asked: Option<String>,
+}
+
+/// How much of a table's rows come with its handle, on a small window. A
+/// share of a large one (`syn::room`). Past it the model gets the summary.
+pub const TABLE_AFTER_CHARS: usize = 8_000;
 
 impl Called {
     fn ours(said: impl std::fmt::Display, reversal: Reversal) -> Self {
@@ -390,8 +430,45 @@ impl Called {
             server_answered: false,
             ok: false,
             reversal,
+            table: None,
         }
     }
+}
+
+/// The records in an answer, if it is a list of them: a JSON array of objects,
+/// or an object one of whose fields is the largest such array (`{"results": […]}`).
+pub fn as_table(text: &str) -> Option<(Vec<crate::syn::resultset::Column>, Vec<Vec<Value>>, Option<String>)> {
+    let parsed: Value = serde_json::from_str(text.trim()).ok()?;
+    let is_records = |v: &Value| v.as_array().is_some_and(|a| !a.is_empty() && a.iter().all(Value::is_object));
+    let (records, at) = if is_records(&parsed) {
+        (parsed.as_array()?.clone(), None)
+    } else {
+        let o = parsed.as_object()?;
+        let (key, list) = o
+            .iter()
+            .filter(|(_, v)| is_records(v))
+            .max_by_key(|(_, v)| v.as_array().map(Vec::len).unwrap_or(0))?;
+        (list.as_array()?.clone(), Some(key.clone()))
+    };
+    let (columns, rows) = crate::syn::resultset::from_objects(&records);
+    Some((columns, rows, at))
+}
+
+/// A filed table's summary, inside the same boundary any answer is.
+pub fn fenced_table(table: &Table, summary: &Value) -> String {
+    let mut summary = summary.clone();
+    if let Value::Object(o) = &mut summary {
+        o.insert(
+            "answered".into(),
+            serde_json::json!(format!(
+                "{} answered{}{}; the records are in this table, every one of them.",
+                table.server,
+                if table.chars > 0 { format!(" with {} characters", table.chars) } else { String::new() },
+                table.at.as_deref().map(|k| format!(" (the list under \"{k}\")")).unwrap_or_default()
+            )),
+        );
+    }
+    wrap(&table.server, &table.tool, &summary.to_string())
 }
 
 /// Call a tool, as the engine does once the gate has said go.
@@ -402,6 +479,11 @@ impl Called {
 /// has changed from a read to a write since is not called on a read's
 /// permission.
 pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<&Capability>) -> Called {
+    if provider::find(vault_path, name).is_none() {
+        if let Some(found) = declared::find(vault_path, name) {
+            return declared::call(vault_path, found, args, consented).await;
+        }
+    }
     let Some(tool) = provider::find(vault_path, name) else {
         return Called::ours(format!("`{name}` is not connected right now."), Reversal::Nothing);
     };
@@ -449,7 +531,32 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
         };
         match session.call_tool(&tool.tool, &sending).await {
             Ok(result) => {
-                let fenced = wrap(&tool.server_name, &tool.tool, &scrub(result.text));
+                let text = scrub(result.text);
+                // A list of records is filed whatever its size, so a total over
+                // it is `crunch`'s and not the model's. Small ones still come
+                // whole. See `resultset::deliver`.
+                if !result.is_error {
+                    if let Some((columns, rows, at)) = as_table(&text) {
+                        return Called {
+                            content: String::new(),
+                            server_answered: true,
+                            ok: true,
+                            reversal,
+                            table: Some(Table {
+                                server: tool.server_name.clone(),
+                                tool: tool.tool.clone(),
+                                columns,
+                                rows,
+                                at,
+                                chars: text.chars().count(),
+                                missing: Vec::new(),
+                                exposure: crate::syn::resultset::Exposure::Full,
+                                asked: None,
+                            }),
+                        };
+                    }
+                }
+                let fenced = wrap(&tool.server_name, &tool.tool, &text);
                 return Called {
                     content: if result.is_error {
                         serde_json::json!({ "error": fenced }).to_string()
@@ -459,6 +566,7 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
                     server_answered: true,
                     ok: !result.is_error,
                     reversal,
+                    table: None,
                 };
             }
             // A session the server forgot is opened again, once.
@@ -476,6 +584,7 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
                     server_answered: true,
                     ok: false,
                     reversal,
+                    table: None,
                 };
             }
             Err(e) => {
@@ -500,11 +609,13 @@ pub async fn call(vault_path: &str, name: &str, args: &Value, consented: Option<
 pub fn wrap(server: &str, tool: &str, text: &str) -> String {
     let mark = crate::syn::web::boundary_mark();
     let whole = text.chars().count();
-    let (text, cut) = if whole > RESULT_CHARS {
+    // `RESULT_CHARS` on a small window; a share of a large one. See `syn::room`.
+    let room = crate::syn::room::scaled(RESULT_CHARS);
+    let (text, cut) = if whole > room {
         (
-            text.chars().take(RESULT_CHARS).collect::<String>(),
+            text.chars().take(room).collect::<String>(),
             format!(
-                "\n\n(Cut: this is the first {RESULT_CHARS} of {whole} characters. Say that it was cut; \
+                "\n\n(Cut: this is the first {room} of {whole} characters. Say that it was cut; \
                  ask the tool for less — a narrower query, fewer results — rather than for the rest.)"
             ),
         )
@@ -527,10 +638,12 @@ pub fn wrap(server: &str, tool: &str, text: &str) -> String {
 pub fn refused_after_reading(tool: &str) -> String {
     format!(
         "`{tool}` is not available in this run. This run has already read something written outside \
-         this vault — a web page, a feed, a file, or a connector's answer — and anything sent to an \
-         connector now, even a search, could carry what you know out with it. So every connector tool is \
-         refused for the rest of this run. Tell the user what you found and what you would do next, \
-         and let them ask for it in a new message."
+         this vault — a web page, a feed, a file, or a connector's answer — and anything sent to a \
+         connector now, even a search, could carry what you know out with it. The one exception: when all \
+         you have read is one connector's answer, that same connector's read tools stay open, with values \
+         from the user's question or from its own answer. Everything else is refused for the rest of this \
+         run. Tell the user what you found and what you would do next, and let them ask for it in a new \
+         message."
     )
 }
 
@@ -648,8 +761,11 @@ pub async fn test(server: &Server, secrets: &HashMap<String, String>) -> Tested 
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "eval"))]
 pub(crate) mod fake;
+
+#[cfg(any(test, feature = "eval"))]
+pub(crate) mod fake_rest;
 
 #[cfg(test)]
 mod tests;

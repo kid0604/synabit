@@ -40,6 +40,10 @@ import { useSynConsent } from '../../mini-apps/messages/composables/useSynConsen
 import { useSynChoice } from '../../mini-apps/messages/composables/useSynChoice';
 import ConsentCard from '../../mini-apps/messages/components/ConsentCard.vue';
 import ChoiceCard from '../../mini-apps/messages/components/ChoiceCard.vue';
+import WritePlanCard from '../../mini-apps/messages/components/WritePlanCard.vue';
+import { useSynWrites } from '../../mini-apps/messages/composables/useSynWrites';
+import ConnectorProposalCard from '../../mini-apps/messages/components/ConnectorProposalCard.vue';
+import { useSynConnectorProposal } from '../../mini-apps/messages/composables/useSynConnectorProposal';
 import type { ConsentAnswer, SynMessage } from '../../mini-apps/messages/types';
 import { useSynChat } from '../../mini-apps/messages/composables/useSynChat';
 import RunProgress from './RunProgress.vue';
@@ -131,6 +135,20 @@ const { pendingIn: choicePendingIn, answer: answerChoice } = useSynChoice(() => 
 
 const consentHere = computed(() => consentPendingIn(conversationId.value));
 const choiceHere = computed(() => choicePendingIn(conversationId.value));
+const {
+  pendingIn: writesPendingIn,
+  answer: answerWrites,
+  error: writesError,
+  answering: writesAnswering,
+} = useSynWrites(() => props.vaultPath);
+const writesHere = computed(() => writesPendingIn(conversationId.value));
+const {
+  pendingIn: connectorPendingIn,
+  answer: answerConnector,
+  error: connectorError,
+  answering: connectorAnswering,
+} = useSynConnectorProposal(() => props.vaultPath);
+const connectorHere = computed(() => connectorPendingIn(conversationId.value));
 
 const hasAnswer = computed(
   () =>
@@ -138,7 +156,9 @@ const hasAnswer = computed(
     busy.value ||
     !!failed.value ||
     !!consentHere.value ||
-    !!choiceHere.value,
+    !!choiceHere.value ||
+    !!writesHere.value ||
+    !!connectorHere.value,
 );
 
 /**
@@ -329,6 +349,24 @@ const onConsent = async (choice: ConsentAnswer) => {
   await send(id, '', stopped);
 };
 
+/** Answer a plan of sends, then carry on — as `onConsent`. See `syn::writes`. */
+const onWrites = async (approved: string[]) => {
+  const stopped = writesHere.value?.run_id;
+  const id = writesHere.value?.conversation_id;
+  const was = await answerWrites(approved, id);
+  if (!was || !stopped || !id) return;
+  await send(id, '', stopped);
+};
+
+/** Answer a connector Syn drafted, then carry on — as `onWrites`. */
+const onConnector = async (approved: boolean) => {
+  const stopped = connectorHere.value?.run_id;
+  const id = connectorHere.value?.conversation_id;
+  const was = await answerConnector(approved, id);
+  if (!was || !stopped || !id) return;
+  await send(id, '', stopped);
+};
+
 /**
  * Say which one, and carry on with it — as Messages does, and for the same
  * reason: picking one is saying which to go on with. See `onChoice` there.
@@ -509,8 +547,23 @@ const onKeydown = (event: KeyboardEvent) => {
 
           <!-- Syn stopped to ask. Above whatever the answer says, because until
                it is answered there is no more answer coming. -->
-          <div v-if="!busy && (choiceHere || consentHere)" class="space-y-2 mb-3">
+          <div v-if="!busy && (choiceHere || consentHere || writesHere || connectorHere)" class="space-y-2 mb-3">
+            <ConnectorProposalCard
+              v-if="connectorHere"
+              :vault-path="vaultPath"
+              :connector-id="connectorHere.connector"
+              :busy="connectorAnswering"
+              :error="connectorError"
+              @answer="onConnector"
+            />
             <ChoiceCard v-if="choiceHere" :choice="choiceHere.choice" @answer="onChoice" />
+            <WritePlanCard
+              v-if="writesHere"
+              :plan="writesHere.plan"
+              :busy="writesAnswering"
+              :error="writesError"
+              @answer="onWrites"
+            />
             <ConsentCard
               v-if="consentHere"
               :ask="consentHere.ask"

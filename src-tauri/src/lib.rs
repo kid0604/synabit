@@ -528,6 +528,8 @@ fn fail_startup_on_database(app: &tauri::AppHandle, error: &crate::error::AppErr
     use tauri::Manager;
     use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
     log::error!("Synabit cannot start: the database could not be opened: {error}");
+    // A phone has no window to hide; the dialog covers the app there.
+    #[cfg(desktop)]
     for window in app.webview_windows().values() {
         let _ = window.hide();
     }
@@ -1178,6 +1180,21 @@ pub fn run() {
             commands::connector::syn_connector_save,
             commands::connector::syn_connector_delete,
             commands::connector::syn_connector_test,
+            commands::connector::syn_manifest_list,
+            commands::connector::syn_manifest_validate,
+            commands::connector::syn_manifest_save,
+            commands::connector::syn_instance_approve,
+            commands::connector::syn_instance_remove,
+            commands::connector::syn_instance_peek_cert,
+            commands::connector::syn_manifest_bundled,
+            commands::syn::syn_answer_writes,
+            commands::syn::syn_answer_connector,
+            commands::syn::syn_staged_list,
+            commands::connector::syn_device_notification_access,
+            commands::connector::syn_connect,
+            commands::connector::syn_device_open_notification_access,
+            commands::syn::syn_staged_text,
+            commands::syn::syn_staged_discard,
             commands::telegram::telegram_status,
             commands::telegram::telegram_set_token,
             commands::telegram::telegram_clear_token,

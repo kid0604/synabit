@@ -127,3 +127,10 @@ export function placeNearSelection(
 
   return { top: Math.round(top), left: Math.round(left) };
 }
+
+/** Open the ask bar with a question typed in, from anywhere — Settings' "Ask Syn to connect…". */
+export const SYN_ASK_WITH = 'syn-ask-with-question';
+
+export function askSynWith(text: string): void {
+  window.dispatchEvent(new CustomEvent(SYN_ASK_WITH, { detail: { text } }));
+}

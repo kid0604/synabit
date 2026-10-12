@@ -354,6 +354,7 @@ const stateStyle = (state: RunState) => ({
   awaiting_consent: 'bg-violet-500',
   // Waiting on a person, not on permission — see `syn::ambiguity`.
   awaiting_choice: 'bg-violet-400',
+  awaiting_approval: 'bg-violet-500',
   interrupted: 'bg-gray-400',
 }[state] ?? 'bg-gray-400');
 

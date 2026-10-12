@@ -88,6 +88,12 @@ impl Refusal {
     pub fn stage_needs_what(stage: &str) -> Self {
         Self::of("stage_needs_what", [stage.into()])
     }
+    pub fn eval_needs_a_name() -> Self {
+        Self::of("eval_needs_a_name", [])
+    }
+    pub fn eval_cannot(why: &str) -> Self {
+        Self::of("eval_cannot", [why.into()])
+    }
     pub fn stats_needs_by() -> Self {
         Self::of("stats_needs_by", [])
     }
@@ -205,6 +211,8 @@ pub const SAYINGS: &[(&str, &str)] = &[
     ("stage_cannot_yet", "{0} cannot work out '{1}' yet"),
     ("stage_needs_what", "{0} needs to be told what to work out"),
     ("stats_needs_by", "stats needs `by` and something to gather under"),
+    ("eval_needs_a_name", "eval needs a name for what it works out — `eval md = spent_s / 28800`"),
+    ("eval_cannot", "eval cannot read that: {0}"),
     ("seq_needs_by", "seq needs `by` and something to follow through time"),
     ("ask_needs_a_number", "ask needs a number of lines to keep"),
     ("sort_needs_a_key", "sort needs something to sort by"),

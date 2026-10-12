@@ -126,6 +126,10 @@ pub fn reversal_for(tool: &str, capability: &Capability) -> Reversal {
             how: "the row is kept aside in its month; update_transaction with restore: true puts it back"
                 .into(),
         },
+        crate::syn::staging::TOOL => Reversal::Automatic {
+            how: "nothing reaches the ledger until the person confirms Finance's import preview; dismissing it there drops the staged rows"
+                .into(),
+        },
         "write_spreadsheet" => Reversal::Automatic {
             how: "a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash"
                 .into(),
@@ -228,12 +232,25 @@ impl VaultTools {
     /// different arguments — a `run_recipe` that could declare its steps, say.
     fn table(tool: &str, _args: &Value) -> Option<Capability> {
         use Capability::*;
+        // Drafting a connector writes a note; reading a spec to draft it from
+        // reaches the spec's host, asked like any read of a host.
+        if tool == crate::syn::connector::authoring::DRAFT_TOOL {
+            return Some(
+                match _args.get("openapi_url").and_then(Value::as_str).and_then(|u| url::Url::parse(u).ok()).and_then(|u| u.host_str().map(str::to_string)) {
+                    Some(host) => NetRead { domain: host },
+                    None => VaultWrite,
+                },
+            );
+        }
         Some(match tool {
             "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash" | "safe_list" | "safe_health"
             | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
             | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
             | "read_board" | "timeline" | "read_spreadsheet"
-            | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL => {
+            | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL | crate::syn::crunch::TOOL | crate::syn::writes::TOOL
+            | crate::syn::connector::authoring::PROPOSE_TOOL | crate::syn::connector::authoring::FIND_TOOL
+            // What a try reaches is weighed by the engine, from the draft.
+            | crate::syn::connector::authoring::TRY_TOOL => {
                 VaultRead
             }
 
@@ -267,7 +284,13 @@ impl VaultTools {
             // write — see `reversal_for`.
             | "update_transaction" | "delete_transaction" | "write_spreadsheet"
             // Rows inside a note: a write to that note, undone by its earlier version.
-            | "table_rows" => {
+            | "table_rows"
+            // Writes a file into `.synabit/staging/` for the person to review
+            // in Finance. The ledger stays theirs to change, from the import
+            // preview — but a file is written, and declaring it a read let it
+            // through plan mode, helpers and Telegram's read rule. See
+            // `syn::staging`.
+            | crate::syn::staging::TOOL => {
                 VaultWrite
             }
 
@@ -655,6 +678,13 @@ mod tests {
             "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
             "safe_list", "safe_health", "safe_request", "table_rows",
             crate::syn::tools::LOOK_BACK_TOOL,
+            crate::syn::crunch::TOOL,
+            crate::syn::writes::TOOL,
+            crate::syn::connector::authoring::DRAFT_TOOL,
+            crate::syn::connector::authoring::PROPOSE_TOOL,
+            crate::syn::connector::authoring::FIND_TOOL,
+            crate::syn::connector::authoring::TRY_TOOL,
+            crate::syn::staging::TOOL,
             crate::syn::tools::BROWSE_TOOL,
             crate::syn::tools::PLAN_TOOL,
             crate::syn::delegate::TOOL,

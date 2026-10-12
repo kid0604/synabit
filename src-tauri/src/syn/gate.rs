@@ -55,6 +55,15 @@ use crate::syn::surface::Surface;
 pub struct View<'a> {
     /// Whether the run has read something written outside the vault.
     pub tainted: bool,
+    /// When everything the run has read came from one connector, its slug:
+    /// that connector's read tools stay open. See `taint::Origin`.
+    pub only_connector: Option<&'a str>,
+    /// What a call back to that connector may carry: the person's question and
+    /// the connector's own earlier answers. See `taint::only_echoes`.
+    pub echoes: &'a [String],
+    /// Hashes of the sends the person approved and that have not gone yet.
+    /// See `syn::writes`.
+    pub approved_writes: &'a [String],
     pub surface: Surface,
     /// What the most recent `query_nodes` turned up, whole.
     pub seen: &'a [Candidate],
@@ -114,6 +123,14 @@ pub enum How {
     /// A tool on a connector: a network request or a program's answer,
     /// which the engine awaits, like `Browse`. See `syn::connector::call`.
     Connector,
+    /// A plan of sends, laid out for the person. See `syn::writes`.
+    ProposeWrites,
+    /// Syn writing a connector's declaration. See `connector::authoring`.
+    DraftConnector,
+    /// Syn asking the person to approve a connector it drafted.
+    ProposeConnector,
+    /// One reading call of a draft, before it is proposed.
+    TryConnector,
     /// Answered with this refusal, but recorded as a call the run made — it is
     /// a budget, not a rule, and the transcript should show it was reached.
     OverSkillBudget(String),
@@ -151,7 +168,74 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // `connector__` name is on it; this says why in words that fit, and puts the
     // refusal on the record, because an attempt to reach a server after
     // reading something is exactly what the audit log is for. See `syn::connector`.
-    if view.tainted && crate::syn::connector::is_connector_tool(tool) {
+    //
+    // One exception, and only one: a run whose only outside reading is one
+    // connector's answer may *read* that same connector again — list the
+    // projects, then the issues of one. Nothing goes anywhere it was not
+    // already; a write, or any other server, is still refused.
+    let back_to_the_same_reader = view.tainted
+        && crate::syn::connector::is_connector_tool(tool)
+        && view.only_connector.is_some_and(|slug| crate::syn::connector::provider::server_slug_of(tool) == Some(slug))
+        && matches!(capability, Some(Capability::NetRead { .. }));
+    // …and only with words it already had, or the person's. A value lifted
+    // from a note would be the vault leaving by the same door.
+    if back_to_the_same_reader {
+        if let Err(value) = crate::syn::taint::only_echoes(args, view.echoes) {
+            let shown: String = value.chars().take(80).collect();
+            return Decided {
+                gate: Gate::Refuse {
+                    said: format!(
+                        "`{tool}` may be called again in this run only with words from the user's question or \
+                         from what this connector itself answered. \"{shown}\" is from neither — it would take \
+                         something to the server that it did not have. Ask with values from its earlier answer, or \
+                         tell the user what you found and let them ask in a new message."
+                    ),
+                    note: Some(format!("Refused `{tool}`: \"{shown}\" came from neither the question nor this connector.")),
+                },
+                audit: capability.map(|_| Outcome::Refused),
+            };
+        }
+    }
+    let same_connector_read = back_to_the_same_reader;
+
+    // A send the person approved, exactly as approved, goes — after reading
+    // too: approving a plan *is* the person saying where what was read may go.
+    // Only in the app, and never from a helper run. See `syn::writes`.
+    if crate::syn::connector::is_connector_tool(tool)
+        && !view.sub_run
+        && view.surface == crate::syn::surface::Surface::App
+        && view.approved_writes.contains(&crate::syn::writes::hash(tool, args))
+    {
+        return Decided { gate: Gate::Go(How::Connector), audit: capability.map(|_| Outcome::Allowed) };
+    }
+    // What cannot be taken back is only ever sent through a plan.
+    if crate::syn::connector::declared::is_irreversible(tool) {
+        return Decided {
+            gate: Gate::Refuse {
+                said: format!(
+                    "`{tool}` sends something that cannot be taken back, so it only goes through a plan the user \
+                     approves. Call propose_writes with this request, exactly as you mean to send it."
+                ),
+                note: Some(format!("Refused `{tool}`: irreversible, and not in an approved plan.")),
+            },
+            audit: capability.map(|_| Outcome::Refused),
+        };
+    }
+    // After reading, a send needs a plan: what was read may be in it.
+    if view.tainted && crate::syn::connector::is_connector_tool(tool) && matches!(capability, Some(Capability::NetWrite { .. })) {
+        return Decided {
+            gate: Gate::Refuse {
+                said: format!(
+                    "`{tool}` sends something, and this run has read something from outside that may be in it. \
+                     Propose it with propose_writes — every send you mean to make, with its exact arguments — \
+                     and the user decides which go."
+                ),
+                note: Some(format!("Refused `{tool}`: a send after reading, outside a plan.")),
+            },
+            audit: capability.map(|_| Outcome::Refused),
+        };
+    }
+    if view.tainted && crate::syn::connector::is_connector_tool(tool) && !same_connector_read {
         return Decided {
             gate: Gate::Refuse {
                 said: crate::syn::connector::refused_after_reading(tool),
@@ -162,7 +246,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
             audit: capability.map(|_| Outcome::Refused),
         };
     }
-    if view.tainted && !crate::syn::taint::allowed_after_reading(tool) {
+    if view.tainted && !same_connector_read && !crate::syn::taint::allowed_after_reading(tool) {
         return Decided::quietly(Gate::Refuse {
             said: crate::syn::taint::refusal(tool),
             note: Some(format!(
@@ -356,6 +440,14 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::Delegate
     } else if tool == crate::syn::toolset::FIND_TOOL {
         How::FindTools
+    } else if tool == crate::syn::writes::TOOL {
+        How::ProposeWrites
+    } else if tool == crate::syn::connector::authoring::DRAFT_TOOL {
+        How::DraftConnector
+    } else if tool == crate::syn::connector::authoring::PROPOSE_TOOL {
+        How::ProposeConnector
+    } else if tool == crate::syn::connector::authoring::TRY_TOOL {
+        How::TryConnector
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.
         How::Connector
@@ -397,6 +489,9 @@ mod tests {
     fn view<'a>(ledger: &'a Ledger, until_done: &'a dyn Fn(&Capability) -> bool) -> View<'a> {
         View {
             tainted: false,
+            only_connector: None,
+            echoes: &[],
+            approved_writes: &[],
             surface: Surface::App,
             seen: &[],
             ledger,

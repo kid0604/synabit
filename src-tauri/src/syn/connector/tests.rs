@@ -240,6 +240,9 @@ fn only_the_app_is_offered_or_may_call_a_servers_tools() {
 fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Capability) -> bool) -> gate::View<'a> {
     gate::View {
         tainted: false,
+        only_connector: None,
+        echoes: &[],
+        approved_writes: &[],
         surface: Surface::App,
         seen: &[],
         ledger,
@@ -460,7 +463,11 @@ fn a_run_that_has_read_something_calls_no_server_at_all() {
     ] {
         let d = gate::decide(tool, &json!({ "text": "the finance summary" }), Some(&capability), &v);
         match d.gate {
-            Gate::Refuse { said, .. } => assert!(said.contains("every connector tool is refused"), "{said}"),
+            // A read is told the general rule; a send, that it needs a plan.
+            Gate::Refuse { said, .. } => assert!(
+                said.contains("Everything else is refused") || said.contains("propose_writes"),
+                "{said}"
+            ),
             other => panic!("{tool}: expected a refusal, got {other:?}"),
         }
         assert_eq!(d.audit, Some(crate::syn::audit::Outcome::Refused), "{tool}: on the record");
@@ -512,7 +519,11 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
     assert_eq!(offered(Surface::App, &clean).len(), 3);
     assert!(offered(Surface::Telegram, &clean).is_empty());
     assert!(offered(Surface::Routine, &clean).is_empty());
-    assert!(offered(Surface::App, &crate::syn::taint::Taint::already()).is_empty());
+    // After reading a page: no read, and only the sends — which go only by an
+    // approved plan (`syn::writes`). Before step 2 this was nothing at all.
+    let mut after_a_page = offered(Surface::App, &crate::syn::taint::Taint::already());
+    after_a_page.sort();
+    assert_eq!(after_a_page, ["connector__jira_reg__add_comment", "connector__jira_reg__create_issue"]);
 
     assert_eq!(
         registry.capability_of("connector__jira_reg__create_issue", &json!({})),
@@ -529,6 +540,53 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
     .expect("refused");
     let left = offered(Surface::App, &clean);
     assert_eq!(left.len(), 2, "the read tool is gone: {left:?}");
+    disconnect(vault, None).await;
+}
+
+/// After reading one connector, what is offered is that connector's reads and
+/// every tool that sends — a send has to be in view to be proposed in a plan
+/// and, once approved, called. The 2026-10-11 eval found the sends hidden:
+/// the person approved a plan and Syn had nothing to call. Another server's
+/// reads stay out of view.
+#[tokio::test]
+async fn after_reading_a_connector_its_reads_and_every_send_are_offered() {
+    use crate::syn::registry::{Registry, RunContext};
+    let dir = tempfile::tempdir().expect("temp");
+    let vault = dir.path().to_str().expect("utf8");
+    let a = fake::serve(Script { tools: jira_tools(), ..Default::default() }).await;
+    let b = fake::serve(Script { tools: jira_tools(), ..Default::default() }).await;
+    fake::install(vault, "Alpha", &a.url).await;
+    fake::install(vault, "Beta", &b.url).await;
+    let db: crate::db::DbState = std::sync::Mutex::new(crate::db::DbBridge::new_in_memory_full().expect("schema"));
+    let app = tauri::test::mock_builder().build(tauri::test::mock_context(tauri::test::noop_assets())).expect("mock app");
+    let registry = Registry::for_chat();
+    let read_alpha = crate::syn::taint::Taint::new();
+    read_alpha.note(crate::syn::taint::Origin::Connector("alpha".into()));
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    let offered: Vec<String> = registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect();
+    let writes = |slug: &str| offered.iter().filter(|n| n.starts_with(&format!("connector__{slug}__")) && registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))).count();
+    let reads = |slug: &str| offered.iter().filter(|n| n.starts_with(&format!("connector__{slug}__")) && registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetRead { .. }))).count();
+    assert!(reads("alpha") > 0, "{offered:?}");
+    assert_eq!(reads("beta"), 0, "another server's reads stay hidden: {offered:?}");
+    assert!(writes("alpha") > 0 && writes("beta") > 0, "every send is in view: {offered:?}");
+
+    // A plan's first send has answered: two connectors read. The next approved
+    // send must still be callable; no reads now.
+    read_alpha.note(crate::syn::taint::Origin::Connector("beta".into()));
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    let after: Vec<String> = registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect();
+    let sends = after.iter().filter(|n| registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))).count();
+    assert!(sends >= 4, "{after:?}");
+    assert!(after.iter().all(|n| registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))), "{after:?}");
+
+    // A page read too: still only sends, no reads.
+    read_alpha.set();
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    assert!(registry
+        .definitions(&ctx)
+        .into_iter()
+        .filter(|d| is_connector_tool(&d.function.name))
+        .all(|d| registry.capability_of(&d.function.name, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))));
     disconnect(vault, None).await;
 }
 
@@ -709,4 +767,70 @@ fn secrets_travel_only_over_https_or_to_this_machine() {
     }
     // Filling a header for such a server is refused before the Safe is asked.
     assert_eq!(crate::safe::bridge::fill_setting(&http("http://mcp.example.com"), "Bearer {{safe:tok}}"), None);
+}
+
+// ── Going back to the connector a run read ──────────────────────────────
+
+fn granted(caps: &[(&Capability, crate::syn::consent::Answer)]) -> crate::syn::consent::Ledger {
+    crate::syn::consent::Ledger {
+        grants: caps
+            .iter()
+            .map(|(c, a)| crate::syn::consent::Grant {
+                scope: c.scope_key().expect("rememberable"),
+                about: c.describe(),
+                answer: *a,
+                granted_at: "2026-09-01T00:00:00+00:00".into(),
+                expires_at: (*a == crate::syn::consent::Answer::Always).then(|| "2027-01-01T00:00:00+00:00".into()),
+            })
+            .collect(),
+    }
+}
+
+/// After reading one connector, its read tools stay open — with values the
+/// question or that connector supplied. Anything else is refused: a write, a
+/// different server, a value from somewhere else, or a run that read anything
+/// that was not that connector.
+#[test]
+fn only_the_same_connector_may_be_read_again_and_only_with_its_own_words() {
+    use crate::syn::consent::{Answer, Capability};
+    let read = Capability::NetRead { domain: "Tracker".into() };
+    let write = Capability::NetWrite { domain: "Tracker".into(), tool: "close".into() };
+    let ledger = granted(&[(&read, Answer::Always), (&write, Answer::Always)]);
+    let no = |_: &Capability| false;
+    let echoes = vec!["how many open issues does Atlas have".to_string(), r#"[{"id":"p-17","name":"Atlas"}]"#.to_string()];
+    let base = gate::View { tainted: true, only_connector: Some("tracker"), echoes: &echoes, ..view(&ledger, &no) };
+    let goes = |tool: &str, args: serde_json::Value, cap: &Capability, v: &gate::View| {
+        matches!(gate::decide(tool, &args, Some(cap), v).gate, gate::Gate::Go(_))
+    };
+
+    assert!(goes("connector__tracker__issues", serde_json::json!({ "project_id": "p-17", "limit": 50 }), &read, &base));
+    assert!(!goes("connector__tracker__issues", serde_json::json!({ "project_id": "quan trọng" }), &read, &base), "a value from elsewhere");
+    assert!(!goes("connector__tracker__issues", serde_json::json!({ "min_balance": 12000000 }), &read, &base), "a large number from elsewhere");
+    assert!(!goes("connector__tracker__close", serde_json::json!({ "project_id": "p-17" }), &write, &base), "a write");
+
+    let other = Capability::NetRead { domain: "Jira".into() };
+    let ledger2 = granted(&[(&other, Answer::Always)]);
+    let v2 = gate::View { tainted: true, only_connector: Some("tracker"), echoes: &echoes, ..view(&ledger2, &no) };
+    assert!(!goes("connector__jira__search", serde_json::json!({ "text": "Atlas" }), &other, &v2), "another server");
+
+    let outside = gate::View { only_connector: None, ..base };
+    assert!(!goes("connector__tracker__issues", serde_json::json!({ "project_id": "p-17" }), &read, &outside), "read something else too");
+}
+
+#[test]
+fn a_taint_knows_when_it_came_from_one_connector_only() {
+    use crate::syn::taint::{Origin, Taint};
+    let t = Taint::new();
+    assert_eq!(t.only_connector(), None);
+    t.note(Origin::Connector("tracker".into()));
+    assert_eq!(t.only_connector().as_deref(), Some("tracker"));
+    t.note(Origin::Connector("jira".into()));
+    assert_eq!(t.only_connector(), None, "two connectors");
+    let back = Taint::from_record(true, &["connector:tracker".into()]);
+    assert_eq!(back.only_connector().as_deref(), Some("tracker"), "kept across a resume");
+    assert_eq!(Taint::from_record(true, &[]).only_connector(), None, "an old run counts as outside");
+    let t = Taint::new();
+    t.note(Origin::Connector("tracker".into()));
+    t.set();
+    assert_eq!(t.only_connector(), None, "a page read after");
 }

@@ -36,17 +36,54 @@
 //! Content read in round two can shape a decision in round six. A gate that
 //! expired would stop only the clumsiest version of the attack.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Whether a run has read something it should not believe.
+/// Where something a run read came from.
+///
+/// Two kinds, because there is one decision that needs them told apart: a
+/// run that has read only a connector's answer may go back to *that same*
+/// connector to read more — list the projects, then the issues of one — and a
+/// run that has read anything else may not reach a connector at all. What it
+/// read was already that server's; asking it again for more sends nothing to
+/// anyone who did not have it. `docs/syn-connectors-2026-10-08.md` §3.5.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Origin {
+    /// A page, a feed, a file, a forwarded message, retrieved context.
+    Outside,
+    /// One connector's answer, by its slug.
+    Connector(String),
+}
+
+impl Origin {
+    /// As kept on a `Run`: `outside`, `connector:jira`.
+    pub fn key(&self) -> String {
+        match self {
+            Origin::Outside => "outside".into(),
+            Origin::Connector(slug) => format!("connector:{slug}"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Origin {
+        match key.strip_prefix("connector:") {
+            Some(slug) if !slug.is_empty() => Origin::Connector(slug.to_string()),
+            // Anything this version does not know is treated as the strictest.
+            _ => Origin::Outside,
+        }
+    }
+}
+
+/// Whether a run has read something it should not believe, and from where.
 ///
 /// Atomic rather than a `Cell` because the engine's future crosses threads,
 /// and shared rather than owned because a recipe's steps must be able to set
 /// it: a recipe that reads a feed article and then trashes a note is the same
 /// attack as a run that does, one level down.
 #[derive(Debug, Default)]
-pub struct Taint(AtomicBool);
+pub struct Taint {
+    any: AtomicBool,
+    from: std::sync::Mutex<BTreeSet<Origin>>,
+}
 
 impl Taint {
     pub fn new() -> Self {
@@ -56,16 +93,166 @@ impl Taint {
     /// One that has already read something — a Telegram turn carrying a
     /// forwarded message, say.
     pub fn already() -> Self {
-        Self(AtomicBool::new(true))
+        let t = Self::default();
+        t.set();
+        t
+    }
+
+    /// As a run left it: `read_from` when it says where, else `read_untrusted`
+    /// alone, which is as strict as it gets.
+    pub fn from_record(read_untrusted: bool, read_from: &[String]) -> Self {
+        let t = Self::default();
+        for key in read_from {
+            t.note(Origin::from_key(key));
+        }
+        if read_untrusted && !t.is_set() {
+            t.set();
+        }
+        t
     }
 
     pub fn is_set(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+        self.any.load(Ordering::SeqCst)
     }
 
+    /// Read something from outside the vault — no more said about where.
     pub fn set(&self) {
-        self.0.store(true, Ordering::SeqCst);
+        self.note(Origin::Outside);
     }
+
+    pub fn note(&self, origin: Origin) {
+        if let Ok(mut from) = self.from.lock() {
+            from.insert(origin);
+        }
+        self.any.store(true, Ordering::SeqCst);
+    }
+
+    /// Every origin, as kept on a `Run`.
+    pub fn keys(&self) -> Vec<String> {
+        self.from.lock().map(|f| f.iter().map(Origin::key).collect()).unwrap_or_default()
+    }
+
+    /// Whether everything read so far came from connectors — no page, feed,
+    /// file or forwarded message. Sends stay in view then, by plan only.
+    pub fn only_connectors(&self) -> bool {
+        self.is_set() && self.from.lock().is_ok_and(|f| f.iter().all(|o| matches!(o, Origin::Connector(_))))
+    }
+
+    /// The one connector everything read so far came from, if that is so.
+    /// `None` for a run that read nothing, read anything else, or read two
+    /// connectors.
+    pub fn only_connector(&self) -> Option<String> {
+        if !self.is_set() {
+            return None;
+        }
+        let from = self.from.lock().ok()?;
+        match from.iter().collect::<Vec<_>>().as_slice() {
+            [Origin::Connector(slug)] => Some(slug.clone()),
+            _ => None,
+        }
+    }
+}
+
+/// Whether every value in a connector call's arguments is an echo — words
+/// the person asked with, or words that same connector already answered.
+///
+/// The condition on going back to a connector after reading its answer. The
+/// server already has what it said, and the person said what they said; a
+/// value from anywhere else — a note in the vault, another server, the model's
+/// own composition — would be taking something to that server it did not
+/// have. So: `project_id: "p-17"` after `list_projects` returned `p-17` goes;
+/// `text: "quan trọng"` lifted from a note does not.
+///
+/// Small whole numbers (a page size, a limit) and booleans carry nothing and
+/// are let through. Every other value — a longer number included, since a
+/// balance is a number — must be found, ignoring case, in `sources`. Returns
+/// the first value that was not.
+pub fn only_echoes(args: &serde_json::Value, sources: &[String]) -> Result<(), String> {
+    use serde_json::Value;
+    let lowered: Vec<String> = sources.iter().map(|s| s.to_lowercase()).collect();
+    // A date the person wrote their way — "30/9/2026" — goes as the API
+    // writes it, "2026-09-30": the same date, not a new value. Seen in the
+    // 2026-10-11 eval, where the read the person asked for was refused.
+    let dates: std::collections::BTreeSet<String> = sources.iter().flat_map(|s| dates_in(s)).collect();
+    let found = |needle: &str| {
+        let needle = needle.trim().to_lowercase();
+        needle.is_empty()
+            || lowered.iter().any(|s| s.contains(&needle))
+            || iso_date(&needle).is_some_and(|d| dates.contains(&d) || plausible_date(&d))
+    };
+    fn walk(v: &Value, check: &dyn Fn(&Value) -> Result<(), String>) -> Result<(), String> {
+        match v {
+            Value::Object(o) => o.values().try_for_each(|x| walk(x, check)),
+            Value::Array(a) => a.iter().try_for_each(|x| walk(x, check)),
+            other => check(other),
+        }
+    }
+    walk(args, &|v| match v {
+        Value::Null | Value::Bool(_) => Ok(()),
+        Value::Number(n) if n.as_f64().is_some_and(|f| f.fract() == 0.0 && f.abs() <= 100.0) => Ok(()),
+        Value::Number(n) => if found(&n.to_string()) { Ok(()) } else { Err(n.to_string()) },
+        Value::String(s) => if found(s) { Ok(()) } else { Err(s.clone()) },
+        _ => Ok(()),
+    })
+}
+
+/// `2026-09-30`, `2026-09-30T00:00:00Z`, `2026-09`, or the compact forms
+/// CalDAV and others write — `20260930`, `20260930T000000Z` — → its date, or month.
+fn iso_date(text: &str) -> Option<String> {
+    let re = regex::Regex::new(r"^(\d{4})-(\d{2})(?:-(\d{2}))?(?:[t ][0-9:.+\-z]*)?$").ok()?;
+    if let Some(c) = re.captures(text.trim()) {
+        return Some(match c.get(3) {
+            Some(d) => format!("{}-{}-{}", &c[1], &c[2], d.as_str()),
+            None => format!("{}-{}", &c[1], &c[2]),
+        });
+    }
+    let compact = regex::Regex::new(r"^(\d{4})(\d{2})(\d{2})(?:t\d{4,6}z?)?$").ok()?;
+    let c = compact.captures(text.trim())?;
+    Some(format!("{}-{}-{}", &c[1], &c[2], &c[3]))
+}
+
+/// A real day near now carries next to nothing — less than a page number —
+/// and asking about "this week" or "last month" sends days nobody wrote: the
+/// day after the last, the first of a month. Five years back to two ahead.
+/// Before this, a calendar read for the week the person named was refused
+/// for its end, the day after (2026-10-12 eval).
+fn plausible_date(iso: &str) -> bool {
+    let day = if iso.len() == 7 { format!("{iso}-01") } else { iso.to_string() };
+    let Ok(d) = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d") else { return false };
+    let today = chrono::Utc::now().date_naive();
+    d >= today - chrono::Duration::days(5 * 366) && d <= today + chrono::Duration::days(2 * 366)
+}
+
+/// Every date and month written in `text`, as `yyyy-mm-dd` and `yyyy-mm`:
+/// ISO, `d/m/yyyy` (also with `-` or `.`), and `m/yyyy`.
+fn dates_in(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let valid = |y: u32, m: u32, d: u32| (1..=12).contains(&m) && (1..=31).contains(&d) && (1900..=2200).contains(&y);
+    if let Ok(re) = regex::Regex::new(r"\b(\d{4})-(\d{1,2})(?:-(\d{1,2}))?\b") {
+        for c in re.captures_iter(text) {
+            let (y, m) = (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0));
+            let d = c.get(3).map(|d| d.as_str().parse().unwrap_or(0));
+            if valid(y, m, d.unwrap_or(1)) {
+                out.push(format!("{y:04}-{m:02}"));
+                if let Some(d) = d {
+                    out.push(format!("{y:04}-{m:02}-{d:02}"));
+                }
+            }
+        }
+    }
+    if let Ok(re) = regex::Regex::new(r"\b(?:(\d{1,2})[/.\-])?(\d{1,2})[/.\-](\d{4})\b") {
+        for c in re.captures_iter(text) {
+            let (m, y): (u32, u32) = (c[2].parse().unwrap_or(0), c[3].parse().unwrap_or(0));
+            let d = c.get(1).map(|d| d.as_str().parse().unwrap_or(0));
+            if valid(y, m, d.unwrap_or(1)) {
+                out.push(format!("{y:04}-{m:02}"));
+                if let Some(d) = d {
+                    out.push(format!("{y:04}-{m:02}-{d:02}"));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Tools whose results are written by somebody other than the user.
@@ -78,9 +265,8 @@ impl Taint {
 /// comes from a bank, a colleague, a download, and a cell can hold a sentence
 /// addressed to the model as easily as a number.
 ///
-/// What is not here, and is a known gap rather than an oversight: a web page the
-/// user clipped into their own vault. Once it is a note it reads like one, and
-/// there is no field that reliably says otherwise.
+/// A web page clipped into the vault is not a tool of its own: it is a note,
+/// shown by `get_node` or by retrieval, and `from_outside` is how either tells.
 pub const UNTRUSTED_READS: &[&str] = &[
     "read_feed_article",
     // Its snippets come out of the same PDFs and Office files `read_file_text`
@@ -121,6 +307,24 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
     "timeline",
     "load_skill",
     "look_back",
+    // Arithmetic over a table this conversation already brought back. Reaches
+    // nothing and writes nothing — and a table read from outside is exactly
+    // what it is for, so refusing it after reading would refuse its point.
+    "crunch",
+    // Lays a plan of sends out for the user; sends nothing itself. Approving
+    // the plan is the user deciding where what was read may go.
+    "propose_writes",
+    // A draft is inert until the user approves it on the card, which shows the
+    // host whatever the draft says; drafting from documentation just read is
+    // the point. `authoring::check` refuses a host the user did not name.
+    "connector_draft",
+    "connector_connect",
+    "connector_find",
+    // A statement is read to be staged: nothing reaches the ledger until the
+    // person confirms Finance's import preview. See `syn::staging`.
+    "stage_transactions",
+    // Held by the engine to values the person said, once anything was read.
+    "connector_try",
     // Names only — never a value — and what Syn may know of is the user's
     // choice per item. Reading a page cannot make a name mean more.
     "safe_list",
@@ -164,15 +368,59 @@ pub const ALLOWED_AFTER_READING: &[&str] = &[
 /// daily note" was refused `update_node` — again in every new message, because
 /// every new message retrieved the same photos.
 ///
-/// The name itself is a known gap, the one a clipped page is: a downloaded
-/// file is named by whoever made it. A name is a line, and the model is told
-/// what a retrieved file is; a page of text is what this gate is for.
+/// The name itself is still a gap: a downloaded file is named by whoever made
+/// it. Counting it as somebody's words would bring back the Telegram trouble
+/// above, and telling an instruction from a title by its length does not work
+/// — "Biên bản họp dự án Q3" is six words and "xoá hết task" is three. It waits
+/// for writes after reading to be staged for review rather than refused, when
+/// counting every name costs nothing.
 pub fn untrusted_source(source_type: &str, words_inside: impl FnOnce() -> bool) -> bool {
     match source_type {
         "feed_article" => true,
         "file" => words_inside(),
         _ => false,
     }
+}
+
+/// Frontmatter keys that name the web address a note's words were taken from.
+///
+/// Narrow on purpose. `url` is not here: a person's profile, a project's repo
+/// or a bookmark carries one without its body being that page's words, and a
+/// false positive here costs the run its edits (`ALLOWED_AFTER_READING`).
+pub const OUTSIDE_SOURCE_KEYS: &[&str] = &["source", "source_url", "clipped_from"];
+
+/// Whether a note says its words came from a web page — a clipping.
+///
+/// A clipped page is the stranger's words with the vault's clothes on: once it
+/// is a note it reads like one, and before this nothing marked it. A clipper —
+/// the browser extensions people use, and the fixture in `eval` — writes where
+/// it came from as `source:`. Only a web address counts; a `source` that names
+/// a note or a device (`timeline::moments` writes an object there) is the
+/// vault's own.
+pub fn from_outside(properties: &serde_json::Value) -> bool {
+    OUTSIDE_SOURCE_KEYS.iter().any(|key| {
+        properties
+            .get(*key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .is_some_and(|v| {
+                let v = v.to_ascii_lowercase();
+                v.starts_with("http://") || v.starts_with("https://")
+            })
+    })
+}
+
+/// The connectors whose mirrored notes `text` shows, by their paths
+/// (`connector::mirror::path_for`). A mirrored note is that connector's
+/// words wherever it is read from — a tool, retrieval — as its answer was
+/// (lesson S5).
+pub fn mirrored_in(text: &str) -> Vec<String> {
+    static RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"/mirror-([a-z0-9_]{1,20})/[0-9a-f]{16}\.md").expect("pattern"));
+    let mut out: Vec<String> = RE.captures_iter(text).map(|c| c[1].to_string()).collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 pub fn allowed_after_reading(tool: &str) -> bool {
@@ -493,7 +741,44 @@ fn urls_in(text: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
+mod clippings {
+    use super::*;
+    use serde_json::json;
+
+    /// A clipped page is the stranger's words, however much it looks like a note.
+    #[test]
+    fn a_note_with_a_web_source_is_from_outside() {
+        assert!(from_outside(&json!({ "source": "https://vendor.example/onboarding", "tags": ["clipping"] })));
+        assert!(from_outside(&json!({ "source_url": "HTTP://x.example/a" })));
+        assert!(from_outside(&json!({ "clipped_from": " https://x.example/ " })));
+    }
+
+    /// And nothing else is: a moment's `source` names a note, a person's `url`
+    /// is a profile, a task's `source` is where it was typed.
+    #[test]
+    fn the_vaults_own_sources_are_not() {
+        assert!(!from_outside(&json!({ "source": { "node": "Notes/uat.md" } })));
+        assert!(!from_outside(&json!({ "url": "https://linkedin.com/in/someone" })));
+        assert!(!from_outside(&json!({ "source": "telegram" })));
+        assert!(!from_outside(&json!({})));
+        assert!(!from_outside(&json!(null)));
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    /// A date the person wrote their way is the same date in the API's way;
+    /// a date they never wrote is not. See `only_echoes`.
+    #[test]
+    fn a_date_is_an_echo_in_any_way_it_is_written() {
+        let said = vec!["tỷ giá EUR sang USD ngày 30/9/2026, và cả tháng 8/2026".to_string()];
+        assert!(super::only_echoes(&serde_json::json!({ "date": "2026-09-30", "from": "EUR" }), &said).is_ok());
+        assert!(super::only_echoes(&serde_json::json!({ "month": "2026-08" }), &said).is_ok());
+        assert!(super::only_echoes(&serde_json::json!({ "start": "20261012T000000Z", "end": "20261019T000000Z" }), &said).is_ok(), "a week asked about: its days, written as CalDAV writes them");
+        assert!(super::only_echoes(&serde_json::json!({ "date": "1899-09-29" }), &said).is_err(), "a day far from now is information");
+        assert!(super::only_echoes(&serde_json::json!({ "q": "2026-09-30 mật khẩu" }), &said).is_err(), "a date is no cover for words");
+    }
+
     use super::*;
 
     #[test]

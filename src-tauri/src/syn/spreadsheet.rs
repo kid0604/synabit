@@ -123,10 +123,11 @@ pub fn load(path: &std::path::Path, kind: Kind, sheet: Option<&str>) -> Result<S
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "Sheet1".to_string());
             let delimiter = delimiter.unwrap_or_else(|| sniff_delimiter(text));
-            let cells = parse_delimited(text, delimiter)
+            let mut cells: Vec<Vec<Value>> = parse_delimited(text, delimiter)
                 .into_iter()
                 .map(|row| row.iter().map(|c| typed_text(c)).collect())
                 .collect();
+            settle_grouping(&mut cells);
             Ok(Sheet { names: vec![name.clone()], name, origin: (0, 0), cells })
         }
         Kind::Workbook => load_workbook(path, sheet),
@@ -267,6 +268,12 @@ fn typed_text(raw: &str) -> Value {
     if s.is_empty() {
         return Value::Null;
     }
+    // `-55.000` is fifty-five thousand in a Vietnamese statement and fifty-five
+    // in an American one. Left as written here, and settled by its column
+    // (`settle_grouping`), which can tell.
+    if ambiguous(s) {
+        return Value::String(s.to_string());
+    }
     let digits = s.strip_prefix('-').unwrap_or(s);
     let (whole, fraction) = digits.split_once('.').unwrap_or((digits, ""));
     let plain = !whole.is_empty()
@@ -285,6 +292,54 @@ fn typed_text(raw: &str) -> Value {
         }
     }
     Value::String(capped(raw))
+}
+
+/// One dot and exactly three digits after it: a thousand or a decimal.
+fn ambiguous(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    matches!(digits.split_once('.'), Some((w, f)) if (1..=3).contains(&w.len()) && f.len() == 3
+        && w.chars().all(|c| c.is_ascii_digit()) && f.chars().all(|c| c.is_ascii_digit())
+        && !(w.len() > 1 && w.starts_with('0')))
+}
+
+/// Numbers written with `.` between thousands, read so — decided for each
+/// column, as `crunch::dot_grouped` decides it. A column that is not grouped
+/// has its ambiguous cells read as decimals, as they always were.
+///
+/// Read cell by cell, a statement's `-55.000` was -55 beside `-1.265.000`
+/// left as text, and a model totalled the mixture (2026-10-11 eval).
+fn settle_grouping(cells: &mut [Vec<Value>]) {
+    let width = cells.iter().map(Vec::len).max().unwrap_or(0);
+    for c in 0..width {
+        // Every number in it, a decimal already read as one included: `2.25`
+        // beside `1.500` says the dot is a decimal point.
+        let texts: Vec<String> = cells
+            .iter()
+            .filter_map(|r| r.get(c))
+            .filter_map(|v| match v {
+                Value::String(s) => Some(s.clone()),
+                Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            })
+            .collect();
+        let grouped = crate::syn::crunch::dot_grouped(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+        for row in cells.iter_mut() {
+            let Some(Value::String(s)) = row.get(c).cloned() else { continue };
+            let n = if grouped {
+                let plain = crate::syn::crunch::ungrouped(&s);
+                (s.contains('.') && plain.trim_start_matches('-').chars().all(|ch| ch.is_ascii_digit() || ch == '.'))
+                    .then(|| plain.parse::<f64>().ok())
+                    .flatten()
+            } else if ambiguous(&s) {
+                s.parse::<f64>().ok()
+            } else {
+                None
+            };
+            if let Some(n) = n {
+                row[c] = number(n);
+            }
+        }
+    }
 }
 
 /// Which of comma, semicolon and tab separates the fields.
@@ -425,7 +480,9 @@ pub fn parse_range(raw: &str) -> Result<Window, String> {
 /// What one call hands back: the header, a page of rows, and how to get the
 /// next one.
 pub fn page(sheet: &Sheet, window: Option<Window>, max_rows: usize) -> Value {
-    let max_rows = max_rows.clamp(1, MAX_ROWS);
+    // On a large window, more rows in one read, in proportion (`syn::room`).
+    let rows_chars = crate::syn::room::scaled(ROWS_CHARS);
+    let max_rows = max_rows.clamp(1, MAX_ROWS * rows_chars / ROWS_CHARS);
     let (row0, col0) = sheet.origin;
     let height = sheet.cells.len() as u32;
     let width = sheet.cells.iter().map(Vec::len).max().unwrap_or(0) as u32;
@@ -487,7 +544,7 @@ pub fn page(sheet: &Sheet, window: Option<Window>, max_rows: usize) -> Value {
     while r <= asked_last && rows.len() < max_rows {
         let row = slice(r);
         spent += serde_json::to_string(&row).map(|s| s.len()).unwrap_or(0) + 1;
-        if spent > ROWS_CHARS && !rows.is_empty() {
+        if spent > rows_chars && !rows.is_empty() {
             break;
         }
         rows.push(row);
@@ -669,6 +726,18 @@ mod tests {
 
     #[test]
     fn numbers_become_numbers_and_account_numbers_stay_text() {
+        let mut statement = vec![
+            vec![json!("Số tiền")],
+            vec![typed_text("-55.000")],
+            vec![typed_text("-1.265.000")],
+            vec![typed_text("25.000.000")],
+        ];
+        settle_grouping(&mut statement);
+        assert_eq!(statement[1][0], json!(-55000), "a thousand, by its column");
+        assert_eq!(statement[2][0], json!(-1265000));
+        let mut prices = vec![vec![typed_text("1.500")], vec![typed_text("2.25")]];
+        settle_grouping(&mut prices);
+        assert_eq!(prices[0][0], json!(1.5), "a decimal, by its column");
         assert_eq!(typed_text("42"), json!(42));
         assert_eq!(typed_text("-12.50"), json!(-12.5));
         assert_eq!(typed_text("0.3"), json!(0.3));

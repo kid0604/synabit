@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
@@ -34,6 +34,8 @@ import FinanceDebts from './components/FinanceDebts.vue';
 import FinanceBudgets from './components/FinanceBudgets.vue';
 import FinanceRecurring from './components/FinanceRecurring.vue';
 import FinanceImportModal from './components/FinanceImportModal.vue';
+import StagedImports from './components/StagedImports.vue';
+import { useStagedImports } from './useStagedImports';
 import TransactionModal from './TransactionModal.vue';
 import FinanceSettingsModal from './FinanceSettingsModal.vue';
 import FinanceOnboarding from './FinanceOnboarding.vue';
@@ -778,6 +780,47 @@ const importHeader = ref<string[]>([]);
 const importMap = ref<ColumnMap | null>(null);
 const importMissing = ref<string[]>([]);
 const importResult = ref<ImportResult | null>(null);
+/** The staging the preview is showing, when it is one Syn prepared. */
+const importStagedId = ref<string | null>(null);
+
+const stagedImports = useStagedImports(() => props.vaultPath);
+onBeforeUnmount(() => stagedImports.stop());
+
+/** Work out what importing `text` would do and show it — the one way in, whether picked by hand or staged by Syn. */
+const previewImport = (fileName: string, text: string, stagedId: string | null = null): boolean => {
+    const rows = parseCsv(text);
+    if (rows.length === 0) {
+        storageError.value = t('finance.storage_error.import_empty');
+        return false;
+    }
+    const [header, ...body] = rows;
+    const map = matchColumns(header);
+    importFileName.value = fileName;
+    importHeader.value = header;
+    importMap.value = map;
+    importMissing.value = missingColumns(map);
+    importResult.value = missingColumns(map).length > 0
+        ? { ready: [], duplicates: 0, problems: [] }
+        : importRows(body, map, {
+            accounts: accounts.value,
+            categories: [...incomeCategories.value, ...expenseCategories.value],
+            currency: currentCurrency.value,
+            existing: allTransactionsFlat.value,
+        });
+    importStagedId.value = stagedId;
+    showImportModal.value = true;
+    return true;
+};
+
+const previewStaged = async (id: string) => {
+    try {
+        const s = stagedImports.staged.value.find(x => x.id === id);
+        previewImport(s?.why || s?.source || id, await stagedImports.text(id), id);
+    } catch (e) {
+        logger.error('Failed to read what Syn staged', e);
+        storageError.value = t('finance.storage_error.import_read');
+    }
+};
 
 /**
  * Read a file and work out what importing it would do — without doing it.
@@ -795,28 +838,7 @@ const chooseImportFile = async () => {
         const path = Array.isArray(picked) ? picked[0] : picked;
         if (!path) return;
 
-        const rows = parseCsv(await readTextFile(path));
-        if (rows.length === 0) {
-            storageError.value = t('finance.storage_error.import_empty');
-            return;
-        }
-
-        const [header, ...body] = rows;
-        const map = matchColumns(header);
-
-        importFileName.value = path.split(/[\\/]/).pop() ?? path;
-        importHeader.value = header;
-        importMap.value = map;
-        importMissing.value = missingColumns(map);
-        importResult.value = missingColumns(map).length > 0
-            ? { ready: [], duplicates: 0, problems: [] }
-            : importRows(body, map, {
-                accounts: accounts.value,
-                categories: [...incomeCategories.value, ...expenseCategories.value],
-                currency: currentCurrency.value,
-                existing: allTransactionsFlat.value,
-            });
-        showImportModal.value = true;
+        previewImport(path.split(/[\\/]/).pop() ?? path, await readTextFile(path));
     } catch (e) {
         logger.error('Failed to read the file', e);
         storageError.value = t('finance.storage_error.import_read');
@@ -846,6 +868,9 @@ const confirmImport = async () => {
             });
         }
         await loadData();
+        // In the ledger now: the staging it came from is done with.
+        if (importStagedId.value) await stagedImports.discard(importStagedId.value);
+        importStagedId.value = null;
     } catch (e) {
         logger.error('Failed to import transactions', e);
         storageError.value = t('finance.storage_error.import_failed');
@@ -988,6 +1013,7 @@ onMounted(async () => {
     // month that is missing this month's rent.
     await materialiseRecurring();
     handleRouteQuery();
+    void stagedImports.start();
     
     bus.on('vault:file-modified', ({ paths }) => {
         // A sync that touched only months can refresh only those months.
@@ -1075,6 +1101,8 @@ defineExpose({ openMonthById });
               <X class="w-4 h-4" />
           </button>
       </div>
+
+      <StagedImports :staged="stagedImports.staged.value" @preview="previewStaged" @discard="stagedImports.discard" />
 
       <!-- Main Content Area -->
       <div v-if="currentMonth || currentView === 'reports' || currentView === 'debts'" class="flex-1 flex gap-6 px-2 md:px-6 pt-4 md:pt-6 pb-2 md:pb-6 overflow-hidden relative">

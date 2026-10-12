@@ -30,7 +30,7 @@ export const ROUND_BUCKETS: (keyof RoundBuckets)[] = [
  */
 export const ENDINGS: RunState[] = [
   'done', 'budget_exhausted', 'failed', 'cancelled',
-  'awaiting_consent', 'awaiting_choice', 'interrupted', 'working',
+  'awaiting_consent', 'awaiting_choice', 'awaiting_approval', 'interrupted', 'working',
 ];
 
 /** `unknown` last: it is the count that says this screen needs fixing. */

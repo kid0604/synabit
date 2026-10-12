@@ -104,7 +104,8 @@ pub fn page_chars(settings: &crate::models::syn::SynSettings) -> usize {
     if settings.provider.is_local() {
         PAGE_CHARS_LOCAL
     } else {
-        PAGE_CHARS_REMOTE
+        // A share of the window when the run knows it (`syn::room`).
+        crate::syn::room::scaled(PAGE_CHARS_REMOTE)
     }
 }
 

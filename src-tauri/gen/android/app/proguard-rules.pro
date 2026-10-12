@@ -54,3 +54,4 @@
 # ---------------------------------------------------------------------------
 -dontwarn javax.annotation.Nullable
 -dontwarn javax.annotation.concurrent.GuardedBy
+-keep class com.synabit.app.SynDeviceBridge { *; }

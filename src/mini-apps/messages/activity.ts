@@ -23,7 +23,7 @@ export interface Activity {
  *  and the inspector keeps all of it. */
 export const RECENT_MS = 24 * 60 * 60 * 1000;
 
-const WAITING = new Set(['awaiting_consent', 'awaiting_choice']);
+const WAITING = new Set(['awaiting_consent', 'awaiting_choice', 'awaiting_approval']);
 
 export function groupRuns(all: RunSummary[], now: number = Date.now()): Activity {
   // A helper's run is part of its parent's work, not a piece of its own: the

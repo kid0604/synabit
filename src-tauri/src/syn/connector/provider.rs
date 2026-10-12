@@ -316,34 +316,81 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
     /// The tools of every connected server, for a run asked in the app.
     ///
     /// Nothing for a run asked from Telegram or by a routine: a server's tool
-    /// asks permission, and there is nobody at either to ask. Nothing for a
-    /// run that has already read something from outside, which would be
-    /// refused every one of them. Nothing a person has switched off.
+    /// asks permission, and there is nobody at either to ask. Nothing a person
+    /// has switched off. And for a run that has already read something from
+    /// outside, nothing — except, when all it read was one connector's answer,
+    /// that connector's read tools and every tool that sends: the gate lets the
+    /// first through and the second only by an approved plan (`gate::decide`
+    /// step 1, `syn::writes`). A send not in view could be neither proposed
+    /// nor, once approved, called — the 2026-10-11 eval found exactly that.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
-        if ctx.surface != crate::syn::surface::Surface::App || ctx.taint.is_set() {
+        if ctx.surface != crate::syn::surface::Surface::App {
             return Vec::new();
         }
+        // After reading anything: every send stays in view — the gate lets one
+        // through only as an approved plan's request (`syn::writes`), and one
+        // out of view can be neither proposed nor, once approved, called; the
+        // 2026-10-11 eval found both. Reads only of the one connector, when
+        // all that was read was that one connector.
+        let only_from: Option<Option<String>> = if ctx.taint.is_set() {
+            Some(if ctx.taint.only_connectors() { ctx.taint.only_connector() } else { None })
+        } else {
+            None
+        };
         // The first turn in a vault starts its servers. Handed the app's handle
         // when it is the real one, for the keychain on Android.
         let app = (ctx.app as &dyn std::any::Any).downcast_ref::<tauri::AppHandle>().cloned();
+        super::declared::know_app(app.clone());
         super::start_if_needed(ctx.vault_path, app);
 
         let ledger = crate::syn::consent::load(ctx.vault_path);
         let now = chrono::Utc::now().to_rfc3339();
-        catalog_of(ctx.vault_path)
+        let catalog = catalog_of(ctx.vault_path);
+        let mut offered: Vec<ToolDefinition> = catalog
             .iter()
             .filter(|s| s.status == Status::Connected)
             .flat_map(|s| s.tools.iter())
             .filter(|t| !crate::syn::registry::is_switched_off(&capability_for(t), &ledger, &now))
+            .filter(|t| {
+                // After reading one connector: its reads, and every tool that
+                // sends — which goes only through a plan the person approved
+                // (`gate::decide`, `syn::writes`), and has to be in view to be
+                // proposed and then called. Other connectors' reads stay hidden.
+                only_from.as_ref().is_none_or(|slug| match capability_for(t) {
+                    Capability::NetRead { .. } => slug.as_deref().is_some_and(|s| server_slug_of(&t.name) == Some(s)),
+                    _ => true,
+                })
+            })
             .map(Offered::definition)
-            .collect()
+            .collect();
+
+        // Declared connectors this device approved. See `declared`.
+        let mcp_slugs: Vec<String> = super::config::load(ctx.vault_path).servers.iter().map(|s| s.slug()).collect();
+        let declared = {
+            let db = ctx.db.lock().unwrap_or_else(|e| e.into_inner());
+            super::declared::refresh(ctx.vault_path, &db, &mcp_slugs)
+        };
+        for d in &declared {
+            for op in &d.manifest.operations {
+                let capability = super::declared::capability(d, op);
+                if crate::syn::registry::is_switched_off(&capability, &ledger, &now) {
+                    continue;
+                }
+                // As above: the same connector's reads, and sends (by plan only).
+                if only_from.as_ref().is_some_and(|slug| matches!(capability, Capability::NetRead { .. }) && slug.as_deref() != Some(d.manifest.id.as_str())) {
+                    continue;
+                }
+                offered.push(super::declared::definition(d, op));
+            }
+        }
+        offered
     }
 
     fn capability(&self, tool: &str, _args: &Value) -> Option<Capability> {
         if !is_connector_tool(tool) {
             return None;
         }
-        capability_by_name(tool)
+        capability_by_name(tool).or_else(|| super::declared::find_anywhere(tool).map(|(d, op)| super::declared::capability(&d, &op)))
     }
 
     /// Not reached from a run: a call is a network request, which the engine

@@ -116,6 +116,7 @@ fn _every_variant_is_listed(state: RunState) {
         | RunState::BudgetExhausted
         | RunState::AwaitingConsent
         | RunState::AwaitingChoice
+        | RunState::AwaitingApproval
         | RunState::Interrupted => {}
     }
 }
@@ -152,6 +153,9 @@ pub enum RunState {
     /// answer at all to the second, since restoring only helps somebody who
     /// noticed the wrong thing went. See `syn::ambiguity`.
     AwaitingChoice,
+    /// Stopped on a plan of sends to connectors, waiting for the person to
+    /// approve the ones they want. `Run::writes` holds it. See `syn::writes`.
+    AwaitingApproval,
     /// Found on disk as `Working` by a process that is not driving it.
     ///
     /// Which is to say: the app was closed, or crashed, in the middle. Written
@@ -171,7 +175,7 @@ impl RunState {
     /// That is not hypothetical: `AwaitingConsent` was added to the enum, the
     /// agreement test went on passing, and the front end had no idea the state
     /// existed. The test was enumerating the variants it was meant to check.
-    pub const ALL: [RunState; 8] = [
+    pub const ALL: [RunState; 9] = [
         RunState::Working,
         RunState::Done,
         RunState::Failed,
@@ -179,6 +183,7 @@ impl RunState {
         RunState::BudgetExhausted,
         RunState::AwaitingConsent,
         RunState::AwaitingChoice,
+        RunState::AwaitingApproval,
         RunState::Interrupted,
     ];
 
@@ -616,6 +621,12 @@ pub struct Run {
     /// on with, whether or not they are in its history.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_untrusted: bool,
+    /// Where what made `read_untrusted` came from — `outside`, `connector:jira`
+    /// — so a run carried on keeps the one thing that depends on it: going
+    /// back to the same connector for more. Empty on runs from before it was
+    /// kept, which then count as `outside`, the strictest. See `taint::Origin`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_from: Vec<String>,
     /// Whether an earlier turn of this conversation read something nobody
     /// here wrote. Not a taint — the user has spoken since — but a stranger's
     /// words may be what they said "ok" to, so a Safe secret is not sent on
@@ -700,6 +711,19 @@ pub struct Run {
     /// proceeding normally, with one detail Syn refuses to guess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_choice: Option<crate::syn::ambiguity::Choice>,
+    /// The plan of sends this run proposed, and where each request stands.
+    /// Carried to the run that continues it, which is where approved requests
+    /// are sent. See `syn::writes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writes: Option<crate::syn::writes::Plan>,
+    /// A connector Syn drafted and asked the person to approve — its id —
+    /// while the card is waiting. See `connector::authoring`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_connector: Option<String>,
+    /// A connector the person declined on the card, so the run that carries
+    /// on tells the model so instead of asking again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declined_connector: Option<String>,
     /// The call this run was about to make when it stopped for permission.
     ///
     /// # Why the answer is not enough on its own
@@ -805,6 +829,10 @@ impl Run {
             error: None,
             plan_only: false,
             read_untrusted: false,
+            read_from: Vec::new(),
+            writes: None,
+            pending_connector: None,
+            declined_connector: None,
             untrusted_before: false,
             plan: Vec::new(),
             ceiling: None,
@@ -1205,6 +1233,12 @@ pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
     newest
         .into_values()
         .map(|run| match (&run.pending_consent, &run.pending_choice) {
+            _ if run.pending_connector.is_some() && run.state == RunState::AwaitingApproval => serde_json::json!({
+                "run_id": run.id, "conversation_id": run.conversation_id, "connector": run.pending_connector,
+            }),
+            _ if run.writes.as_ref().is_some_and(|p| p.awaiting()) && run.state == RunState::AwaitingApproval => serde_json::json!({
+                "run_id": run.id, "conversation_id": run.conversation_id, "plan": run.writes,
+            }),
             (Some(ask), _) => serde_json::json!({
                 "run_id": run.id, "conversation_id": run.conversation_id, "ask": ask,
             }),
@@ -1217,7 +1251,11 @@ pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
 
 /// Whether a run is still waiting for somebody to answer it.
 pub fn is_waiting(run: &Run) -> bool {
-    run.carried_on_at.is_none() && (run.pending_consent.is_some() || run.pending_choice.is_some())
+    run.carried_on_at.is_none()
+        && (run.pending_consent.is_some()
+            || run.pending_choice.is_some()
+            || (run.state == RunState::AwaitingApproval
+                && (run.pending_connector.is_some() || run.writes.as_ref().is_some_and(|p| p.awaiting()))))
 }
 
 /// A run as a list needs it: everything except the transcript.

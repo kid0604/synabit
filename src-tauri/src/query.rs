@@ -214,21 +214,216 @@ impl Default for Expr {
 /// What a `stats` stage counts up.
 ///
 /// §7.1: the grammar slot is fixed and the **table of names inside it is
-/// open**. Adding `sum(x)` later costs an entry here and not one comma of
+/// open**. `sum(x)` and its kin cost an entry here and not one comma of
 /// syntax, which is the whole reason the slot was drawn this wide while only
-/// one name ships.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `count` shipped. They came with Syn's `crunch` (2026-10-11), because a model
+/// adding thirty amounts in its head gets them wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tally {
     Count,
+    Sum(String),
+    Avg(String),
+    Min(String),
+    Max(String),
+    /// How many different values the column holds.
+    Distinct(String),
 }
 
 impl Tally {
     /// What the column of numbers is called in the answer.
-    pub fn column(self) -> &'static str {
+    ///
+    /// `sum_amount` rather than `sum(amount)`, so that `sort sum_amount desc`
+    /// and `where sum_amount > 5` read it back as one word.
+    pub fn column(&self) -> String {
         match self {
-            Tally::Count => "count",
+            Tally::Count => "count".into(),
+            Tally::Sum(f) => format!("sum_{f}"),
+            Tally::Avg(f) => format!("avg_{f}"),
+            Tally::Min(f) => format!("min_{f}"),
+            Tally::Max(f) => format!("max_{f}"),
+            Tally::Distinct(f) => format!("distinct_{f}"),
         }
     }
+
+    /// The column this reads, if any.
+    pub fn field(&self) -> Option<&str> {
+        match self {
+            Tally::Count => None,
+            Tally::Sum(f) | Tally::Avg(f) | Tally::Min(f) | Tally::Max(f) | Tally::Distinct(f) => Some(f),
+        }
+    }
+
+    /// `count`, `sum(amount)`, `avg(amount)`… — `None` for a word that is not one.
+    fn of(word: &str) -> Option<Result<Tally, ()>> {
+        let word = word.trim_matches(',');
+        if word == "count" || word == "count()" {
+            return Some(Ok(Tally::Count));
+        }
+        let (name, rest) = word.split_once('(')?;
+        let field = rest.strip_suffix(')')?.trim();
+        if field.is_empty() {
+            return Some(Err(()));
+        }
+        let field = field.to_string();
+        Some(Ok(match name {
+            "sum" => Tally::Sum(field),
+            "avg" | "mean" => Tally::Avg(field),
+            "min" => Tally::Min(field),
+            "max" => Tally::Max(field),
+            "distinct" | "dc" => Tally::Distinct(field),
+            _ => return Some(Err(())),
+        }))
+    }
+}
+
+/// A sum worked out on each row by `| eval`.
+///
+/// Numbers, columns, text in quotes, `+ - * /`, brackets, and a short list of
+/// functions — `round`, `abs`, and the clock ones that read a time in a zone:
+/// `hour`, `day`, `month`, `weekday`. Deliberately not a language: there is no
+/// `if`, no variable but the row's own columns, and nothing that reaches out.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Arith {
+    Number(f64),
+    Text(String),
+    Column(String),
+    Neg(Box<Arith>),
+    Op(Box<Arith>, char, Box<Arith>),
+    Call(String, Vec<Arith>),
+}
+
+/// The functions `eval` knows, and how many arguments each takes.
+pub const ARITH_CALLS: &[(&str, usize, usize)] = &[
+    ("round", 1, 2),
+    ("abs", 1, 1),
+    ("hour", 1, 2),
+    ("day", 1, 2),
+    ("month", 1, 2),
+    ("weekday", 1, 2),
+    ("lower", 1, 1),
+    // `extract(text, "[+-][0-9.,]+")`: the first match, or its first group —
+    // a number out of a bank's notification, with no model reading it.
+    ("extract", 2, 2),
+];
+
+impl Arith {
+    /// Read `spent_s / 28800`, `round(avg_amount, 2)`, `hour(_time, "Asia/Ho_Chi_Minh")`.
+    pub fn parse(text: &str) -> Result<Arith, String> {
+        let tokens = arith_tokens(text)?;
+        let mut at = 0usize;
+        let expr = arith_sum(&tokens, &mut at)?;
+        match tokens.get(at) {
+            None => Ok(expr),
+            Some(extra) => Err(format!("'{extra}' has nothing to join onto")),
+        }
+    }
+}
+
+fn arith_tokens(text: &str) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+        } else if c == '"' || c == '\'' {
+            let quote = c;
+            chars.next();
+            let mut s = String::from('"');
+            loop {
+                match chars.next() {
+                    Some(q) if q == quote => break,
+                    Some(q) => s.push(q),
+                    None => return Err("a quote was opened and not closed".into()),
+                }
+            }
+            out.push(s);
+        } else if "+-*/(),".contains(c) {
+            out.push(c.to_string());
+            chars.next();
+        } else {
+            let mut w = String::new();
+            while let Some(&d) = chars.peek() {
+                if d.is_whitespace() || "+-*/(),\"'".contains(d) {
+                    break;
+                }
+                w.push(d);
+                chars.next();
+            }
+            out.push(w);
+        }
+    }
+    Ok(out)
+}
+
+fn arith_sum(t: &[String], at: &mut usize) -> Result<Arith, String> {
+    let mut left = arith_product(t, at)?;
+    while let Some(op) = t.get(*at).filter(|o| *o == "+" || *o == "-") {
+        let op = op.chars().next().unwrap_or('+');
+        *at += 1;
+        left = Arith::Op(Box::new(left), op, Box::new(arith_product(t, at)?));
+    }
+    Ok(left)
+}
+
+fn arith_product(t: &[String], at: &mut usize) -> Result<Arith, String> {
+    let mut left = arith_factor(t, at)?;
+    while let Some(op) = t.get(*at).filter(|o| *o == "*" || *o == "/") {
+        let op = op.chars().next().unwrap_or('*');
+        *at += 1;
+        left = Arith::Op(Box::new(left), op, Box::new(arith_factor(t, at)?));
+    }
+    Ok(left)
+}
+
+fn arith_factor(t: &[String], at: &mut usize) -> Result<Arith, String> {
+    let Some(word) = t.get(*at).cloned() else {
+        return Err("eval ends where a value should be".into());
+    };
+    *at += 1;
+    if word == "-" {
+        return Ok(Arith::Neg(Box::new(arith_factor(t, at)?)));
+    }
+    if word == "(" {
+        let inner = arith_sum(t, at)?;
+        if t.get(*at).map(String::as_str) != Some(")") {
+            return Err("a bracket was opened and not closed in eval".into());
+        }
+        *at += 1;
+        return Ok(inner);
+    }
+    if let Some(text) = word.strip_prefix('"') {
+        return Ok(Arith::Text(text.to_string()));
+    }
+    if let Ok(n) = word.parse::<f64>() {
+        return Ok(Arith::Number(n));
+    }
+    if t.get(*at).map(String::as_str) == Some("(") {
+        let name = word.to_lowercase();
+        let Some((_, least, most)) = ARITH_CALLS.iter().find(|(n, ..)| *n == name) else {
+            return Err(format!("eval does not know '{word}' — it knows {}", ARITH_CALLS.iter().map(|(n, ..)| *n).collect::<Vec<_>>().join(", ")));
+        };
+        *at += 1;
+        let mut args = Vec::new();
+        if t.get(*at).map(String::as_str) != Some(")") {
+            loop {
+                args.push(arith_sum(t, at)?);
+                match t.get(*at).map(String::as_str) {
+                    Some(",") => *at += 1,
+                    Some(")") => break,
+                    _ => return Err(format!("{name}( was not closed")),
+                }
+            }
+        }
+        *at += 1;
+        if args.len() < *least || args.len() > *most {
+            return Err(format!("{name} takes {least} to {most} values, not {}", args.len()));
+        }
+        return Ok(Arith::Call(name, args));
+    }
+    if ["+", "*", "/", ")", ","].contains(&word.as_str()) {
+        return Err(format!("'{word}' cannot start a value"));
+    }
+    Ok(Arith::Column(word.to_lowercase()))
 }
 
 /// What rows are gathered under.
@@ -244,6 +439,8 @@ pub enum Bucket {
     Month,
     Year,
     Field(String),
+    /// No `by`: every row in one heap, for a grand total.
+    All,
 }
 
 impl Bucket {
@@ -255,6 +452,7 @@ impl Bucket {
             Bucket::Month => "month".into(),
             Bucket::Year => "year".into(),
             Bucket::Field(name) => name.clone(),
+            Bucket::All => "all".into(),
         }
     }
 
@@ -313,8 +511,11 @@ pub enum Test {
 /// One step of the pipeline: the answer so far, turned into another answer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stage {
-    /// `| stats count by month`
-    Stats { tally: Tally, by: Bucket },
+    /// `| stats count by month`, `| stats count, sum(amount) by category`,
+    /// `| stats sum(amount)` — no `by` is one heap.
+    Stats { tallies: Vec<Tally>, by: Bucket },
+    /// `| eval md = spent_s / 28800` — a new column worked out on each row.
+    Eval { name: String, expr: Arith },
     /// `| sort count desc`
     Sort { key: String, descending: bool },
     /// `| seq gaps by who`
@@ -691,25 +892,54 @@ fn read_stage(run: &[String], q: &mut Query) {
 
     match name {
         "stats" => {
-            // `stats <fn> by <key>` — the slot is fixed, the table of names
-            // inside it is open (§7.1).
-            let tally = match rest.first().map(String::as_str) {
-                Some("count") => Tally::Count,
-                Some(other) => {
-                    q.refused.push(Refusal::stage_cannot_yet("stats", other));
-                    return;
+            // `stats <fn>[, <fn>…] [by <key>]` — the slot is fixed, the table
+            // of names inside it is open (§7.1). Without `by`, every row is
+            // one heap: the grand total a sum is usually asked for.
+            let mut tallies = Vec::new();
+            let mut at = 0usize;
+            while let Some(word) = rest.get(at).map(String::as_str) {
+                if word == "by" {
+                    break;
                 }
-                None => {
-                    q.refused.push(Refusal::stage_needs_what("stats"));
+                at += 1;
+                if word == "," || word.is_empty() {
+                    continue;
+                }
+                match Tally::of(word) {
+                    Some(Ok(t)) => tallies.push(t),
+                    Some(Err(())) | None => {
+                        q.refused.push(Refusal::stage_cannot_yet("stats", word.trim_matches(',')));
+                        return;
+                    }
+                }
+            }
+            if tallies.is_empty() {
+                q.refused.push(Refusal::stage_needs_what("stats"));
+                return;
+            }
+            let by = match (rest.get(at).map(String::as_str), rest.get(at + 1)) {
+                (None, _) => Bucket::All,
+                (Some("by"), Some(key)) if rest.get(at + 2).is_none() => Bucket::of(key),
+                _ => {
+                    q.refused.push(Refusal::stats_needs_by());
                     return;
                 }
             };
-            match (rest.get(1).map(String::as_str), rest.get(2)) {
-                (Some("by"), Some(key)) => q.stages.push(Stage::Stats {
-                    tally,
-                    by: Bucket::of(key),
-                }),
-                _ => q.refused.push(Refusal::stats_needs_by()),
+            q.stages.push(Stage::Stats { tallies, by });
+        }
+        "eval" => {
+            // Read from the words as typed: a zone is `Asia/Ho_Chi_Minh`, and
+            // quoted text is meant as written.
+            let raw: Vec<&str> = run.iter().skip(1).map(String::as_str).collect();
+            let name = raw.first().map(|n| n.to_lowercase());
+            match (name, raw.get(1).copied()) {
+                (Some(name), Some("=")) if name.chars().all(|c| c.is_alphanumeric() || c == '_') => {
+                    match Arith::parse(&raw[2..].join(" ")) {
+                        Ok(expr) => q.stages.push(Stage::Eval { name, expr }),
+                        Err(why) => q.refused.push(Refusal::eval_cannot(&why)),
+                    }
+                }
+                _ => q.refused.push(Refusal::eval_needs_a_name()),
             }
         }
         "seq" => {
@@ -1231,6 +1461,13 @@ impl Operand {
                 }
             }
         }
+        // A day is a day, not a column of that name: `last > 2026-01-01`
+        // compares against the date, which sorts as text the way it counts.
+        // Read as a column it compared against nothing and kept every row.
+        let b = word.as_bytes();
+        if b.len() >= 10 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-' && b[7] == b'-' {
+            return Operand::Text(word.to_string());
+        }
         // A bare word is a column name; a quoted one is text somebody meant
         // literally, which is how a column called `done` is told from the word.
         match strip_quotes(word) {
@@ -1546,5 +1783,57 @@ mod tests {
     fn a_lone_moments_is_a_word() {
         assert_eq!(parse("moments").source, None);
     }
-}
 
+    #[test]
+    fn stats_takes_several_tallies_and_needs_no_by() {
+        let q = parse("| stats count, sum(amount), avg(amount) by category");
+        assert!(q.refused.is_empty(), "{:?}", q.refused);
+        assert_eq!(
+            q.stages,
+            vec![Stage::Stats {
+                tallies: vec![Tally::Count, Tally::Sum("amount".into()), Tally::Avg("amount".into())],
+                by: Bucket::Field("category".into()),
+            }]
+        );
+        let total = parse("| stats sum(amount)");
+        assert_eq!(total.stages, vec![Stage::Stats { tallies: vec![Tally::Sum("amount".into())], by: Bucket::All }]);
+        // The old form reads as it always did.
+        assert_eq!(
+            parse("is:note | stats count by month").stages,
+            vec![Stage::Stats { tallies: vec![Tally::Count], by: Bucket::Month }]
+        );
+        assert!(!parse("| stats median(x)").refused.is_empty());
+        assert!(!parse("| stats count by").refused.is_empty());
+    }
+
+    #[test]
+    fn eval_reads_a_sum_with_its_zone_as_typed() {
+        let q = parse(r#"| eval h = hour(_time, "Asia/Ho_Chi_Minh") | eval md = round(spent_s / 28800, 2)"#);
+        assert!(q.refused.is_empty(), "{:?}", q.refused);
+        assert_eq!(
+            q.stages[0],
+            Stage::Eval {
+                name: "h".into(),
+                expr: Arith::Call("hour".into(), vec![Arith::Column("_time".into()), Arith::Text("Asia/Ho_Chi_Minh".into())]),
+            }
+        );
+        assert!(matches!(&q.stages[1], Stage::Eval { name, expr: Arith::Call(f, _) } if name == "md" && f == "round"));
+        assert!(!parse("| eval = 3").refused.is_empty());
+        assert!(!parse("| eval x = launch(1)").refused.is_empty());
+    }
+
+    /// `last > 2026-01-01` compares against the day. It used to read the day
+    /// as a column of that name, find none, and keep every row.
+    #[test]
+    fn a_day_in_where_is_a_day() {
+        let q = parse("| where last > 2026-01-01");
+        assert_eq!(
+            q.stages,
+            vec![Stage::Where(Test::Compare(
+                Operand::Column("last".into()),
+                Comparison::GreaterThan,
+                Operand::Text("2026-01-01".into())
+            ))]
+        );
+    }
+}

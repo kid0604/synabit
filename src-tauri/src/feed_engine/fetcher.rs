@@ -261,7 +261,7 @@ impl reqwest::dns::Resolve for PublicOnly {
 /// The header comes in two spellings: a number of seconds, or an HTTP date.
 /// Both are worth honouring — a feed that answers 429 and is asked again on
 /// our own schedule is a feed we are about to be blocked by.
-fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> Option<i64> {
+pub(crate) fn retry_after_seconds(headers: &reqwest::header::HeaderMap) -> Option<i64> {
     let raw = headers.get(reqwest::header::RETRY_AFTER)?.to_str().ok()?;
 
     if let Ok(seconds) = raw.trim().parse::<i64>() {

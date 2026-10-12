@@ -117,7 +117,7 @@ pub fn system_prompt(today: &str) -> String {
 
 /// What goes back to the parent, as the delegate call's result.
 pub fn findings(child: &Run, answer: &str) -> String {
-    let answer: String = answer.chars().take(FINDINGS_CHARS).collect();
+    let answer: String = answer.chars().take(crate::syn::room::scaled(FINDINGS_CHARS)).collect();
     serde_json::json!({
         "findings": answer,
         "helper_run": child.id,

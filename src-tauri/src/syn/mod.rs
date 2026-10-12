@@ -12,6 +12,7 @@ pub mod calibration;
 pub mod pane;
 pub mod consent;
 pub mod correction;
+pub mod crunch;
 pub mod engine;
 #[cfg(any(test, feature = "eval"))]
 pub mod eval;
@@ -36,6 +37,10 @@ pub mod stats;
 pub mod provider;
 pub mod rag;
 pub mod registry;
+pub mod resultset;
+pub mod room;
+pub mod writes;
+pub mod staging;
 pub mod routine;
 pub mod run;
 pub mod settings;

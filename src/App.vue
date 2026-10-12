@@ -156,7 +156,7 @@ import MobileLayout from './layouts/MobileLayout.vue';
 import AskBar from './shared/syn/AskBar.vue';
 import AppDialog from './shared/components/AppDialog.vue';
 import { captureFocus, buildFocus, focusWithSelection, type SynFocus } from './shared/syn/focus';
-import { SYN_ASK, SYN_ASK_ABOUT, type AskAboutDetail } from './shared/syn/selectionAsk';
+import { SYN_ASK, SYN_ASK_ABOUT, SYN_ASK_WITH, type AskAboutDetail } from './shared/syn/selectionAsk';
 import { routeQuickQuestion, QUICK_QUESTION_EVENT } from './shared/syn/quickAsk';
 import synAvatar from './assets/syn-avatar.jpg';
 import { useSynEnabled } from './shared/syn/useSynEnabled';
@@ -1128,6 +1128,14 @@ const onAskAbout = (e: Event) => {
  * there, with what it will carry, costs one Enter — the same call `onChoice`
  * in the bar makes for a question it wrote on the person's behalf.
  */
+/** A question handed in from elsewhere in the app — Settings' "Ask Syn to connect…". Settings closes so the bar is what is seen. */
+const onAskWith = (e: Event) => {
+    const text = (e as CustomEvent<{ text: string }>).detail?.text;
+    if (!text || !askBarAllowed.value) return;
+    showSettingsModal.value = false;
+    void askWithQuestion(text);
+};
+
 const askWithQuestion = async (text: string) => {
     if (askBarOpen.value) {
         // A bar already open holds an exchange about something else. Closing it
@@ -1257,6 +1265,7 @@ onMounted(async () => {
   window.addEventListener('keydown', handleKeyboardNav);
   window.addEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   window.addEventListener(SYN_ASK_ABOUT, onAskAbout);
+  window.addEventListener(SYN_ASK_WITH, onAskWith);
   // After the vault is known, so a question that arrived during startup is
   // routed by the vault's real state rather than by "nothing loaded yet".
   stopQuickQuestionListener = await listen(QUICK_QUESTION_EVENT, () => void collectQuickQuestion());
@@ -1526,6 +1535,7 @@ onUnmounted(() => {
   window.removeEventListener('keydown', handleKeyboardNav);
   window.removeEventListener('syn-ask-in-thread', onAskInThread as EventListener);
   window.removeEventListener(SYN_ASK_ABOUT, onAskAbout);
+  window.removeEventListener(SYN_ASK_WITH, onAskWith);
   stopQuickQuestionListener?.();
   document.removeEventListener('visibilitychange', rescanOnResume);
   destroyEventBus();

@@ -32,6 +32,8 @@ import { useSynActivity } from './composables/useSynActivity';
 import { useSynChat } from './composables/useSynChat';
 import { useSynConsent } from './composables/useSynConsent';
 import { useSynChoice } from './composables/useSynChoice';
+import { useSynWrites } from './composables/useSynWrites';
+import { useSynConnectorProposal } from './composables/useSynConnectorProposal';
 import { useSynModels } from './composables/useSynModels';
 import { useThreads, type ThreadState } from '../../shared/syn/useThreads';
 import { useSynEnabled, SETTINGS_SAVED } from '../../shared/syn/useSynEnabled';
@@ -137,12 +139,77 @@ const onConsent = async (choice: ConsentAnswer) => {
 const { pendingIn: choicePendingIn, answer: answerChoice, refresh: refreshChoice } = useSynChoice(() => props.vaultPath);
 const choiceHere = computed(() => choicePendingIn(activeConversationId.value));
 
+/**
+ * A plan of sends Syn stopped on. Answered like consent: the approval is
+ * recorded, the card goes, and the work carries on in its own conversation —
+ * where the approved requests are sent. See `syn::writes`.
+ */
+const {
+  pendingIn: writesPendingIn,
+  answer: answerWrites,
+  error: writesError,
+  answering: writesAnswering,
+  refresh: refreshWrites,
+} = useSynWrites(() => props.vaultPath);
+const writesHere = computed(() => writesPendingIn(activeConversationId.value));
+
+const onWrites = async (approved: string[]) => {
+  const stopped = writesHere.value?.run_id;
+  const id = writesHere.value?.conversation_id;
+  const was = await answerWrites(approved, id);
+  if (!was || !stopped || !id) return;
+  const onScreen = () => activeConversationId.value === id;
+  const last = activeMessages.value[activeMessages.value.length - 1];
+  if (onScreen() && last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
+  const response = await sendMessage(props.vaultPath, id, '', {
+    model: selectedModel.value || undefined,
+    resumeRun: stopped,
+  });
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    clearStreaming(id);
+  }
+};
+
+/**
+ * A connector Syn drafted and stopped on. Approved (or not) on the card, then
+ * the work carries on as after a plan. See `connector::authoring`.
+ */
+const {
+  pendingIn: connectorPendingIn,
+  answer: answerConnector,
+  error: connectorError,
+  answering: connectorAnswering,
+  refresh: refreshConnector,
+} = useSynConnectorProposal(() => props.vaultPath);
+const connectorHere = computed(() => connectorPendingIn(activeConversationId.value));
+
+const onConnector = async (approved: boolean) => {
+  const stopped = connectorHere.value?.run_id;
+  const id = connectorHere.value?.conversation_id;
+  const was = await answerConnector(approved, id);
+  if (!was || !stopped || !id) return;
+  const onScreen = () => activeConversationId.value === id;
+  const last = activeMessages.value[activeMessages.value.length - 1];
+  if (onScreen() && last?.role === 'assistant' && !last.content.trim()) activeMessages.value.pop();
+  const response = await sendMessage(props.vaultPath, id, '', {
+    model: selectedModel.value || undefined,
+    resumeRun: stopped,
+  });
+  if (response) {
+    if (onScreen()) activeMessages.value.push(response);
+    clearStreaming(id);
+  }
+};
+
 // Questions asked while this screen was not looking — by a routine, before a
 // restart — are read back from the runs on disk whenever it comes back, so the
 // card is there to answer. See `useSynConsent`.
 onActivated(() => {
   void refreshConsent();
   void refreshChoice();
+  void refreshWrites();
+  void refreshConnector();
 });
 
 // Both sentences come from the locale. They are written into the person's own
@@ -1350,6 +1417,12 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @retry="retryConnection"
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
+                  :writes-plan="writesHere?.plan ?? null"
+                  :writes-busy="writesAnswering"
+                  :writes-error="writesHere ? writesError : null"
+                  :connector-ask="connectorHere?.connector ?? null"
+                  :connector-busy="connectorAnswering"
+                  :connector-error="connectorHere ? connectorError : null"
                   :choice-ask="choiceHere?.choice ?? null"
                   :consent-busy="consentAnswering"
                   :consent-error="consentHere ? consentError : null"
@@ -1362,6 +1435,8 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @regenerate="handleRegenerate"
                   @notification-action="handleNotificationAction"
                   @consent="onConsent"
+                  @writes="onWrites"
+                  @connector="onConnector"
                   @choice="onChoice"
                 />
             </template>

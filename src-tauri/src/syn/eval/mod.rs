@@ -30,6 +30,7 @@
 //! where the report goes. `harness_runs_the_product_path` below runs without a
 //! model and is what keeps the harness itself honest in CI.
 
+pub mod connectors;
 pub mod fixture;
 pub mod grade;
 pub mod harness;

@@ -162,7 +162,9 @@ fn ensure_schema(conn: &Connection) -> AppResult<()> {
             name TEXT NOT NULL
         );",
     )
-    .map_err(|e| AppError::General(format!("State DB Schema Error: {e}")))
+    .map_err(|e| AppError::General(format!("State DB Schema Error: {e}")))?;
+    conn.execute_batch(crate::syn::resultset::SCHEMA)
+        .map_err(|e| AppError::General(format!("State DB Schema Error: {e}")))
 }
 
 fn main_has_table(conn: &Connection, table: &str) -> bool {

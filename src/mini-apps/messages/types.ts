@@ -175,6 +175,8 @@ export type RunState =
    * fine and Syn refuses to guess one detail. See `syn::ambiguity`.
    */
   | 'awaiting_choice'
+  /** Stopped on a plan of sends to connectors for the user to approve. See `syn::writes`. */
+  | 'awaiting_approval'
   /** Found as `working` by a process that was not driving it — the app was closed mid-run. */
   | 'interrupted';
 
