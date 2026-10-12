@@ -65,6 +65,14 @@ pub enum NodeType {
     /// the last version, and turn off. Spelled `syn_skill` on disk, leaving the
     /// plain word to whoever owns the vault.
     Skill,
+    /// What a service is and how to reach it, written for Syn to read.
+    ///
+    /// Storage like a skill, and for the same reason: it decides where Syn may
+    /// reach, so it is a file the user can read and diff. Spelled
+    /// `syn_connector` on disk. It was not on this list, so every connector
+    /// file logged as a type no part of the app queries. See
+    /// `syn::connector::manifest`.
+    Connector,
     /// A kept way of looking at the vault: a query plus how to arrange it.
     ///
     /// Written by Things and read by nothing else. Deliberately not `Filter`,
@@ -105,6 +113,8 @@ impl NodeType {
         "syn_memory",
         "syn_skill",
         "syn_thread",
+        "syn_connector",
+        "schema",
         "json",
         "canvas",
     ];
@@ -134,6 +144,7 @@ impl NodeType {
             NodeType::Memory => "syn_memory",
             NodeType::Skill => "syn_skill",
             NodeType::Thread => "syn_thread",
+            NodeType::Connector => "syn_connector",
             NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
@@ -172,6 +183,7 @@ impl From<&str> for NodeType {
             "syn_memory" => NodeType::Memory,
             "syn_skill" => NodeType::Skill,
             "syn_thread" => NodeType::Thread,
+            "syn_connector" => NodeType::Connector,
             "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,

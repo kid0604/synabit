@@ -145,6 +145,9 @@ fn app_tools(app: &str) -> &'static [&'static str] {
             "create_transaction",
             "update_transaction",
             "delete_transaction",
+            // Writes rows for Finance's import preview, read from a statement:
+            // money, whatever the file it came from.
+            crate::syn::staging::TOOL,
         ],
         "feeds" => &["search_feed_articles", "read_feed_article", "update_feed_article"],
         "file" => &["search_files", "read_file_text", "read_spreadsheet", "write_spreadsheet"],

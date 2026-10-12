@@ -437,16 +437,89 @@ pub fn guard(url: &str) -> AppResult<()> {
 /// It is where a webview starts and where pages park iframes; refusing it
 /// refuses ordinary browsing rather than an attack. It reaches nothing and
 /// carries nothing.
+///
+/// # Why the name is looked up too
+///
+/// `guard` judges the host as it is written: an address literal by its value,
+/// a name only by suffixes like `.local`. A public name whose DNS answer is
+/// `127.0.0.1` or `192.168.1.1` — anybody can publish one — passed, and the
+/// window went to this machine by name. The fetch path never had the hole,
+/// because its resolver drops private answers (`fetcher::PublicOnly`); a
+/// webview resolves for itself, so here the name is looked up first and
+/// refused if **any** answer is private, since which one the webview picks is
+/// not ours to say.
+///
+/// A lookup that fails is let through: the webview cannot reach a name nobody
+/// can resolve either, and refusing it would only replace the browser's own
+/// error page with silence. A lookup that does not answer in
+/// `LOOKUP_PATIENCE` is refused — slowness is something the owner of a name
+/// controls, and a check that gives up open is one an attacker waits out.
+///
+/// What this does not close is a name whose answer changes between this lookup
+/// and the webview's own (rebinding with a short TTL). Closing that needs the
+/// webview's traffic to go through a resolver this app controls.
 pub fn may_go_to(url: &url::Url) -> bool {
+    may_go_to_with(url, look_up)
+}
+
+/// How long a navigation waits on the name lookup before it is refused.
+const LOOKUP_PATIENCE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// What looking a name up came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Lookup {
+    Found(Vec<std::net::IpAddr>),
+    Failed,
+    TimedOut,
+}
+
+/// The system resolver, with a limit on how long a navigation waits for it.
+///
+/// `on_navigation` is synchronous and the standard lookup has no timeout, so it
+/// runs on a thread of its own; one that outlives the wait is left to finish
+/// and drop its answer.
+fn look_up(host: &str) -> Lookup {
+    use std::net::ToSocketAddrs;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let host = host.to_string();
+    std::thread::spawn(move || {
+        let found = (host.as_str(), 0)
+            .to_socket_addrs()
+            .map(|addrs| addrs.map(|a| a.ip()).collect::<Vec<_>>());
+        let _ = tx.send(found);
+    });
+    match rx.recv_timeout(LOOKUP_PATIENCE) {
+        Ok(Ok(ips)) if !ips.is_empty() => Lookup::Found(ips),
+        Ok(_) => Lookup::Failed,
+        Err(_) => Lookup::TimedOut,
+    }
+}
+
+fn may_go_to_with(url: &url::Url, resolve: impl Fn(&str) -> Lookup) -> bool {
     if url.as_str() == "about:blank" {
         return true;
     }
 
-    let allowed = guard(url.as_str()).is_ok();
-    if !allowed {
+    if guard(url.as_str()).is_err() {
         log::warn!("[Syn] The browsing window was steered at {url} and refused");
+        return false;
     }
-    allowed
+
+    // Address literals were judged by `guard`; only a name has an answer to check.
+    let Some(url::Host::Domain(name)) = url.host() else {
+        return true;
+    };
+    match resolve(name) {
+        Lookup::Found(ips) if ips.iter().any(|ip| crate::feed_engine::fetcher::is_private_ip(*ip)) => {
+            log::warn!("[Syn] The browsing window was steered at {url}, which resolves to this machine or its network, and refused");
+            false
+        }
+        Lookup::TimedOut => {
+            log::warn!("[Syn] Looking up {name} took too long; the browsing window was not sent there");
+            false
+        }
+        Lookup::Found(_) | Lookup::Failed => true,
+    }
 }
 
 /// What a page in this window is never allowed to start.
@@ -1813,14 +1886,44 @@ mod tests {
     /// browsing rather than an attack.
     #[test]
     fn it_does_not_refuse_ordinary_browsing() {
+        let public = |_: &str| Lookup::Found(vec!["93.184.215.14".parse().unwrap()]);
         for url in [
             "https://duckduckgo.com/?q=x",
             "https://vnexpress.net/",
             "http://example.org/a?b=c#d",
             "about:blank",
         ] {
-            assert!(may_go_to(&at(url)), "{url} was refused");
+            assert!(may_go_to_with(&at(url), public), "{url} was refused");
         }
+        // A name nobody can resolve is the webview's error page to show, not ours.
+        assert!(may_go_to_with(&at("https://no-such-name.example/"), |_| Lookup::Failed));
+    }
+
+    /// A public name that answers with this machine's address is this machine.
+    ///
+    /// `guard` reads the host as written, so `http://127.0.0.1.nip.io/` or any
+    /// name somebody points at `192.168.1.1` passed it, and the window — with
+    /// its session — went there.
+    #[test]
+    fn a_name_that_resolves_to_this_machine_is_refused() {
+        for answer in ["127.0.0.1", "192.168.1.1", "169.254.169.254", "::1", "fd00::1"] {
+            let ip: std::net::IpAddr = answer.parse().unwrap();
+            assert!(
+                !may_go_to_with(&at("https://looks-public.example/"), |_| Lookup::Found(vec![ip])),
+                "a name answering {answer} was let through"
+            );
+        }
+        // One private answer among public ones is enough: which one the
+        // webview uses is not ours to say.
+        let mixed = |_: &str| Lookup::Found(vec!["93.184.215.14".parse().unwrap(), "10.0.0.5".parse().unwrap()]);
+        assert!(!may_go_to_with(&at("https://looks-public.example/"), mixed));
+    }
+
+    /// A lookup that never answers is refused — slowness is the name owner's
+    /// to choose, and a check that gives up open is one to wait out.
+    #[test]
+    fn a_lookup_that_does_not_answer_is_refused() {
+        assert!(!may_go_to_with(&at("https://slow.example/"), |_| Lookup::TimedOut));
     }
 
     /// Downloads and popups both leave the window, and neither is something a
