@@ -821,8 +821,20 @@ pub async fn visit<R: tauri::Runtime>(
     }
 
     #[cfg(desktop)]
-    open_and_read(app, waiting, url).await
+    {
+        let _turn = WINDOW_TURN.lock().await;
+        open_and_read(app, waiting, url).await
+    }
 }
+
+/// The window's turn: one page at a time.
+///
+/// There is one window and one pending read (`Pending`), and a round may now
+/// browse two things side by side. Without a turn each, the second navigation
+/// would land while the first was being read, and the first would hand back
+/// the second's page. Held for a navigation and its read, then let go — so two
+/// lookups share the window rather than wait for each other's whole ladder.
+static WINDOW_TURN: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 /// The window itself, on the platforms that have one.
 ///
@@ -901,6 +913,7 @@ pub async fn read_showing<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     waiting: &Waiting,
 ) -> AppResult<Read> {
+    let _turn = WINDOW_TURN.lock().await;
     let showing = crate::syn::pane::showing(app)
         .ok_or_else(|| AppError::General("There is no page open to read".into()))?;
 

@@ -41,6 +41,9 @@ import { useSynChoice } from '../../mini-apps/messages/composables/useSynChoice'
 import ConsentCard from '../../mini-apps/messages/components/ConsentCard.vue';
 import ChoiceCard from '../../mini-apps/messages/components/ChoiceCard.vue';
 import WritePlanCard from '../../mini-apps/messages/components/WritePlanCard.vue';
+import HeldChangesCard from '../../mini-apps/messages/components/HeldChangesCard.vue';
+import SkillProposalCard from '../../mini-apps/messages/components/SkillProposalCard.vue';
+import RoutineProposalCard from '../../mini-apps/messages/components/RoutineProposalCard.vue';
 import { useSynWrites } from '../../mini-apps/messages/composables/useSynWrites';
 import ConnectorProposalCard from '../../mini-apps/messages/components/ConnectorProposalCard.vue';
 import { useSynConnectorProposal } from '../../mini-apps/messages/composables/useSynConnectorProposal';
@@ -150,15 +153,16 @@ const {
 } = useSynConnectorProposal(() => props.vaultPath);
 const connectorHere = computed(() => connectorPendingIn(conversationId.value));
 
+/**
+ * A run in this conversation stopped on a card: a permission, a choice, a plan
+ * of sends, a connector. One rule for all of them — the card is what there is
+ * to read, and the stopped run's text is not an answer. (Held changes are not
+ * a stop: they follow an answer, which stays.)
+ */
+const waitingCard = computed(() => !!(consentHere.value || choiceHere.value || writesHere.value || connectorHere.value));
+
 const hasAnswer = computed(
-  () =>
-    answer.value.length > 0 ||
-    busy.value ||
-    !!failed.value ||
-    !!consentHere.value ||
-    !!choiceHere.value ||
-    !!writesHere.value ||
-    !!connectorHere.value,
+  () => answer.value.length > 0 || busy.value || !!failed.value || waitingCard.value,
 );
 
 /**
@@ -176,7 +180,7 @@ const canContinueElsewhere = computed(
     // A card waiting for an answer counts: the conversation is where it can
     // also be answered, and somebody who would rather read the question in
     // the larger screen should be able to take it there.
-    (!!answer.value || !!consentHere.value || !!choiceHere.value) &&
+    (!!answer.value || waitingCard.value) &&
     props.focus?.app !== 'messages',
 );
 
@@ -547,7 +551,7 @@ const onKeydown = (event: KeyboardEvent) => {
 
           <!-- Syn stopped to ask. Above whatever the answer says, because until
                it is answered there is no more answer coming. -->
-          <div v-if="!busy && (choiceHere || consentHere || writesHere || connectorHere)" class="space-y-2 mb-3">
+          <div v-if="!busy && waitingCard" class="space-y-2 mb-3">
             <ConnectorProposalCard
               v-if="connectorHere"
               :vault-path="vaultPath"
@@ -573,12 +577,18 @@ const onKeydown = (event: KeyboardEvent) => {
             />
           </div>
 
+          <!-- Changes held after reading, waiting once the answer is in. The
+               same card Messages shows. See `syn::changes`. -->
+          <HeldChangesCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
+          <SkillProposalCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
+          <RoutineProposalCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
+
           <!-- What the run is doing: its plan, the step in words, how much
                of its allowance is gone. The same panel Messages shows. -->
           <RunProgress v-if="busy" class="mb-3" :plan="plan" :progress="progress" />
 
           <div
-            v-if="rendered && !(choiceHere || consentHere)"
+            v-if="rendered && !waitingCard"
             class="prose prose-sm dark:prose-invert max-w-none text-[14px] leading-relaxed"
             v-html="rendered"
           ></div>

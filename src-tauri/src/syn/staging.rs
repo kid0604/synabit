@@ -133,7 +133,7 @@ pub fn stage(
     let source = format!(
         "{handle}{}",
         set.source.instance.as_deref().map(|i| format!(" · {i}")).unwrap_or_default()
-            + &set.source.operation.as_deref().map(|o| format!(" · {o}")).unwrap_or_default()
+            + set.source.operation.as_deref().map(|o| format!(" · {o}")).unwrap_or_default().as_str()
     );
     let why: String = field("why").unwrap_or_default().chars().take(300).collect();
     let staged = write(vault_path, &lines, &why, &source, conversation_id)?;

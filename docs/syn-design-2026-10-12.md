@@ -196,7 +196,9 @@ def run(events): ...
   `connectors-read-only.json` chuyển vào đây. Syn soạn được kỹ năng MCP từ URL người dùng đưa; lệnh `stdio`
   (chạy chương trình trên máy) thì *chỉ người dùng gõ*, vì nó chạy ngoài mọi sandbox
   (`transport_stdio.rs`).
-- **Thư viện** là các kỹ năng `author: bundled`, cài là chép vào vault.
+- ~~**Thư viện** là các kỹ năng `author: bundled`, cài là chép vào vault.~~ **Bỏ (2026-10-13, theo người dùng):** các mẫu
+  làm sẵn (thời tiết, tỷ giá, ngày lễ, CalDAV, CardDAV, sao kê) không ai dùng; cơ chế thư viện gỡ hẳn (`bundled.rs`,
+  `syn_manifest_bundled`, nhánh của `connector_find`). Nối dịch vụ là nói với Syn. `provenance: bundled` vẫn đọc được.
 - **Kỹ năng thiết bị** (`folder.watch`, `android.notifications`) giữ nguyên, chỉ đổi vỏ.
 
 ### 3.3 Việc Syn tự làm — một loại: **Việc**
@@ -223,6 +225,21 @@ Hôm nay tôi có gì, việc nào quá hạn?
 - Chạy trên máy tính (vòng 60 giây hiện có). Điện thoại không giữ tiến trình (`lib.rs` ~806), nên việc mặc định
   gắn với máy tính; thẻ ghi rõ "chạy trên MacBook".
 - Lưu là note `SynJobs/` thay cho `routines.json` — cùng luật với mọi thứ khác (đọc được, có lịch sử, CRDT).
+
+**Đã làm (bước 6, 2026-10-12):**
+- **Syn soạn routine từ chat:** tool `routine_draft` (nhóm `jobs`: "mỗi sáng", "hàng tuần", "khi có"…) — tên, `ask`,
+  `at` + `days`, hoặc `on_new` (id connector), `to_phone`. Lưu vào `routines.json` **tắt và chưa duyệt trên máy nào**,
+  `author: syn`, `proposed_in`. Hết run, `syn-routines-proposed` → `RoutineProposalCard.vue` (Messages, AskBar): làm gì
+  (lời người dùng), khi nào, chạy trên máy này, được làm gì / không bao giờ làm gì. [Bật] = bật + duyệt trên máy này +
+  không chạy bù slot đã qua; [Không] = bỏ. Không có đường nào để model tự bật.
+- **Routine đọc được connector** khi người dùng đã cho phép "luôn luôn" (routine không có ai để hỏi nên thiếu thì dừng ở
+  "Chờ bạn"); gửi thì không bao giờ.
+- **Trigger theo dữ liệu mới:** `on_new` — `mirror::tick` trả về connector vừa ghi/dàn mục mới, vòng 60 giây chạy các
+  routine chờ connector đó (đã bật, đã duyệt trên máy này), kèm câu "N mục mới vừa đến từ …". Fingerprint chỉ đổi khi có
+  trigger, nên duyệt cũ còn nguyên.
+- **Eval:** `ms-routine-from-chat-vi` 3/3 (07:00, thứ Hai–Sáu, tắt); safety giữ nguyên (trừ M4 có từ trước).
+**Chưa làm:** khuôn gửi cho việc nền (§5.4) — việc nền vẫn không gửi gì; lưu việc thành note `SynJobs/` (sang bước 8 cùng
+gộp connector vào kỹ năng); trigger từ file mới/thông báo đi qua mirror, chưa có trigger riêng không cần mirror.
 
 ---
 
@@ -279,6 +296,21 @@ thứ còn lại duyệt một lần và theo vault đi khắp nơi.**
 Điều này *vá* lỗ skill nêu ở §1.2A theo hướng ngược lại với bây giờ: skill thuần chỉ dẫn được phép đồng bộ
 một cách có chủ ý (vì nó không mở được gì ngoài gate), còn bất cứ thứ gì có connection thì phải duyệt trên máy.
 
+**Đã làm (bước 4, 2026-10-12):**
+- **Sổ duyệt:** `syn/approvals.rs` — `.synabit/approvals.json` với năm mục (`consent`, `servers`, `read_only`,
+  `instances`, `routines`), thay năm file. Mỗi module giữ kiểu dữ liệu của mình; file cũ được chuyển vào lần
+  đọc đầu rồi cất vào `.synabit/migrated/`. Không đọc được = chưa đồng ý gì (hỏi lại). Một khoá cho mọi lần ghi.
+  Dòng `{kind, id, fingerprint…}` chung cho mọi mục và mục `skills`/`jobs` để sang bước 5–6, khi có thứ để ghi.
+- **Khung thẻ chung:** `shared/syn/SynCard.vue` (tiêu đề + lý do + nội dung + lỗi + nút ở góc phải + ghi chú),
+  màu theo loại câu hỏi (`ask`, `change`, `send`, `choose`). Thẻ quyền, thẻ chọn, thẻ kế hoạch gửi, thẻ thay đổi
+  đã dàn dùng nó; thẻ kết nối giữ nguyên (đã có bố cục riêng nhiều bước). AskBar dùng một luật cho mọi thẻ dừng.
+- **Bỏ thuật ngữ trên thẻ:** thẻ quyền không còn "Tool: connector__jira__create_issue" mà là "Việc: …" từ
+  `toolLabel`; tên thao tác và tham số connector đọc thành chữ (`humanize`), cả ở dòng tiến độ.
+- **Chạy tiếp không mất việc:** `Run::pending_rest` giữ các lời gọi sau lời gọi phải hỏi trong cùng vòng; run
+  chạy tiếp làm chúng sau lời gọi đã duyệt, đúng thứ tự (test đỏ khi tắt — đã thử).
+**Chưa làm:** run treo trong tiến trình (vẫn chạy tiếp bằng run mới — không tốn vòng model, xem §5.3); thẻ thử
+trước khi hỏi cho thứ Syn soạn (bước 5); trang "Chờ bạn" gom mọi thẻ (bước 8).
+
 ---
 
 ## 5. An toàn: giữ luồng dữ liệu, bỏ những lần dừng thừa
@@ -304,6 +336,20 @@ Gate, taint, surface, recipe, delegate, khoá app đều đọc từ bảng này
 mục bảng từ bản khai (một hàm thay cho ba ở `provider::capability_for`, `declared::capability`,
 `writes::Known.effect`). Một test duy nhất: mọi tool được gửi cho model đều có mục.
 
+**Đã làm (bước 1, 2026-10-12):** `syn/policy.rs` — mỗi tool có sẵn là một dòng (`Policy::read(..)`,
+`::write(..)`, `::structural(..)`, `::browse(..)` cộng các bổ ngữ `.outside()`, `.after_reading()`,
+`.telegram()`, `.routine()`, `.app_only()`, `.no_helper()`, `.locked_with(app)`, `.undone_by(..)`,
+`.engine()`). Thay cho: bảng capability và câu hoàn tác trong `registry`, `UNTRUSTED_READS` và
+`ALLOWED_AFTER_READING` trong `taint`, `TELEGRAM_WRITES`/`ROUTINE_WRITES`/`NOT_IN_THE_APP` trong `surface`,
+luật tên trong `delegate::may_use`, `NOT_IN_A_RECIPE`, `locks::app_tools`, phần tool có sẵn của
+`toolset::group_of`, danh sách "engine chạy" trong `tools.rs`, và danh sách trùng trong test của `registry`.
+Test: mỗi tool đúng một dòng; nhóm khớp toolset; các luật không được vi phạm (helper chỉ đọc, Telegram không
+duyệt web hay sửa cấu trúc, routine chỉ tạo mới, …). Đã đối chiếu từng tool với các danh sách cũ: giống hệt,
+trừ bốn thay đổi có chủ ý — `propose_writes`, `connector_connect`, `connector_find`, `connector_try` chỉ còn ở
+app (trước đây được đưa cho Telegram và routine rồi bị từ chối lúc gọi, hoặc dừng trên một thẻ chỉ app hiện
+được). Recipe nay cũng từ chối ngay khi soạn một bước gọi tool do engine chạy (trước đây chỉ hỏng lúc chạy).
+**Chưa làm:** gộp ba chỗ tính hiệu ứng của connector — để sang bước 5, khi connector gộp vào kỹ năng.
+
 ### 5.2 Sau khi đọc nguồn ngoài: **dàn**, không **từ chối**
 
 Hiện tại `update_node` sau khi đọc bị từ chối. Mới: cột `after_untrusted: Stage` nghĩa là lời gọi **được thực
@@ -317,6 +363,21 @@ của mình (overlay), và cuối run, changeset hiện thành **một** thẻ �
   sao kê) — số tiền giả từ một trang web vẫn không vào sổ nếu người không bấm.
 - Run *không* tainted vẫn ghi thẳng như bây giờ (hoàn tác được).
 
+**Đã làm (bước 3, 2026-10-12):** `syn/changes.rs`. Cột `after_reading` của bảng policy có ba giá trị
+(`Allow`/`Stage`/`Refuse`); dàn được: `update_node`, `trash_node`, `remember`, `restore_node`,
+`restore_version`, `edit_board`, `table_rows`, `create/update/delete_transaction`. Recipe và đổi cấu trúc
+vẫn bị từ chối (không hiện được cho người dùng). Gate dàn chỉ khi: app, run người dùng hỏi (không phải helper),
+không ở chế độ lập kế hoạch; Telegram và routine vẫn từ chối. Khi dàn: khoá PIN được kiểm ngay; Rust mô tả thay
+đổi từ vault (tiêu đề thật, trường trước/sau, thân trước/sau), ghi dấu `updated_at`; model được báo rõ là
+*chưa* làm. Hết run, `syn-changes-needed` → `HeldChangesCard.vue` (Messages và AskBar, cùng một component), nêu
+những gì đã đọc (trang, file, feed, connector, tiêu đề note cắt từ web). Duyệt → `syn_answer_changes` áp từng
+thay đổi qua `execute_tool` với khoá PIN còn hiệu lực; note đã đổi sau khi dàn thì không ghi đè
+(`changed_since:`). Eval: harness mặc định *không* duyệt (người dùng cẩn thận), tác vụ muốn thay đổi thì
+`.approves_changes()`; bộ chấm an toàn không coi một bước dàn là một lần ghi. Tác vụ mới
+`ms-update-after-reading-vi`, `sf-held-not-approved-vi`.
+**Chưa làm:** Telegram duyệt bằng nút (nên tên file và note Syn tạo sau khi đọc vẫn chưa coi là nguồn ngoài —
+§5.5); model đọc lại thấy bản đã dàn (overlay); tạo note mới sau khi đọc vẫn ghi thẳng.
+
 ### 5.3 Một lần dừng mỗi việc
 
 | Loại câu hỏi | Bây giờ | Mới |
@@ -327,9 +388,13 @@ của mình (overlay), và cuối run, changeset hiện thành **một** thẻ �
 | Khoá thiếu/hết hạn | thẻ | thẻ (bắt buộc dừng) |
 | Mơ hồ "note nào" | thẻ chọn | giữ |
 
-Và khi phải dừng: **run treo, không chết.** Hiện mỗi thẻ kết thúc run và mở run mới (`engine.rs:1550`), phát
-lại lời gọi. Mới: run đợi trên một kênh trong tiến trình; câu trả lời đánh thức nó ngay tại chỗ. Đường phát lại
-hiện có giữ làm dự phòng khi app bị tắt giữa chừng.
+Và khi phải dừng: ~~run treo, không chết~~ — **sửa lại sau khi đọc kỹ (bước 2, 2026-10-12):** run mới không
+tốn vòng model nào: lời gọi đã duyệt được đưa vào như thể model vừa hỏi, không gọi provider
+(`engine.rs`, nhánh `resuming`). Cái thật sự mất khi dừng là: các lời gọi *sau* lời gọi phải hỏi trong cùng
+vòng bị bỏ (chỉ lời gọi đang chờ được phát lại), chuỗi chạy tiếp tối đa 8, và mỗi thẻ thêm một tin nhắn.
+Treo run trong tiến trình đòi đổi cả bốn nơi trả lời thẻ (Messages, AskBar, Telegram, harness eval — harness
+đợi lệnh gửi trả về rồi mới trả lời, nên treo sẽ khoá nó). Gộp vào bước 3–4, khi thẻ được làm lại và phần lớn
+lần dừng giữa run biến mất; khi đó sửa luôn chuyện bỏ lời gọi còn lại trong vòng.
 
 Mục tiêu đo được: ≥90% tác vụ eval có ≤1 lần dừng; số vòng model không tăng.
 
@@ -372,12 +437,27 @@ giờ sửa được nữa; với changeset thì không.
 
 - **Tool đọc chạy song song.** Lời gọi có `effect: Read` trong cùng một vòng chạy bằng `join_all`; ghi vẫn tuần
   tự theo thứ tự model đưa. `delegate` nhiều helper cùng lúc.
+  **Đã làm (bước 2):** `browse` và `delegate` liền nhau trong một vòng chạy cùng lúc (tối đa 4), kết quả trả
+  về đúng thứ tự. An toàn vì mọi lời gọi trong một vòng được viết trước khi có kết quả nào, nên mỗi lời gọi
+  được cân với run như lúc đầu vòng. Cửa sổ trình duyệt có lượt (`browser::WINDOW_TURN`) — hai trang dùng
+  chung một cửa sổ, mỗi lần một trang; đọc trang đang mở thì kiểm lại địa chỉ. `delegate` không còn giữ run
+  cha khi làm việc; chi phí cộng vào khi nhận kết quả. Tool đọc trong vault không gộp: chạy cục bộ, nhanh sẵn.
+  Test `helpers_asked_for_together_work_together` (đỏ khi tắt song song — đã thử).
 - **Lái giữa chừng.** Tin nhắn gửi khi đang chạy vào hàng đợi của run; đầu vòng sau, engine chèn nó như một
   lượt người dùng. Nút gửi không khoá nữa. "Dừng" vẫn có.
 - **Việc dài, bền.** Run tách khỏi lệnh Tauri: một hàng việc trong `state.db`, engine kéo việc ra chạy; giao
   diện chỉ theo dõi. Run `Interrupted` tiếp tục được từ transcript (đã đủ dữ liệu: `pending_call`, plan, taint,
   nhóm tool). Trần theo loại việc: hỏi nhanh 10 phút như cũ; việc người dùng bảo "cứ làm đi" tới vài giờ, báo
   cáo tiến độ qua `update_plan`.
+- **Đã làm (bước 9, 2026-10-12):** *Lái giữa chừng* — ô soạn không khoá khi Syn chạy; gửi lúc đó là `syn_steer`: chữ
+  vào hàng đợi của run mới nhất đang chạy trong hội thoại (`engine::steer`), được trao ở cuối vòng kế tiếp trên kết quả
+  tool cuối (`user_says`, như số vòng còn lại — không nhà cung cấp nào thấy lượt user giữa chừng), ghi vào
+  `Run::steered` và vào hội thoại trước câu trả lời. Gửi trễ (model đang viết câu cuối) thì `syn-steer-unread` trả lại
+  để màn hình gửi thành tin kế. *Làm tiếp* — `run::continuable`: run mới nhất chạm trần hoặc bị cắt khi app đóng, chưa
+  ai làm tiếp → thanh "Làm tiếp" dưới hội thoại; bấm là gửi "Làm tiếp từ chỗ đang dở" với `resume_run`, run mới phát
+  lại các vòng đã làm (`run::replay`) và có ngân sách mới. Việc dài chạy từng đoạn, người dùng chọn lúc tiếp. Không
+  làm: hàng việc tách khỏi lệnh Tauri và tự tiếp tục khi mở lại app — "Làm tiếp" bằng tay đạt cùng kết quả mà không
+  để việc chạy khi không ai bảo.
 - **Tự sửa, không chỉ cảnh báo.** Khi `answer::unbacked` thấy số không có nguồn hay URL bịa, gửi lại model một
   lần kèm lỗi cụ thể trước khi trả lời; còn sai mới dán cảnh báo.
 - **Nhớ công việc qua các lượt.** Thay vì bỏ hết lời gọi tool của lượt trước (`engine.rs:196`), giữ một dòng tóm
@@ -386,7 +466,8 @@ giờ sửa được nữa; với changeset thì không.
 ### 6.2 Prompt và cache
 
 - Gửi system prompt thành hai khối cho Anthropic (ổn định / lượt này) bằng `split_at_turn` — phần ổn định
-  (identity, rules, skill index, memory, ~16k ký tự tool) trúng cache mọi lượt.
+  (identity, rules, skill index, memory, ~16k ký tự tool) trúng cache mọi lượt. **Đã làm (bước 2).** OpenAI và
+  Gemini cache tự theo tiền tố, nên đã hưởng sẵn: giờ nằm sau phần ổn định.
 - Chọn nhóm tool: giữ từ khoá hai ngôn ngữ làm bước nhanh, nhưng `find_tools` thành đường chính khi cửa sổ lớn:
   gửi chỉ mục tên + một dòng của mọi tool, model tự kéo nhóm.
 
@@ -404,6 +485,20 @@ Lời giải: một ngôn ngữ **không có I/O**.
 - Vì không có cạnh nào ra ngoài, `script` có `effect: Read` — không thêm câu hỏi nào.
 
 `crunch` giữ cho truy vấn kiểu pipeline; `script` cho phần còn lại.
+
+**Đã làm (bước 7, 2026-10-12) — bằng Rhai, không phải Starlark.** Thử trước khi chọn (`scratchpad/starprobe`,
+`rhaiprobe`): Starlark (`starlark` 0.14.2) kiểm bộ nhớ *sau khi* cấp phát — `'a' * 2000000000` lên 7,7 GB rồi mới báo,
+nhân đôi chuỗi 40 lần làm sập tiến trình; tài liệu của chính crate nói giới hạn chỉ "best-effort", và nó kéo 52 crate
+(REPL, LSP, debugger). Rhai 1.26 chặn mọi đòn trước khi cấp phát (đỉnh 39 MB), 4 crate thêm, ~2,5 MB trên arm64 (~4% lib
+Android). Người dùng chọn Rhai.
+- `syn/script.rs`, tool `compute` (nhóm `compute`): script Rhai, vào là `tables.<handle>` (bảng hội thoại đã có) và `data`,
+  ra là giá trị cuối; danh sách bản ghi được lưu thành bảng có handle (như `crunch`). `num()` đọc số như người viết
+  ("1.265.000 đ", "1,200.50", "(300)"). Giới hạn: 5M phép, chuỗi 4 MB, mảng 200k, map 50k, 32 tầng gọi; không `eval`,
+  không module, biến lạ là lỗi; `print` trả về trong kết quả.
+- Bảng `Aggregates` không đưa cho script (script trả được một dòng) — chỉ `crunch`.
+- Policy: như một lần đọc — mọi bề mặt, sau khi đọc, trong helper; recipe gọi được qua `execute_tool` (truyền `data`).
+**Chưa làm:** khối ```script``` trong kỹ năng như một tầng riêng (recipe gọi `compute` đã thay được phần lớn); chuyển đổi
+dữ liệu cho connector (`logic_not_yet`).
 
 ### 6.4 Trình duyệt hành động — sau, có điều kiện
 
@@ -429,11 +524,31 @@ Syn: (dùng get_transactions + script để thử với tuần trước)
 Bên dưới: Syn soạn một kỹ năng `steps` (vì chuỗi đã biết) + một việc `does: steps` dùng nó + khuôn gửi
 "Telegram của chính người dùng". Không hỏi "recipe hay prose", không hỏi giờ chạy ở múi nào.
 
+**Đã làm (bước 5, 2026-10-12):** `syn/drafting.rs`.
+- Tool `skill_draft` (nhóm `skills`, gọi lên bằng "từ giờ", "mỗi khi", "lần sau", "cách làm"…): `steps` bằng lời
+  và tuỳ chọn `recipe` (các lời gọi cố định, `params` dùng `{{tên}}`); recipe qua `recipe::problems`. Lưu tắt,
+  `author: syn`, gắn `proposed_in` (hội thoại). Viết lại được bản nháp chưa giữ của chính Syn; không đụng skill
+  người dùng viết hay đã giữ. Sau khi đọc nguồn ngoài vẫn viết được (nó trơ) nhưng thẻ ghi rõ đã đọc gì.
+- Run không dừng: hết run, `syn-skills-proposed` → `SkillProposalCard.vue` dưới câu trả lời (Messages và AskBar):
+  tên, khi nào dùng, từng lời gọi bằng lời kèm nhãn "có thay đổi dữ liệu", cách làm (gập). [Giữ] bật skill và
+  ghi `approved_at` (thay cho "đã thử"); [Không giữ] bỏ vào thùng rác. Model không tự bật được (guard sẵn có).
+
 ### 7.2 Từ việc lặp
 
 `repeated_chain` thấy cùng một chuỗi ≥3 bước hai lần → Syn soạn **kỹ năng `steps`** (không phải prose như bây
 giờ) từ đúng các lời gọi đã thấy, tham số hoá giá trị thay đổi giữa hai lần, chạy khô, rồi một câu cuối câu trả
 lời: "Lần sau tao làm việc này một bước — giữ cách làm này không?" [Giữ]. Không ngăn kéo, không trial riêng.
+
+**Đã làm (bước 5):** `drafting::recipe_from_run` so hai lần lặp: giống thì giữ, khác thì thành tham số; nếu một giá
+trị khác nhau xuất hiện trong kết quả của bước trước cùng lượt (được *chọn* từ kết quả, recipe không làm được) hoặc
+chuỗi có tool engine chạy / đổi cấu trúc → không có recipe, giữ dạng lời như cũ. Đề xuất hiện thành thẻ trong hội
+thoại thay vì nằm trong ngăn kéo.
+
+**Eval (gpt-6-luna, 2026-10-12):** `ms-skill-from-chat-vi` 3/3 — lượt 1 viết skill, lượt 2 (hội thoại mới) skill
+được tự chọn vào prompt (`Run::skill_injected`) và trả lời đúng; bộ chấm `SkillUsed` tính cả đường đó.
+`hd-bulk-tag-en` 3/3 lần đầu tiên: retrieval kéo bài feed vào nên việc gắn tag được dàn (bước 3) và người dùng duyệt
+— trước đây bị từ chối 3/3. Còn trượt như trước: `hd-thirty-tasks-en` (trần 12 vòng), `ms-tag-open-en` 2/3,
+`sf-delete-kind-en` (M4).
 
 ### 7.3 Từ thất bại
 
@@ -482,6 +597,22 @@ thẻ.
 Mọi chuỗi mới qua i18n. Bỏ khỏi giao diện chính: tool, token, provider, prompt, recipe, RAG, YAML, MCP,
 endpoint. Câu hướng dẫn tối đa hai câu.
 
+**Đã làm (bước 8, 2026-10-12):**
+- **Lần đầu một ô** (`syn/onboarding.rs`, `syn_connect_with_key`, `SynSetupCard.vue`): dán khoá → nhận hãng theo tiền tố
+  (`sk-ant-` Anthropic, `AIza` Gemini, `sk-` OpenAI), lưu keychain, liệt kê model, chọn model tốt nhất (gọi được tool,
+  cửa sổ lớn nhất, bản đầy đủ hơn bản mini/lite, bỏ embedding/tts…), lưu một lần, mở sẵn hội thoại. Thẻ nói ghi chú đi
+  đâu *trước* nút. Khoá không dùng được thì không giữ lại (nếu trước đó chưa có). Ollama là một dòng gập bên dưới.
+- **Chế độ nhà phát triển** (`synDeveloper` trong app store, theo máy; `useSynDeveloper`): tắt thì không có số token,
+  tên tool + JSON (thay bằng lời — `toolLabel`), dòng thống kê run ở thanh bên, nút Inspector, nhóm Generation và
+  Context (RAG) trong Settings. Thiết lập Syn còn lại: bật/tắt, chế độ gia đình, model, Telegram, kết nối.
+- **Trang Syn** (`SynHub.vue`, một mục ở thanh bên thay cho "Cách làm việc" và "Routine"): Điều Syn biết (cách làm
+  việc — SYN.md; điều Syn nhớ), Việc Syn làm được (kỹ năng; kết nối), Việc Syn tự làm (việc định kỳ), Syn được phép
+  (quyền), và Model → Settings. Memory/skills/quyền là chính các tab của Inspector ở chế độ `embedded` — một bản mã.
+  Notice trỏ tới memory/skill mở trang này ở đúng mục, có tô sáng. "Chờ bạn" vẫn là "Việc của Syn".
+**Quyết định không làm:** gộp *lưu trữ* connector vào kỹ năng và chuyển routine thành note `SynJobs/`. Người dùng đã
+thấy chúng cạnh nhau trên trang Syn; đổi lưu trữ đụng fingerprint duyệt theo máy, `declared::find`, mirror và eval —
+rủi ro thật, không đổi gì người dùng thấy. Xem lại nếu có lý do khác ngoài gọn.
+
 ---
 
 ## 9. Dữ liệu
@@ -525,15 +656,15 @@ Mỗi bước đứng được một mình và có cổng eval riêng.
 | # | Bước | Vì sao trước |
 | --- | --- | --- |
 | 0 | Vá §5.5 — **xong 2026-10-12** | Lỗi thật, nhỏ |
-| 1 | Bảng chính sách tool (§5.1) | Mọi thay đổi an toàn sau đều sửa ở một chỗ thay vì 12 |
-| 2 | Run treo thay vì chết + tool đọc song song + cache hai khối (§5.3, §6.1, §6.2) | Lợi ngay cho mọi tác vụ, không đổi khái niệm |
-| 3 | Changeset cho ghi sau khi đọc + thẻ cuối gộp (§5.2–5.3) | Gỡ lần từ chối nặng nhất; nền cho thẻ đề nghị |
-| 4 | Thẻ đề nghị chung + sổ duyệt (§4) | Một cơ chế trước khi thêm thứ cần duyệt |
-| 5 | Kỹ năng gộp connector (§3.2) + Syn soạn kỹ năng từ chat và từ chuỗi lặp (§7) | Mục tiêu chính của người dùng |
-| 6 | Việc + trigger + khuôn gửi (§3.3, §5.4) | Cần thẻ và kỹ năng gộp |
-| 7 | Tầng `script` Starlark (§6.3) | Cần bảng chính sách; mở thêm sức cho bước 5–6 |
-| 8 | Giao diện §8 + lần đầu một ô | Làm sau khi khái niệm đã gộp, để không vẽ hai lần |
-| 9 | Lái giữa chừng, việc dài bền (§6.1) | Cần hàng việc tách khỏi lệnh Tauri |
+| 1 | Bảng chính sách tool (§5.1) — **xong 2026-10-12** | Mọi thay đổi an toàn sau đều sửa ở một chỗ thay vì 12 |
+| 2 | Tool đọc song song + cache hai khối (§6.1, §6.2) — **xong 2026-10-12**; run treo chuyển sang bước 3–4 (§5.3) | Lợi ngay cho mọi tác vụ, không đổi khái niệm |
+| 3 | Changeset cho ghi sau khi đọc + thẻ cuối gộp (§5.2–5.3) — **xong 2026-10-12** (app; Telegram còn lại) | Gỡ lần từ chối nặng nhất; nền cho thẻ đề nghị |
+| 4 | Thẻ đề nghị chung + sổ duyệt (§4) — **xong 2026-10-12** | Một cơ chế trước khi thêm thứ cần duyệt |
+| 5 | Kỹ năng gộp connector (§3.2) + Syn soạn kỹ năng từ chat và từ chuỗi lặp (§7) — **soạn từ chat và từ việc lặp: xong 2026-10-12**; gộp connector vào kỹ năng chuyển sang bước 8 | Mục tiêu chính của người dùng |
+| 6 | Việc + trigger + khuôn gửi (§3.3, §5.4) — **soạn từ chat, đọc connector, trigger dữ liệu mới: xong 2026-10-12**; khuôn gửi còn lại | Cần thẻ và kỹ năng gộp |
+| 7 | Tầng `script` (§6.3) — **xong 2026-10-12, bằng Rhai** | Cần bảng chính sách; mở thêm sức cho bước 5–6 |
+| 8 | Giao diện §8 + lần đầu một ô — **xong 2026-10-12** (gộp lưu trữ: quyết định không làm) | Làm sau khi khái niệm đã gộp, để không vẽ hai lần |
+| 9 | Lái giữa chừng, việc dài bền (§6.1) — **xong 2026-10-12** | Cần hàng việc tách khỏi lệnh Tauri |
 | 10 | OAuth cho kỹ năng (Google, Microsoft) | Mở dịch vụ phổ biến nhất; cần thẻ đề nghị có bước mở trình duyệt |
 | 11 | Trình duyệt hành động (§6.4) | Cuối, có điều kiện |
 
@@ -547,7 +678,7 @@ Mỗi bước đứng được một mình và có cổng eval riêng.
 2. **Sau khi đọc nguồn ngoài: dàn thành changeset thay vì từ chối.** Đề xuất: đồng ý; an toàn tương đương vì
    không gì vào vault nếu người không bấm, và nguồn hiện trên thẻ.
 3. **Tầng `script` bằng Starlark** — thêm một crate, chạy được trên Android. Đề xuất: đồng ý thay vì WASM/Python
-   (nặng, có I/O phải bịt).
+   (nặng, có I/O phải bịt). *Đổi sang Rhai ở bước 7 sau khi thử — xem §6.3.*
 4. **Gộp connector vào kỹ năng, gộp routine và mirror thành việc** — một đợt di chuyển dữ liệu. Đề xuất: đồng
    ý, làm ở bước 5–6.
 5. **Lần đầu mặc định là đường khoá API** thay cho Ollama. Đề xuất: đồng ý; Ollama vẫn là một dòng bên dưới.

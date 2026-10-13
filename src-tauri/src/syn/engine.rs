@@ -41,6 +41,64 @@ struct Live {
     /// the first is still going. See [`underway`].
     goal: String,
     stop: Arc<AtomicBool>,
+    /// When it started, so a word sent while two run in one conversation goes
+    /// to the newer.
+    started: std::time::Instant,
+}
+
+/// What the person said to a run while it worked, waiting for its next round.
+/// See `steer`.
+static STEERING: std::sync::LazyLock<std::sync::Mutex<HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The person typed while Syn was working: hand it to the run doing that
+/// work, at its next round, rather than starting a second run beside it.
+///
+/// A second run used to start — the composer was locked while one worked, and
+/// sending anyway began another with no idea what the first was doing, so
+/// "no, the other note" reached nothing that could act on it. Now it goes to
+/// the newest run working in that conversation. `false` when none is: the
+/// caller sends it as an ordinary message.
+pub fn steer(conversation_id: &str, text: &str) -> bool {
+    let text = text.trim();
+    if text.is_empty() {
+        return false;
+    }
+    let target = {
+        let live = LIVE_RUNS.read().unwrap_or_else(|e| e.into_inner());
+        live.iter()
+            .filter(|(_, l)| l.conversation_id.as_deref() == Some(conversation_id))
+            .max_by_key(|(_, l)| l.started)
+            .map(|(id, _)| id.clone())
+    };
+    let Some(run_id) = target else { return false };
+    STEERING.lock().unwrap_or_else(|e| e.into_inner()).entry(run_id).or_default().push(text.to_string());
+    true
+}
+
+fn take_steering(run_id: &str) -> Vec<String> {
+    STEERING.lock().unwrap_or_else(|e| e.into_inner()).remove(run_id).unwrap_or_default()
+}
+
+/// Put what the person said in front of the model, with the results of the
+/// round it arrived during — on the last tool result, as the rounds left are,
+/// so no provider sees a user turn where it expects a tool's.
+fn hand_over(working: &mut [ChatMessage], said: &[String]) {
+    let Some(last) = working.last_mut() else { return };
+    let note = "The user wrote this while you were working. It is the newest thing they said: \
+        follow it, change course if it asks you to, and say in your answer how you took it.";
+    if last.role == "tool" {
+        last.content = match serde_json::from_str::<serde_json::Value>(&last.content) {
+            Ok(serde_json::Value::Object(mut map)) => {
+                map.insert("user_says".into(), serde_json::json!(said));
+                map.insert("user_says_note".into(), serde_json::json!(note));
+                serde_json::Value::Object(map).to_string()
+            }
+            _ => format!("{}\n\n[{note}]\n{}", last.content, said.join("\n")),
+        };
+    } else {
+        last.content = format!("{}\n\n[{note}]\n{}", last.content, said.join("\n"));
+    }
 }
 
 /// Every run being driven right now, keyed by run id.
@@ -60,6 +118,7 @@ fn register_run(run_id: &str, conversation_id: Option<String>, goal: &str) -> Ar
             conversation_id,
             goal: goal.to_string(),
             stop: Arc::clone(&stop),
+            started: std::time::Instant::now(),
         },
     );
     stop
@@ -417,6 +476,65 @@ impl SynEngine {
             Err(e) => run.fail(e.to_string()),
         }
         crate::syn::run::save_run_best_effort(req.vault_path, run);
+
+        // Routines it wrote, likewise. See `routine::draft`.
+        if run.state == RunState::Done && run.parent_run_id.is_none() && !run.drafted_routines.is_empty() {
+            let book = crate::syn::routine::load(req.vault_path);
+            let proposals: Vec<_> = crate::syn::routine::proposals(&book)
+                .into_iter()
+                .filter(|r| run.drafted_routines.contains(&r.id))
+                .collect();
+            if !proposals.is_empty() {
+                let event = serde_json::json!({ "conversation_id": run.conversation_id, "routines": proposals });
+                if let Err(e) = req.app.emit(crate::syn::routine::PROPOSED_EVENT, &event) {
+                    log::error!("Failed to emit {}: {e}", crate::syn::routine::PROPOSED_EVENT);
+                }
+            }
+        }
+
+        // Skills it wrote, put to the person under the answer. See `syn::drafting`.
+        if run.state == RunState::Done && run.parent_run_id.is_none() && !run.drafted_skills.is_empty() {
+            let proposals: Vec<crate::syn::drafting::Proposal> = {
+                let db = req.db.lock().unwrap_or_else(|e| e.into_inner());
+                crate::syn::drafting::waiting(&db)
+                    .into_iter()
+                    .filter(|p| run.drafted_skills.contains(&p.skill_id))
+                    .collect()
+            };
+            if !proposals.is_empty() {
+                let event = serde_json::json!({ "conversation_id": run.conversation_id, "skills": proposals });
+                if let Err(e) = req.app.emit(crate::syn::drafting::EVENT, &event) {
+                    log::error!("Failed to emit {}: {e}", crate::syn::drafting::EVENT);
+                }
+            }
+        }
+
+        // The work is done and changes are waiting: the card, now, beside the
+        // answer that says what they are. Not for a run that stopped to ask —
+        // the run that carries it on takes them with it — nor for a helper,
+        // which holds nothing. See `syn::changes`.
+        if run.state == RunState::Done && run.parent_run_id.is_none() {
+            if let Some(set) = run.changes.as_ref().filter(|c| c.awaiting()) {
+                let event = serde_json::json!({
+                    "run_id": run.id,
+                    "conversation_id": run.conversation_id,
+                    "changes": set,
+                });
+                if let Err(e) = req.app.emit(crate::syn::changes::EVENT, &event) {
+                    log::error!("Failed to emit {}: {e}", crate::syn::changes::EVENT);
+                }
+            }
+        }
+        // Said too late for any round — the answer was already being written.
+        // Handed back, so the screen sends it as the next message rather than
+        // it being lost.
+        let unread = take_steering(&run.id);
+        if !unread.is_empty() {
+            let event = serde_json::json!({ "conversation_id": run.conversation_id, "texts": unread });
+            if let Err(e) = req.app.emit("syn-steer-unread", &event) {
+                log::error!("Failed to emit syn-steer-unread: {e}");
+            }
+        }
         unregister_run(&run.id);
 
         // The browsing window belongs to the run, not to a page read. Here
@@ -757,9 +875,12 @@ impl SynEngine {
                 // `www.bongdanet.co`, and a resumed run that searched
                 // DuckDuckGo. See `Run::pending_call`.
                 run.note(iteration, format!("Carrying on with `{}`.", call.function.name));
+                // And what the same round asked for after it, in order.
+                let mut calls = vec![call];
+                calls.extend(std::mem::take(&mut run.pending_rest));
                 ChatReply {
                     content: String::new(),
-                    tool_calls: vec![call],
+                    tool_calls: calls,
                     // Nothing was asked of a provider, so nothing was spent.
                     usage: Default::default(),
                     duration_ms: None,
@@ -856,7 +977,8 @@ impl SynEngine {
                 images: None,
             });
 
-            for tc in &reply.tool_calls {
+            let mut ready: std::collections::HashMap<usize, Ready> = std::collections::HashMap::new();
+            for (index, tc) in reply.tool_calls.iter().enumerate() {
                 run.spent.wall_ms = started.elapsed().as_millis() as u64;
                 // Not the round count: this round was admitted at the top and
                 // has been counted since. See `Budget::exceeded_during_a_round`.
@@ -869,85 +991,73 @@ impl SynEngine {
                     break 'drive LoopEnd::Cancelled;
                 }
 
-                // What happens to this call, decided before anything runs.
-                // The rules and their order live in `syn::gate`; this loop only
-                // carries out the answer.
-                // A declared connector is weighed in this vault: another vault
-                // may declare one of the same id, under another name. Seen in
-                // the 2026-10-11 eval, where `call` then refused the read as
-                // "changed since permission was weighed".
-                let capability = match crate::syn::connector::declared::find(req.vault_path, &tc.function.name) {
-                    Some((d, op)) => Some(crate::syn::connector::declared::capability(&d, &op)),
-                    // A try reaches the draft's host, asked like any read of it.
-                    None if tc.function.name == crate::syn::connector::authoring::TRY_TOOL => {
-                        match draft_named(req, &tc.function.arguments).and_then(|m| {
-                            url::Url::parse(&m.base_url).ok().and_then(|u| u.host_str().map(str::to_string))
-                        }) {
-                            Some(host) => Some(crate::syn::consent::Capability::NetRead { domain: host }),
-                            None => req.registry.capability_of(&tc.function.name, &tc.function.arguments),
+                // Pages and helpers this round asked for one after another are
+                // run side by side, then handed back in order. Safe because every
+                // call in a round was written before any of them answered: what
+                // one brings back cannot be in another's arguments. Each is
+                // weighed with the run as it stands at the first of them — which
+                // is the run their arguments were written in.
+                if !ready.contains_key(&index) {
+                    let room = run
+                        .budget
+                        .tool_calls
+                        .map_or(usize::MAX, |cap| cap.saturating_sub(run.spent.tool_calls) as usize)
+                        .min(TOGETHER);
+                    let mut batch = Vec::new();
+                    for (j, next) in reply.tool_calls.iter().enumerate().skip(index) {
+                        let name = next.function.name.as_str();
+                        if batch.len() >= room || (name != crate::syn::tools::BROWSE_TOOL && name != crate::syn::delegate::TOOL) {
+                            break;
+                        }
+                        let (capability, decided) = weigh(req, run, next, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run);
+                        match decided.gate {
+                            crate::syn::gate::Gate::Go(how @ (crate::syn::gate::How::Browse | crate::syn::gate::How::Delegate)) => {
+                                batch.push((j, capability, how, decided.audit))
+                            }
+                            _ => break,
                         }
                     }
-                    None => req.registry.capability_of(&tc.function.name, &tc.function.arguments),
-                };
-                let ledger = crate::syn::consent::load(req.vault_path);
-                let now = chrono::Utc::now().to_rfc3339();
-                let until_done = |c: &crate::syn::consent::Capability| {
-                    consent_conversation
-                        .as_deref()
-                        .is_some_and(|conv| crate::syn::consent::allowed_until_done(conv, c))
-                };
-                let only_connector = taint.only_connector();
-                let approved_writes: Vec<String> = run.writes.as_ref().map(|p| p.approved()).unwrap_or_default();
-                // What a call back to that connector may carry. Built only when
-                // there is one, from the question and that connector's answers.
-                let echoes: Vec<String> = match only_connector.as_deref() {
-                    Some(slug) => std::iter::once(run.goal.clone())
-                        .chain(run.steps.iter().chain(earlier_steps.iter()).filter(|s| {
-                            s.tool.as_deref().and_then(crate::syn::connector::provider::server_slug_of) == Some(slug)
-                                // A try of it, and the spec it was drafted from,
-                                // are its words too — as the taint counts them.
-                                || (s.tool.as_deref().is_some_and(|t| {
-                                    t == crate::syn::connector::authoring::TRY_TOOL || t == crate::syn::connector::authoring::DRAFT_TOOL
-                                }) && s.args.as_ref().and_then(|a| a.get("id")).and_then(|v| v.as_str()).map(str::trim) == Some(slug))
-                        }).map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone())))
-                        .collect(),
-                    None => Vec::new(),
-                };
-                let decided = crate::syn::gate::decide(
-                    &tc.function.name,
-                    &tc.function.arguments,
-                    capability.as_ref(),
-                    &crate::syn::gate::View {
-                        tainted: taint.is_set(),
-                        only_connector: only_connector.as_deref(),
-                        echoes: &echoes,
-                        approved_writes: &approved_writes,
-                        untrusted_before: run.untrusted_before,
-                        reach: Some(&destinations),
-                        surface: run.surface,
-                        seen: &seen,
-                        ledger: &ledger,
-                        allowed_until_done: &until_done,
-                        skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
-                        plan_only: run.plan_only,
-                        sub_run,
-                        now: &now,
-                        safe: &|tool, handle| crate::safe::bridge::may_send(req.vault_path, tool, handle),
-                    },
-                );
-                if let (Some(outcome), Some(capability)) = (decided.audit, capability.as_ref()) {
-                    crate::syn::audit::record_best_effort_detailed(
-                        req.vault_path,
-                        &run_id,
-                        &tc.function.name,
-                        capability,
-                        outcome,
-                        run.surface,
-                        audit_detail(&tc.function.name, &tc.function.arguments).as_deref(),
-                    );
+                    if batch.len() > 1 {
+                        for (j, capability, _, audit) in &batch {
+                            let next = &reply.tool_calls[*j];
+                            audit_decided(req, run, &run_id, next, capability.as_ref(), *audit);
+                            destinations.note_authored(&next.function.arguments);
+                        }
+                        let tainted = taint.is_set();
+                        let reach = destinations.clone();
+                        let guard = tainted.then_some(&reach);
+                        let parent: &Run = run;
+                        let fetching = batch.iter().map(|(j, _, how, _)| {
+                            let next = &reply.tool_calls[*j];
+                            let reach = &reach;
+                            async move {
+                                let t0 = std::time::Instant::now();
+                                let fetched = match how {
+                                    crate::syn::gate::How::Browse => {
+                                        Fetched::Browse(browse(req, &arg_str(next, "what"), &arg_str(next, "site"), guard).await)
+                                    }
+                                    _ => Fetched::Delegate(self.delegate(parent, req, stop, &arg_str(next, "goal"), tainted, reach).await),
+                                };
+                                (fetched, t0.elapsed())
+                            }
+                        });
+                        let fetched = futures::future::join_all(fetching).await;
+                        for ((j, capability, how, _), (fetched, took)) in batch.into_iter().zip(fetched) {
+                            ready.insert(j, Ready { capability, how, fetched, took });
+                        }
+                    }
                 }
 
-                let how = match decided.gate {
+                let (capability, gate, mut fetched, took) = match ready.remove(&index) {
+                    Some(r) => (r.capability, crate::syn::gate::Gate::Go(r.how), Some(r.fetched), Some(r.took)),
+                    None => {
+                        let (capability, decided) = weigh(req, run, tc, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run);
+                        audit_decided(req, run, &run_id, tc, capability.as_ref(), decided.audit);
+                        (capability, decided.gate, None, None)
+                    }
+                };
+
+                let how = match gate {
                     crate::syn::gate::Gate::Refuse { said, note } => {
                         if let Some(note) = note {
                             run.note(iteration, note);
@@ -965,6 +1075,7 @@ impl SynEngine {
                     // What it was about to do travels with the question, so
                     // answering can carry it out rather than start again.
                     crate::syn::gate::Gate::Ask(ask) => {
+                        run.pending_rest = reply.tool_calls[index + 1..].to_vec();
                         break 'drive LoopEnd::NeedsConsent(ask, Box::new(tc.clone()))
                     }
                     crate::syn::gate::Gate::Go(how) => how,
@@ -986,17 +1097,14 @@ impl SynEngine {
                     crate::syn::gate::How::Browse => {
                         // The ladder, decided here and not by the model. Async,
                         // so it cannot live in `execute_tool`'s table.
-                        let field = |key: &str| {
-                            tc.function
-                                .arguments
-                                .get(key)
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .trim()
-                                .to_string()
+                        let page = match fetched.take() {
+                            Some(Fetched::Browse(page)) => page,
+                            _ => {
+                                let guard = taint.is_set().then_some(&destinations);
+                                browse(req, &arg_str(tc, "what"), &arg_str(tc, "site"), guard).await
+                            }
                         };
-                        let guard = taint.is_set().then_some(&destinations);
-                        match browse(req, &field("what"), &field("site"), guard).await {
+                        match page {
                             Ok((content, sources)) => {
                                 taint.set();
                                 destinations.note_seen_in(&content);
@@ -1048,15 +1156,16 @@ impl SynEngine {
                         }
                     }
                     crate::syn::gate::How::Delegate => {
-                        let goal = tc
-                            .function
-                            .arguments
-                            .get("goal")
-                            .and_then(|v| v.as_str())
-                            .map(str::trim)
-                            .unwrap_or_default()
-                            .to_string();
-                        match self.delegate(run, req, stop, &goal, taint.is_set(), &destinations).await {
+                        let handed = match fetched.take() {
+                            Some(Fetched::Delegate(handed)) => handed,
+                            _ => self.delegate(run, req, stop, &arg_str(tc, "goal"), taint.is_set(), &destinations).await,
+                        };
+                        // Its spending is the parent's spending.
+                        run.spent.tokens = run.spent.tokens.saturating_add(handed.tokens);
+                        if let Some(note) = handed.note {
+                            run.note(run.spent.iterations.saturating_sub(1), note);
+                        }
+                        match handed.result {
                             Ok((content, sources, read_untrusted, reached)) => {
                                 // What the helper read is in this run's hands now.
                                 if read_untrusted {
@@ -1156,6 +1265,7 @@ impl SynEngine {
                             }),
                             Ok(plan) => {
                                 run.writes = Some(plan);
+                                run.pending_rest = reply.tool_calls[index + 1..].to_vec();
                                 break 'drive LoopEnd::NeedsApproval(Box::new(tc.clone()));
                             }
                         }
@@ -1225,6 +1335,7 @@ impl SynEngine {
                             }
                             Proposed::Ask(id) => {
                                 run.pending_connector = Some(id);
+                                run.pending_rest = reply.tool_calls[index + 1..].to_vec();
                                 break 'drive LoopEnd::NeedsConnector(Box::new(tc.clone()));
                             }
                         }
@@ -1324,6 +1435,109 @@ impl SynEngine {
                             reversal: called.reversal,
                         })
                     }
+                    // Syn writing a routine: saved switched off and agreed to on
+                    // no computer; the person turns it on from the card.
+                    crate::syn::gate::How::DraftRoutine => {
+                        let read = if taint.is_set() { crate::syn::changes::read_from(&run.steps) } else { Vec::new() };
+                        let content = match crate::syn::routine::draft(&tc.function.arguments, run.conversation_id.as_deref(), read)
+                            .and_then(|r| crate::syn::routine::keep_draft(req.vault_path, r))
+                        {
+                            Err(e) => serde_json::json!({ "error": e }),
+                            Ok(r) => {
+                                if !run.drafted_routines.contains(&r.id) {
+                                    run.drafted_routines.push(r.id.clone());
+                                }
+                                serde_json::json!({
+                                    "drafted": r.name,
+                                    "note": "Saved switched off. The user turns it on, or not, on a card under your answer; it never runs until then. Say in one line what it will do and when.",
+                                })
+                            }
+                        };
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content: content.to_string(),
+                            reversal: crate::syn::registry::Reversal::Automatic {
+                                how: "the user lets it go on its card, which removes it".into(),
+                            },
+                        })
+                    }
+                    // Syn writing a skill for itself: saved switched off, and
+                    // put to the person on a card when the work is done. See
+                    // `syn::drafting`.
+                    crate::syn::gate::How::DraftSkill => {
+                        let known: Vec<String> =
+                            crate::syn::tools::get_tool_definitions().into_iter().map(|d| d.function.name).collect();
+                        let content = match crate::syn::drafting::parse(&tc.function.arguments, &known) {
+                            Err(e) => serde_json::json!({ "error": e }),
+                            Ok(draft) => {
+                                let tool_ctx = crate::syn::tools::ToolContext {
+                                    db: req.db,
+                                    vault_path: req.vault_path,
+                                    app: req.app,
+                                    run_id: Some(&run_id),
+                                    model: Some(&taint),
+                                };
+                                let read = if taint.is_set() { crate::syn::changes::read_from(&run.steps) } else { Vec::new() };
+                                match crate::syn::drafting::write(&tool_ctx, &draft, run.conversation_id.as_deref(), Some(&run_id), &read) {
+                                    Err(e) => serde_json::json!({ "error": e }),
+                                    Ok(id) => {
+                                        if !run.drafted_skills.contains(&id) {
+                                            run.drafted_skills.push(id);
+                                        }
+                                        serde_json::json!({
+                                            "drafted": draft.name,
+                                            "note": "Saved switched off. The user sees it on a card under your answer and keeps it or not; until then it is not used. Say in one line what you wrote down.",
+                                        })
+                                    }
+                                }
+                            }
+                        };
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content: content.to_string(),
+                            reversal: crate::syn::registry::Reversal::Automatic {
+                                how: "the user lets it go on its card, which puts it in the trash".into(),
+                            },
+                        })
+                    }
+                    // A change to what was there, after reading: held for the
+                    // person, described from the vault as it is, and shown on a
+                    // card when the work is done. See `syn::changes`.
+                    crate::syn::gate::How::Stage => {
+                        let tool_ctx = crate::syn::tools::ToolContext {
+                            db: req.db,
+                            vault_path: req.vault_path,
+                            app: req.app,
+                            run_id: Some(&run_id),
+                            model: Some(&taint),
+                        };
+                        let content = match crate::syn::tools::locked_refusal(&tool_ctx, &tc.function.name, &tc.function.arguments) {
+                            Ok(Some(why)) => crate::syn::locks::refusal_json(&why),
+                            Err(e) => serde_json::json!({ "error": e.to_string() }).to_string(),
+                            Ok(None) => {
+                                let described = {
+                                    let db = req.db.lock().unwrap_or_else(|e| e.into_inner());
+                                    crate::syn::changes::describe(&db, &tc.function.name, &tc.function.arguments)
+                                };
+                                match described {
+                                    Err(e) => serde_json::json!({ "error": e }).to_string(),
+                                    Ok(change) => {
+                                        let read = crate::syn::changes::read_from(&run.steps);
+                                        let set = run.changes.get_or_insert_with(Default::default);
+                                        set.read(read);
+                                        let first = set.hold(change);
+                                        serde_json::json!({
+                                            "staged": true,
+                                            "note": if first { crate::syn::changes::HELD } else { "Already held for the user's approval." },
+                                        })
+                                        .to_string()
+                                    }
+                                }
+                            }
+                        };
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content,
+                            reversal: crate::syn::registry::Reversal::Nothing,
+                        })
+                    }
                     crate::syn::gate::How::Execute => {
                         req.registry.execute(&ctx, &tc.function.name, &tc.function.arguments)
                     }
@@ -1367,7 +1581,7 @@ impl SynEngine {
 
                 // A link a feed article offered may be opened as it is, the way
                 // one a page offered may. See `taint::Destinations`.
-                if crate::syn::taint::UNTRUSTED_READS.contains(&tc.function.name.as_str()) {
+                if crate::syn::taint::untrusted_read(&tc.function.name) {
                     destinations.note_seen_in(&content);
                 }
 
@@ -1384,7 +1598,7 @@ impl SynEngine {
                     tool_succeeded(&content),
                     reversal,
                     &content,
-                    call_started.elapsed().as_millis() as u64,
+                    took.unwrap_or_else(|| call_started.elapsed()).as_millis() as u64,
                 );
                 crate::syn::run::save_run_best_effort(req.vault_path, run);
                 progress(req.app, run, Some(&tc.function.name));
@@ -1416,6 +1630,15 @@ impl SynEngine {
             // results — the one place the model reads between deciding to
             // look and deciding whether to look again. See `rounds_left`.
             tell_the_rounds_left(&mut working, &run.spent, &run.budget);
+
+            // What the person said while this round ran, for the next one.
+            let said = take_steering(&run.id);
+            if !said.is_empty() {
+                hand_over(&mut working, &said);
+                run.note(run.spent.iterations, format!("The user added, while it worked: {}", said.join(" / ")));
+                run.steered.extend(said);
+                crate::syn::run::save_run_best_effort(req.vault_path, run);
+            }
         };
 
         // Out of something. Ask once more without tools so the model has to
@@ -1619,17 +1842,21 @@ impl SynEngine {
     /// anything written outside the vault.
     async fn delegate<R: tauri::Runtime>(
         &self,
-        parent: &mut Run,
+        parent: &Run,
         req: &DriveRequest<'_, R>,
         stop: &Arc<AtomicBool>,
         goal: &str,
         tainted: bool,
         reach: &crate::syn::taint::Destinations,
-    ) -> AppResult<(String, Vec<crate::models::syn::SourceRef>, bool, crate::syn::taint::Destinations)> {
+    ) -> Handed {
         if goal.is_empty() {
-            return Err(crate::error::AppError::General(
-                "Say what the helper should do: `goal` is the whole job, and it sees nothing else.".into(),
-            ));
+            return Handed {
+                tokens: 0,
+                note: None,
+                result: Err(crate::error::AppError::General(
+                    "Say what the helper should do: `goal` is the whole job, and it sees nothing else.".into(),
+                )),
+            };
         }
 
         let mut child = Run::new(goal, None, crate::syn::delegate::budget_for(parent));
@@ -1708,19 +1935,18 @@ impl SynEngine {
             }
         };
 
-        // Its spending is the parent's spending.
-        parent.spent.tokens = parent.spent.tokens.saturating_add(child.spent.tokens);
-        parent.note(
-            parent.spent.iterations.saturating_sub(1),
-            format!(
-                "Handed work to helper run {} ({} round(s), {} tool call(s)).",
-                child.id, child.spent.iterations, child.spent.tool_calls
-            ),
+        // Its spending is the parent's spending, added by the parent when it
+        // takes the findings — helpers run side by side, and none of them may
+        // hold the parent while it works.
+        let note = format!(
+            "Handed work to helper run {} ({} round(s), {} tool call(s)).",
+            child.id, child.spent.iterations, child.spent.tool_calls
         );
-
-        let answer = answer?;
-        let content = crate::syn::delegate::findings(&child, &answer.content);
-        Ok((content, answer.sources.unwrap_or_default(), child.read_untrusted, child.destinations))
+        let result = answer.map(|answer| {
+            let content = crate::syn::delegate::findings(&child, &answer.content);
+            (content, answer.sources.unwrap_or_default(), child.read_untrusted, child.destinations.clone())
+        });
+        Handed { tokens: child.spent.tokens, note: Some(note), result }
     }
 
     /// The window the next request has to fit, in tokens.
@@ -2191,6 +2417,142 @@ fn worth_reading(fetched: AppResult<crate::syn::web::Page>) -> Option<crate::syn
     }
 }
 
+/// What happens to one call, decided before anything runs: its capability and
+/// the gate's answer. Pure — nothing is recorded — so a round can weigh calls
+/// ahead to see which may run side by side, and the loop weighs a call again
+/// when it reaches it. The rules and their order live in `syn::gate`.
+#[allow(clippy::too_many_arguments)]
+fn weigh<R: tauri::Runtime>(
+    req: &DriveRequest<'_, R>,
+    run: &Run,
+    tc: &crate::models::syn::ToolCall,
+    taint: &crate::syn::taint::Taint,
+    destinations: &crate::syn::taint::Destinations,
+    seen: &[crate::syn::ambiguity::Candidate],
+    consent_conversation: Option<&str>,
+    earlier_steps: &[crate::syn::run::Step],
+    sub_run: bool,
+) -> (Option<crate::syn::consent::Capability>, crate::syn::gate::Decided) {
+    // What happens to this call, decided before anything runs.
+    // The rules and their order live in `syn::gate`; this loop only
+    // carries out the answer.
+    // A declared connector is weighed in this vault: another vault
+    // may declare one of the same id, under another name. Seen in
+    // the 2026-10-11 eval, where `call` then refused the read as
+    // "changed since permission was weighed".
+    let capability = match crate::syn::connector::declared::find(req.vault_path, &tc.function.name) {
+        Some((d, op)) => Some(crate::syn::connector::declared::capability(&d, &op)),
+        // A try reaches the draft's host, asked like any read of it.
+        None if tc.function.name == crate::syn::connector::authoring::TRY_TOOL => {
+            match draft_named(req, &tc.function.arguments).and_then(|m| {
+                url::Url::parse(&m.base_url).ok().and_then(|u| u.host_str().map(str::to_string))
+            }) {
+                Some(host) => Some(crate::syn::consent::Capability::NetRead { domain: host }),
+                None => req.registry.capability_of(&tc.function.name, &tc.function.arguments),
+            }
+        }
+        None => req.registry.capability_of(&tc.function.name, &tc.function.arguments),
+    };
+    let ledger = crate::syn::consent::load(req.vault_path);
+    let now = chrono::Utc::now().to_rfc3339();
+    let until_done = |c: &crate::syn::consent::Capability| {
+        consent_conversation
+            .is_some_and(|conv| crate::syn::consent::allowed_until_done(conv, c))
+    };
+    let only_connector = taint.only_connector();
+    let approved_writes: Vec<String> = run.writes.as_ref().map(|p| p.approved()).unwrap_or_default();
+    // What a call back to that connector may carry. Built only when
+    // there is one, from the question and that connector's answers.
+    let echoes: Vec<String> = match only_connector.as_deref() {
+        Some(slug) => std::iter::once(run.goal.clone())
+            .chain(run.steps.iter().chain(earlier_steps.iter()).filter(|s| {
+                s.tool.as_deref().and_then(crate::syn::connector::provider::server_slug_of) == Some(slug)
+                    // A try of it, and the spec it was drafted from,
+                    // are its words too — as the taint counts them.
+                    || (s.tool.as_deref().is_some_and(|t| {
+                        t == crate::syn::connector::authoring::TRY_TOOL || t == crate::syn::connector::authoring::DRAFT_TOOL
+                    }) && s.args.as_ref().and_then(|a| a.get("id")).and_then(|v| v.as_str()).map(str::trim) == Some(slug))
+            }).map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone())))
+            .collect(),
+        None => Vec::new(),
+    };
+    let decided = crate::syn::gate::decide(
+        &tc.function.name,
+        &tc.function.arguments,
+        capability.as_ref(),
+        &crate::syn::gate::View {
+            tainted: taint.is_set(),
+            only_connector: only_connector.as_deref(),
+            echoes: &echoes,
+            approved_writes: &approved_writes,
+            untrusted_before: run.untrusted_before,
+            reach: Some(destinations),
+            surface: run.surface,
+            seen,
+            ledger: &ledger,
+            allowed_until_done: &until_done,
+            skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
+            plan_only: run.plan_only,
+            sub_run,
+            now: &now,
+            safe: &|tool, handle| crate::safe::bridge::may_send(req.vault_path, tool, handle),
+        },
+    );
+    (capability, decided)
+}
+
+/// Record what the gate decided, where the audit log keeps such things.
+fn audit_decided<R: tauri::Runtime>(
+    req: &DriveRequest<'_, R>,
+    run: &Run,
+    run_id: &str,
+    tc: &crate::models::syn::ToolCall,
+    capability: Option<&crate::syn::consent::Capability>,
+    audit: Option<crate::syn::audit::Outcome>,
+) {
+    if let (Some(outcome), Some(capability)) = (audit, capability) {
+        crate::syn::audit::record_best_effort_detailed(
+            req.vault_path,
+            run_id,
+            &tc.function.name,
+            capability,
+            outcome,
+            run.surface,
+            audit_detail(&tc.function.name, &tc.function.arguments).as_deref(),
+        );
+    }
+}
+
+/// How many pages or helpers one round runs side by side, at most.
+const TOGETHER: usize = 4;
+
+/// What a call run ahead of its turn brought back, waiting for the loop to
+/// reach it.
+struct Ready {
+    capability: Option<crate::syn::consent::Capability>,
+    how: crate::syn::gate::How,
+    fetched: Fetched,
+    took: std::time::Duration,
+}
+
+enum Fetched {
+    Browse(AppResult<(String, Vec<crate::models::syn::SourceRef>)>),
+    Delegate(Handed),
+}
+
+/// What a helper came back with, and what it cost its parent.
+struct Handed {
+    tokens: u64,
+    note: Option<String>,
+    result: AppResult<(String, Vec<crate::models::syn::SourceRef>, bool, crate::syn::taint::Destinations)>,
+}
+
+/// A string argument of a call, trimmed; empty when absent.
+fn arg_str(tc: &crate::models::syn::ToolCall, key: &str) -> String {
+    tc.function.arguments.get(key).and_then(|v| v.as_str()).unwrap_or_default().trim().to_string()
+}
+
+
 /// Look something up, or read a page — cheapest path that works.
 ///
 /// The three rungs are in `tools::BROWSE_TOOL`'s doc, with the reasoning. What
@@ -2467,13 +2829,16 @@ async fn look_at<R: tauri::Runtime>(
         .is_some_and(|open| browser::same_place(&open.url, address))
     {
         match browser::read_showing(req.app, req.browser).await {
-            Ok(read) => {
+            // Still the page that was asked for: another lookup in the same
+            // round may have taken the window somewhere else in between.
+            Ok(read) if browser::same_place(&read.url, address) => {
                 let page = web::reduce(&read.html, &read.url);
                 if browser::worth_keeping(&page) {
                     return Ok((onward(req.browser, &page, &read.html, cap), vec![web::citation(&page)]));
                 }
                 log::info!("[Syn] The open page had nothing readable on it; fetching instead");
             }
+            Ok(read) => log::info!("[Syn] The window had moved on to {}; fetching instead", read.url),
             Err(e) => log::info!("[Syn] Could not read the open page ({e}); fetching instead"),
         }
     }
@@ -2658,24 +3023,7 @@ fn propose_connector<R: tauri::Runtime>(req: &DriveRequest<'_, R>, run: &mut Run
     let Some(id) = args.get("id").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {
         return Proposed::Said(serde_json::json!({ "error": "connector_connect needs the draft's `id`." }));
     };
-    let mut found = draft_named(req, args);
-    // One Synabit ships is filed as it ships — its own words and its own
-    // provenance — and then asked about like any other.
-    if found.is_none() {
-        if let Some((title, note)) = crate::syn::connector::authoring::bundled_note(id) {
-            let ctx = crate::syn::tools::ToolContext { db: req.db, vault_path: req.vault_path, app: req.app, run_id: Some(&run.id), model: None };
-            let filed = crate::syn::tools::execute_tool(
-                &ctx,
-                "create_node",
-                &serde_json::json!({ "node_type": manifest::CONNECTOR_TYPE, "title": title, "content": note }),
-            );
-            if let Err(e) = filed {
-                return Proposed::Said(serde_json::json!({ "error": format!("Could not add it: {e}") }));
-            }
-            found = draft_named(req, args);
-        }
-    }
-    let Some(m) = found else {
+    let Some(m) = draft_named(req, args) else {
         return Proposed::Said(serde_json::json!({ "error": format!("There is no connector `{id}`. Draft it with connector_draft first.") }));
     };
     let problems = manifest::problems(&m);
@@ -4886,6 +5234,63 @@ mod driving {
         );
     }
 
+    /// The rest of the round it stopped in is made too, after the call that
+    /// was asked about, in the order it was asked for. It used to be lost: the
+    /// resumed run made the one call and the model never learnt the others
+    /// had not run.
+    #[tokio::test]
+    async fn a_resumed_run_makes_the_rest_of_the_round_it_stopped_in() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db: crate::db::DbState = Mutex::new(DbBridge::new_in_memory_full().expect("schema"));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_consent_test();
+        let call = |id: &str, name: &str| ToolCall {
+            id: Some(id.into()),
+            function: ToolCallFunction { name: name.into(), arguments: serde_json::json!({}) },
+            thought_signature: None,
+        };
+
+        let mut stopped = Run::new("gửi rồi xem", Some("conv-rest".into()), budget(12));
+        let engine = SynEngine::new(Box::new(Scripted::new(
+            &vault,
+            &stopped.id,
+            vec![ChatReply {
+                content: String::new(),
+                tool_calls: vec![call("c1", "list_schemas"), call("c2", "send_test"), call("c3", "list_trash"), call("c4", "list_schemas")],
+                usage: Default::default(),
+                duration_ms: None,
+            }],
+        )));
+        engine
+            .drive(&mut stopped, DriveRequest {
+                app: &app, message_id: "m1", history: &history("gửi rồi xem"), model: "scripted", temperature: None,
+                registry: &registry, db: &db, vault_path: &vault, num_ctx: 8192, max_history: 50, browser: &browser_state, resume_call: None,
+            })
+            .await
+            .expect("stops cleanly");
+        assert_eq!(stopped.state, RunState::AwaitingConsent);
+        let rest: Vec<String> = stopped.pending_rest.iter().map(|c| c.id.clone().unwrap_or_default()).collect();
+        assert_eq!(rest, vec!["c3", "c4"], "what came after the question, kept");
+
+        crate::syn::consent::allow_until_done("conv-rest", &stopped.pending_consent.clone().expect("asked").capability);
+        let mut carried = Run::new("gửi rồi xem", Some("conv-rest".into()), budget(12));
+        carried.pending_rest = stopped.pending_rest.clone(); // as `carry_over` does
+        let engine = SynEngine::new(Box::new(Scripted::new(&vault, &carried.id, vec![text("Xong.")])));
+        engine
+            .drive(&mut carried, DriveRequest {
+                app: &app, message_id: "m2", history: &history("gửi rồi xem"), model: "scripted", temperature: None,
+                registry: &registry, db: &db, vault_path: &vault, num_ctx: 8192, max_history: 50, browser: &browser_state,
+                resume_call: stopped.pending_call.clone(),
+            })
+            .await
+            .expect("answers");
+        let ran: Vec<&str> = carried.steps.iter().filter(|s| s.kind == StepKind::ToolCall).filter_map(|s| s.tool.as_deref()).collect();
+        assert_eq!(ran, vec!["send_test", "list_trash", "list_schemas"]);
+        assert!(carried.pending_rest.is_empty(), "made once");
+    }
+
     /// And it is one call carried over, not a mode the run stays in.
     ///
     /// A second round asks the provider like any other. Otherwise a resumed run
@@ -6270,10 +6675,7 @@ mod driving {
         let host = url::Url::parse(&server.base).expect("url").host_str().expect("host").to_string();
         crate::syn::consent::record(&vault, &crate::syn::consent::Capability::NetRead { domain: host }, crate::syn::consent::Answer::Always, chrono::Utc::now()).expect("granted");
 
-        // What exists: the weather one ships; nothing does tasks yet.
-        let found = crate::syn::connector::authoring::find(&db.lock().expect("db"), &vault, "thời tiết weather Hà Nội");
-        assert_eq!(found["matched"][0]["kind"], "bundled", "{found}");
-        assert_eq!(found["matched"][0]["id"], "weather");
+        // Nothing does tasks yet.
         let none = crate::syn::connector::authoring::find(&db.lock().expect("db"), &vault, "todoist");
         assert!(none["matched"].as_array().expect("list").is_empty(), "{none}");
 
@@ -6296,7 +6698,7 @@ mod driving {
                 calls("connector_try", serde_json::json!({ "id": "tasks", "operation": "add", "args": {} })),
                 calls("connector_draft", chosen),
                 calls("connector_try", serde_json::json!({ "id": "tasks", "operation": "list_tasks" })),
-                calls("connector_connect", serde_json::json!({ "id": "weather" })),
+                calls("connector_connect", serde_json::json!({ "id": "tasks" })),
                 text("unreached"),
             ],
         )
@@ -6314,11 +6716,11 @@ mod driving {
         assert!(!server.lines().iter().any(|l| l.starts_with("POST")), "{:?}", server.lines());
         assert!(crate::syn::connector::instance::approved_here(&vault, &connector_draft(&vault, db, "tasks").expect("draft")).is_none(), "a try approves nothing");
 
-        // The bundled one, filed as it ships and asked about.
+        // The draft that worked, asked about on the card.
         assert_eq!(run.state, RunState::AwaitingApproval, "{:?}", run.steps);
-        assert_eq!(run.pending_connector.as_deref(), Some("weather"));
-        let weather = connector_draft(&vault, db, "weather").expect("filed");
-        assert_eq!(weather.provenance, crate::syn::connector::manifest::Provenance::Bundled);
+        assert_eq!(run.pending_connector.as_deref(), Some("tasks"));
+        let tasks = connector_draft(&vault, db, "tasks").expect("filed");
+        assert_eq!(tasks.provenance, crate::syn::connector::manifest::Provenance::Syn);
     }
 
     /// After reading, a try carries only what the person said: the vault's
@@ -6525,7 +6927,10 @@ mod driving {
         let crunched: Vec<String> = run.steps.iter().filter(|s| s.tool.as_deref() == Some("crunch")).map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone())).collect();
         assert!(crunched[0].contains("-175001"), "{}", crunched[0]);
         assert!(crunched[1].contains("24824999"), "{}", crunched[1]);
-        assert_eq!(refusals(&run), 1, "the ledger write after reading the statement: {:?}", run.steps);
+        // The ledger write after reading the statement is held, not made.
+        let held = run.changes.as_ref().expect("held");
+        assert_eq!(held.changes.len(), 1, "{:?}", run.steps);
+        assert_eq!(held.changes[0].kind, crate::syn::changes::Kind::TransactionNew);
         assert!(!dir.path().join("Finance/2026-10.json").exists() && !dir.path().join("Finance/2026-09.json").exists(), "nothing in the ledger");
     }
 
@@ -6651,6 +7056,166 @@ mod driving {
         assert!(run.read_from.iter().any(|o| o.contains("cal")), "{:?}", run.read_from);
         assert_eq!(refusals(&run), 1, "{:?}", run.steps);
         assert!(db.lock().expect("db").get_node("Notes/keep.md").expect("read").is_some());
+    }
+
+    /// Asked for something done every morning, Syn writes the routine switched
+    /// off and agreed to nowhere; the person turns it on from the card.
+    #[tokio::test]
+    async fn a_routine_syn_writes_waits_for_the_person_to_turn_it_on() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let mut run = Run::new("mỗi sáng 7 giờ tóm tắt lịch", Some("conv-routine".into()), budget(8));
+        drive_script_in(&app, &vault, &mut run, "mỗi sáng 7 giờ tóm tắt lịch", vec![
+            calls(crate::syn::routine::DRAFT_TOOL, serde_json::json!({ "name": "Lịch sáng", "ask": "Tóm tắt lịch hôm nay.", "at": "07:00" })),
+            text("Đã soạn việc này; bật nó ở thẻ bên dưới."),
+        ]).await;
+        assert_eq!(run.drafted_routines.len(), 1, "{:?}", run.steps);
+        let book = crate::syn::routine::load(&vault);
+        let waiting = crate::syn::routine::proposals(&book);
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].proposed_in.as_deref(), Some("conv-routine"));
+        assert!(!waiting[0].enabled && !crate::syn::routine::approved_here(&vault, &waiting[0]));
+
+        let now = chrono::NaiveDateTime::parse_from_str("2026-10-13 06:00", "%Y-%m-%d %H:%M").expect("time");
+        crate::syn::routine::answer_proposal(&vault, &waiting[0].id, true, now).expect("turned on");
+        let book = crate::syn::routine::load(&vault);
+        let kept = book.routines.iter().find(|r| r.id == waiting[0].id).expect("kept");
+        assert!(kept.enabled && crate::syn::routine::approved_here(&vault, kept));
+    }
+
+    /// A script builds a table from data, the table comes back with a handle,
+    /// a second script reads it by that handle; a table the person allowed
+    /// only totals of is not handed to a script at all.
+    #[tokio::test]
+    async fn compute_files_what_it_makes_and_never_reads_what_may_only_be_totalled() {
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let secret = {
+            let state = app.state::<crate::db::DbState>();
+            let db = state.lock().expect("db");
+            let (columns, rows) = crate::syn::resultset::from_objects(&[serde_json::json!({ "salary": 98_000_000 })]);
+            crate::syn::resultset::create(
+                db.conn(),
+                crate::syn::resultset::NewSet {
+                    scope: "conv-compute".into(),
+                    run_id: "earlier".into(),
+                    source: Default::default(),
+                    columns,
+                    rows,
+                    missing: vec![],
+                    exposure: crate::syn::resultset::Exposure::Aggregates,
+                    ttl_hours: 0,
+                },
+                chrono::Utc::now().timestamp(),
+            )
+            .expect("filed")
+        };
+        let mut run = Run::new("tính", Some("conv-compute".into()), budget(8));
+        crate::syn::run::save_run_best_effort(&vault, &run);
+        drive_script_in(&app, &vault, &mut run, "tính", vec![
+            calls(crate::syn::script::TOOL, serde_json::json!({
+                "code": "let out = []; for d in data { out.push(#{ name: d.name, total: num(d.a) + num(d.b) }); } out",
+                "data": [{ "name": "An", "a": "1.000", "b": "2.500" }, { "name": "Bình", "a": "500", "b": "1,5" }],
+            })),
+            text("xong"),
+        ]).await;
+        let made = run.steps.iter().find(|s| s.tool.as_deref() == Some(crate::syn::script::TOOL)).expect("ran");
+        let made: serde_json::Value = serde_json::from_str(made.full.as_deref().unwrap_or(&made.preview)).expect("json");
+        let handle = made["handle"].as_str().expect("filed with a handle").to_string();
+        assert_eq!(made["rows"][0]["total"], serde_json::json!(3500.0), "{made}");
+
+        let mut next = Run::new("tính tiếp", Some("conv-compute".into()), budget(8));
+        crate::syn::run::save_run_best_effort(&vault, &next);
+        drive_script_in(&app, &vault, &mut next, "tính tiếp", vec![
+            calls(crate::syn::script::TOOL, serde_json::json!({
+                "code": format!("let s = 0.0; for r in tables.{handle} {{ s += r.total; }} s"),
+                "tables": [handle],
+            })),
+            calls(crate::syn::script::TOOL, serde_json::json!({ "code": format!("tables.{secret}[0].salary"), "tables": [secret] })),
+            text("xong"),
+        ]).await;
+        let results: Vec<String> = next
+            .steps
+            .iter()
+            .filter(|s| s.tool.as_deref() == Some(crate::syn::script::TOOL))
+            .map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone()))
+            .collect();
+        assert!(results[0].contains("\"result\":4001.5"), "{}", results[0]);
+        assert!(results[1].contains("may only be totalled") && !results[1].contains("98000000"), "{}", results[1]);
+    }
+
+    /// Typed while Syn works, it reaches that work at its next round — with
+    /// the round's results, where every provider takes it — and is kept for
+    /// the conversation. Typed where nothing works, it is not taken.
+    #[tokio::test]
+    async fn what_is_typed_while_syn_works_reaches_the_next_round() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+        let mut run = Run::new("tìm note", Some("conv-steer".into()), budget(8));
+        let provider = std::sync::Arc::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![calls("list_schemas", serde_json::json!({})), text("Đã đổi sang note khác.")],
+        ));
+        let turns = std::sync::atomic::AtomicUsize::new(0);
+        *provider.before_reply.lock().expect("lock") = Some(Box::new(move || {
+            if turns.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                assert!(steer("conv-steer", "thôi, xem note Q4"), "a run is working there");
+            }
+        }));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(&mut run, DriveRequest {
+                app: &app, message_id: "m1", history: &history("tìm note"), model: "scripted", temperature: None,
+                registry: &registry, db: &db, vault_path: &vault, num_ctx: 8192, max_history: 50, browser: &browser_state, resume_call: None,
+            })
+            .await
+            .expect("answers");
+
+        assert_eq!(run.steered, vec!["thôi, xem note Q4".to_string()]);
+        let second = provider.histories.lock().expect("lock").get(1).cloned().expect("asked twice");
+        let (role, content) = second.last().cloned().expect("a last message");
+        assert_eq!(role, "tool", "handed over with the round's results");
+        assert!(content.contains("thôi, xem note Q4") && content.contains("user_says"), "{content}");
+        assert!(!steer("conv-steer", "còn nữa"), "nothing is working there now");
+        assert!(!steer("conv-elsewhere", "x"));
+    }
+
+    /// A mirror that brought something new says which connector, for the
+    /// routines that run on it; one not yet due again says nothing.
+    #[tokio::test]
+    async fn a_mirror_with_something_new_names_its_connector() {
+        use crate::syn::connector::{fake_rest, manifest, mirror};
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let state = app.state::<crate::db::DbState>();
+        let db = state.inner();
+        let server = fake_rest::serve([("/dav/calendars/me/home/", ics_answer(&[("ev-1", "20261012T020000Z", "Họp team")]))].into_iter().collect()).await;
+        let m = manifest::parse_yaml(&format!("{}{CAL_MIRROR}", CALDAV.replace("BASE", &server.base))).expect("reads");
+        let yaml_secret = m.auth.secret().map(|n| crate::commands::connector::secret_slot(&m.id, n));
+        if let Some(slot) = yaml_secret {
+            crate::syn::connector::declared::TEST_SECRETS.lock().expect("secrets").insert(slot, "pw".into());
+        }
+        crate::syn::connector::instance::approve(&vault, &m, crate::syn::connector::instance::Choices { network: crate::syn::connector::instance::Network::Internal, mirrors: ["home".to_string()].into(), ..Default::default() }, "now").expect("approved");
+        // Filed in the vault, where `tick` finds the declarations it runs.
+        crate::syn::tools::execute_tool(
+            &crate::syn::tools::ToolContext { db, vault_path: &vault, app: &app, run_id: None, model: None },
+            "create_node",
+            &serde_json::json!({ "node_type": "syn_connector", "title": m.name, "content": format!("```connector\n{}{CAL_MIRROR}\n```", CALDAV.replace("BASE", &server.base)) }),
+        ).expect("filed");
+
+        let fresh = mirror::tick(&app, db, &vault).await;
+        assert_eq!(fresh.iter().map(|(id, _, n)| (id.as_str(), *n)).collect::<Vec<_>>(), vec![(m.id.as_str(), 1)], "{fresh:?}");
+        assert!(mirror::tick(&app, db, &vault).await.is_empty(), "not due again yet");
     }
 
     /// Transactions a mirror reads go to staging, each once — never into the
@@ -6864,8 +7429,14 @@ mod driving {
         )
         .await;
 
-        assert_eq!(refusals(&run), 4, "{:?}", run.steps);
+        // Held for the person, every one, and none of them made.
+        assert_eq!(refusals(&run), 0, "{:?}", run.steps);
+        let held = run.changes.as_ref().expect("held");
+        assert_eq!(held.changes.len(), 4, "{held:?}");
+        assert!(held.changes.iter().all(|c| c.state == crate::syn::changes::State::Held));
+        assert!(held.because.contains(&"feeds".to_string()), "{:?}", held.because);
         assert!(dir.path().join("Notes/keep.md").exists(), "and the note is where it was");
+        assert_eq!(std::fs::read_to_string(dir.path().join("Notes/keep.md")).unwrap(), "---\ntype: note\ntitle: Giữ lại\n---\nquan trọng");
     }
 
     /// A web page clipped into the vault is the page's words, however much it
@@ -6907,7 +7478,9 @@ mod driving {
         )
         .await;
         assert!(run.read_untrusted, "the clipping is outside words");
-        assert_eq!(refusals(&run), 1, "{:?}", run.steps);
+        let held = run.changes.as_ref().expect("held, not made");
+        assert_eq!(held.changes.len(), 1);
+        assert_eq!(held.because, vec!["Vendor onboarding (clipped)".to_string()], "named by its title");
 
         // The user's own note, read the same way, is not.
         let mut own = Run::new("đọc", Some("conv-own".into()), budget(8));
@@ -6920,6 +7493,153 @@ mod driving {
         )
         .await;
         assert!(!own.read_untrusted);
+    }
+
+    /// A change held after reading is made when the person approves it, and
+    /// not before; let go, it is not made at all; and a note that changed
+    /// after the change was held is not overwritten.
+    #[tokio::test]
+    async fn a_held_change_is_made_only_when_the_person_approves_it() {
+        use tauri::Manager;
+        type App = tauri::AppHandle<tauri::test::MockRuntime>;
+        async fn hold(app: &App, vault: &str, tool: &str, args: serde_json::Value) -> (String, Vec<String>) {
+            let mut run = Run::new("làm theo", Some("conv-held".into()), budget(8));
+            run.read_untrusted = true;
+            drive_script_in(app, vault, &mut run, "làm theo", vec![calls(tool, args), text("đã đề xuất")]).await;
+            let hashes = run.changes.as_ref().expect("held").changes.iter().map(|c| c.hash.clone()).collect();
+            (run.id, hashes)
+        }
+        fn answer(app: &App, vault: &str, id: &str, approved: &[String]) -> Vec<crate::syn::changes::Outcome> {
+            let db = app.state::<crate::db::DbState>();
+            crate::commands::syn::answer_changes(app, db.inner(), vault, id, approved).expect("answered")
+        }
+        let body = |dir: &std::path::Path| std::fs::read_to_string(dir.join("Notes/keep.md")).unwrap_or_default();
+
+        // Approved: made.
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let (id, hashes) = hold(&app, &vault, "update_node", serde_json::json!({ "node_id": "Notes/keep.md", "properties": { "status": "done" } })).await;
+        assert!(!body(dir.path()).contains("status"), "held, not made");
+        let out = answer(&app, &vault, &id, &hashes);
+        assert_eq!(out[0].state, crate::syn::changes::State::Applied, "{out:?}");
+        assert!(body(dir.path()).contains("status: done"), "{}", body(dir.path()));
+        assert!(answer(&app, &vault, &id, &hashes).is_empty(), "once");
+
+        // Let go: not made.
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let (id, _) = hold(&app, &vault, "trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })).await;
+        let out = answer(&app, &vault, &id, &[]);
+        assert_eq!(out[0].state, crate::syn::changes::State::Declined);
+        assert!(dir.path().join("Notes/keep.md").exists());
+
+        // Changed since: left alone.
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let (id, hashes) = hold(&app, &vault, "trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })).await;
+        {
+            let state = app.state::<crate::db::DbState>();
+            let guard = state.lock().expect("db");
+            let mut node = guard.get_node("Notes/keep.md").expect("read").expect("there");
+            node.updated_at = "2026-10-12 09:00:00".into();
+            guard.upsert_node(&node).expect("edited by the person meanwhile");
+        }
+        let out = answer(&app, &vault, &id, &hashes);
+        assert_eq!(out[0].state, crate::syn::changes::State::Failed, "{out:?}");
+        assert_eq!(out[0].error.as_deref(), Some("changed_since:Notes/keep.md"));
+        assert!(dir.path().join("Notes/keep.md").exists(), "the person's newer note is not trashed");
+    }
+
+    /// Asked to keep a way of doing a job, Syn writes it down switched off; the
+    /// person keeps it on the card, and then it runs. The model cannot switch
+    /// it on itself, and one let go is in the trash.
+    #[tokio::test]
+    async fn a_skill_syn_writes_is_used_only_once_the_person_keeps_it() {
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let recipe = serde_json::json!({
+            "params": [{ "name": "title", "description": "the note's title", "required": true }],
+            "steps": [{ "tool": "create_node", "args": { "node_type": "note", "title": "{{title}}", "content": "Tổng kết" } }],
+        });
+
+        let mut run = Run::new("từ giờ mỗi khi tao bảo tổng kết thì tạo note", Some("conv-skill".into()), budget(8));
+        drive_script_in(&app, &vault, &mut run, "từ giờ mỗi khi tao bảo tổng kết thì tạo note", vec![
+            calls(crate::syn::drafting::TOOL, serde_json::json!({
+                "name": "Tổng kết", "when_to_use": "khi người dùng nói tổng kết",
+                "steps": "1. Tạo note tổng kết bằng create_node.", "recipe": recipe,
+            })),
+            // The model tries to switch it on itself.
+            calls("update_node", serde_json::json!({ "node_id": "SynSkills/Tổng kết.md", "properties": { "enabled": true } })),
+            text("Đã ghi lại cách làm."),
+        ]).await;
+        assert_eq!(run.drafted_skills.len(), 1, "{:?}", run.steps);
+        let id = run.drafted_skills[0].clone();
+        let waiting = {
+            let state = app.state::<crate::db::DbState>();
+            let db = state.lock().expect("db");
+            crate::syn::drafting::waiting(&db)
+        };
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].conversation_id.as_deref(), Some("conv-skill"));
+        assert_eq!(waiting[0].tier, crate::syn::skill::Tier::Recipe);
+        assert_eq!(waiting[0].calls, vec![crate::syn::drafting::Call { tool: "create_node".into(), does: "write" }]);
+        let enabled = |app: &tauri::AppHandle<tauri::test::MockRuntime>| {
+            let state = app.state::<crate::db::DbState>();
+            let db = state.lock().expect("db");
+            crate::syn::skill::all(&db).expect("skills").into_iter().find(|s| s.id == id).map(|s| s.enabled)
+        };
+        assert_eq!(enabled(&app), Some(false), "the model could not switch it on");
+
+        // Not yet kept: it does not run.
+        let mut early = Run::new("tổng kết", Some("conv-skill".into()), budget(8));
+        drive_script_in(&app, &vault, &mut early, "tổng kết", vec![
+            calls("run_recipe", serde_json::json!({ "name": "Tổng kết", "params": { "title": "Sớm" } })),
+            text("ok"),
+        ]).await;
+        assert!(!dir.path().join("Notes/Sớm.md").exists());
+
+        // Kept on the card: it runs.
+        {
+            let state = app.state::<crate::db::DbState>();
+            crate::syn::drafting::answer(&app, state.inner(), &vault, &id, true).expect("kept");
+        }
+        assert_eq!(enabled(&app), Some(true));
+        let mut later = Run::new("tổng kết", Some("conv-skill".into()), budget(8));
+        drive_script_in(&app, &vault, &mut later, "tổng kết", vec![
+            calls("run_recipe", serde_json::json!({ "name": "Tổng kết", "params": { "title": "Tuần 41" } })),
+            text("ok"),
+        ]).await;
+        let made = {
+            let state = app.state::<crate::db::DbState>();
+            let db = state.lock().expect("db");
+            db.get_nodes_by_type("note").expect("notes").into_iter().any(|n| n.title == "Tuần 41")
+        };
+        assert!(made, "{:?}", later.steps);
+        assert!({
+            let state = app.state::<crate::db::DbState>();
+            let db = state.lock().expect("db");
+            crate::syn::drafting::waiting(&db).is_empty()
+        }, "no longer waiting");
+
+        // Let go: in the trash, and asked about no more.
+        let mut other = Run::new("lần sau làm vậy", Some("conv-skill".into()), budget(8));
+        drive_script_in(&app, &vault, &mut other, "lần sau làm vậy", vec![
+            calls(crate::syn::drafting::TOOL, serde_json::json!({ "name": "Khác", "when_to_use": "x", "steps": "1. y" })),
+            text("ok"),
+        ]).await;
+        let other_id = other.drafted_skills[0].clone();
+        {
+            let state = app.state::<crate::db::DbState>();
+            crate::syn::drafting::answer(&app, state.inner(), &vault, &other_id, false).expect("let go");
+            let db = state.lock().expect("db");
+            assert!(crate::syn::drafting::waiting(&db).is_empty());
+            assert!(crate::syn::skill::find(&crate::syn::skill::all(&db).expect("skills"), "Khác").is_none());
+        }
     }
 
     /// The bypass: a recipe runs its steps through `execute_tool`, not the
@@ -7111,7 +7831,8 @@ mod driving {
         )
         .await;
 
-        assert_eq!(refusals(&run), 1, "{:?}", run.steps);
+        // Held: what it read before still counts, so the trash waits for the person.
+        assert_eq!(run.changes.as_ref().map(|c| c.changes.len()), Some(1), "{:?}", run.steps);
         assert!(dir.path().join("Notes/keep.md").exists());
     }
 
@@ -7147,8 +7868,8 @@ mod driving {
 
         let mut history = vec![said("system", "Bạn là Syn.".into())];
         for i in 0..6 {
-            history.push(said("user", format!("câu hỏi {i} ") + &"chữ ".repeat(700)));
-            history.push(said("assistant", format!("trả lời {i} ") + &"ý ".repeat(700)));
+            history.push(said("user", format!("câu hỏi {i} ") + "chữ ".repeat(700).as_str()));
+            history.push(said("assistant", format!("trả lời {i} ") + "ý ".repeat(700).as_str()));
         }
         history.push(said("user", "vậy tóm lại là gì?".into()));
 
@@ -7249,6 +7970,103 @@ mod driving {
     }
 
     // ── handing work over, and carrying on ─────────────────────────
+
+    /// Two helpers asked for in one round work at the same time.
+    ///
+    /// Each helper's model waits at a barrier for the other before it answers.
+    /// Run one after the other, the first would wait alone and say so; run side
+    /// by side, they meet. And the parent still gets both back, in order.
+    #[tokio::test]
+    async fn helpers_asked_for_together_work_together() {
+        struct Meeting {
+            barrier: tokio::sync::Barrier,
+            parent_calls: std::sync::atomic::AtomicUsize,
+        }
+        impl Meeting {
+            async fn answer(&self, req: &ChatRequest<'_>) -> ChatReply {
+                let asked = req.messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone()).unwrap_or_default();
+                if let Some(which) = asked.strip_prefix("helper ") {
+                    let met = tokio::time::timeout(std::time::Duration::from_secs(5), self.barrier.wait()).await.is_ok();
+                    return text(&format!("{which}: {}", if met { "met" } else { "alone" }));
+                }
+                if self.parent_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    let call = |id: &str, goal: &str| ToolCall {
+                        id: Some(id.into()),
+                        function: ToolCallFunction { name: crate::syn::delegate::TOOL.into(), arguments: serde_json::json!({ "goal": goal }) },
+                        thought_signature: None,
+                    };
+                    return ChatReply {
+                        content: String::new(),
+                        tool_calls: vec![call("c1", "helper A"), call("c2", "helper B")],
+                        usage: Default::default(),
+                        duration_ms: None,
+                    };
+                }
+                text("xong")
+            }
+        }
+        #[async_trait::async_trait]
+        impl ChatProvider for Meeting {
+            fn id(&self) -> SynProvider {
+                SynProvider::Ollama
+            }
+            async fn check_status(&self) -> AppResult<ProviderStatus> {
+                unreachable!("the loop never asks")
+            }
+            async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
+                unreachable!("the loop never asks")
+            }
+            async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
+                Ok(self.answer(&req).await)
+            }
+            async fn chat_streaming(&self, req: ChatRequest<'_>, sink: &StreamSink<'_>) -> AppResult<ChatReply> {
+                let reply = self.answer(&req).await;
+                (sink.on_token)(&reply.content);
+                Ok(reply)
+            }
+        }
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+        let mut run = Run::new("so sánh hai thứ", Some("conv-together".into()), budget(6));
+        let engine = SynEngine::new(Box::new(Meeting {
+            barrier: tokio::sync::Barrier::new(2),
+            parent_calls: std::sync::atomic::AtomicUsize::new(0),
+        }));
+        let app = app();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history("so sánh hai thứ"),
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: &db,
+                    vault_path: &vault,
+                    num_ctx: 65_536,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        assert_eq!(run.state, RunState::Done);
+        let handed: Vec<&crate::syn::run::Step> =
+            run.steps.iter().filter(|s| s.tool.as_deref() == Some(crate::syn::delegate::TOOL)).collect();
+        assert_eq!(handed.len(), 2);
+        assert!(handed[0].preview.contains("A: met"), "{}", handed[0].preview);
+        assert!(handed[1].preview.contains("B: met"), "{}", handed[1].preview);
+        let notes = run.steps.iter().filter(|s| s.kind == StepKind::Note && s.preview.starts_with("Handed work")).count();
+        assert_eq!(notes, 2, "each helper's spending is the parent's");
+    }
 
     /// A helper does its reading in a run of its own, and its parent gets back
     /// the findings — one tool result — however much the helper read.

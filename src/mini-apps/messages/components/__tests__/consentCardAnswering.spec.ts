@@ -42,7 +42,7 @@ describe('the permission card', () => {
 
   it('says so when the answer did not go through', () => {
     const wrapper = card({ error: 'disk full' });
-    const said = wrapper.find('[data-consent-error]');
+    const said = wrapper.find('[data-card-error]');
     expect(said.exists()).toBe(true);
     expect(said.attributes('role')).toBe('alert');
     expect(said.text()).toContain('disk full');

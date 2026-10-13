@@ -103,6 +103,7 @@ lz4_flex = "0.13.1"
 chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"
 time = { version = "0.3.55", features = ["formatting"] }
+rhai = { version = "1.26", features = ["sync", "serde", "no_module", "no_custom_syntax"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # A hotkey that works while another app is focused only exists on desktop;

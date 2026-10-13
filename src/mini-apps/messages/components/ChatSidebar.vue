@@ -24,12 +24,14 @@
  * than interleaved.
  */
 import { ref, computed } from 'vue';
-import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, ScrollText, Activity, CalendarClock } from 'lucide-vue-next';
+import { Search, GitBranch, Plus, MessageSquare, Bell, Trash2, Check, Pencil, ChevronRight, Activity, CalendarClock } from 'lucide-vue-next';
 import { useI18n } from 'vue-i18n';
 import NavButtons from '../../../shared/components/NavButtons.vue';
 import type { Thread, FootingTally } from '../../../shared/syn/useThreads';
 import type { SynConversation } from '../types';
 import { grouped, closed, subtitle } from '../threads';
+import { useSynDeveloper } from '../../../shared/syn/useSynDeveloper';
+import type { HubTab } from './SynHub.vue';
 
 /** What the pane is showing. Explicit, so nothing has to guess it from an id. */
 export type Selection =
@@ -49,6 +51,9 @@ export type Selection =
    * them. This is the other half.
    */
   | { kind: 'instructions' }
+  /** Everything about Syn that is the person's: what it knows, can do, does
+   *  on its own and may do. See `SynHub`. */
+  | { kind: 'syn'; tab?: HubTab | null; highlight?: string | null }
   | null;
 
 const props = defineProps<{
@@ -113,6 +118,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+/** The run tallies are Syn's workings, for whoever asked to see them. */
+const developer = useSynDeveloper();
 const searchQuery = ref('');
 const newThreadTitle = ref('');
 
@@ -328,7 +335,7 @@ const when = (iso?: string) => {
       <!-- What the runs say about all of it. One line, under the work it is
            about, because a number nobody is shown is a number nobody acts on. -->
       <p
-        v-if="stats && stats.runs_in_a_thread"
+        v-if="developer && stats && stats.runs_in_a_thread"
         class="px-2.5 pb-2 text-xs"
         :class="stats.runs_that_wrote_back ? 'text-gray-500' : 'text-amber-600 dark:text-amber-500'"
       >
@@ -342,7 +349,7 @@ const when = (iso?: string) => {
       <!-- What the answers were standing on. The question `syn::footing`
            exists to answer, on a screen rather than in a field on disk. -->
       <p
-        v-if="guessRate !== null && footing"
+        v-if="developer && guessRate !== null && footing"
         class="px-2.5 pb-2 text-xs"
         :class="guessRate >= 0.2 ? 'text-amber-600 dark:text-amber-500' : 'text-gray-500'"
         :title="footing.unmeasured
@@ -437,15 +444,17 @@ const when = (iso?: string) => {
         </span>
       </button>
 
-      <!-- ─── Routines ───────────────────────────────────────
-           Beside Syn's work, because that is where their runs are listed. -->
+      <!-- ─── Syn ────────────────────────────────────────────
+           What Syn knows, can do, does on its own and may do — one place,
+           where routines and the instructions used to be two. See `SynHub`. -->
       <button
         class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('routines') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
-        @click="emit('select', { kind: 'routines' })"
+        :class="isOn('syn') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
+        data-sidebar-syn
+        @click="emit('select', { kind: 'syn' })"
       >
         <CalendarClock class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" aria-hidden="true" />
-        <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.routines') }}</span>
+        <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.hub_title') }}</span>
       </button>
 
       <!-- ─── Notifications ──────────────────────────────────
@@ -466,19 +475,7 @@ const when = (iso?: string) => {
         </span>
       </button>
 
-      <!-- ─── How we work together ───────────────────────────
-           `{vault}/SYN.md`. Last in the list because it is read rarely and
-           changed rarely — and here at all because until now the only way to
-           it was a textarea inside a settings modal, which is the arrangement
-           the file was created to end. -->
-      <button
-        class="mt-1 w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer"
-        :class="isOn('instructions') ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
-        @click="emit('select', { kind: 'instructions' })"
-      >
-        <ScrollText class="w-4 h-4 flex-shrink-0 text-gray-500 dark:text-gray-400" />
-        <span class="flex-1 text-[13px] text-gray-900 dark:text-gray-100">{{ t('syn.settings_instructions') }}</span>
-      </button>
+
     </div>
   </div>
 </template>

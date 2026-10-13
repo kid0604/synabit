@@ -81,6 +81,21 @@ pub struct Routine {
     /// files written before it existed.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub updated_at: String,
+    /// Run when this connector's mirror brings in something new, rather than
+    /// (or as well as) at a time. Its id. See `connector::mirror`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_new: Option<String>,
+    /// `syn` when Syn wrote it from a conversation; the person turned it on.
+    /// See `draft` below.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    /// The conversation Syn proposed it in, while it waits to be turned on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proposed_in: Option<String>,
+    /// What the run had read from outside before it wrote this, named on
+    /// the card. See `syn::changes::read_from`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_before: Vec<String>,
 }
 
 fn yes() -> bool {
@@ -174,7 +189,9 @@ pub fn check(routine: &Routine) -> Result<(), String> {
     if routine.ask.trim().is_empty() {
         return Err("A routine needs something to ask.".into());
     }
-    if time_of(&routine.schedule.at).is_none() {
+    let on_new = routine.on_new.as_deref().is_some_and(|c| !c.trim().is_empty());
+    // A time, or something new to run on — or both. A time given must be one.
+    if !(on_new && routine.schedule.at.trim().is_empty()) && time_of(&routine.schedule.at).is_none() {
         return Err(format!("`{}` is not a time of day; use HH:MM.", routine.schedule.at));
     }
     if routine.schedule.weekdays.iter().any(|d| !(1..=7).contains(d)) {
@@ -280,22 +297,19 @@ pub fn question(routine: &Routine, now: NaiveDateTime) -> String {
 // agreed to again.
 
 /// What a routine does, written so that any change reads as a different string.
+///
+/// What it runs on is part of what it does: a trigger changed elsewhere waits
+/// to be agreed to again. Left out when there is none, so every routine agreed
+/// to before triggers existed is still agreed to.
 pub fn fingerprint(routine: &Routine) -> String {
-    serde_json::to_string(&(&routine.ask, &routine.schedule, routine.to_phone)).unwrap_or_default()
-}
-
-fn approvals_path(vault_path: &str) -> AppResult<PathBuf> {
-    let dir = Path::new(vault_path).join(".synabit");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("routines-approved.json"))
+    match &routine.on_new {
+        None => serde_json::to_string(&(&routine.ask, &routine.schedule, routine.to_phone)).unwrap_or_default(),
+        Some(on) => serde_json::to_string(&(&routine.ask, &routine.schedule, routine.to_phone, on)).unwrap_or_default(),
+    }
 }
 
 fn approvals(vault_path: &str) -> BTreeMap<String, String> {
-    approvals_path(vault_path)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::Routines)
 }
 
 /// Whether this computer agreed to run this routine as it now is.
@@ -307,28 +321,32 @@ pub fn approved_here(vault_path: &str, routine: &Routine) -> bool {
 pub fn approve_here(vault_path: &str, routine: &Routine) -> AppResult<()> {
     let mut map = approvals(vault_path);
     map.insert(routine.id.clone(), fingerprint(routine));
-    let path = approvals_path(vault_path)?;
-    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(&map)?.as_bytes())?;
-    Ok(())
+    crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::Routines, &map)
 }
 
 /// The routines this computer was already running before agreement was asked
 /// for. Without this, every routine would stop the day this shipped, waiting
 /// for an agreement nobody knew to give. Once: the file existing is the mark.
 pub fn agree_to_what_ran_before(vault_path: &str, book: &Book) {
-    let Ok(path) = approvals_path(vault_path) else {
-        return;
-    };
-    if path.exists() {
+    if crate::syn::approvals::has(vault_path, crate::syn::approvals::Section::Routines) {
         return;
     }
     let map: BTreeMap<String, String> = book.routines.iter().map(|r| (r.id.clone(), fingerprint(r))).collect();
-    let written = serde_json::to_string_pretty(&map)
-        .map_err(|e| e.to_string())
-        .and_then(|text| std::fs::write(&path, text).map_err(|e| e.to_string()));
-    if let Err(e) = written {
+    if let Err(e) = crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::Routines, &map) {
         log::warn!("[Syn] Could not note which routines this computer runs: {e}");
     }
+}
+
+/// What runs here because a connector's mirror just brought something new:
+/// switched on, well formed, waiting on that connector, and agreed to on this
+/// computer. See `connector::mirror::tick`.
+pub fn triggered_here(vault_path: &str, book: &Book, connector: &str) -> Vec<Routine> {
+    book.routines
+        .iter()
+        .filter(|r| r.enabled && r.on_new.as_deref() == Some(connector))
+        .filter(|r| check(r).is_ok() && approved_here(vault_path, r))
+        .cloned()
+        .collect()
 }
 
 /// What may start on the schedule here: due, well formed, and agreed to on
@@ -392,6 +410,10 @@ mod tests {
             to_phone: false,
             conversation_id: None,
             updated_at: String::new(),
+            on_new: None,
+            author: None,
+            proposed_in: None,
+            read_before: vec![],
         }
     }
 
@@ -526,5 +548,194 @@ mod tests {
         let back: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(back["metadata"]["node_id"], "n-routines");
         assert_eq!(load(vault).last_slot.get("r1").map(String::as_str), Some("2026-09-28T07:30"));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WRITTEN BY SYN, TURNED ON BY THE PERSON
+// ═══════════════════════════════════════════════════════════════
+//
+// A routine was the person's to write, on a screen, and Syn was kept from it
+// entirely: deciding what to spend somebody's attention, money and data on
+// while they are not looking is not Syn's to decide. That stays true. What
+// changed is who writes it down: "mỗi sáng 7 giờ tóm tắt lịch cho tao" is the
+// person deciding, and the form was only a second way of saying it. So Syn
+// writes the routine **switched off and not agreed to on any computer**, and
+// the person turns it on from the card under the answer — which is the screen,
+// brought to where they asked. Nothing Syn can call turns one on.
+
+/// The tool.
+pub const DRAFT_TOOL: &str = "routine_draft";
+
+/// Emitted when a run ends having written routines, for the card.
+pub const PROPOSED_EVENT: &str = "syn-routines-proposed";
+
+fn arg(args: &serde_json::Value, key: &str) -> String {
+    args.get(key).and_then(serde_json::Value::as_str).map(str::trim).unwrap_or_default().to_string()
+}
+
+/// A routine from what the model asked for, checked as the screen checks one.
+pub fn draft(args: &serde_json::Value, conversation_id: Option<&str>, read_before: Vec<String>) -> Result<Routine, String> {
+    let weekdays: Vec<u8> = args
+        .get("days")
+        .and_then(serde_json::Value::as_array)
+        .map(|a| a.iter().filter_map(serde_json::Value::as_u64).map(|d| d as u8).collect())
+        .unwrap_or_default();
+    let on_new = Some(arg(args, "on_new")).filter(|c| !c.is_empty());
+    let routine = Routine {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: arg(args, "name"),
+        ask: arg(args, "ask"),
+        schedule: Schedule { at: arg(args, "at"), weekdays },
+        enabled: false,
+        to_phone: args.get("to_phone").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        conversation_id: None,
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        on_new,
+        author: Some("syn".into()),
+        proposed_in: conversation_id.map(str::to_string),
+        read_before,
+    };
+    check(&routine)?;
+    Ok(routine)
+}
+
+/// Keep a draft in the book, switched off. Syn's own unanswered draft of the
+/// same name is replaced; a routine the person has is never touched.
+pub fn keep_draft(vault_path: &str, routine: Routine) -> Result<Routine, String> {
+    let mut book = load(vault_path);
+    let name = routine.name.trim().to_lowercase();
+    let same = |r: &Routine| r.name.trim().to_lowercase() == name;
+    if let Some(existing) = book.routines.iter().find(|r| same(r)) {
+        if existing.author.as_deref() != Some("syn") || existing.enabled || existing.proposed_in.is_none() {
+            return Err(format!(
+                "There is already a routine called `{}` that the user keeps. Choose another name, or tell the user \
+                 what you would change in it.",
+                existing.name
+            ));
+        }
+    }
+    let mut routine = routine;
+    match book.routines.iter_mut().find(|r| same(r)) {
+        Some(existing) => {
+            routine.id = existing.id.clone();
+            *existing = routine.clone();
+        }
+        None => {
+            if book.routines.len() >= MOST_ROUTINES {
+                return Err(format!("There are already {MOST_ROUTINES} routines, which is the most there can be."));
+            }
+            book.routines.push(routine.clone());
+        }
+    }
+    save(vault_path, &book).map_err(|e| e.to_string())?;
+    Ok(routine)
+}
+
+/// Routines Syn wrote that are waiting for the person.
+pub fn proposals(book: &Book) -> Vec<Routine> {
+    book.routines
+        .iter()
+        .filter(|r| r.author.as_deref() == Some("syn") && !r.enabled && r.proposed_in.is_some())
+        .cloned()
+        .collect()
+}
+
+/// The person's answer from the card: turn it on and agree to it on this
+/// computer — not for a slot already passed today — or let it go.
+pub fn answer_proposal(vault_path: &str, id: &str, keep: bool, now: NaiveDateTime) -> Result<(), String> {
+    let mut book = load(vault_path);
+    let Some(at) = book.routines.iter().position(|r| r.id == id && r.proposed_in.is_some() && !r.enabled) else {
+        return Err("That routine is not waiting for an answer.".into());
+    };
+    if !keep {
+        book.routines.remove(at);
+        book.last_slot.remove(id);
+        return save(vault_path, &book).map_err(|e| e.to_string());
+    }
+    let routine = &mut book.routines[at];
+    routine.enabled = true;
+    routine.proposed_in = None;
+    routine.updated_at = chrono::Utc::now().to_rfc3339();
+    let kept = routine.clone();
+    if let Some(passed) = due(&kept, None, now) {
+        book.last_slot.insert(kept.id.clone(), passed);
+    }
+    save(vault_path, &book).map_err(|e| e.to_string())?;
+    approve_here(vault_path, &kept).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod written_by_syn {
+    use super::*;
+
+    fn vault() -> (tempfile::TempDir, String) {
+        let d = tempfile::tempdir().expect("temp");
+        let p = d.path().to_str().expect("utf8").to_string();
+        (d, p)
+    }
+
+    fn at(s: &str) -> NaiveDateTime {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M").unwrap()
+    }
+
+    /// Written switched off, agreed to nowhere, and never due until the person
+    /// turns it on — then due, here, from the next slot.
+    #[test]
+    fn a_routine_syn_writes_runs_only_once_the_person_turns_it_on() {
+        let (_d, v) = vault();
+        let r = draft(&serde_json::json!({ "name": "Sáng", "ask": "Hôm nay có gì?", "at": "07:30" }), Some("c1"), vec![]).unwrap();
+        let r = keep_draft(&v, r).unwrap();
+        let book = load(&v);
+        assert!(!approved_here(&v, &r));
+        assert!(due_here(&v, &book, at("2026-10-13 07:31")).is_empty(), "off and not agreed to");
+        assert_eq!(proposals(&book).len(), 1);
+
+        answer_proposal(&v, &r.id, true, at("2026-10-13 08:00")).unwrap();
+        let book = load(&v);
+        assert!(proposals(&book).is_empty());
+        assert!(due_here(&v, &book, at("2026-10-13 08:01")).is_empty(), "today's 7:30 had passed when it was turned on");
+        assert_eq!(due_here(&v, &book, at("2026-10-14 07:31")).len(), 1);
+    }
+
+    #[test]
+    fn one_let_go_is_gone_and_the_persons_own_are_never_touched() {
+        let (_d, v) = vault();
+        let r = keep_draft(&v, draft(&serde_json::json!({ "name": "A", "ask": "x", "at": "09:00" }), Some("c1"), vec![]).unwrap()).unwrap();
+        answer_proposal(&v, &r.id, false, at("2026-10-13 08:00")).unwrap();
+        assert!(load(&v).routines.is_empty());
+
+        let mut book = load(&v);
+        book.routines.push(Routine {
+            id: "mine".into(), name: "B".into(), ask: "y".into(), schedule: Schedule { at: "09:00".into(), weekdays: vec![] },
+            enabled: true, to_phone: false, conversation_id: None, updated_at: String::new(),
+            on_new: None, author: None, proposed_in: None, read_before: vec![],
+        });
+        save(&v, &book).unwrap();
+        let err = keep_draft(&v, draft(&serde_json::json!({ "name": "b", "ask": "z", "at": "10:00" }), Some("c1"), vec![]).unwrap());
+        assert!(err.is_err());
+        assert!(answer_proposal(&v, "mine", true, at("2026-10-13 08:00")).is_err(), "only a proposal is answered");
+    }
+
+    /// On something new from a connector: no time needed, and run only for that
+    /// connector, only once turned on and agreed to.
+    #[test]
+    fn a_routine_on_new_data_runs_for_its_connector_only() {
+        let (_d, v) = vault();
+        let r = keep_draft(&v, draft(&serde_json::json!({ "name": "Lịch mới", "ask": "Có gì mới?", "on_new": "calendar" }), Some("c1"), vec![]).unwrap()).unwrap();
+        assert!(triggered_here(&v, &load(&v), "calendar").is_empty(), "off");
+        answer_proposal(&v, &r.id, true, at("2026-10-13 08:00")).unwrap();
+        let book = load(&v);
+        assert_eq!(triggered_here(&v, &book, "calendar").len(), 1);
+        assert!(triggered_here(&v, &book, "bank").is_empty());
+        assert!(due_here(&v, &book, at("2026-10-14 07:31")).is_empty(), "no time, never time-due");
+        assert!(draft(&serde_json::json!({ "name": "x", "ask": "y" }), None, vec![]).is_err(), "a time or a trigger");
+    }
+
+    /// Agreements given before triggers existed still hold.
+    #[test]
+    fn a_fingerprint_without_a_trigger_is_what_it_was() {
+        let r = draft(&serde_json::json!({ "name": "a", "ask": "b", "at": "07:00" }), None, vec![]).unwrap();
+        assert_eq!(fingerprint(&r), serde_json::to_string(&(&r.ask, &r.schedule, r.to_phone)).unwrap());
     }
 }

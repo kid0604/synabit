@@ -1098,7 +1098,7 @@ mod tests {
             }
         }
         let manifests = std::fs::read_to_string(root.join("package.json")).unwrap_or_default().to_lowercase()
-            + &std::fs::read_to_string(root.join("src-tauri/Cargo.toml")).unwrap_or_default().to_lowercase();
+            + std::fs::read_to_string(root.join("src-tauri/Cargo.toml")).unwrap_or_default().to_lowercase().as_str();
         found.extend(calls.iter().filter(|call| manifests.contains(call.as_str())).map(|call| format!("a manifest names {call}")));
         assert!(found.is_empty(), "{found:#?}");
     }
@@ -1106,11 +1106,17 @@ mod tests {
     /// The Rust crates that reach the Android build, as of the last size review.
     /// `aes`, `chacha20` and `flate2` were already there, at the same versions
     /// and features, through aes-gcm, chacha20poly1305 and zip (2026-09-29).
+    /// `rhai` (Syn's `compute`, 2026-10-12): about 2.5 MB stripped on arm64
+    /// with the features used, against 59 MB for `libsynabit_lib.so` in the
+    /// release bundle of 2026-08-27 — about 4%, less once compressed. Four
+    /// crates with it (smartstring, thin-vec, no-std-compat, rhai_codegen);
+    /// pure Rust, so nothing to build for Android. Chosen over Starlark, which
+    /// brought 52 crates — a REPL, an LSP and a debugger among them.
     const REVIEWED_CRATES: &[&str] = &[
         "aes", "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20", "chacha20poly1305", "chrono", "chrono-tz",
         "ctor", "feed-rs", "flate2", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
         "iroh", "jni", "keyring", "libc", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
-        "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rusqlite", "rustls", "scraper",
+        "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rhai", "rusqlite", "rustls", "scraper",
         "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "synabit_protocol", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",
         "tauri-plugin-notification", "tauri-plugin-opener", "tauri-plugin-os", "tauri-plugin-process",

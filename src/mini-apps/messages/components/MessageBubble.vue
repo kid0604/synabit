@@ -2,6 +2,8 @@
 import { computed, ref, watch, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { logger } from '../../../utils/logger';
+import { useSynDeveloper } from '../../../shared/syn/useSynDeveloper';
+import { toolLabel } from '../../../shared/syn/toolLabel';
 import { useDebounceFn } from '@vueuse/core';
 import { marked, Renderer, type Tokens } from 'marked';
 import { renderDiagram, diagramTheme } from '../../../shared/mermaid';
@@ -159,6 +161,9 @@ const emit = defineEmits<{
 
 const copied = ref(false);
 const showTools = ref(false);
+/** Syn's workings — tool names, arguments, tokens — only for whoever asked to
+ *  see them. Everybody else reads what was done in words. */
+const developer = useSynDeveloper();
 const fullscreenImage = ref<string | null>(null);
 const fullscreenImageType = ref<'base64' | 'file'>('base64');
 
@@ -933,9 +938,12 @@ const copyContent = async () => {
                 :key="i"
                 class="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-gray-50 dark:bg-gray-800/30 text-xs"
               >
-                <span class="text-accent dark:text-accent-dark font-mono font-medium shrink-0">{{ tc.tool_name }}</span>
-                <span class="text-gray-500 dark:text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
-                <span v-if="tc.result_preview" class="text-gray-500 dark:text-gray-400 truncate ml-auto">→ {{ tc.result_preview.slice(0, 80) }}</span>
+                <template v-if="developer">
+                  <span class="text-accent dark:text-accent-dark font-mono font-medium shrink-0">{{ tc.tool_name }}</span>
+                  <span class="text-gray-500 dark:text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
+                  <span v-if="tc.result_preview" class="text-gray-500 dark:text-gray-400 truncate ml-auto">→ {{ tc.result_preview.slice(0, 80) }}</span>
+                </template>
+                <span v-else class="text-text dark:text-text-dark">{{ toolLabel(t, tc.tool_name) }}</span>
               </div>
             </div>
           </Transition>
@@ -1095,7 +1103,7 @@ const copyContent = async () => {
           {{ formatTime(message.timestamp) }}
         </span>
         <span
-          v-if="message.role === 'assistant' && (message.tokens || message.duration_ms)"
+          v-if="developer && message.role === 'assistant' && (message.tokens || message.duration_ms)"
           class="text-xs text-gray-500 dark:text-gray-400"
         >
           <template v-if="message.tokens">{{ message.tokens }} {{ $t('syn.tokens') }}</template>

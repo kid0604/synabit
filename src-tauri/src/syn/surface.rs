@@ -40,50 +40,19 @@ pub enum Surface {
     Routine,
 }
 
-/// What a routine may write: only new things.
-///
-/// Nobody is watching a routine run, so nothing it does may need watching. A
-/// new note — the brief, the summary — takes nothing away; changing or
-/// removing what is already there is for a run somebody is looking at.
-const ROUTINE_WRITES: &[&str] = &["create_node", "draw_board"];
+// What each surface may write is on the tools' rows in `syn::policy`: a
+// routine only makes new things (`create_node`, `draw_board`), since nobody is
+// watching it; Telegram writes notes, memories, captures and transactions,
+// each put back by the trash or version history; `capture` is Telegram's and
+// not the app's.
 
 const ROUTINE_BLOCK: &str = "## Where you are answering
 This is a routine the person set up to run on a schedule. Nobody is watching while you work; they will read what you write later, in the app or on their phone.
 - Do what the routine asks, for today, then write the result: what matters first, short, in the language the routine is written in.
-- You can read and look things up, and create a new note when the routine asks for one. You cannot change or remove anything that already exists.
+- You can read and look things up — connected services included, where the person allowed it — and create a new note when the routine asks for one. You cannot change or remove anything that already exists, and you cannot send anything anywhere.
 - Anything that needs the person's permission stops this run until they answer. Do what you can without it.
 - Nothing new to report is a fine result: say so in one line.
 ";
-
-/// What a question from Telegram may write, by name.
-///
-/// Reading is decided by capability, so a read tool added later is offered
-/// there without anybody remembering to list it — reading changes nothing.
-/// Writing is decided by name, so a write tool added later is not offered until
-/// somebody decides it should be. Under-offering is the safe direction to err.
-///
-/// Making a note, remembering something and keeping what was sent came first.
-/// Changing and removing what exists came second (P3): every one of them is put
-/// back by the trash or by version history, and when more than one note could
-/// be meant the run stops and asks which — on Telegram, with buttons.
-const TELEGRAM_WRITES: &[&str] = &[
-    "create_node",
-    "remember",
-    crate::syn::tools::CAPTURE_TOOL,
-    "update_node",
-    "trash_node",
-    "restore_node",
-    "restore_version",
-    "create_transaction",
-    "update_feed_article",
-];
-
-/// Tools that exist for a surface other than the app, and are not offered in it.
-///
-/// `capture` keeps what somebody sent from their phone. In the app they are one
-/// click from QuickCap itself, and describing the tool to every turn of every
-/// conversation there would be paying for it where nobody needs it.
-const NOT_IN_THE_APP: &[&str] = &[crate::syn::tools::CAPTURE_TOOL];
 
 /// How Syn is told it is answering through Telegram.
 const TELEGRAM_BLOCK: &str = "## Where you are answering
@@ -112,21 +81,36 @@ impl Surface {
         // Connectors (Phase F): a server's tool asks permission, and only the app has
         // somebody there to answer. By name as well as by capability, so a
         // tool a server misdescribed is still kept in the app. See `syn::connector`.
+        //
+        // A routine may *read* one: "every morning, pull my Todoist and sum it
+        // up" is most of why routines are wanted. Only a read, and only with
+        // a permission the person gave always — a routine has nobody to ask,
+        // so anything else stops it waiting for them (`consent`, with no
+        // conversation to allow it once in). Sending is never a routine's.
         if crate::syn::connector::is_connector_tool(tool) {
-            return self == Surface::App;
+            return match self {
+                Surface::App => true,
+                Surface::Routine => matches!(capability, Some(Capability::NetRead { .. })),
+                Surface::Telegram => false,
+            };
         }
+        // A built-in tool: its row says. Away from the app, nothing that reaches
+        // past the vault goes, whatever the row — the engine weighs some calls
+        // (`connector_try`) as a read of a host, and that is the app's to ask.
+        if let Some(on) = crate::syn::policy::on(tool, self) {
+            let leaves = matches!(
+                capability,
+                Some(Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::Spend { .. } | Capability::Execute | Capability::UseSecret { .. })
+            );
+            return on && (self == Surface::App || !leaves);
+        }
+        // A name nothing claims. Reading changes nothing, so it is offered by
+        // capability; a write is not offered away from the app until somebody
+        // gives it a row. Under-offering is the safe direction to err.
         match self {
-            Surface::App => !NOT_IN_THE_APP.contains(&tool),
-            Surface::Telegram => match capability {
-                Some(Capability::VaultRead) => true,
-                Some(Capability::VaultWrite) => TELEGRAM_WRITES.contains(&tool),
-                _ => false,
-            },
-            Surface::Routine => match capability {
-                Some(Capability::VaultRead) | Some(Capability::Browse) => true,
-                Some(Capability::VaultWrite) => ROUTINE_WRITES.contains(&tool),
-                _ => false,
-            },
+            Surface::App => true,
+            Surface::Telegram => matches!(capability, Some(Capability::VaultRead)),
+            Surface::Routine => matches!(capability, Some(Capability::VaultRead) | Some(Capability::Browse)),
         }
     }
 
@@ -167,7 +151,7 @@ mod tests {
     fn the_app_loses_nothing() {
         for definition in crate::syn::tools::get_tool_definitions() {
             let name = definition.function.name;
-            if NOT_IN_THE_APP.contains(&name.as_str()) {
+            if crate::syn::policy::on(&name, Surface::App) == Some(false) {
                 continue;
             }
             assert!(

@@ -11,6 +11,9 @@ import StreamingIndicator from './StreamingIndicator.vue';
 import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
 import WritePlanCard from './WritePlanCard.vue';
+import HeldChangesCard from './HeldChangesCard.vue';
+import SkillProposalCard from './SkillProposalCard.vue';
+import RoutineProposalCard from './RoutineProposalCard.vue';
 import ConnectorProposalCard from './ConnectorProposalCard.vue';
 import type { WritePlan } from '../composables/useSynWrites';
 import ChoiceCard from './ChoiceCard.vue';
@@ -32,6 +35,11 @@ const props = defineProps<{
   /** How far the run has got, against its ceilings. See `syn-progress`. */
   progress?: Progress | null;
   vaultPath?: string;
+  /** The work here that stopped short — out of rounds or time, or cut off —
+   *  and can be carried on. See `run::continuable`. */
+  continuable?: { why: 'ceiling' | 'interrupted'; ceiling?: string | null } | null;
+  /** The conversation shown, for the changes its runs held. See `syn::changes`. */
+  conversationId?: string | null;
   connectionLost?: boolean;
   /** The provider in use, by name — the banner says which one is not answering. */
   providerName?: string;
@@ -79,6 +87,10 @@ const emit = defineEmits<{
   'open-settings': [];
   /** Ask the provider again, from the setup card. */
   retry: [];
+  /** Words typed while Syn works, for that work. See `engine::steer`. */
+  steer: [text: string];
+  /** Carry on the work that stopped short. See `run::continuable`. */
+  'carry-on': [];
 }>();
 
 const inputText = ref('');
@@ -309,8 +321,11 @@ const removeImage = (index: number) => {
 };
 
 // Whether the send button should be active
+// While Syn works, what is typed goes to that work (words only): the composer
+// stays open, so "no, the other note" reaches the run that can act on it.
 const canSend = computed(() => {
-  return (inputText.value.trim() || pendingImages.value.length > 0) && !props.isStreaming;
+  if (props.isStreaming) return !!inputText.value.trim();
+  return !!(inputText.value.trim() || pendingImages.value.length > 0);
 });
 
 const handleSend = () => {
@@ -320,7 +335,13 @@ const handleSend = () => {
   const text = tidyComposerText(inputText.value);
 
   if (!text && pendingImages.value.length === 0) return;
-  if (props.isStreaming) return;
+  if (props.isStreaming) {
+    if (!text) return;
+    emit('steer', text);
+    inputText.value = '';
+    if (textareaRef.value) textareaRef.value.style.height = 'auto';
+    return;
+  }
 
   emit('send', text, pendingImages.value.length ? [...pendingImages.value] : undefined, planFirst.value || undefined);
   planFirst.value = false;
@@ -413,6 +434,7 @@ const handleStop = () => {
             :vault-path="vaultPath"
             @open-settings="emit('open-settings')"
             @retry="emit('retry')"
+            @connected="emit('retry')"
           />
         </div>
 
@@ -486,6 +508,20 @@ const handleStop = () => {
             :error="connectorError"
             @answer="emit('connector', $event)"
           />
+        </div>
+        <!-- Work that stopped short: carried on with a fresh allowance, from
+             where it was. A long job is done a stretch at a time this way, and
+             the person says when the next stretch starts. -->
+        <div v-if="continuable && !isStreaming" class="px-4" data-carry-on>
+          <div class="flex flex-wrap items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 dark:border-gray-700/50 text-xs text-gray-600 dark:text-gray-300">
+            <span class="flex-1 min-w-0">{{ continuable.why === 'ceiling' ? $t('syn.carry_on_ceiling') : $t('syn.carry_on_interrupted') }}</span>
+            <button type="button" class="btn-primary" @click="emit('carry-on')">{{ $t('syn.carry_on') }}</button>
+          </div>
+        </div>
+        <div v-if="vaultPath && !isStreaming" class="px-4">
+          <HeldChangesCard :vault-path="vaultPath" :conversation-id="conversationId" />
+          <SkillProposalCard class="mt-2" :vault-path="vaultPath" :conversation-id="conversationId" />
+          <RoutineProposalCard class="mt-2" :vault-path="vaultPath" :conversation-id="conversationId" />
         </div>
         <div v-if="writesPlan" class="px-4">
           <WritePlanCard :plan="writesPlan" :busy="writesBusy" :error="writesError" @answer="emit('writes', $event)" />
@@ -611,7 +647,7 @@ const handleStop = () => {
 
               <!-- Send / Stop -->
               <button
-                v-if="isStreaming"
+                v-if="isStreaming && !canSend"
                 @click="handleStop"
                 class="p-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white transition-all cursor-pointer shadow-sm"
                 :title="$t('syn.stop')"

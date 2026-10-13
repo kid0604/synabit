@@ -163,6 +163,10 @@ pub struct Skill {
     /// What this prevents is Syn enabling its own work, and what it offers the
     /// user is a reason not to do it blind.
     pub trial_at: Option<String>,
+    /// When the person kept a skill Syn wrote, on the card under its answer.
+    /// See `syn::drafting`.
+    #[serde(default)]
+    pub approved_at: Option<String>,
     /// A revision Syn is proposing, waiting on the user.
     ///
     /// Not applied. The skill is enabled — that is why it ran and why it went
@@ -258,6 +262,12 @@ impl Skill {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .map(str::to_string),
+            approved_at: props
+                .get(crate::syn::drafting::APPROVED_AT)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
             trial_at: props
                 .get("trial_at")
                 .and_then(|v| v.as_str())
@@ -297,7 +307,7 @@ impl Skill {
     /// consults it, deliberately: hand-editing a file in your own vault is not
     /// something this app gets to refuse.
     pub fn may_be_enabled(&self) -> bool {
-        self.author != "syn" || self.trial_at.is_some()
+        self.author != "syn" || self.trial_at.is_some() || self.approved_at.is_some()
     }
 }
 

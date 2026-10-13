@@ -389,6 +389,65 @@ pub async fn syn_set_api_key(
         .map_err(AppError::General)
 }
 
+/// Connect Syn to a model with nothing but a key: which provider is in the
+/// key, the model is the best it reaches, and both are saved at once. Errors
+/// are codes the card says in the person's language: `unrecognised_key`,
+/// `key_rejected: …`, `no_model`. See `syn::onboarding`.
+#[tauri::command]
+pub async fn syn_connect_with_key(
+    app: tauri::AppHandle,
+    vault_path: String,
+    key: String,
+) -> Result<crate::syn::onboarding::Connected, AppError> {
+    let key = key.trim().to_string();
+    let Some((provider, base_url)) = crate::syn::onboarding::provider_for_key(&key) else {
+        return Err(AppError::General("unrecognised_key".into()));
+    };
+    let had_one = crate::secrets::SecretManager::has_syn_api_key(Some(&app), provider.key_slot());
+    crate::secrets::SecretManager::set_syn_api_key(Some(&app), provider.key_slot(), &key).map_err(AppError::General)?;
+
+    let mut settings = crate::syn::settings::load_settings(&vault_path).unwrap_or_default();
+    settings.provider = provider;
+    if let Some(base) = base_url {
+        settings.openai_base_url = base.to_string();
+    }
+    let listed = provider_for(&app, &settings).await.list_models().await;
+    let models = match listed {
+        Ok(models) => models,
+        Err(e) => {
+            // A key that does not work is not kept in place of nothing.
+            if !had_one {
+                let _ = crate::secrets::SecretManager::set_syn_api_key(Some(&app), provider.key_slot(), "");
+            }
+            return Err(AppError::General(format!("key_rejected: {e}")));
+        }
+    };
+    let Some(model) = crate::syn::onboarding::best_model(&models) else {
+        return Err(AppError::General("no_model".into()));
+    };
+    settings.default_model = Some(model.clone());
+    settings.default_models.insert(provider, model.clone());
+    settings.enabled = true;
+    let settings = keep_family_safe_as_filed(&vault_path, settings);
+    crate::syn::settings::save_settings(&vault_path, &settings)?;
+    Ok(crate::syn::onboarding::Connected { provider, model })
+}
+
+/// Something typed while Syn works in a conversation, for that work: true when
+/// a run took it at its next round, false when none is working (send it as an
+/// ordinary message). See `engine::steer`.
+#[tauri::command]
+pub async fn syn_steer(conversation_id: String, text: String) -> Result<bool, AppError> {
+    Ok(crate::syn::engine::steer(&conversation_id, &text))
+}
+
+/// The work in a conversation that stopped short and can be carried on. See
+/// `run::continuable`.
+#[tauri::command]
+pub async fn syn_continuable(vault_path: String, conversation_id: String) -> Result<Option<serde_json::Value>, AppError> {
+    Ok(crate::syn::run::continuable(&vault_path, &conversation_id))
+}
+
 /// Whether a key is stored for a provider.
 #[tauri::command]
 pub async fn syn_has_api_key(
@@ -583,7 +642,7 @@ pub async fn send_message_inner<R: tauri::Runtime>(
     }
 
     // 10. Into the conversation file.
-    let conv = write_turn(vault_path, &request, surface, conv, turn, &assistant_message, &model, &settings).await?;
+    let conv = write_turn(vault_path, &request, surface, conv, turn, &assistant_message, &model, &settings, &run.steered).await?;
 
     // 11. Look back at the exchange, in the background.
     reflect_after(app, state.inner(), vault_path, &settings, &model, &question, &assistant_message, &conv, &run, &request.conversation_id).await;
@@ -1109,11 +1168,21 @@ fn carry_over(run: &mut Run, stopped: &Run) {
     if run.writes.is_none() {
         run.writes = stopped.writes.clone();
     }
+    // What it held for the person: shown when the work it is part of is done.
+    // See `syn::changes`.
+    if run.changes.is_none() {
+        run.changes = stopped.changes.clone();
+    }
     // The connector it asked about, and whether the person said no to it:
     // the replayed `connector_connect` is answered from these.
     run.pending_connector = stopped.pending_connector.clone();
     run.declined_connector = stopped.declined_connector.clone();
     run.resumed_from = Some(stopped.id.clone());
+    // The rest of the round it stopped in, made after the call it was asked
+    // about. See `Run::pending_rest`.
+    if stopped.pending_call.is_some() {
+        run.pending_rest = stopped.pending_rest.clone();
+    }
 }
 
 /// Step 9: what the answer turned out to be standing on.
@@ -1216,6 +1285,7 @@ async fn write_turn(
     answer: &SynMessage,
     model: &str,
     settings: &SynSettings,
+    steered: &[String],
 ) -> Result<SynConversationFull, AppError> {
     let held = conversation::hold(&request.conversation_id).await;
     let mut conv = match conversation::get_conversation(vault_path, &request.conversation_id) {
@@ -1232,6 +1302,27 @@ async fn write_turn(
             conv
         }
     };
+
+    // What the person said while it worked, before the answer that took it in.
+    if !steered.is_empty() {
+        let at = conv.messages.iter().position(|m| m.id == answer.id).unwrap_or(conv.messages.len());
+        for (i, text) in steered.iter().enumerate() {
+            conv.messages.insert(at + i, SynMessage {
+                id: uuid::Uuid::new_v4().to_string(),
+                role: "user".to_string(),
+                content: text.clone(),
+                model: None,
+                timestamp: answer.timestamp.clone(),
+                tokens: None,
+                duration_ms: None,
+                sources: None,
+                footing: None,
+                tool_calls_log: None,
+                images: None,
+                plan: None,
+            });
+        }
+    }
 
     // Record what answered, so the conversation keeps using it — and record
     // the provider with it, since the name alone does not identify a model.
@@ -1417,6 +1508,8 @@ async fn reflect_after<R: tauri::Runtime>(
                 let model_name = model.to_string();
                 let goal = run.goal.clone();
                 let run_id_for_skill = run.id.clone();
+                let conversation_for_skill = run.conversation_id.clone();
+                let recipe = crate::syn::drafting::recipe_from_run(run, &chain);
                 let num_ctx = settings.num_ctx;
                 let app_handle = app.clone();
                 let taken: Vec<String> = state
@@ -1446,11 +1539,35 @@ async fn reflect_after<R: tauri::Runtime>(
                         return;
                     };
 
-                    if let Err(e) =
-                        write_suggested_skill(&app_handle, &vault, &draft, &chain, Some(&run_id_for_skill))
-                    {
-                        log::warn!("[Syn] Could not write the suggested skill: {e}");
-                        return;
+                    let written = match write_suggested_skill(
+                        &app_handle,
+                        &vault,
+                        &draft,
+                        &chain,
+                        Some(&run_id_for_skill),
+                        recipe.as_ref(),
+                        conversation_for_skill.as_deref(),
+                    ) {
+                        Ok(id) => id,
+                        Err(e) => {
+                            log::warn!("[Syn] Could not write the suggested skill: {e}");
+                            return;
+                        }
+                    };
+                    // Its card, under the answer that did the job twice.
+                    if let Some(id) = written {
+                        use tauri::{Emitter, Manager};
+                        let state = app_handle.state::<crate::db::DbState>();
+                        let proposals: Vec<crate::syn::drafting::Proposal> = state
+                            .lock()
+                            .map(|db| crate::syn::drafting::waiting(&db).into_iter().filter(|p| p.skill_id == id).collect())
+                            .unwrap_or_default();
+                        if !proposals.is_empty() {
+                            let _ = app_handle.emit(
+                                crate::syn::drafting::EVENT,
+                                serde_json::json!({ "conversation_id": conversation_for_skill, "skills": proposals }),
+                            );
+                        }
                     }
                     let _ = crate::syn::skill::remember_proposed(&vault, &chain);
                     log::info!(
@@ -1638,10 +1755,12 @@ pub async fn syn_list_routines(vault_path: String) -> Result<Vec<RoutineView>, A
         .collect())
 }
 
-/// Create a routine, or change one — only ever from the screen.
+/// Create a routine, or change one, from the screen.
 ///
-/// There is no tool for this, and there will not be: a routine is the person
-/// deciding what Syn does while they are not looking. See `syn::routine`.
+/// A routine is the person deciding what Syn does while they are not looking.
+/// Syn may *write* one from a conversation (`routine::draft`), switched off;
+/// only the person turns it on — here, or on the card under the answer
+/// (`syn_answer_routine_proposal`).
 ///
 /// A new one is not run for a slot that has already passed today: made at
 /// 9:00 with a time of 7:30, it waits for tomorrow rather than running the
@@ -1690,6 +1809,21 @@ pub async fn syn_save_routine(
 #[tauri::command]
 pub async fn syn_waiting(vault_path: String) -> Result<Vec<serde_json::Value>, AppError> {
     Ok(crate::syn::run::waiting_questions(&vault_path))
+}
+
+/// Routines Syn wrote that are waiting for the person, each with the
+/// conversation it was proposed in. See `routine::draft`.
+#[tauri::command]
+pub async fn syn_waiting_routine_proposals(vault_path: String) -> Result<Vec<crate::syn::routine::Routine>, AppError> {
+    Ok(crate::syn::routine::proposals(&crate::syn::routine::load(&vault_path)))
+}
+
+/// Turn on a routine Syn wrote — and agree to it on this computer — or let it
+/// go. See `routine::answer_proposal`.
+#[tauri::command]
+pub async fn syn_answer_routine_proposal(vault_path: String, routine_id: String, keep: bool) -> Result<(), AppError> {
+    crate::syn::routine::answer_proposal(&vault_path, &routine_id, keep, chrono::Local::now().naive_local())
+        .map_err(AppError::General)
 }
 
 /// Agree, on this computer, to run a routine that was written or changed on
@@ -1766,7 +1900,9 @@ fn write_suggested_skill<R: tauri::Runtime>(
     draft: &crate::syn::reflect::SkillDraft,
     chain: &[String],
     source_run: Option<&str>,
-) -> Result<(), AppError> {
+    recipe: Option<&crate::syn::recipe::Recipe>,
+    conversation_id: Option<&str>,
+) -> Result<Option<String>, AppError> {
     use tauri::Manager;
     let state = app.state::<crate::db::DbState>();
     let ctx = crate::syn::tools::ToolContext {
@@ -1777,11 +1913,23 @@ fn write_suggested_skill<R: tauri::Runtime>(
         model: None,
     };
 
+    // The same calls both times, with what differed made a parameter: a
+    // recipe, which runs the same way every time and costs no rounds. Prose
+    // when the job picked values out of what it found. See
+    // `drafting::recipe_from_run`.
+    let tier = if recipe.is_some() { crate::syn::skill::Tier::Recipe } else { crate::syn::skill::Tier::Prose };
+    let content = crate::syn::drafting::body(&crate::syn::drafting::Draft {
+        name: draft.name.clone(),
+        description: draft.description.clone(),
+        when_to_use: draft.when_to_use.clone(),
+        steps: draft.steps.clone(),
+        recipe: recipe.cloned(),
+    });
     let mut properties = crate::syn::skill::frontmatter(
         &draft.name,
         &draft.description,
         &draft.when_to_use,
-        crate::syn::skill::Tier::Prose,
+        tier,
         chain,
         "syn",
         false,
@@ -1796,19 +1944,26 @@ fn write_suggested_skill<R: tauri::Runtime>(
             // answer, rather than a question somebody made up for it.
             map.insert("source_run".to_string(), serde_json::json!(run));
         }
+        // Asked about under the answer in this conversation, rather than left
+        // in a drawer to be found. See `syn::drafting`.
+        if let Some(c) = conversation_id {
+            map.insert(crate::syn::drafting::PROPOSED_IN.to_string(), serde_json::json!(c));
+        }
     }
 
-    crate::syn::tools::execute_tool(
+    let said = crate::syn::tools::execute_tool(
         &ctx,
         "create_node",
         &serde_json::json!({
             "node_type": crate::syn::skill::SKILL_TYPE,
             "title": draft.name,
-            "content": draft.steps,
+            "content": content,
             "properties": properties,
         }),
     )?;
-    Ok(())
+    Ok(serde_json::from_str::<serde_json::Value>(&said)
+        .ok()
+        .and_then(|v| v.get("id").and_then(|i| i.as_str()).map(str::to_string)))
 }
 
 /// Put a proposed revision on the skill, without applying it.
@@ -2390,6 +2545,88 @@ pub async fn syn_answer_writes(vault_path: String, run_id: String, approved: Vec
     run.note(run.spent.iterations, format!("The user approved {yes} of the planned sends and declined {no}."));
     crate::syn::run::save_run(&vault_path, &run)?;
     Ok(true)
+}
+
+/// Changes waiting on a card, for every run that ended with some held: what
+/// the card shows on opening, when the event that put it there was missed.
+/// See `syn::changes`.
+#[tauri::command]
+pub async fn syn_waiting_changes(vault_path: String) -> Result<Vec<serde_json::Value>, AppError> {
+    let mut runs = crate::syn::run::load_all(&vault_path)?;
+    runs.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    Ok(runs
+        .into_iter()
+        .filter(|r| r.parent_run_id.is_none() && r.state == crate::syn::run::RunState::Done)
+        .filter_map(|r| {
+            let set = r.changes.filter(|c| c.awaiting())?;
+            Some(serde_json::json!({ "run_id": r.id, "conversation_id": r.conversation_id, "changes": set }))
+        })
+        .collect())
+}
+
+/// The person's answer to the changes a run held: the ones they approve, by
+/// hash, are made now; the rest are let go. Returns where each ended up.
+/// See `syn::changes`.
+#[tauri::command]
+pub async fn syn_answer_changes(
+    app: tauri::AppHandle,
+    vault_path: String,
+    run_id: String,
+    approved: Vec<String>,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<crate::syn::changes::Outcome>, AppError> {
+    answer_changes(&app, state.inner(), &vault_path, &run_id, &approved)
+}
+
+pub(crate) fn answer_changes<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    db: &crate::db::DbState,
+    vault_path: &str,
+    run_id: &str,
+    approved: &[String],
+) -> Result<Vec<crate::syn::changes::Outcome>, AppError> {
+    let mut run = crate::syn::run::get_run(vault_path, run_id)?;
+    let Some(mut set) = run.changes.take().filter(|c| c.awaiting()) else {
+        return Ok(Vec::new());
+    };
+    let outcomes = crate::syn::changes::apply(app, db, vault_path, run_id, &mut set, approved);
+    let count = |s: crate::syn::changes::State| outcomes.iter().filter(|o| o.state == s).count();
+    run.note(
+        run.spent.iterations,
+        format!(
+            "The user approved {} of the held changes ({} made, {} could not be) and let {} go.",
+            approved.len(),
+            count(crate::syn::changes::State::Applied),
+            count(crate::syn::changes::State::Failed),
+            count(crate::syn::changes::State::Declined),
+        ),
+    );
+    run.changes = Some(set);
+    crate::syn::run::save_run(vault_path, &run)?;
+    Ok(outcomes)
+}
+
+/// Skills Syn wrote that are waiting for the person, each with the
+/// conversation it was proposed in. See `syn::drafting`.
+#[tauri::command]
+pub async fn syn_waiting_skill_proposals(
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<crate::syn::drafting::Proposal>, AppError> {
+    let db = state.lock().map_err(|e| AppError::General(format!("DB lock error: {e}")))?;
+    Ok(crate::syn::drafting::waiting(&db))
+}
+
+/// Keep a skill Syn wrote — switched on, from now — or let it go to the trash.
+/// See `syn::drafting`.
+#[tauri::command]
+pub async fn syn_answer_skill_proposal(
+    app: tauri::AppHandle,
+    vault_path: String,
+    skill_id: String,
+    keep: bool,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<(), AppError> {
+    crate::syn::drafting::answer(&app, state.inner(), &vault_path, &skill_id, keep).map_err(AppError::General)
 }
 
 /// The person's answer to a connector Syn drafted and proposed. Approving is
@@ -3532,6 +3769,32 @@ mod send_steps {
         assert!(run.destinations.may_visit("https://news.example/a"));
         assert_eq!(run.tool_groups, vec!["history".to_string()]);
         assert_eq!(run.resumed_from.as_deref(), Some(stopped.id.as_str()));
+    }
+
+    /// What the round asked for after the stopping call, and what the run held
+    /// for the person, both go on with the run that carries it on.
+    #[test]
+    fn carrying_on_keeps_the_rest_of_the_round_and_the_held_changes() {
+        let call = |id: &str| crate::models::syn::ToolCall {
+            id: Some(id.into()),
+            function: crate::models::syn::ToolCallFunction { name: "list_trash".into(), arguments: serde_json::json!({}) },
+            thought_signature: None,
+        };
+        let mut stopped = Run::new("x", Some("c1".into()), Budget::from_settings(&SynSettings::default()));
+        stopped.pending_call = Some(call("c1"));
+        stopped.pending_rest = vec![call("c2")];
+        stopped.changes = Some(crate::syn::changes::Changeset::default());
+        let mut run = Run::new("x", Some("c1".into()), Budget::from_settings(&SynSettings::default()));
+        carry_over(&mut run, &stopped);
+        assert_eq!(run.pending_rest.len(), 1);
+        assert!(run.changes.is_some());
+
+        // A run that stopped on a question of *which* has no call to make:
+        // nothing of its round is replayed.
+        stopped.pending_call = None;
+        let mut run = Run::new("x", Some("c1".into()), Budget::from_settings(&SynSettings::default()));
+        carry_over(&mut run, &stopped);
+        assert!(run.pending_rest.is_empty());
     }
 
     fn chunk(id: &str, source_type: &str, title: &str) -> crate::models::syn::ContextChunk {

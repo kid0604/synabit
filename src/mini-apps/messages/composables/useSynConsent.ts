@@ -23,6 +23,7 @@ import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
 import type { ConsentAnswer, ConsentAsk } from '../types';
 import { errorText } from '../../../shared/errorText';
+import { humanize } from '../../../shared/syn/toolLabel';
 
 export interface ConsentEvent {
   run_id: string;
@@ -202,7 +203,7 @@ export const askPhrase = (
   if ('NetWrite' in capability) {
     return {
       key: 'syn.consent_netwrite',
-      values: { domain: capability.NetWrite.domain, tool: capability.NetWrite.tool },
+      values: { domain: capability.NetWrite.domain, tool: humanize(capability.NetWrite.tool) },
     };
   }
   if ('UseSecret' in capability) {

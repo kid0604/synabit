@@ -255,107 +255,25 @@ fn dates_in(text: &str) -> Vec<String> {
     out
 }
 
-/// Tools whose results are written by somebody other than the user.
-///
-/// `browse` is not here because it is not in `execute_tool`'s table; the engine
-/// sets the taint for it. `search_feed_articles` is here with `read_feed_article`
-/// because a summary is as much the feed's words as the article is.
-///
-/// `read_spreadsheet` is here for the reason `read_file_text` is: a workbook
-/// comes from a bank, a colleague, a download, and a cell can hold a sentence
-/// addressed to the model as easily as a number.
+/// Whether what a tool returns is somebody else's words: a feed article, a
+/// file's text, a spreadsheet's cells. Reading one taints the run. The tools
+/// are marked `outside()` on their rows in `syn::policy`. `browse` is not:
+/// the engine sets the taint for it, and keeps what it saw in `Destinations`
+/// its own way.
 ///
 /// A web page clipped into the vault is not a tool of its own: it is a note,
 /// shown by `get_node` or by retrieval, and `from_outside` is how either tells.
-pub const UNTRUSTED_READS: &[&str] = &[
-    "read_feed_article",
-    // Its snippets come out of the same PDFs and Office files `read_file_text`
-    // reads whole; a sentence planted in one is as much there in an excerpt.
-    "search_files",
-    "search_feed_articles",
-    "read_file_text",
-    "read_spreadsheet",
-];
+pub fn untrusted_read(tool: &str) -> bool {
+    crate::syn::policy::outside_words(tool)
+}
 
-/// Everything a run may still do after reading one of those.
-///
-/// Reading, and making something new. Nothing that changes or removes what
-/// already existed, and nothing that rides in every future prompt.
-///
-/// `update_feed_article` stays because all it can do is mark an article read or
-/// starred, and "read these and mark them" is most of why the feed tools exist.
-/// `create_transaction` does not: a page saying *you spent 5,000,000* is exactly
-/// the forged record this is for, and the user can ask for it in a new message.
-pub const ALLOWED_AFTER_READING: &[&str] = &[
-    // Reading.
-    "query_nodes",
-    "get_node",
-    "list_schemas",
-    "get_linked_nodes",
-    "list_trash",
-    "list_versions",
-    "search_feed_articles",
-    "read_feed_article",
-    "search_files",
-    "read_file_text",
-    "read_spreadsheet",
-    "get_finance_summary",
-    "search_finance",
-    "get_transactions",
-    "recall",
-    "read_board",
-    "timeline",
-    "load_skill",
-    "look_back",
-    // Arithmetic over a table this conversation already brought back. Reaches
-    // nothing and writes nothing — and a table read from outside is exactly
-    // what it is for, so refusing it after reading would refuse its point.
-    "crunch",
-    // Lays a plan of sends out for the user; sends nothing itself. Approving
-    // the plan is the user deciding where what was read may go.
-    "propose_writes",
-    // A draft is inert until the user approves it on the card, which shows the
-    // host whatever the draft says; drafting from documentation just read is
-    // the point. `authoring::check` refuses a host the user did not name.
-    "connector_draft",
-    "connector_connect",
-    "connector_find",
-    // A statement is read to be staged: nothing reaches the ledger until the
-    // person confirms Finance's import preview. See `syn::staging`.
-    "stage_transactions",
-    // Held by the engine to values the person said, once anything was read.
-    "connector_try",
-    // Names only — never a value — and what Syn may know of is the user's
-    // choice per item. Reading a page cannot make a name mean more.
-    "safe_list",
-    "safe_health",
-    // A card the user fills in, or does not. Nothing is sent and nothing is
-    // written by the call itself; a page that asked for it gets a form the
-    // user can see and dismiss.
-    "safe_request",
-    // Making something new. `create_node` refuses Syn's own kinds whatever the
-    // taint — see `reserved_type`.
-    "create_node",
-    "capture",
-    "draw_board",
-    "update_feed_article",
-    // Only ever a new file: an existing name is refused, and a string that
-    // looks like a formula is written as text — see `spreadsheet::write_xlsx`.
-    // `update_transaction` and `delete_transaction` are not here, for the
-    // reason `create_transaction` is not.
-    "write_spreadsheet",
-    // Reaching out, but only along links already seen — see `Destinations`.
-    "browse",
-    // The run's own list of steps. Changes nothing outside the run.
-    "update_plan",
-    // A helper that may only read; what it reads taints this run in turn.
-    "delegate",
-    // Loads more tools; each is weighed again when it is called.
-    "find_tools",
-];
+// What a run may still do after reading — reading, and making something new;
+// nothing that changes or removes what already existed, and nothing that rides
+// in every future prompt — is `after_reading` on the rows in `syn::policy`,
+// each with its reason beside it.
 
 /// Retrieved context written by somebody other than the user: a feed
-/// article's summary, text taken out of a file. See `UNTRUSTED_READS`, which is
+/// article's summary, text taken out of a file. See `untrusted_read`, which is
 /// the same list for the tools.
 ///
 /// A file is only somebody else's words when words were read out of it.
@@ -386,7 +304,7 @@ pub fn untrusted_source(source_type: &str, words_inside: impl FnOnce() -> bool) 
 ///
 /// Narrow on purpose. `url` is not here: a person's profile, a project's repo
 /// or a bookmark carries one without its body being that page's words, and a
-/// false positive here costs the run its edits (`ALLOWED_AFTER_READING`).
+/// false positive here costs the run its edits (`allowed_after_reading`).
 pub const OUTSIDE_SOURCE_KEYS: &[&str] = &["source", "source_url", "clipped_from"];
 
 /// Whether a note says its words came from a web page — a clipping.
@@ -423,8 +341,9 @@ pub fn mirrored_in(text: &str) -> Vec<String> {
     out
 }
 
+/// An allowlist, so it fails closed: a tool with no row is refused.
 pub fn allowed_after_reading(tool: &str) -> bool {
-    ALLOWED_AFTER_READING.contains(&tool)
+    crate::syn::policy::after_reading(tool)
 }
 
 /// What a run is told when it reaches for something else.

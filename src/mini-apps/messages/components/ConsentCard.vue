@@ -15,6 +15,8 @@ import { useI18n } from 'vue-i18n';
 import { ShieldQuestion, Check, Clock, X as XIcon } from 'lucide-vue-next';
 
 import { askPhrase } from '../composables/useSynConsent';
+import { toolLabel } from '../../../shared/syn/toolLabel';
+import SynCard from '../../../shared/syn/SynCard.vue';
 import type { ConsentAnswer, ConsentAsk } from '../types';
 
 const props = defineProps<{
@@ -38,65 +40,45 @@ const sentence = computed(() => {
 </script>
 
 <template>
-  <div
-    class="rounded-xl border border-amber-300 dark:border-amber-900/70
-           bg-amber-50/60 dark:bg-amber-950/25 p-4"
+  <SynCard
+    tone="ask"
+    :icon="ShieldQuestion"
+    :title="t('syn.consent_title')"
+    :error="error ? t('syn.consent_failed', { reason: error }) : null"
+    :note="t('syn.consent_explainer')"
   >
-    <div class="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400">
-      <ShieldQuestion class="w-3.5 h-3.5" />
-      {{ t('syn.consent_title') }}
-    </div>
+    <template #lead>
+      <p class="text-sm text-text dark:text-text-dark">{{ sentence }}</p>
+      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.consent_tool', { doing: toolLabel(t, ask.tool) }) }}</p>
+    </template>
 
-    <p class="mt-2 text-sm text-text dark:text-text-dark">{{ sentence }}</p>
-    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-      {{ t('syn.consent_tool', { tool: ask.tool }) }}
-    </p>
-
-    <div class="mt-3 flex flex-wrap gap-2">
+    <template #actions>
       <button
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-               bg-accent text-white hover:bg-accent/90
-               disabled:opacity-50 disabled:cursor-default"
-        :disabled="busy"
-        @click="emit('answer', 'once')"
-      >
-        <Clock class="w-3 h-3" /> {{ t('syn.consent_once') }}
-      </button>
-
-      <!-- Absent where it would not be honoured. A ledger showing a permission
-           that never applies lies to whoever reads it to find out what they
-           agreed to, and a button that produces one is where that starts. -->
-      <button
-        v-if="ask.can_be_remembered"
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
-               bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700
-               disabled:opacity-50 disabled:cursor-default"
-        :disabled="busy"
-        @click="emit('answer', 'always')"
-      >
-        <Check class="w-3 h-3" /> {{ t('syn.consent_always') }}
-      </button>
-
-      <button
-        class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg text-red-600
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-red-600
                hover:bg-red-50 dark:hover:bg-red-950/40
                disabled:opacity-50 disabled:cursor-default"
         :disabled="busy"
         @click="emit('answer', 'never')"
       >
-        <XIcon class="w-3 h-3" /> {{ t('syn.consent_never') }}
+        <XIcon class="w-3.5 h-3.5" /> {{ t('syn.consent_never') }}
       </button>
-    </div>
-
-    <p
-      v-if="error"
-      role="alert"
-      data-consent-error
-      class="mt-2 text-xs text-red-600 dark:text-red-400"
-    >
-      {{ t('syn.consent_failed', { reason: error }) }}
-    </p>
-
-    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.consent_explainer') }}</p>
-  </div>
+      <!-- Absent where it would not be honoured. A ledger showing a permission
+           that never applies lies to whoever reads it to find out what they
+           agreed to, and a button that produces one is where that starts. -->
+      <button
+        v-if="ask.can_be_remembered"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
+               border border-gray-200 dark:border-gray-700/50 text-text dark:text-text-dark
+               hover:bg-gray-50 dark:hover:bg-white/5
+               disabled:opacity-50 disabled:cursor-default"
+        :disabled="busy"
+        @click="emit('answer', 'always')"
+      >
+        <Check class="w-3.5 h-3.5" /> {{ t('syn.consent_always') }}
+      </button>
+      <button class="btn-primary inline-flex items-center gap-1.5" :disabled="busy" @click="emit('answer', 'once')">
+        <Clock class="w-3.5 h-3.5" /> {{ t('syn.consent_once') }}
+      </button>
+    </template>
+  </SynCard>
 </template>

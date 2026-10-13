@@ -17,6 +17,7 @@ import { useI18n } from 'vue-i18n';
 import { HelpCircle, Sparkles } from 'lucide-vue-next';
 
 import type { AmbiguousChoice } from '../types';
+import SynCard from '../../../shared/syn/SynCard.vue';
 
 const props = defineProps<{ choice: AmbiguousChoice }>();
 const emit = defineEmits<{ answer: [nodeId: string] }>();
@@ -29,20 +30,14 @@ const verb = () =>
 </script>
 
 <template>
-  <div
-    class="rounded-xl border border-accent/30 dark:border-accent-dark/30
-           bg-accent/5 dark:bg-accent-dark/5 p-4"
+  <SynCard
+    tone="choose"
+    :icon="HelpCircle"
+    :title="t('syn.choice_title')"
+    :lead="t('syn.choice_body', { n: choice.candidates.length, verb: verb() })"
+    :note="t('syn.choice_explainer')"
   >
-    <div class="flex items-center gap-2 text-xs font-medium text-accent dark:text-accent-dark">
-      <HelpCircle class="w-3.5 h-3.5" />
-      {{ t('syn.choice_title') }}
-    </div>
-
-    <p class="mt-2 text-sm text-text dark:text-text-dark">
-      {{ t('syn.choice_body', { n: choice.candidates.length, verb: verb() }) }}
-    </p>
-
-    <ul class="mt-3 space-y-1.5">
+    <ul class="space-y-1.5">
       <li v-for="candidate in choice.candidates" :key="candidate.id">
         <button
           class="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm
@@ -68,7 +63,5 @@ const verb = () =>
         </button>
       </li>
     </ul>
-
-    <p class="mt-2.5 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.choice_explainer') }}</p>
-  </div>
+  </SynCard>
 </template>

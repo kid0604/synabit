@@ -64,6 +64,8 @@ describe('A moment already kept', () => {
     await wrapper.find('[data-moment-title]').setValue('Ăn trưa bún chả với Nga');
     await wrapper.find('[data-moment-time]').setValue('12:15');
     await wrapper.find('[data-moment-where]').setValue('Hàng Mành');
+    expect(wrapper.find('[data-moment-amount]').exists()).toBe(false);
+    await wrapper.find('[data-ask-amount]').trigger('click');
     await wrapper.find('[data-moment-amount]').setValue('50000');
     await wrapper.find('[data-moment-save]').trigger('click');
     await flushPromises();

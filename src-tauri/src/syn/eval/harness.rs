@@ -122,6 +122,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
             None => turn.ask.to_string(),
         };
         let mut resume = None;
+        let mut carried_on = 0;
         for _ in 0..=MAX_ANSWERS_PER_TURN {
             let sent = crate::commands::syn::send_message_inner(
                 vault.handle(),
@@ -219,7 +220,33 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                     message = first.title.clone();
                     resume = Some(last.id);
                 }
-                _ => break,
+                // A stretch of work that reached its limit, carried on as the
+                // person would with "Carry on" — up to twice a turn.
+                RunState::BudgetExhausted if task.carries_on && carried_on < 2 => {
+                    carried_on += 1;
+                    message = "Carry on from where you stopped.".to_string();
+                    resume = Some(last.id);
+                }
+                _ => {
+                    // Skills it wrote wait on a card under the answer: kept as
+                    // the task says a person would, or let go.
+                    for id in &last.drafted_skills {
+                        let state = vault.db();
+                        let _ = crate::syn::drafting::answer(vault.handle(), state.inner(), &vault.path, id, task.approves_skills);
+                    }
+                    // Changes held after reading wait on a card at the end of
+                    // the work: approved as the task says a person would, or
+                    // let go. See `syn::changes`.
+                    if let Some(set) = last.changes.as_ref().filter(|c| c.awaiting()) {
+                        let approved: Vec<String> = if task.approves_changes {
+                            set.changes.iter().map(|c| c.hash.clone()).collect()
+                        } else {
+                            Vec::new()
+                        };
+                        let _ = crate::commands::syn::answer_changes(vault.handle(), vault.db().inner(), &vault.path, &last.id, &approved);
+                    }
+                    break;
+                }
             }
         }
     }

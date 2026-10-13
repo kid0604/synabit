@@ -629,10 +629,7 @@ fn request_body(req: &ChatRequest<'_>, stream: bool, keep_thinking: bool) -> Val
     }
 
     if !system.is_empty() {
-        body.insert(
-            "system".into(),
-            json!([{ "type": "text", "text": system.join("\n\n"), "cache_control": { "type": "ephemeral" } }]),
-        );
+        body.insert("system".into(), Value::Array(system_blocks(&system.join("\n\n"))));
     }
 
     if let Some(tools) = req.tools.filter(|t| !t.is_empty()) {
@@ -651,6 +648,30 @@ fn request_body(req: &ChatRequest<'_>, stream: bool, keep_thinking: bool) -> Val
     }
 
     Value::Object(body)
+}
+
+/// The system prompt as two blocks, the breakpoint on the first.
+///
+/// The prompt has a stable half — who Syn is, the rules, the skills, the
+/// memories — and a half about this message: the date and time, the screen,
+/// what retrieval found (`prompt::TURN_HEADING`). Sent as one block with the
+/// breakpoint after it, the cached prefix ended with the time of day, so every
+/// new message missed and paid for the stable half again; only rounds inside
+/// one run were read back. Cut at the seam, the stable half is read back on
+/// every message for as long as it stays the same.
+///
+/// A prompt with no seam is one block, marked, as before.
+fn system_blocks(system: &str) -> Vec<Value> {
+    let (stable, turn) = crate::syn::prompt::split_at_turn(system);
+    let turn = turn.trim_start_matches('\n');
+    match (stable.is_empty(), turn.is_empty()) {
+        (false, false) => vec![
+            json!({ "type": "text", "text": stable, "cache_control": { "type": "ephemeral" } }),
+            json!({ "type": "text", "text": turn }),
+        ],
+        (true, false) => vec![json!({ "type": "text", "text": turn, "cache_control": { "type": "ephemeral" } })],
+        _ => vec![json!({ "type": "text", "text": stable, "cache_control": { "type": "ephemeral" } })],
+    }
 }
 
 /// Syn's tool declarations as Claude reads them, with the first breakpoint on
@@ -1302,6 +1323,31 @@ mod tests {
         assert_eq!(roles(&body), ["user"]);
         assert_eq!(body["stream"], true);
         assert_eq!(body["max_tokens"], MAX_TOKENS_STREAMING);
+    }
+
+    /// The half of the prompt about this message — the time, the screen, what
+    /// was retrieved — is after the breakpoint, so the next message reads the
+    /// stable half back instead of missing on the time of day.
+    #[test]
+    fn the_stable_half_is_cached_apart_from_this_message() {
+        let system = format!(
+            "Bạn là Syn.\n\nRules.\n\n{}Hôm nay là thứ Hai, 09:31.",
+            crate::syn::prompt::TURN_HEADING
+        );
+        let history = [msg("system", &system), msg("user", "chào")];
+        let body = request_body(&request(&history, "claude-opus-5"), true, true);
+
+        let blocks = body["system"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["text"], "Bạn là Syn.\n\nRules.");
+        assert_eq!(blocks[0]["cache_control"]["type"], "ephemeral");
+        assert!(blocks[1]["text"].as_str().unwrap().starts_with(crate::syn::prompt::TURN_HEADING));
+        assert!(blocks[1]["text"].as_str().unwrap().contains("09:31"));
+        assert!(blocks[1].get("cache_control").is_none(), "the time of day is not part of what is cached");
+
+        // At most four breakpoints is Anthropic's limit; tools, system, the last turn.
+        let marks = body.to_string().matches("cache_control").count();
+        assert!(marks <= 4, "{marks}");
     }
 
     /// Tools, then system, then the conversation: a breakpoint at the end of

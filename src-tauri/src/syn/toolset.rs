@@ -67,6 +67,11 @@ pub enum Group {
     Writes,
     /// Syn writing a connector: `connector_draft`, `connector_connect`.
     Authoring,
+    /// Syn writing down a way of doing a job, for the person to keep.
+    Skills,
+    /// Syn writing something to do on its own — at a time, or when something
+    /// new comes in — for the person to turn on.
+    Jobs,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -89,6 +94,8 @@ impl Group {
             Group::Compute => "compute".into(),
             Group::Writes => "writes".into(),
             Group::Authoring => "authoring".into(),
+            Group::Skills => "skills".into(),
+            Group::Jobs => "jobs".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -109,6 +116,8 @@ impl Group {
             "compute" => Group::Compute,
             "writes" => Group::Writes,
             "authoring" => Group::Authoring,
+            "skills" => Group::Skills,
+            "jobs" => Group::Jobs,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -137,6 +146,8 @@ impl Group {
             Group::Compute => "totals, averages, counts and filters over a table a tool returned (crunch)".into(),
             Group::Writes => "a plan of sends to connectors for the user to approve (propose_writes)".into(),
             Group::Authoring => "connect to a new service: draft a connector from its API or OpenAPI spec, and ask the user to approve it".into(),
+            Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
+            Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
@@ -152,23 +163,9 @@ pub fn group_of(tool: &str) -> Group {
     {
         return Group::Connector(rest.split("__").next().unwrap_or_default().to_string());
     }
-    match tool {
-        "get_finance_summary" | "search_finance" | "get_transactions" | "create_transaction" | "stage_transactions"
-        | "update_transaction" | "delete_transaction" => Group::Finance,
-        "search_feed_articles" | "read_feed_article" | "update_feed_article" => Group::Feeds,
-        "search_files" | "read_file_text" | "read_spreadsheet" | "write_spreadsheet" => Group::Files,
-        "read_board" | "draw_board" | "edit_board" => Group::Boards,
-        "timeline" => Group::Timeline,
-        "list_trash" | "restore_node" | "list_versions" | "restore_version" => Group::History,
-        "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => Group::Structure,
-        "recall" | crate::syn::tools::LOOK_BACK_TOOL => Group::Past,
-        "safe_list" | "safe_health" | "safe_request" => Group::Safe,
-        "table_rows" => Group::Tables,
-        name if name == crate::syn::crunch::TOOL => Group::Compute,
-        name if name == crate::syn::writes::TOOL => Group::Writes,
-        name if [crate::syn::connector::authoring::DRAFT_TOOL, crate::syn::connector::authoring::PROPOSE_TOOL, crate::syn::connector::authoring::FIND_TOOL, crate::syn::connector::authoring::TRY_TOOL].contains(&name) => Group::Authoring,
-        _ => Group::Core,
-    }
+    // A built-in tool's group is on its row in `syn::policy`. A name nothing
+    // claims is core's, where it has always gone on to fail as unknown.
+    crate::syn::policy::of(tool).map_or(Group::Core, |p| p.group.group())
 }
 
 /// Words that bring a group, written as a person types them.
@@ -235,6 +232,19 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "kết nối với", "nối với", "nối syn", "tích hợp", "connector", "openapi", "kết nối tới", "connect to",
             "integrate", "integration", "hook up",
         ],
+        // Asking for a way of working to be kept: "from now on, whenever…".
+        Group::Skills => &[
+            "từ giờ", "từ nay", "mỗi khi", "mỗi lần", "lần sau", "kỹ năng", "cách làm", "quy trình",
+            "nhớ cách", "làm như vậy", "skill", "skills", "whenever", "every time", "from now on",
+            "next time", "procedure", "the way you did",
+        ],
+        // Asking for something done without being asked each time.
+        Group::Jobs => &[
+            "mỗi sáng", "mỗi tối", "mỗi ngày", "hàng ngày", "hằng ngày", "mỗi tuần", "hàng tuần",
+            "hằng tuần", "định kỳ", "mỗi thứ", "khi có", "tự động", "every morning", "every evening",
+            "every day", "daily", "every week", "weekly", "every monday", "routine", "on a schedule",
+            "automatically", "whenever a new",
+        ],
         Group::Core | Group::Connector(_) | Group::Compute | Group::Writes => &[],
     }
 }
@@ -290,6 +300,8 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Safe,
         Group::Tables,
         Group::Authoring,
+        Group::Skills,
+        Group::Jobs,
     ] {
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);

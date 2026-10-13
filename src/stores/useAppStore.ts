@@ -65,6 +65,10 @@ export const useAppStore = defineStore('app', () => {
     // a choice never made. `shared/appAccess.startApp` and the first-run mode
     // question in App.vue are what ask.
     const simpleModeChosen = ref(false);
+    // Syn's workings on show: tokens under answers, tool names and arguments,
+    // the run inspector, the tuning settings. Off for everybody who has not
+    // asked for them; see `mini-apps/messages`.
+    const synDeveloper = ref(false);
     const defaultAppChosen = ref(false);
     
     // Unified Sync Settings
@@ -111,6 +115,7 @@ export const useAppStore = defineStore('app', () => {
       const simple = await storeInstance.get('simpleMode');
       if (typeof simple === 'boolean') simpleMode.value = simple;
       simpleModeChosen.value = await storeInstance.has('simpleMode');
+      synDeveloper.value = (await storeInstance.get('synDeveloper')) === true;
       
       const arcDays = await storeInstance.get('taskArchiveDays');
       if (arcDays) taskArchiveDays.value = Number(arcDays);
@@ -319,6 +324,9 @@ export const useAppStore = defineStore('app', () => {
       simpleModeChosen.value = true;
       if (storeInstance) await storeInstance.set('simpleMode', v);
     });
+    watch(synDeveloper, async (v) => {
+      if (storeInstance) await storeInstance.set('synDeveloper', v);
+    });
     watch(activeSyncProvider, async (v) => {
       if (storeInstance) await storeInstance.set('activeSyncProvider', v);
     });
@@ -405,6 +413,7 @@ export const useAppStore = defineStore('app', () => {
     appLanguage,
     uiScale,
     simpleMode,
+    synDeveloper,
     simpleModeChosen,
     defaultAppChosen,
     chooseSimpleMode,

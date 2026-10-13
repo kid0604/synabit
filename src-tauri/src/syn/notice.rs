@@ -501,6 +501,7 @@ mod tests {
             enabled: true,
             source_run: None,
             trial_at: None,
+            approved_at: None,
             pending_revision: None,
             revision_because: None,
             body: String::new(),

@@ -14,7 +14,12 @@ import LockScreen from '../../../shared/components/LockScreen.vue';
 import { useAppLockStore, pinErrorKey } from '../../../stores/useAppLockStore';
 import { needsPinToSave, setFamilySafe } from '../familySafe';
 import { showAppNotice } from '../../../composables/useAppNotice';
+import { useAppStore } from '../../../stores/useAppStore';
 import type { ModelInfo } from '../types';
+
+/** Tuning — temperature, rounds, window, budgets — is for whoever asked to
+ *  see Syn's workings; everybody else gets the defaults. See `synDeveloper`. */
+const appStore = useAppStore();
 
 const props = defineProps<{
   vaultPath: string;
@@ -255,6 +260,16 @@ watch(() => props.vaultPath, async () => {
         </span>
       </label>
 
+      <!-- Syn's workings: tokens, tool names, the run inspector, the tuning
+           below. A device's choice, kept with the app's own settings. -->
+      <label class="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 cursor-pointer" data-syn-developer>
+        <input type="checkbox" v-model="appStore.synDeveloper" class="mt-0.5 w-4 h-4 accent-accent cursor-pointer" />
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-text dark:text-text-dark">{{ t('syn.developer_mode') }}</span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{{ t('syn.developer_mode_hint') }}</span>
+        </span>
+      </label>
+
       <!-- CONNECTION -->
       <SettingsSection id="ai-model" :title="t('syn.settings_ai_model')" :summary="aiModelSummary" default-open>
         <div class="space-y-3">
@@ -405,7 +420,7 @@ watch(() => props.vaultPath, async () => {
       </SettingsSection>
 
       <!-- GENERATION -->
-      <SettingsSection id="generation" :title="t('syn.settings_generation')" :summary="generationSummary">
+      <SettingsSection v-if="appStore.synDeveloper" id="generation" :title="t('syn.settings_generation')" :summary="generationSummary">
         <div class="space-y-4">
           <!-- Temperature -->
           <div>
@@ -493,7 +508,7 @@ watch(() => props.vaultPath, async () => {
       </SettingsSection>
 
       <!-- CONTEXT (RAG) -->
-      <SettingsSection id="context" :title="t('syn.settings_context')" :summary="contextSummary">
+      <SettingsSection v-if="appStore.synDeveloper" id="context" :title="t('syn.settings_context')" :summary="contextSummary">
         <div class="space-y-3">
           <!-- Enable vault context -->
           <div class="flex items-center justify-between py-1">

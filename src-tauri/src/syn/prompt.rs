@@ -1674,7 +1674,7 @@ mod tests {
     /// than the rules, which are never dropped.
     #[test]
     fn memory_goes_before_anything_that_defines_the_assistant() {
-        let huge_memory = "=== WHAT YOU REMEMBER ===\n".to_string() + &"m".repeat(4000);
+        let huge_memory = "=== WHAT YOU REMEMBER ===\n".to_string() + "m".repeat(4000).as_str();
         let p = plan("ctx", Some(&huge_memory), 6000);
 
         let dropped: Vec<_> = p.breakdown().into_iter().filter(|c| c.dropped).map(|c| c.kind).collect();

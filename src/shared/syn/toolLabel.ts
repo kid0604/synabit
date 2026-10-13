@@ -18,13 +18,13 @@ export const LABELLED_TOOLS = [
   'timeline', 'read_board', 'draw_board', 'edit_board', 'capture', 'update_plan', 'rename_field',
   'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools', 'table_rows',
   'crunch', 'propose_writes', 'connector_draft', 'connector_connect', 'connector_find',
-  'connector_try', 'stage_transactions',
+  'connector_try', 'stage_transactions', 'skill_draft', 'routine_draft', 'compute',
 ] as const;
 
 export function toolLabel(t: (key: string, values?: Record<string, unknown>) => string, tool: string): string {
   if ((LABELLED_TOOLS as readonly string[]).includes(tool)) return t(`syn.doing_${tool}`);
   const onConnector = connectorTool(tool);
-  if (onConnector) return t('syn.doing_connector', onConnector);
+  if (onConnector) return t('syn.doing_connector', { server: onConnector.server, tool: humanize(onConnector.tool) });
   return t('syn.doing_other', { tool });
 }
 
@@ -50,6 +50,16 @@ export function connectorTool(name: string): { server: string; tool: string } | 
   const cut = rest.indexOf('__');
   if (cut <= 0 || cut + 2 >= rest.length) return null;
   return { server: rest.slice(0, cut), tool: rest.slice(cut + 2) };
+}
+
+/**
+ * A name made for code, read as words: `create_issue` → `create issue`,
+ * `due-date` → `due date`. For the names a person has no other words for —
+ * a connector's operations and their parameters, which come from whoever wrote
+ * the connector and have no translation.
+ */
+export function humanize(name: string): string {
+  return name.replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** Tokens, short enough for one line: 950, 12k, 1.2M. */

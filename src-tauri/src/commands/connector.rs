@@ -464,13 +464,27 @@ pub async fn syn_instance_approve(
 /// Stop using a declaration on this device: its approval, its secret, every
 /// permission granted for it. The note in the vault stays.
 #[tauri::command]
-pub async fn syn_instance_remove(app: tauri::AppHandle, vault_path: String, manifest_id: String) -> Result<Vec<DeclaredView>, AppError> {
+pub async fn syn_instance_remove(
+    app: tauri::AppHandle,
+    vault_path: String,
+    manifest_id: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<DeclaredView>, AppError> {
     let views = declared_views(&app, &vault_path)?;
-    if let Some(m) = views.iter().find_map(|v| v.manifest.as_ref().filter(|m| m.id == manifest_id)) {
+    if let Some(view) = views.iter().find(|v| v.manifest.as_ref().is_some_and(|m| m.id == manifest_id)) {
+        let m = view.manifest.as_ref().expect("found by it");
         if let Some(name) = m.auth.secret() {
             crate::secrets::SecretManager::set_syn_api_key(Some(&app), &secret_slot(&m.id, name), "").map_err(AppError::General)?;
         }
         instance::remove(&vault_path, &m.id, &m.name)?;
+        // Stopping is stopping: the declaration goes to the trash too, so the
+        // list shows what is in use rather than a row that reads "new" and
+        // offers to connect. Kept, not erased — the trash gives it back, and
+        // one from the library is in the library again.
+        let ctx = crate::syn::tools::ToolContext { db: state.inner(), vault_path: &vault_path, app: &app, run_id: None, model: None };
+        if let Err(e) = crate::syn::tools::execute_tool(&ctx, "trash_node", &serde_json::json!({ "node_id": view.node_id })) {
+            log::warn!("[Syn] Stopped {}, but could not put its declaration away: {e}", m.id);
+        }
     }
     sync_device(&app, &vault_path)?;
     declared_views(&app, &vault_path)
@@ -483,20 +497,3 @@ pub async fn syn_instance_peek_cert(url: String) -> Result<String, AppError> {
     crate::syn::connector::http::peek_certificate(&url).await.map_err(AppError::General)
 }
 
-/// One declaration the app comes with, as the settings screen offers it.
-#[derive(serde::Serialize)]
-pub struct BundledView {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub about: &'static str,
-    pub yaml: &'static str,
-}
-
-/// The declarations the app comes with. Adding one is `syn_manifest_save`.
-#[tauri::command]
-pub async fn syn_manifest_bundled() -> Result<Vec<BundledView>, AppError> {
-    Ok(crate::syn::connector::bundled::all()
-        .into_iter()
-        .map(|b| BundledView { id: b.id, name: b.name, about: b.about, yaml: b.yaml })
-        .collect())
-}

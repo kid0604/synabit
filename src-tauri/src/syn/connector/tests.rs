@@ -222,7 +222,8 @@ fn a_long_result_is_cut_and_says_so() {
     assert!(wrapped.chars().count() < RESULT_CHARS + 1_500);
 }
 
-/// Where the question came from decides whether a server's tools exist.
+/// Where the question came from decides whether a server's tools exist: all
+/// of them in the app, none from Telegram, and a routine only reads.
 #[test]
 fn only_the_app_is_offered_or_may_call_a_servers_tools() {
     let read = Capability::NetRead { domain: "Jira".into() };
@@ -230,8 +231,9 @@ fn only_the_app_is_offered_or_may_call_a_servers_tools() {
     for capability in [&read, &write] {
         assert!(Surface::App.offers("connector__jira__x", Some(capability)));
         assert!(!Surface::Telegram.offers("connector__jira__x", Some(capability)));
-        assert!(!Surface::Routine.offers("connector__jira__x", Some(capability)));
     }
+    assert!(Surface::Routine.offers("connector__jira__x", Some(&read)), "a routine may read");
+    assert!(!Surface::Routine.offers("connector__jira__x", Some(&write)), "and never send");
     // Even misclassified as reading the vault, the name alone keeps it in the app.
     assert!(!Surface::Telegram.offers("connector__jira__x", Some(&Capability::VaultRead)));
     assert!(!Surface::Routine.offers("connector__jira__x", Some(&Capability::VaultRead)));

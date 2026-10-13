@@ -711,6 +711,24 @@ pub struct Run {
     /// proceeding normally, with one detail Syn refuses to guess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_choice: Option<crate::syn::ambiguity::Choice>,
+    /// Changes to the vault held for the person after this run read something
+    /// from outside, and where each stands. Carried to the run that continues
+    /// it, and put on a card when the work is done. See `syn::changes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<crate::syn::changes::Changeset>,
+    /// Skills this run wrote, switched off, for the person to keep or not on a
+    /// card under its answer. See `syn::drafting`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafted_skills: Vec<String>,
+    /// Routines this run wrote, switched off, for the person to turn on or
+    /// not on a card under its answer. See `routine::draft`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drafted_routines: Vec<String>,
+    /// What the person said to this run while it worked, in order — each
+    /// handed to it at the next round. Kept so the conversation shows them.
+    /// See `engine::steer`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steered: Vec<String>,
     /// The plan of sends this run proposed, and where each request stands.
     /// Carried to the run that continues it, which is where approved requests
     /// are sent. See `syn::writes`.
@@ -746,6 +764,12 @@ pub struct Run {
     /// asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_call: Option<crate::models::syn::ToolCall>,
+    /// The calls the same round asked for after `pending_call`, not reached
+    /// because the run stopped on it. The run that carries on makes them after
+    /// the one that was asked about — they were lost before, and a round that
+    /// read a page and then two notes came back having read only the page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_rest: Vec<crate::models::syn::ToolCall>,
     // ── What the prompt carried ───────────────────────────────────
     //
     // The next five fields exist for one question: **does what Syn has
@@ -830,6 +854,10 @@ impl Run {
             plan_only: false,
             read_untrusted: false,
             read_from: Vec::new(),
+            changes: None,
+            drafted_skills: Vec::new(),
+            drafted_routines: Vec::new(),
+            steered: Vec::new(),
             writes: None,
             pending_connector: None,
             declined_connector: None,
@@ -844,6 +872,7 @@ impl Run {
             carried_on_at: None,
             pending_consent: None,
             pending_call: None,
+            pending_rest: Vec::new(),
             pending_choice: None,
             memory_lines_sent: None,
             memory_dropped: None,
@@ -1204,6 +1233,27 @@ pub fn latest_for(vault_path: &str, conversation_id: &str) -> Option<Run> {
         .into_iter()
         .filter(|r| r.parent_run_id.is_none() && r.conversation_id.as_deref() == Some(conversation_id))
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
+}
+
+/// The work in a conversation that stopped short and can be carried on: its
+/// newest run, when that ran out of rounds, calls, tokens or time, or was cut
+/// off by the app closing — and nothing has carried it on yet. Carried on as
+/// a question's answer is (`resume_run`): the run replays what it had done and
+/// goes on with a fresh allowance. Long work is done this way, a stretch at a
+/// time, the person choosing each stretch. See `run::replay`.
+pub fn continuable(vault_path: &str, conversation_id: &str) -> Option<Value> {
+    let latest = latest_for(vault_path, conversation_id)?;
+    if latest.carried_on_at.is_some() {
+        return None;
+    }
+    let interrupted = latest.state == RunState::Interrupted
+        || (latest.state == RunState::Working && !crate::syn::engine::is_live(&latest.id));
+    let why = match latest.state {
+        RunState::BudgetExhausted => "ceiling",
+        _ if interrupted => "interrupted",
+        _ => return None,
+    };
+    Some(serde_json::json!({ "run_id": latest.id, "why": why, "ceiling": latest.ceiling, "steps": latest.spent.tool_calls }))
 }
 
 /// Every question still waiting for an answer, newest per conversation, in
@@ -1626,6 +1676,36 @@ pub fn delete_run(vault_path: &str, id: &str) -> AppResult<()> {
 #[cfg(test)]
 fn tests_budget() -> Budget {
     Budget { iterations: Some(12), tool_calls: Some(4), tokens: None, wall_ms: Some(1000) }
+}
+
+#[cfg(test)]
+mod carrying_on {
+    use super::*;
+
+    /// Work that ran out of rounds, or was cut off, can be carried on — once,
+    /// and only the newest in the conversation.
+    #[test]
+    fn work_that_stopped_short_can_be_carried_on_once() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut run = Run::new("làm dài", Some("c1".into()), Budget::from_settings(&crate::models::syn::SynSettings::default()));
+        run.finish(RunState::BudgetExhausted);
+        run.ceiling = Some("iterations".into());
+        save_run(vault, &run).expect("saved");
+        let found = continuable(vault, "c1").expect("carryable");
+        assert_eq!(found["why"], "ceiling");
+        assert_eq!(found["run_id"], serde_json::json!(run.id));
+
+        claim_resume(vault, &run.id).expect("carried on");
+        assert!(continuable(vault, "c1").is_none(), "once");
+
+        let mut cut = Run::new("làm dở", Some("c2".into()), Budget::from_settings(&crate::models::syn::SynSettings::default()));
+        save_run(vault, &cut).expect("saved working, then the app closed");
+        assert_eq!(continuable(vault, "c2").expect("carryable")["why"], "interrupted");
+        cut.finish(RunState::Done);
+        save_run(vault, &cut).expect("saved");
+        assert!(continuable(vault, "c2").is_none(), "an answered run has nothing to carry on");
+    }
 }
 
 #[cfg(test)]

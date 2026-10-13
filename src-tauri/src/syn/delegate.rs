@@ -55,9 +55,12 @@ pub const WALL_MS: u64 = 5 * 60 * 1000;
 pub const FINDINGS_CHARS: usize = 6_000;
 
 /// Whether a sub-run may use a tool with this capability.
+///
+/// The row in `syn::policy` says whether the tool is a helper's at all — not
+/// `delegate` itself, nor the parent's plan — and the capability says whether
+/// this call only reads: `connector_try` is weighed as a read of a host.
 pub fn may_use(tool: &str, capability: Option<&Capability>) -> bool {
-    tool != TOOL
-        && tool != crate::syn::tools::PLAN_TOOL
+    crate::syn::policy::helper(tool) != Some(false)
         && matches!(capability, Some(Capability::VaultRead) | Some(Capability::Browse))
 }
 

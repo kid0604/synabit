@@ -283,6 +283,16 @@ fn locked_for<R: tauri::Runtime>(ctx: &ToolContext<'_, R>) -> AppResult<Option<c
     Ok(Some(crate::syn::locks::Hidden::resolve(locks, &*lock(ctx)?)))
 }
 
+/// Why a call would be refused for reaching something locked with the app
+/// PIN, if it would. For a call held rather than run (`syn::changes`), which
+/// must meet the lock when it is held, not only when it is applied.
+pub fn locked_refusal<R: tauri::Runtime>(ctx: &ToolContext<'_, R>, name: &str, args: &Value) -> AppResult<Option<String>> {
+    match locked_for(ctx)? {
+        Some(hidden) => Ok(hidden.refuse(&*lock(ctx)?, name, args)),
+        None => Ok(None),
+    }
+}
+
 /// The database, for the length of one tool call.
 fn lock<'a, R: tauri::Runtime>(
     ctx: &ToolContext<'a, R>,
@@ -633,7 +643,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "connector_draft".to_string(),
-                description: "Write a connector for a service the user wants Syn to reach, as a declaration (never code). Look first with connector_find: one in the library needs no draft. Two ways: give `openapi_url` alone to list the spec's operations, then call again with `operations` (\"GET /tasks\"…) chosen from that list — Rust writes the declaration; or give `yaml`. What only the user knows — a key, their account, their own server's address — is declared as `inputs` (kind secret, account or address) with a `guide`: where to get it, in steps, and a link on the service's site. Choose everything else yourself; never ask the user technical questions. The host must be one the user named, or an address input. The draft does nothing until connector_connect. Problems come back with codes; fix and call again.".to_string(),
+                description: "Write a connector for a service the user wants Syn to reach, as a declaration (never code). Look first with connector_find: one already in the vault needs no new draft. Two ways: give `openapi_url` alone to list the spec's operations, then call again with `operations` (\"GET /tasks\"…) chosen from that list — Rust writes the declaration; or give `yaml`. What only the user knows — a key, their account, their own server's address — is declared as `inputs` (kind secret, account or address) with a `guide`: where to get it, in steps, and a link on the service's site. Choose everything else yourself; never ask the user technical questions. The host must be one the user named, or an address input. The draft does nothing until connector_connect. Problems come back with codes; fix and call again.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["id", "name"],
@@ -677,7 +687,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "connector_find".to_string(),
-                description: "Before drafting a connector: what Syn can already reach — connectors in the vault and whether each is approved here, ones Synabit ships, and connected MCP servers. Use one that fits rather than drafting another.".to_string(),
+                description: "Before drafting a connector: what Syn can already reach — connectors in the vault and whether each is approved here, and connected MCP servers. Use one that fits rather than drafting another.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["need"],
@@ -717,6 +727,48 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 // Written out for `toolLabel.spec.ts`, as `crunch` is.
+                name: "routine_draft".to_string(),
+                description: "Set up something you do on your own, without being asked each time — when the user asks for it (\"mỗi sáng 7 giờ tóm tắt lịch cho tao\", \"khi có giao dịch mới thì…\", \"every Monday…\"). Give `at` (HH:MM, their time) and optionally `days` (1 = Monday … 7 = Sunday; none = every day), or `on_new` with a connected service's id to run whenever its kept copy brings in something new — or both. `ask` is what you will be asked each time, in their words, complete on its own. It is saved switched off; the user turns it on, or not, on a card under your answer. It runs on this computer, can read, look things up, read connected services they allowed always, and make new notes — never change or remove what is there.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["name", "ask"],
+                    "properties": {
+                        "name": { "type": "string", "description": "A short name the user would recognise." },
+                        "ask": { "type": "string", "description": "What to do each time, as a complete request." },
+                        "at": { "type": "string", "description": "HH:MM, 24-hour, local time." },
+                        "days": { "type": "array", "items": { "type": "integer" }, "description": "1 = Monday … 7 = Sunday. Leave out for every day." },
+                        "on_new": { "type": "string", "description": "A connected service's id: run when it brings in something new." },
+                        "to_phone": { "type": "boolean", "description": "Also send the result to their phone (Telegram)." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out for `toolLabel.spec.ts`, as `crunch` is.
+                name: "skill_draft".to_string(),
+                description: "Write down a way of doing a job, so it is done the same way next time — when the user asks you to (\"từ giờ mỗi khi…\", \"lần sau làm như vậy\", \"from now on, whenever…\"). Not for a one-off request, and not for a fact about them (that is `remember`). The skill is saved switched off; the user keeps it or not on a card under your answer, so do the job now as well if they asked for it now. Give `recipe` when the job is always the same tool calls with only some values changing — those values become `params`, used as \"{{name}}\" — and `steps` in words either way. Calling it again with the same name rewrites your draft.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["name", "when_to_use", "steps"],
+                    "properties": {
+                        "name": { "type": "string", "description": "A short name the user would recognise, in their language." },
+                        "description": { "type": "string", "description": "One line: what it does." },
+                        "when_to_use": { "type": "string", "description": "When to use it — the words the user would ask with." },
+                        "steps": { "type": "string", "description": "The procedure as numbered Markdown steps, naming the tool at each." },
+                        "recipe": {
+                            "type": "object",
+                            "description": "Optional: the fixed calls. {\"params\": [{\"name\": \"since\", \"description\": \"…\", \"required\": true}], \"steps\": [{\"tool\": \"query_nodes\", \"args\": {\"query\": \"…{{since}}…\"}, \"as\": \"done\"}, {\"tool\": \"create_node\", \"when\": \"done is not empty\", \"args\": {…\"{{done}}\"…}}]}"
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out for `toolLabel.spec.ts`, as `crunch` is.
                 name: "propose_writes".to_string(),
                 description: "Propose every send to a connector you mean to make — creating, changing, posting, mailing — as one plan the user approves on a card. Required for a send after reading anything from outside, and for one that cannot be undone. After the user answers you are told which requests are approved; then call each exactly as proposed. Pass a table a tool returned as \"{{result:r3}}\" (a list of records) or \"{{result:r3:rows}}\" (a header row, then rows) — Rust fills it in.".to_string(),
                 parameters: serde_json::json!({
@@ -735,6 +787,23 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                                 }
                             }
                         }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out for `toolLabel.spec.ts`, as `crunch` is.
+                name: "compute".to_string(),
+                description: "Run a short script for anything crunch cannot do: matching two tables, a calculation per row, dates, reshaping, ranking by your own rule. The language is Rhai (like JavaScript): `let x = 1;`, `for row in tables.r1 { … }`, `if a > b { … } else { … }`, maps `#{ name: \"A\", total: 2 }`, arrays `[1, 2]`, `.push(x)`, `.len()`, `x.to_string()`, `parse_float(s)`, `num(v)` reads any written number (\"1.265.000\", \"-55,000 đ\") or gives `()`. Tables you name in `tables` arrive as `tables.r1`, a list of rows (maps by column, lower case); anything you pass in `data` arrives as `data`. The last expression is the result; a list of maps comes back as a new table with a handle. It reaches nothing — no files, no network — and stops if it runs too long; errors say where to fix.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["code"],
+                    "properties": {
+                        "code": { "type": "string", "description": "The Rhai script. Its last expression is the result." },
+                        "tables": { "type": "array", "items": { "type": "string" }, "description": "Handles of tables this conversation has, e.g. [\"r1\", \"r2\"]." },
+                        "data": { "description": "Any JSON to hand the script as `data`." }
                     }
                 }),
             },
@@ -1630,6 +1699,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "edit_board" => tool_edit_board(ctx, args),
         "table_rows" => tool_table_rows(ctx, args),
         name if name == crate::syn::crunch::TOOL => tool_crunch(ctx, args),
+        name if name == crate::syn::script::TOOL => tool_compute(ctx, args),
 
         // What Syn knows about the person rather than about their vault.
         // Stored as nodes, so `trash_node` and `restore_node` already forget
@@ -1642,16 +1712,10 @@ pub fn execute_tool<R: tauri::Runtime>(
         name if name == crate::syn::recipe::RUN_TOOL => tool_run_recipe(ctx, args),
         "recall" => tool_recall(&*lock(ctx)?, args),
         name if name == LOOK_BACK_TOOL => tool_look_back(ctx, args),
-        // Not here: this one is async, and `execute_tool` is not. The engine
-        // runs it before reaching this table — see `SynEngine::drive`.
-        name if name == BROWSE_TOOL
-            || name == crate::syn::writes::TOOL
-            || name == crate::syn::connector::authoring::DRAFT_TOOL
-            || name == crate::syn::connector::authoring::PROPOSE_TOOL
-            || name == crate::syn::connector::authoring::TRY_TOOL
-            || name == PLAN_TOOL
-            || name == crate::syn::delegate::TOOL
-            || name == crate::syn::toolset::FIND_TOOL => Err(AppError::General(
+        // Not here: these are async, or stop the run, or change the run itself,
+        // and `execute_tool` does none of that. The engine runs them before
+        // reaching this table — see `SynEngine::drive` and `policy::engine`.
+        name if crate::syn::policy::engine(name) => Err(AppError::General(
             format!("{name} is driven by the engine, not by this table"),
         )),
 
@@ -1719,7 +1783,7 @@ pub fn execute_tool<R: tauri::Runtime>(
             && serde_json::from_str::<Value>(out)
                 .ok()
                 .is_some_and(|v| v.get("_returned").and_then(Value::as_u64) == Some(0) && v.get("in_notes").is_none());
-        if crate::syn::taint::UNTRUSTED_READS.contains(&name) && !found_nothing {
+        if crate::syn::taint::untrusted_read(name) && !found_nothing {
             taint.set();
         }
         // A clipped page, read whole: a note by every measure but whose words it holds.
@@ -4760,6 +4824,78 @@ fn tool_stage_transactions<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value
     .to_string())
 }
 
+/// Run a script over tables this conversation has and data the call passes.
+/// A list of records comes back filed as a table, like `crunch`'s, so it can
+/// be totalled, sent or scripted again by its handle. See `syn::script`.
+fn tool_compute<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    use crate::syn::resultset;
+    let code = args.get("code").and_then(Value::as_str).unwrap_or_default();
+    let named: Vec<String> = args
+        .get("tables")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(|h| h.trim().to_string()).collect())
+        .unwrap_or_default();
+    let scope = crate::syn::crunch::scope_for(ctx.vault_path, ctx.run_id);
+    let now = chrono::Utc::now().timestamp();
+    // Read and release: the script runs without the database.
+    let mut tables = serde_json::Map::new();
+    let mut from = Vec::new();
+    {
+        let db = lock(ctx)?;
+        for handle in &named {
+            let Some(set) = resultset::load(db.conn(), &scope, handle, now)? else {
+                return Ok(serde_json::json!({ "error": format!("There is no table '{handle}' in this conversation. Use a handle a tool gave you, like r1.") }).to_string());
+            };
+            if set.exposure == resultset::Exposure::Aggregates {
+                return Ok(serde_json::json!({ "error": format!("Table '{handle}' may only be totalled, not read row by row: use crunch on it.") }).to_string());
+            }
+            tables.insert(handle.clone(), Value::Array(resultset::as_objects(&set.columns, &set.rows)));
+            from.push(handle.clone());
+        }
+    }
+    let ran = match crate::syn::script::run(code, tables, args.get("data").cloned().unwrap_or(Value::Null)) {
+        Ok(ran) => ran,
+        Err(e) => return Ok(serde_json::json!({ "error": e }).to_string()),
+    };
+    if crate::syn::script::is_table(&ran.value) {
+        let rows: Vec<Value> = ran.value.as_array().cloned().unwrap_or_default();
+        let (columns, cells) = resultset::from_objects(&rows);
+        let db = lock(ctx)?;
+        let delivered = resultset::deliver(
+            db.conn(),
+            resultset::NewSet {
+                scope,
+                run_id: ctx.run_id.unwrap_or("app").to_string(),
+                source: resultset::Source {
+                    kind: "compute".into(),
+                    instance: None,
+                    operation: Some(if from.is_empty() { "data".into() } else { from.join(", ") }),
+                    query: Some(code.chars().take(2_000).collect()),
+                },
+                columns,
+                rows: cells,
+                missing: Vec::new(),
+                exposure: resultset::Exposure::Full,
+                ttl_hours: 0,
+            },
+            crate::syn::room::scaled(crate::syn::crunch::INLINE_BUDGET),
+            now,
+        )?;
+        let mut out = delivered.to_value();
+        if let Value::Object(o) = &mut out {
+            if !ran.printed.is_empty() {
+                o.insert("printed".into(), serde_json::json!(ran.printed));
+            }
+        }
+        return Ok(out.to_string());
+    }
+    let mut out = serde_json::json!({ "result": ran.value });
+    if !ran.printed.is_empty() {
+        out["printed"] = serde_json::json!(ran.printed);
+    }
+    Ok(out.to_string())
+}
+
 fn tool_crunch<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
     let handle = args.get("handle").and_then(Value::as_str).unwrap_or_default();
     let pipeline = args.get("pipeline").and_then(Value::as_str).unwrap_or_default();
@@ -5635,7 +5771,7 @@ const WRITE_MAX_COLS: usize = 200;
 /// Make a new workbook, never replace one.
 ///
 /// Refusing an existing name is the whole of the safety here: this runs after
-/// a run has read something from outside (`taint::ALLOWED_AFTER_READING`), on
+/// a run has read something from outside (`taint::allowed_after_reading`), on
 /// the ground that making something new cannot damage what the person already
 /// has. Overwriting would break that ground, so it is not a flag — it is not
 /// possible. The refusal names a free file to use instead.
@@ -6600,7 +6736,7 @@ mod tests {
         // not generic: it reads the run's own tables, which no other tool can,
         // and it is the `compute` group's — sent only once a result in the run
         // has filed a table, so a turn without one pays nothing for it.
-        let compute = [crate::syn::crunch::TOOL];
+        let compute = [crate::syn::crunch::TOOL, crate::syn::script::TOOL];
         for tool in compute {
             assert!(names.contains(&tool), "{tool} is missing");
         }
@@ -6628,6 +6764,14 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Syn writing down a way of doing a job, for the person to keep: the
+        // `skills` group, brought by asking for one ("từ giờ mỗi khi…"). See
+        // `syn::drafting`.
+        let skills = [crate::syn::drafting::TOOL, crate::syn::routine::DRAFT_TOOL];
+        for tool in skills {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -6648,6 +6792,7 @@ mod tests {
             .chain(writes)
             .chain(authoring)
             .chain(staging)
+            .chain(skills)
             .collect();
         for name in &names {
             assert!(

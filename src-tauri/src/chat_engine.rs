@@ -79,6 +79,37 @@ fn start_due_routines(app: &tauri::AppHandle, vault_path: &str) {
     }
 }
 
+/// Routines waiting on a connector that just brought something new, started
+/// as the scheduled ones are: only what this computer agreed to, never twice
+/// at once. The run is told what came in, so "what is new" has an answer.
+fn start_triggered_routines(app: &tauri::AppHandle, vault_path: &str, fresh: &[(String, String, usize)]) {
+    if fresh.is_empty() {
+        return;
+    }
+    let enabled = crate::syn::settings::load_settings(vault_path).map(|s| s.enabled).unwrap_or(true);
+    if !enabled {
+        return;
+    }
+    let book = crate::syn::routine::load(vault_path);
+    for (connector, name, count) in fresh {
+        for mut routine in crate::syn::routine::triggered_here(vault_path, &book, connector) {
+            if !claim_routine(&routine.id) {
+                continue;
+            }
+            routine.ask = format!("{}\n\n[{count} new item(s) just came in from {name}.]", routine.ask.trim());
+            let app = app.clone();
+            let vault = vault_path.to_string();
+            tauri::async_runtime::spawn(async move {
+                let id = routine.id.clone();
+                if let Err(e) = crate::commands::syn::run_routine(&app, &vault, routine, None).await {
+                    log::error!("[Syn] A routine could not run: {e}");
+                }
+                release_routine(&id);
+            });
+        }
+    }
+}
+
 /// Mark a routine as running, unless it already is. Shared with "run it now",
 /// which could otherwise start it a second time over a scheduled run.
 pub fn claim_routine(id: &str) -> bool {
@@ -121,7 +152,9 @@ pub fn init_engine(app_handle: tauri::AppHandle) {
             // Connector mirrors this device runs, when due. Network, so here
             // and not on the blocking thread. See `connector::mirror`.
             let db = app_handle.state::<crate::db::DbState>();
-            crate::syn::connector::mirror::tick(&app_handle, &db, &mirror_vault).await;
+            let fresh = crate::syn::connector::mirror::tick(&app_handle, &db, &mirror_vault).await;
+            // Routines that run when a service brings something new.
+            start_triggered_routines(&app_handle, &mirror_vault, &fresh);
         }
     });
 }

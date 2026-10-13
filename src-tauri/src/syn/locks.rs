@@ -101,7 +101,7 @@ impl Locks {
     pub fn locked_app_of_tool(&self, tool: &str) -> Option<&str> {
         self.apps
             .iter()
-            .find(|app| app_tools(app).contains(&tool))
+            .find(|app| crate::syn::policy::lock(tool) == Some(app.as_str()))
             .map(String::as_str)
     }
 }
@@ -134,28 +134,9 @@ pub fn app_owns_type(app: &str, node_type: &str) -> bool {
     }
 }
 
-/// The tools that reach an app's store rather than nodes, so the type rule
-/// alone would not cover them.
-fn app_tools(app: &str) -> &'static [&'static str] {
-    match app {
-        "finance" => &[
-            "get_finance_summary",
-            "search_finance",
-            "get_transactions",
-            "create_transaction",
-            "update_transaction",
-            "delete_transaction",
-            // Writes rows for Finance's import preview, read from a statement:
-            // money, whatever the file it came from.
-            crate::syn::staging::TOOL,
-        ],
-        "feeds" => &["search_feed_articles", "read_feed_article", "update_feed_article"],
-        "file" => &["search_files", "read_file_text", "read_spreadsheet", "write_spreadsheet"],
-        "whiteboard" => &["read_board", "draw_board", "edit_board"],
-        "safe" => &["safe_list", "safe_request", "safe_health"],
-        _ => &[],
-    }
-}
+// The tools that reach an app's store rather than nodes, so the type rule
+// alone would not cover them, are named on their rows in `syn::policy`
+// (`locked_with`).
 
 /// A path as the tools and the lock screen both write it.
 fn normalise(s: &str) -> &str {

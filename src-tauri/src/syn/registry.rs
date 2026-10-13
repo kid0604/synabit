@@ -109,33 +109,10 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
 }
 
 /// What undoing one tool looks like, where the sentence for its capability
-/// would not be true of it.
-///
-/// `reversal_of` speaks for a capability, and for a write it names
-/// `trash_node` and `restore_version` — which is right for a node and wrong for
-/// a row inside one, or for a file that is not a node. Saying the generic
-/// sentence about these would be a promise the named tools cannot keep: a
-/// Finance month's history is taken apart into rows and `restore_version`
-/// refuses it, and `trash_node` does not reach a spreadsheet in `assets/`.
+/// would not be true of it — a row inside a note, a file that is not a node.
+/// The sentences are on the tools' rows in `syn::policy`.
 pub fn reversal_for(tool: &str, capability: &Capability) -> Reversal {
-    match tool {
-        "update_transaction" => Reversal::Automatic {
-            how: "update_transaction again, with the values it returned as `before`".into(),
-        },
-        "delete_transaction" => Reversal::Automatic {
-            how: "the row is kept aside in its month; update_transaction with restore: true puts it back"
-                .into(),
-        },
-        crate::syn::staging::TOOL => Reversal::Automatic {
-            how: "nothing reaches the ledger until the person confirms Finance's import preview; dismissing it there drops the staged rows"
-                .into(),
-        },
-        "write_spreadsheet" => Reversal::Automatic {
-            how: "a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash"
-                .into(),
-        },
-        _ => reversal_of(capability),
-    }
+    crate::syn::policy::reversal(tool, capability)
 }
 
 /// What a tool returned, and what it would take to undo.
@@ -212,102 +189,18 @@ pub trait ToolProvider<R: tauri::Runtime>: Send + Sync {
 //  THE VAULT TOOLS
 // ═══════════════════════════════════════════════════════════════
 
-/// The twenty-three tools that reach the vault.
+/// The built-in tools.
 ///
 /// A wrapper, and no more than one. `get_tool_definitions` and `execute_tool`
-/// are untouched; what is added is the table below, which is the part that did
-/// not exist anywhere.
+/// do the work; what each tool may do is its row in `syn::policy`.
 pub struct VaultTools;
 
 impl VaultTools {
-    /// What kind of thing each tool does.
-    ///
-    /// Every name in `get_tool_definitions()` must appear here, and a test
-    /// asserts it — so a tool added without deciding what sort of power it has
-    /// fails to build rather than defaulting to "whatever the others get".
-    /// `_args` because nothing needs them today: `browse` used to read the host
-    /// out of them and no longer does, since one capability covers the tool.
-    /// The parameter stays because the question *"what power is this call
-    /// about to use"* is one a future tool may well answer differently for
-    /// different arguments — a `run_recipe` that could declare its steps, say.
-    fn table(tool: &str, _args: &Value) -> Option<Capability> {
-        use Capability::*;
-        // Drafting a connector writes a note; reading a spec to draft it from
-        // reaches the spec's host, asked like any read of a host.
-        if tool == crate::syn::connector::authoring::DRAFT_TOOL {
-            return Some(
-                match _args.get("openapi_url").and_then(Value::as_str).and_then(|u| url::Url::parse(u).ok()).and_then(|u| u.host_str().map(str::to_string)) {
-                    Some(host) => NetRead { domain: host },
-                    None => VaultWrite,
-                },
-            );
-        }
-        Some(match tool {
-            "query_nodes" | "get_node" | "list_schemas" | "get_linked_nodes" | "list_trash" | "safe_list" | "safe_health"
-            | "list_versions" | "search_feed_articles" | "read_feed_article" | "search_files" | "read_file_text"
-            | "get_finance_summary" | "search_finance" | "get_transactions" | "recall"
-            | "read_board" | "timeline" | "read_spreadsheet"
-            | "load_skill" | crate::syn::tools::LOOK_BACK_TOOL | crate::syn::crunch::TOOL | crate::syn::writes::TOOL
-            | crate::syn::connector::authoring::PROPOSE_TOOL | crate::syn::connector::authoring::FIND_TOOL
-            // What a try reaches is weighed by the engine, from the draft.
-            | crate::syn::connector::authoring::TRY_TOOL => {
-                VaultRead
-            }
-
-            // Touches nothing but the run's own list. Filed with the reads
-            // because that is the power it needs — none — and a plan is not a
-            // thing anybody should be asked permission for.
-            crate::syn::tools::PLAN_TOOL => VaultRead,
-
-            // Hands work to a sub-run that may only read. What the sub-run
-            // reaches for is weighed again, call by call, inside it — this is
-            // the power handing over needs, which is none of its own.
-            crate::syn::delegate::TOOL => VaultRead,
-
-            // Loads a group of tools for the run. Touches nothing.
-            crate::syn::toolset::FIND_TOOL => VaultRead,
-
-            // `run_recipe` is the union of whatever its steps do, which cannot
-            // be declared statically — so the format refuses the structural
-            // tools instead (`recipe::NOT_IN_A_RECIPE`), and what is left tops
-            // out here. Under-declaring would be the dangerous direction; this
-            // errs the other way and stays true.
-            "create_node" | "update_node" | "trash_node" | "restore_node" | "restore_version" | "safe_request"
-            | "update_feed_article" | "create_transaction" | "remember" | "run_recipe"
-            // Enqueues a capture, which becomes a cap like any typed one.
-            | "capture"
-            // A board is a vault node like any other; what makes these two
-            // different is that the model must not decide where anything goes.
-            // See `syn::board`.
-            | "draw_board" | "edit_board"
-            // Phase F. What undoes each is not the generic sentence for a
-            // write — see `reversal_for`.
-            | "update_transaction" | "delete_transaction" | "write_spreadsheet"
-            // Rows inside a note: a write to that note, undone by its earlier version.
-            | "table_rows"
-            // Writes a file into `.synabit/staging/` for the person to review
-            // in Finance. The ledger stays theirs to change, from the import
-            // preview — but a file is written, and declaring it a read let it
-            // through plan mode, helpers and Telegram's read rule. See
-            // `syn::staging`.
-            | crate::syn::staging::TOOL => {
-                VaultWrite
-            }
-
-            "rename_field" | "delete_field" | "rename_kind" | "delete_kind" => VaultStructural,
-
-            // The one thing here that leaves the machine.
-            //
-            // One capability, whatever the argument is. It used to be scoped to
-            // the host when the call named one, which asked a question nobody
-            // could answer: given a question rather than an address, `browse`
-            // searches and then opens what the results point at, so the host is
-            // unknown when the card is drawn and already read by the time it is
-            // known. See `Capability::Browse`.
-            name if name == crate::syn::tools::BROWSE_TOOL => Browse,
-
-            _ => return None,
-        })
+    /// What power a call needs, from the tool's row in `syn::policy`. A test
+    /// there fails for a tool offered without a row, so a new tool cannot
+    /// default to "whatever the others get".
+    fn table(tool: &str, args: &Value) -> Option<Capability> {
+        crate::syn::policy::capability(tool, args)
     }
 }
 
@@ -654,54 +547,6 @@ mod tests {
             "these tools are offered to the model with no capability declared in \
              VaultTools::table: {missing:?}"
         );
-    }
-
-    /// And the other direction: a name in the table that nothing offers is a
-    /// tool that was removed, and the row should have gone with it.
-    #[test]
-    fn the_capability_table_names_no_tool_that_no_longer_exists() {
-        let offered: Vec<String> = crate::syn::tools::get_tool_definitions()
-            .into_iter()
-            .map(|d| d.function.name)
-            .collect();
-
-        // The table is a `match`, so it cannot be iterated; this is the list it
-        // is written from, kept beside it and checked against reality.
-        let declared = [
-            "query_nodes", "get_node", "list_schemas", "get_linked_nodes", "list_trash",
-            "list_versions", "search_feed_articles", "read_feed_article", "search_files", "read_file_text",
-            "get_finance_summary", "search_finance", "get_transactions", "create_node",
-            "update_node", "trash_node", "restore_node", "restore_version",
-            "update_feed_article", "create_transaction", "rename_field", "delete_field",
-            "rename_kind", "delete_kind", "remember", "recall", "load_skill", "run_recipe",
-            "read_board", "draw_board", "edit_board", "capture", "timeline",
-            "update_transaction", "delete_transaction", "read_spreadsheet", "write_spreadsheet",
-            "safe_list", "safe_health", "safe_request", "table_rows",
-            crate::syn::tools::LOOK_BACK_TOOL,
-            crate::syn::crunch::TOOL,
-            crate::syn::writes::TOOL,
-            crate::syn::connector::authoring::DRAFT_TOOL,
-            crate::syn::connector::authoring::PROPOSE_TOOL,
-            crate::syn::connector::authoring::FIND_TOOL,
-            crate::syn::connector::authoring::TRY_TOOL,
-            crate::syn::staging::TOOL,
-            crate::syn::tools::BROWSE_TOOL,
-            crate::syn::tools::PLAN_TOOL,
-            crate::syn::delegate::TOOL,
-            crate::syn::toolset::FIND_TOOL,
-        ];
-
-        for name in declared {
-            assert!(
-                offered.iter().any(|o| o == name),
-                "`{name}` has a capability but is not offered to the model any more"
-            );
-            assert!(
-                VaultTools::table(name, &Value::Null).is_some(),
-                "`{name}` is in this list but not in the table"
-            );
-        }
-        assert_eq!(declared.len(), offered.len(), "the two lists are different lengths");
     }
 
     /// Reading changes nothing, and saying so is what lets the transcript tell

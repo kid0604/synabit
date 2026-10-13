@@ -59,19 +59,13 @@ pub const FENCE: &str = "```recipe";
 /// The tool that runs a recipe, named once so validation can refuse it.
 pub const RUN_TOOL: &str = "run_recipe";
 
-/// Tools a recipe may not call.
-///
-/// These reshape the vault itself — renaming a field across every node of a
-/// kind, deleting a kind — and they are not steps in a job. They are decisions
-/// about how somebody's data is organised, and a canned procedure fired with
-/// parameters is the wrong shape for one.
-///
-/// Refusing them is also what lets `run_recipe` declare a single honest
-/// capability. A recipe's real reach is the union of its steps', and a runner
-/// that could reach anything would have to declare the most reaching thing it
-/// could possibly do. With these out, that is `VaultWrite`.
-pub const NOT_IN_A_RECIPE: [&str; 4] =
-    ["rename_field", "delete_field", "rename_kind", "delete_kind"];
+// A recipe may not call a tool that reshapes the vault — renaming a field
+// across every node of a kind, deleting a kind. Those are decisions about how
+// somebody's data is organised, and a canned procedure fired with parameters
+// is the wrong shape for one. Refusing them is also what lets `run_recipe`
+// declare a single honest capability: a recipe's real reach is the union of
+// its steps', and with these out that is `VaultWrite`. Which tools they are is
+// their `Power::Structural` in `syn::policy`.
 
 /// One value the caller supplies.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -255,18 +249,25 @@ pub fn problems(recipe: &Recipe, known_tools: &[String]) -> Vec<String> {
     for (index, step) in recipe.steps.iter().enumerate() {
         let at = index + 1;
 
+        match crate::syn::policy::of(&step.tool) {
+            Some(p) if p.power == crate::syn::policy::Power::Structural => problems.push(format!(
+                "step {at} calls `{}`, which reshapes the vault. That is a \
+                 decision about how data is organised, not a step in a job.",
+                step.tool
+            )),
+            // Run by the engine — it stops the run, or is async — and a recipe
+            // runs its steps through `execute_tool`, which does not have it.
+            Some(p) if p.engine => problems.push(format!(
+                "step {at} calls `{}`, which only a conversation can use, not a recipe.",
+                step.tool
+            )),
+            _ => {}
+        }
+
         // A recipe may not run a recipe. One calling another is a call graph,
         // and a call graph is one edge away from recursion — which is the loop
         // this format does not have and must not acquire by accident. The
         // length of a recipe is knowable before it runs, and that stays true.
-        if NOT_IN_A_RECIPE.contains(&step.tool.as_str()) {
-            problems.push(format!(
-                "step {at} calls `{}`, which reshapes the vault. That is a \
-                 decision about how data is organised, not a step in a job.",
-                step.tool
-            ));
-        }
-
         if step.tool == RUN_TOOL {
             problems.push(format!(
                 "step {at} runs another recipe. A recipe is a fixed list of \
@@ -616,7 +617,12 @@ mod tests {
     /// any recipe could possibly do.
     #[test]
     fn a_recipe_cannot_rename_or_delete_a_kind() {
-        for tool in NOT_IN_A_RECIPE {
+        let structural = crate::syn::policy::POLICIES
+            .iter()
+            .filter(|p| p.power == crate::syn::policy::Power::Structural)
+            .map(|p| p.name);
+        assert_eq!(structural.clone().count(), 4);
+        for tool in structural {
             let recipe = Recipe {
                 params: vec![],
                 steps: vec![Step {

@@ -284,7 +284,12 @@ pub async fn run_one<R: tauri::Runtime>(
 }
 
 /// Every mirror this device runs that is due, run. Called once a minute.
-pub async fn tick<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::DbState, vault_path: &str) {
+///
+/// Returns each connector whose mirror brought in something new this time —
+/// a note written or changed, a row staged — with how many, for the routines
+/// that run when that happens (`routine::triggered_here`).
+pub async fn tick<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::DbState, vault_path: &str) -> Vec<(String, String, usize)> {
+    let mut fresh: Vec<(String, String, usize)> = Vec::new();
     {
         use tauri::Manager;
         super::device::know_data_dir(app.path().app_data_dir().ok());
@@ -295,6 +300,7 @@ pub async fn tick<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::
     };
     let now = chrono::Utc::now();
     for m in found.into_iter().filter_map(|f| f.manifest.ok()).filter(|m| !m.mirrors.is_empty()) {
+        let mut new_here = 0usize;
         let Some(inst) = super::instance::approved_here(vault_path, &m) else { continue };
         for mi in m.mirrors.iter().filter(|mi| inst.mirrors.contains(&mi.name)) {
             let key = state_key(&m, mi);
@@ -313,7 +319,10 @@ pub async fn tick<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::
                 },
             };
             let ran = match run_one(app, db, vault_path, &m, &inst, mi, secret.as_deref(), now).await {
-                Ok(ran) => ran,
+                Ok(ran) => {
+                    new_here += ran.written + ran.staged;
+                    ran
+                }
                 Err(said) => {
                     log::warn!("[Syn] Mirror {key} failed: {said}");
                     Ran { at: now.timestamp(), ok: false, said, staged_keys: last.staged_keys, ..Default::default() }
@@ -321,7 +330,11 @@ pub async fn tick<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::
             };
             record(vault_path, &key, ran);
         }
+        if new_here > 0 {
+            fresh.push((m.id.clone(), m.name.clone(), new_here));
+        }
     }
+    fresh
 }
 
 pub fn record(vault_path: &str, key: &str, ran: Ran) {

@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, onActivated, onDeactivated, watch, compute
 import { useSidebarResize } from '../../composables/useSidebarResize';
 import { paneShare, sidebarRoom, openBeside, followLink, closePane, SOMEWHERE_TO_START } from '../../shared/syn/pane';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { WEB_SOURCE } from './types';
@@ -25,6 +26,8 @@ import { confirmDelete } from '../../composables/useConfirmDelete';
 import InstructionsPanel from './components/InstructionsPanel.vue';
 import ActivityPanel from './components/ActivityPanel.vue';
 import RoutinesPanel from './components/RoutinesPanel.vue';
+import SynHub from './components/SynHub.vue';
+import { useSynDeveloper } from '../../shared/syn/useSynDeveloper';
 import ModelTier from './components/ModelTier.vue';
 import SynSetupCard from './components/SynSetupCard.vue';
 import { useSynActivity } from './composables/useSynActivity';
@@ -411,7 +414,15 @@ const providerName = computed(() => ({
 const statusKnown = ref(false);
 /** Ollama cannot run on a phone; the setup card says so there. */
 const { isMobileOS } = usePlatform();
+/** A key pasted on the setup card: connect again, then open a conversation to
+ *  talk in — the first run ends where it was going. */
+const onKeyConnected = async () => {
+  await retryConnection();
+  if (status.value.connected) await createConversation();
+};
 const retryConnection = async () => {
+  // A key pasted on the setup card may have changed the provider.
+  await loadProvider();
   await checkStatus(props.vaultPath);
   if (status.value.connected) {
     stopPolling();
@@ -426,6 +437,8 @@ const retryConnection = async () => {
  * is what you read when a change did not do what you expected.
  */
 const showInspector = ref(false);
+/** The inspector reads what a run did: Syn's workings, for whoever asked. */
+const developer = useSynDeveloper();
 /** A run to open the inspector on, when something named one. */
 const inspectorRun = ref<string | null>(null);
 const { waitingCount: runsWaiting, working: runsWorking } = useSynActivity(() => props.vaultPath);
@@ -599,6 +612,98 @@ const reallyDeleteConversation = async (id: string) => {
 };
 
 // Send message
+// ─── While Syn works ─────────────────────────────────────────
+/** Words that could not go to a working run, to send once it has finished. */
+const sendWhenDone = ref<Record<string, string[]>>({});
+
+/** Typed while Syn works: handed to that run at its next round, shown at once.
+ *  If none took it — the work had just finished — sent as the next message. */
+const onSteer = async (text: string) => {
+  const id = activeConversationId.value;
+  if (!id) return;
+  activeMessages.value.push({ id: crypto.randomUUID(), role: 'user', content: text, timestamp: new Date().toISOString() });
+  let taken = false;
+  try {
+    taken = await invoke<boolean>('syn_steer', { conversationId: id, text });
+  } catch (e) {
+    logger.warn('[Syn] Could not hand words to the running work', e);
+  }
+  if (!taken) {
+    activeMessages.value.pop();
+    if (isRunning(id)) sendWhenDone.value = { ...sendWhenDone.value, [id]: [...(sendWhenDone.value[id] ?? []), text] };
+    else await handleSendMessage(text);
+  }
+};
+
+/** Send what waited for the work in a conversation to finish, in order. */
+const flushWhenDone = async (id: string) => {
+  const queued = sendWhenDone.value[id] ?? [];
+  if (!queued.length) return;
+  const { [id]: _sent, ...rest } = sendWhenDone.value;
+  sendWhenDone.value = rest;
+  for (const text of queued) await handleSendMessage(text);
+};
+
+// Said too late for any round: the backend hands it back, to go next.
+void listen<{ conversation_id?: string | null; texts: string[] }>('syn-steer-unread', (event) => {
+  const id = event.payload?.conversation_id;
+  if (!id || !event.payload.texts?.length) return;
+  // Already on screen from `onSteer`; it goes again as its own turn.
+  if (id === activeConversationId.value) {
+    const said = new Set(event.payload.texts);
+    activeMessages.value = activeMessages.value.filter((m) => !(m.role === 'user' && said.has(m.content) && !m.model));
+  }
+  sendWhenDone.value = { ...sendWhenDone.value, [id]: [...(sendWhenDone.value[id] ?? []), ...event.payload.texts] };
+  if (!isRunning(id)) void flushWhenDone(id);
+}).catch((e) => logger.warn('[Syn] Could not listen for words sent late', e));
+
+/** The work here that stopped short and can be carried on. */
+const continuable = ref<{ run_id: string; why: 'ceiling' | 'interrupted'; ceiling?: string | null } | null>(null);
+const refreshContinuable = async (id: string | null) => {
+  continuable.value = null;
+  if (!id) return;
+  try {
+    continuable.value = await invoke<typeof continuable.value>('syn_continuable', { vaultPath: props.vaultPath, conversationId: id });
+  } catch (e) {
+    logger.warn('[Syn] Could not tell whether the work can be carried on', e);
+  }
+};
+
+/** Carry it on: a fresh allowance, from where it stopped (`run::replay`). */
+const onCarryOn = async () => {
+  const id = activeConversationId.value;
+  const stopped = continuable.value?.run_id;
+  if (!id || !stopped || isRunning(id)) return;
+  continuable.value = null;
+  const words = t('syn.carry_on_message');
+  activeMessages.value.push({ id: crypto.randomUUID(), role: 'user', content: words, timestamp: new Date().toISOString() });
+  const response = await sendMessage(props.vaultPath, id, words, { model: selectedModel.value || undefined, resumeRun: stopped });
+  if (response) {
+    if (activeConversationId.value === id) activeMessages.value.push(response);
+    clearStreaming(id);
+  }
+  await refreshContinuable(activeConversationId.value);
+};
+
+// When the open conversation's work finishes: what waited goes, and whether it
+// stopped short is asked again. Asked too on opening a conversation.
+watch(
+  () => [activeConversationId.value, isRunning(activeConversationId.value)] as const,
+  async ([id, running], previous) => {
+    if (!id) return;
+    const [wasId, wasRunning] = previous ?? [null, false];
+    if (id !== wasId) {
+      await refreshContinuable(id);
+      return;
+    }
+    if (wasRunning && !running) {
+      await refreshContinuable(id);
+      await flushWhenDone(id);
+    }
+  },
+  { immediate: true },
+);
+
 const handleSendMessage = async (text: string, images?: string[], replacing?: string, planOnly?: boolean) => {
   // Typing into an empty screen starts a conversation rather than refusing.
   let id = activeConversationId.value;
@@ -806,6 +911,10 @@ const handleSettingsSaved = async () => {
  * hand, and opening the notifications marks them read.
  */
 const handleSelect = async (next: Selection) => {
+  // The instructions and routines are tabs of the Syn page now; anything
+  // that still names them lands there.
+  if (next?.kind === 'instructions') next = { kind: 'syn', tab: 'how' };
+  else if (next?.kind === 'routines') next = { kind: 'syn', tab: 'routines' };
   selection.value = next;
   if (next?.kind === 'conversation') {
     await loadConversation(next.id);
@@ -1158,14 +1267,11 @@ const openConversation = async (id: string) => {
  * am holding two contradictory things about you"* arrived with nowhere to go
  * and look. Half of noticing pointed at nothing.
  *
- * It opens the inspector rather than a screen of its own, because the inspector
- * already has both lists — a third place to read memories would be a third
- * place for them to disagree.
+ * It opens the Syn page on the list it belongs to — the same lists the
+ * inspector shows, so there is still one place to read memories.
  */
 const openSynItem = (tab: 'memory' | 'skills', id: string) => {
-  inspectorTab.value = tab;
-  inspectorHighlight.value = id;
-  showInspector.value = true;
+  void handleSelect({ kind: 'syn', tab, highlight: id });
 };
 
 const inspectorTab = ref<'memory' | 'skills' | null>(null);
@@ -1289,6 +1395,10 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                     <CalendarClock class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.routines') }}</span>
                 </template>
+                <template v-else-if="selection?.kind === 'syn'">
+                    <CalendarClock class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
+                    <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.hub_title') }}</span>
+                </template>
                 <template v-else-if="selection?.kind === 'activity'">
                     <Activity class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" />
                     <span class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.activity') }}</span>
@@ -1348,6 +1458,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                 </button>
 
                 <button
+                  v-if="developer"
                   @click="showInspector = !showInspector"
                   class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 text-gray-500 dark:text-gray-400 transition-colors cursor-pointer"
                   :title="$t('syn.inspector')"
@@ -1417,6 +1528,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @retry="retryConnection"
                   :chat-error="chatError"
                   :consent-ask="consentHere?.ask ?? null"
+                  :conversation-id="activeConversationId"
                   :writes-plan="writesHere?.plan ?? null"
                   :writes-busy="writesAnswering"
                   :writes-error="writesHere ? writesError : null"
@@ -1427,6 +1539,9 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   :consent-busy="consentAnswering"
                   :consent-error="consentHere ? consentError : null"
                   @send="(text, images, planOnly) => handleSendMessage(text, images, undefined, planOnly)"
+                  @steer="onSteer"
+                  @carry-on="onCarryOn"
+                  :continuable="continuable"
                   @approve-plan="handleSendMessage(t('syn.plan_go_message'))"
                   @stop="stopGeneration()"
                   @open-source="handleOpenSource"
@@ -1461,6 +1576,14 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
               :vault-path="vaultPath"
               @open-conversation="(id) => handleSelect({ kind: 'conversation', id })"
             />
+            <SynHub
+              v-else-if="selection?.kind === 'syn'"
+              :vault-path="vaultPath"
+              :tab="selection.tab ?? null"
+              :highlight="selection.highlight ?? null"
+              @open-conversation="(id) => handleSelect({ kind: 'conversation', id })"
+              @open-settings="openSynSettings"
+            />
             <ActivityPanel
               v-else-if="selection?.kind === 'activity'"
               :vault-path="vaultPath"
@@ -1491,6 +1614,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                         :vault-path="vaultPath"
                         @open-settings="openSynSettings"
                         @retry="retryConnection"
+                        @connected="onKeyConnected"
                     />
                 </div>
                 <div v-else class="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400 px-8 text-center">

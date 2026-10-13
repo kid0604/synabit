@@ -134,6 +134,13 @@ pub enum How {
     /// Answered with this refusal, but recorded as a call the run made — it is
     /// a budget, not a rule, and the transcript should show it was reached.
     OverSkillBudget(String),
+    /// Syn writing a skill for itself, switched off. See `syn::drafting`.
+    DraftSkill,
+    /// Syn writing a routine, switched off. See `routine::draft`.
+    DraftRoutine,
+    /// Held for the person: a change to what was there, asked for after the
+    /// run read somebody else's words. See `syn::changes`.
+    Stage,
     /// The registry runs it.
     Execute,
 }
@@ -245,6 +252,18 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
             },
             audit: capability.map(|_| Outcome::Refused),
         };
+    }
+    // A change to what was there, after reading: held for the person rather
+    // than refused, where there is a person to show it to — the app, the run
+    // they asked, not a helper or a plan. What was read may have asked for it,
+    // so it happens only when they approve it, seeing what it does.
+    if view.tainted
+        && !view.sub_run
+        && !view.plan_only
+        && view.surface == crate::syn::surface::Surface::App
+        && crate::syn::policy::staged_after_reading(tool)
+    {
+        return Decided::quietly(Gate::Go(How::Stage));
     }
     if view.tainted && !same_connector_read && !crate::syn::taint::allowed_after_reading(tool) {
         return Decided::quietly(Gate::Refuse {
@@ -448,6 +467,10 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::ProposeConnector
     } else if tool == crate::syn::connector::authoring::TRY_TOOL {
         How::TryConnector
+    } else if tool == crate::syn::drafting::TOOL {
+        How::DraftSkill
+    } else if tool == crate::syn::routine::DRAFT_TOOL {
+        How::DraftRoutine
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.
         How::Connector
@@ -536,9 +559,26 @@ mod tests {
         let granted = ledger(&Capability::VaultWrite, Answer::Always);
         let mut v = view(&granted, &always_until_done);
         v.tainted = true;
+        // A change a person can be shown is held for them, in the app…
         let d = decide("trash_node", &args(), Some(&Capability::VaultWrite), &v);
-        assert!(matches!(d.gate, Gate::Refuse { note: Some(_), .. }), "{d:?}");
+        assert!(matches!(d.gate, Gate::Go(How::Stage)), "{d:?}");
         assert_eq!(d.audit, None, "no capability was weighed, so nothing to log");
+        // …and refused where there is nobody to show it to, or nothing to show.
+        let d = decide("run_recipe", &args(), Some(&Capability::VaultWrite), &v);
+        assert!(matches!(d.gate, Gate::Refuse { note: Some(_), .. }), "{d:?}");
+        let mut on_the_phone = view(&granted, &always_until_done);
+        on_the_phone.tainted = true;
+        on_the_phone.surface = crate::syn::surface::Surface::Telegram;
+        let d = decide("trash_node", &args(), Some(&Capability::VaultWrite), &on_the_phone);
+        assert!(matches!(d.gate, Gate::Refuse { .. }), "{d:?}");
+        let mut a_helper = view(&granted, &always_until_done);
+        a_helper.tainted = true;
+        a_helper.sub_run = true;
+        assert!(matches!(decide("trash_node", &args(), Some(&Capability::VaultWrite), &a_helper).gate, Gate::Refuse { .. }));
+        let mut planning = view(&granted, &always_until_done);
+        planning.tainted = true;
+        planning.plan_only = true;
+        assert!(!matches!(decide("trash_node", &args(), Some(&Capability::VaultWrite), &planning).gate, Gate::Go(How::Stage)));
 
         let read = decide("get_node", &args(), Some(&Capability::VaultRead), &v);
         assert!(matches!(read.gate, Gate::Go(How::Execute)), "reading is still reading");

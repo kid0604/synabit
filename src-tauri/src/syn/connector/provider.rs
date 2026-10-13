@@ -163,7 +163,7 @@ fn exposed_name(slug: &str, tool: &str, taken: &HashSet<String>) -> String {
     let mut n = 2;
     while taken.contains(&name) {
         let suffix = format!("_{n}");
-        name = base.chars().take(MAX_NAME - suffix.len()).collect::<String>() + &suffix;
+        name = base.chars().take(MAX_NAME - suffix.len()).collect::<String>() + suffix.as_str();
         n += 1;
     }
     name

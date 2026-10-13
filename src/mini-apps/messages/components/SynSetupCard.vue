@@ -18,12 +18,20 @@
  *   person's behalf: sending notes to a cloud model is their decision, so the
  *   card says so and points at the setting.
  * * **A hosted provider** — the network or the key.
+ *
+ * Above all three, the shortest way there is: paste a key. Which provider and
+ * which model are worked out from it (`syn_connect_with_key`); the card says
+ * where notes will go before the button is pressed, so pasting is the person
+ * choosing to send them there. Ollama stays one line below, for whoever would
+ * rather keep everything on this computer.
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { WifiOff, Download, Settings, RefreshCw, Check } from 'lucide-vue-next';
+import { invoke } from '@tauri-apps/api/core';
+import { WifiOff, Download, Settings, RefreshCw, Check, KeyRound } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
+import { errorText } from '../../../shared/errorText';
 import { useSynModels } from '../composables/useSynModels';
 import { RECOMMENDED_LOCAL_MODEL } from '../models';
 
@@ -41,6 +49,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'open-settings': [];
   retry: [];
+  /** A key was pasted and works: provider and model are saved. */
+  connected: [provider: string, model: string];
 }>();
 
 const { t } = useI18n();
@@ -66,6 +76,35 @@ const downloadModel = async () => {
   }
 };
 
+// ── One field: the key ─────────────────────────────────────────
+const key = ref('');
+const connecting = ref(false);
+const keyError = ref<string | null>(null);
+const PROVIDER_NAMES: Record<string, string> = { anthropic: 'Anthropic', open_ai_compat: 'OpenAI', gemini: 'Google Gemini' };
+const connected = ref<{ provider: string; model: string } | null>(null);
+
+const connectWithKey = async () => {
+  if (!key.value.trim() || connecting.value) return;
+  connecting.value = true;
+  keyError.value = null;
+  try {
+    const done = await invoke<{ provider: string; model: string }>('syn_connect_with_key', { vaultPath: props.vaultPath, key: key.value });
+    connected.value = done;
+    key.value = '';
+    emit('connected', done.provider, done.model);
+  } catch (e) {
+    const said = errorText(e);
+    keyError.value = said.includes('unrecognised_key')
+      ? t('syn.setup_key_unrecognised')
+      : said.includes('no_model')
+        ? t('syn.setup_key_no_model')
+        : t('syn.setup_key_rejected');
+    logger.warn('[Syn] A pasted key did not connect', e);
+  } finally {
+    connecting.value = false;
+  }
+};
+
 const downloadOllama = () => {
   openUrl('https://ollama.com/download').catch(e => logger.error('[Syn] Could not open the Ollama download page', e));
 };
@@ -75,19 +114,47 @@ const downloadOllama = () => {
   <div
     data-syn-setup
     :data-kind="kind"
-    class="w-full max-w-md mx-auto rounded-2xl border border-gray-200 dark:border-gray-700/50 bg-white dark:bg-white/5 p-5 text-left"
+    class="w-full max-w-md mx-auto rounded-2xl border border-gray-200 dark:border-gray-700/50 bg-white dark:bg-white/5 p-5 text-left space-y-4"
   >
-    <div class="flex items-center gap-3 mb-3">
-      <div class="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-        <WifiOff class="w-4.5 h-4.5 text-amber-600 dark:text-amber-400" />
+    <!-- The shortest way: one field. -->
+    <section data-syn-key class="space-y-2">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-accent/10 dark:bg-accent-dark/10 flex items-center justify-center flex-shrink-0">
+          <KeyRound class="w-4.5 h-4.5 text-accent dark:text-accent-dark" />
+        </div>
+        <p class="text-sm font-semibold text-gray-900 dark:text-white">{{ t('syn.setup_key_title') }}</p>
       </div>
-      <p class="text-sm font-semibold text-gray-900 dark:text-white">
-        <template v-if="kind === 'ollama'">{{ t('syn.setup_title') }}</template>
+      <p class="text-[13px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.setup_key_body') }}</p>
+      <form class="flex gap-2" @submit.prevent="connectWithKey">
+        <input
+          v-model="key"
+          type="password"
+          autocomplete="off"
+          spellcheck="false"
+          :placeholder="t('syn.setup_key_placeholder')"
+          :aria-label="t('syn.setup_key_title')"
+          class="min-w-0 flex-1 px-3 py-2 rounded-lg bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-gray-700/50 text-sm text-text dark:text-text-dark outline-none focus:border-accent dark:focus:border-accent-dark"
+          data-syn-key-input
+        />
+        <button type="submit" class="btn-primary" :disabled="connecting || !key.trim()" data-syn-key-connect>
+          {{ connecting ? t('syn.setup_key_connecting') : t('syn.setup_key_connect') }}
+        </button>
+      </form>
+      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.setup_key_privacy') }}</p>
+      <p v-if="keyError" role="alert" class="text-xs text-red-600 dark:text-red-400" data-syn-key-error>{{ keyError }}</p>
+      <p v-if="connected" role="status" class="text-xs text-emerald-700 dark:text-emerald-400" data-syn-key-done>
+        {{ t('syn.setup_key_done', { provider: PROVIDER_NAMES[connected.provider] ?? connected.provider, model: connected.model }) }}
+      </p>
+    </section>
+
+    <details class="group" :open="kind === 'remote'">
+      <summary class="cursor-pointer text-[13px] text-gray-600 dark:text-gray-300 flex items-center gap-2">
+        <WifiOff class="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        <template v-if="kind === 'ollama'">{{ t('syn.setup_or_local') }}</template>
         <template v-else-if="kind === 'phone'">{{ t('syn.setup_phone_title') }}</template>
         <template v-else>{{ t('syn.setup_remote_title', { provider: providerName }) }}</template>
-      </p>
-    </div>
-
+      </summary>
+      <div class="mt-3">
     <template v-if="kind === 'ollama'">
       <p class="text-[13px] text-gray-600 dark:text-gray-300 leading-relaxed">{{ t('syn.setup_missing_ollama') }}</p>
       <ol class="mt-3 space-y-2 text-[13px]">
@@ -140,7 +207,7 @@ const downloadOllama = () => {
       <button
         v-if="kind === 'ollama'"
         type="button"
-        class="btn-primary"
+        class="btn-secondary"
         @click="downloadOllama"
       >
         <Download class="w-3.5 h-3.5" />
@@ -148,7 +215,7 @@ const downloadOllama = () => {
       </button>
       <button
         type="button"
-        :class="kind === 'ollama' ? 'btn-secondary' : 'btn-primary'"
+        class="btn-secondary"
         @click="emit('open-settings')"
       >
         <Settings class="w-3.5 h-3.5" />
@@ -164,5 +231,7 @@ const downloadOllama = () => {
         {{ t('syn.retry_connection') }}
       </button>
     </div>
+      </div>
+    </details>
   </div>
 </template>

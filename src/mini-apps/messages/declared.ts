@@ -129,14 +129,6 @@ export interface Instance extends Omit<Choices, 'attested' | 'mirrors'> {
   approved_at: string;
 }
 
-/** A declaration the app comes with. */
-export interface BundledView {
-  id: string;
-  name: string;
-  about: string;
-  yaml: string;
-}
-
 export interface Problem {
   code: string;
   at: string;

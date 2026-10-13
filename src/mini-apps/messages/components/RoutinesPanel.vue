@@ -250,7 +250,9 @@ const runNow = async (routine: RoutineView) => {
             <div class="min-w-0 flex-1">
               <p class="text-sm font-medium text-text dark:text-text-dark">{{ routine.name }}</p>
               <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                {{ daysInWords(routine.schedule.weekdays, t) }} · {{ routine.schedule.at }}
+                <template v-if="routine.schedule.at">{{ daysInWords(routine.schedule.weekdays, t) }} · {{ routine.schedule.at }}</template>
+                <template v-if="routine.schedule.at && routine.on_new"> · </template>
+                <template v-if="routine.on_new">{{ t('syn.routine_on_new', { what: routine.on_new }) }}</template>
                 <template v-if="routine.to_phone"> · <Smartphone class="inline w-3 h-3" aria-hidden="true" /> Telegram</template>
                 ·
                 <template v-if="routine.next_run">{{ t('syn.routine_next', { when: whenInWords(routine.next_run, locale) }) }}</template>

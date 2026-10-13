@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Send } from 'lucide-vue-next';
 import type { WritePlan, WriteRequest } from '../composables/useSynWrites';
+import { humanize } from '../../../shared/syn/toolLabel';
+import SynCard from '../../../shared/syn/SynCard.vue';
 
 /**
  * Syn's plan of sends, laid out for the person to approve.
@@ -36,14 +38,18 @@ const count = computed(() => chosen.value.size);
 </script>
 
 <template>
-  <div class="rounded-xl border border-violet-300/60 dark:border-violet-500/30 bg-violet-50/40 dark:bg-violet-500/5 p-3 space-y-3" data-test="write-plan">
-    <div class="flex items-center gap-2">
-      <Send class="w-4 h-4 text-violet-600 dark:text-violet-300" aria-hidden="true" />
-      <p class="text-sm font-medium text-text dark:text-text-dark">{{ t('syn.writes_plan_title', { n: plan.requests.length }, plan.requests.length) }}</p>
-    </div>
-    <p v-if="plan.why" class="text-xs text-gray-600 dark:text-gray-300">
-      <span class="italic">{{ t('syn.plan_why') }}</span> “{{ plan.why }}”
-    </p>
+  <SynCard
+    tone="send"
+    :icon="Send"
+    :title="t('syn.writes_plan_title', { n: plan.requests.length }, plan.requests.length)"
+    :error="error"
+    data-test="write-plan"
+  >
+    <template v-if="plan.why" #lead>
+      <p class="text-xs text-gray-600 dark:text-gray-300">
+        <span class="italic">{{ t('syn.plan_why') }}</span> “{{ plan.why }}”
+      </p>
+    </template>
 
     <ul class="space-y-2">
       <li
@@ -61,7 +67,7 @@ const count = computed(() => chosen.value.size);
             @change="toggle(r.hash, ($event.target as HTMLInputElement).checked)"
           />
           <span class="min-w-0 flex-1">
-            <span class="text-xs font-medium text-text dark:text-text-dark">{{ r.connector }} · {{ r.operation }}</span>
+            <span class="text-xs font-medium text-text dark:text-text-dark">{{ r.connector }} · {{ humanize(r.operation) }}</span>
             <span
               class="ml-2 px-1.5 py-0.5 rounded text-xs font-medium"
               :class="r.effect === 'irreversible'
@@ -74,7 +80,7 @@ const count = computed(() => chosen.value.size);
         </label>
         <dl class="pl-6 space-y-0.5 text-xs">
           <div v-for="s in r.shown" :key="s.param" class="flex gap-2 min-w-0">
-            <dt class="font-mono text-gray-500 dark:text-gray-400 shrink-0">{{ s.param }}</dt>
+            <dt class="text-gray-500 dark:text-gray-400 shrink-0">{{ humanize(s.param) }}</dt>
             <dd class="min-w-0 break-words text-text dark:text-text-dark">
               <template v-if="s.table">{{ t('syn.plan_table', { what: s.table }) }}</template>
               <template v-else>{{ s.value }}</template>
@@ -88,8 +94,7 @@ const count = computed(() => chosen.value.size);
       </li>
     </ul>
 
-    <p v-if="error" class="text-xs text-red-600 dark:text-red-400">{{ error }}</p>
-    <div class="flex items-center justify-end gap-2">
+    <template #actions>
       <button
         type="button"
         class="px-3 py-1.5 rounded-lg text-sm font-medium cursor-pointer border border-gray-200 dark:border-gray-700/50 text-text dark:text-text-dark hover:bg-gray-50 dark:hover:bg-white/5 disabled:opacity-40"
@@ -102,6 +107,6 @@ const count = computed(() => chosen.value.size);
       <button type="button" class="btn-primary" :disabled="busy || count === 0" data-test="approve-chosen" @click="emit('answer', [...chosen])">
         {{ t('syn.plan_approve', { n: count }, count) }}
       </button>
-    </div>
-  </div>
+    </template>
+  </SynCard>
 </template>

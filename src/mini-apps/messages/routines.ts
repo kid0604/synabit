@@ -12,6 +12,14 @@ export interface Routine {
   enabled: boolean;
   to_phone: boolean;
   conversation_id?: string | null;
+  /** A connected service's id: run when it brings in something new. */
+  on_new?: string | null;
+  /** `syn` when Syn wrote it from a conversation. */
+  author?: string | null;
+  /** The conversation Syn proposed it in, while it waits to be turned on. */
+  proposed_in?: string | null;
+  /** What Syn had read from outside before writing it. */
+  read_before?: string[];
 }
 
 export interface RoutineView extends Routine {

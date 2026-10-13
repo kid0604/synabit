@@ -49,7 +49,6 @@ pub mod instance;
 pub mod pick;
 pub mod http;
 pub mod declared;
-pub mod bundled;
 pub mod authoring;
 pub mod decode;
 pub mod device;

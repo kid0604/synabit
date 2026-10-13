@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import tools from '../../../../src-tauri/src/syn/tools.rs?raw';
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
-import { LABELLED_TOOLS, connectorTool, shortCount, toolLabel } from '../toolLabel';
+import { LABELLED_TOOLS, connectorTool, humanize, shortCount, toolLabel } from '../toolLabel';
 
 /**
  * Every tool the model can call has words a person reads.
@@ -59,7 +59,7 @@ describe('what a tool is doing, in words', () => {
   it('says which connector a tool is being used on', () => {
     const t = (key: string, values?: Record<string, unknown>) => `${key}:${JSON.stringify(values ?? {})}`;
     expect(toolLabel(t, 'connector__jira__search_issues')).toBe(
-      'syn.doing_connector:{"server":"jira","tool":"search_issues"}',
+      'syn.doing_connector:{"server":"jira","tool":"search issues"}',
     );
     expect(connectorTool('connector__files__read__all')).toEqual({ server: 'files', tool: 'read__all' });
     expect(connectorTool('connector__jira__')).toBeNull();
@@ -76,5 +76,11 @@ describe('what a tool is doing, in words', () => {
     expect(shortCount(950)).toBe('950');
     expect(shortCount(12_400)).toBe('12k');
     expect(shortCount(1_250_000)).toBe('1.3M');
+  });
+
+  it('reads a name made for code as words', () => {
+    expect(humanize('create_issue')).toBe('create issue');
+    expect(humanize('due-date')).toBe('due date');
+    expect(humanize('__x__y')).toBe('x y');
   });
 });

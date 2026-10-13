@@ -121,6 +121,8 @@ describe('ExtractTray', () => {
     await wrapper.find('[data-field-time]').setValue('09:30');
     await wrapper.find('[data-field-where]').setValue('Mắt Trung ương');
     await wrapper.find('[data-field-category]').setValue('health');
+    expect(wrapper.find('[data-field-amount]').exists()).toBe(false);
+    await wrapper.find('[data-ask-amount]').trigger('click');
     await wrapper.find('[data-field-amount]').setValue('300000');
     await wrapper.find('[data-add-person]').setValue('bác sĩ Long');
     await wrapper.find('[data-add-person]').trigger('keydown.enter');

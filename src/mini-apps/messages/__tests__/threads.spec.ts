@@ -23,6 +23,7 @@ import { askPhrase, capabilityLabel } from '../composables/useSynConsent';
 import choiceComposable from '../composables/useSynChoice.ts?raw';
 import choiceCard from '../components/ChoiceCard.vue?raw';
 import consentCard from '../components/ConsentCard.vue?raw';
+import synCard from '../../../shared/syn/SynCard.vue?raw';
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
 
@@ -257,7 +258,7 @@ describe('whether threads are used', () => {
 describe('the count before there is anything to count', () => {
   it('says nothing at all when no run has had a thread', () => {
     expect(source, 'the aggregate is hidden on an empty denominator')
-      .toContain('v-if="stats && stats.runs_in_a_thread"');
+      .toContain('v-if="developer && stats && stats.runs_in_a_thread"');
   });
 
   it('says nothing about a thread nothing has run in', () => {
@@ -837,9 +838,12 @@ describe('asking which one', () => {
    * that look alike teach one reflex for both.
    */
   it('does not look like the consent card, because it does not mean the same thing', () => {
-    expect(choiceCard, 'not the consent amber').not.toContain('border-amber-300');
-    expect(choiceCard, 'it wears the accent').toContain('border-accent/30');
-    expect(consentCard, 'and consent keeps its own colour').toContain('border-amber-300');
+    // The colours live in the shared frame, by tone (`SynCard`).
+    expect(choiceCard, 'not the consent amber').not.toContain('tone="ask"');
+    expect(choiceCard, 'it wears the accent').toContain('tone="choose"');
+    expect(consentCard, 'and consent keeps its own colour').toContain('tone="ask"');
+    expect(synCard).toMatch(/ask: \{\s*box: 'border-amber-300/);
+    expect(synCard).toMatch(/choose: \{\s*box: 'border-accent\/30/);
   });
 
   /** The model's pick is marked rather than hidden: it is usually right, and a

@@ -13,11 +13,11 @@
 //! host was on. Change the declaration and the approval no longer matches;
 //! change any of those and it is a new approval.
 //!
-//! File: `{vault}/.synabit/connector-instances.json`, like the other device
-//! files beside it — never synced by Synabit.
+//! Kept in the `instances` section of `{vault}/.synabit/approvals.json`, with
+//! everything else this device agreed to — never synced by Synabit. See
+//! `syn::approvals`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -116,24 +116,14 @@ pub fn stamp(m: &Manifest, c: &Choices) -> String {
     hex::encode(Sha256::digest(both.to_string().as_bytes()))
 }
 
-fn path(vault_path: &str) -> AppResult<PathBuf> {
-    let dir = std::path::Path::new(vault_path).join(".synabit");
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir.join("connector-instances.json"))
-}
-
+/// What this device approved, by connector. Kept in this device's approvals;
+/// see `syn::approvals`.
 pub fn load(vault_path: &str) -> BTreeMap<String, Instance> {
-    path(vault_path)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::Instances)
 }
 
 fn save(vault_path: &str, all: &BTreeMap<String, Instance>) -> AppResult<()> {
-    let p = path(vault_path)?;
-    crate::path_utils::write_atomic(&p, serde_json::to_string_pretty(all)?.as_bytes())?;
-    Ok(())
+    crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::Instances, all)
 }
 
 /// Agree to `m` on this device, with these choices.

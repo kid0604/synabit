@@ -44,12 +44,7 @@ const view = computed(() => declared.declared.value.find((v) => v.manifest?.id =
 const m = computed(() => view.value?.manifest ?? null);
 const lang = computed(() => String(locale.value).slice(0, 2));
 
-/** A library connector's name in the person's language; any other's as written. */
-const title = computed(() => {
-  if (!m.value) return props.connectorId;
-  const key = `syn.library_${m.value.id}_name`;
-  return m.value.provenance === 'bundled' && te(key) ? t(key) : m.value.name;
-});
+const title = computed(() => m.value?.name ?? props.connectorId);
 
 const inputs = computed<DeclaredInput[]>(() => (m.value ? inputsOf(m.value) : []));
 const values = ref<Record<string, string>>({});

@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { logger } from '../../../utils/logger';
 import { errorText } from '../../../shared/errorText';
-import type { BundledView, Choices, Connected, DeclaredView, Problem } from '../declared';
+import type { Choices, Connected, DeclaredView, Problem } from '../declared';
 
 /**
  * Declared connectors, as the settings screen drives them. Every command
@@ -41,11 +41,7 @@ export function useSynDeclared(vaultPath: () => string) {
   const save = async (yaml: string, about: string | null = null) =>
     take(await run('save a declaration', () => invoke<DeclaredView[]>('syn_manifest_save', { vaultPath: vaultPath(), yaml, about })));
 
-  const bundled = ref<BundledView[]>([]);
-  const loadBundled = async () => {
-    const found = await run('list the bundled declarations', () => invoke<BundledView[]>('syn_manifest_bundled'));
-    if (found) bundled.value = found;
-  };
+
 
   const approve = async (manifestId: string, choices: Choices, secret: string) =>
     take(
@@ -95,5 +91,5 @@ export function useSynDeclared(vaultPath: () => string) {
     return out;
   };
 
-  return { declared, bundled, busy, error, load, loadBundled, validate, save, approve, remove, peekCertificate, device, connect };
+  return { declared, busy, error, load, validate, save, approve, remove, peekCertificate, device, connect };
 }

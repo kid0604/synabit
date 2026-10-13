@@ -11,9 +11,10 @@
 //!   through `SecretManager`'s slot map like every API key. Never in the JSON:
 //!   that file syncs, opens in any editor, and on a vault kept in git gets
 //!   committed. See `slot`.
-//! * **`{vault}/.synabit/connectors-trusted.json`** — which servers *this computer*
-//!   has agreed to connect to, as they were when it agreed. A dotfile, which
-//!   sync skips, for the reason `consent.json` is one.
+//! * **`servers` in `{vault}/.synabit/approvals.json`** — which servers *this
+//!   computer* has agreed to connect to, as they were when it agreed. A
+//!   dotfile, which sync skips, for the reason consent is kept there too. See
+//!   `syn::approvals`.
 //!
 //! # Why the third one exists
 //!
@@ -275,24 +276,12 @@ pub fn problem(server: &Server, others: &[Server]) -> Option<String> {
 //  WHAT THIS COMPUTER AGREED TO
 // ═══════════════════════════════════════════════════════════════
 
-fn trust_path(vault_path: &str) -> AppResult<PathBuf> {
-    let dir = std::path::Path::new(vault_path).join(".synabit");
-    std::fs::create_dir_all(&dir)?;
-    Ok(moved_from(dir.join("mcp-trusted.json"), dir.join("connectors-trusted.json")))
-}
-
 fn trust_map(vault_path: &str) -> HashMap<String, String> {
-    trust_path(vault_path)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::Servers)
 }
 
 fn save_trust(vault_path: &str, map: &HashMap<String, String>) -> AppResult<()> {
-    let path = trust_path(vault_path)?;
-    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(map)?.as_bytes())?;
-    Ok(())
+    crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::Servers, map)
 }
 
 /// Whether this computer agreed to this server exactly as it now is.
@@ -332,24 +321,12 @@ struct ReadOnlyPin {
     tools: Vec<String>,
 }
 
-fn pin_path(vault_path: &str) -> AppResult<PathBuf> {
-    let dir = std::path::Path::new(vault_path).join(".synabit");
-    std::fs::create_dir_all(&dir)?;
-    Ok(moved_from(dir.join("mcp-read-only.json"), dir.join("connectors-read-only.json")))
-}
-
 fn pins(vault_path: &str) -> HashMap<String, ReadOnlyPin> {
-    pin_path(vault_path)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
+    crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::ReadOnly)
 }
 
 fn save_pins(vault_path: &str, map: &HashMap<String, ReadOnlyPin>) -> AppResult<()> {
-    let path = pin_path(vault_path)?;
-    crate::path_utils::write_atomic(&path, serde_json::to_string_pretty(map)?.as_bytes())?;
-    Ok(())
+    crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::ReadOnly, map)
 }
 
 /// Of the tools a server now claims only read, the ones believed. See above.
@@ -493,7 +470,8 @@ mod tests {
         assert!(!trusted_here(vault, &server), "turned into a program: asks again");
 
         assert!(
-            !dir.path().join("Syn/connectors-trusted.json").exists() && dir.path().join(".synabit/connectors-trusted.json").exists(),
+            !dir.path().join("Syn/connectors-trusted.json").exists()
+                && dir.path().join(".synabit").join(crate::syn::approvals::FILE).exists(),
             "and the agreement is in the folder that does not sync"
         );
     }
@@ -588,7 +566,9 @@ mod tests {
         assert_eq!(load(vault).servers.len(), 1, "the list carried over");
         assert!(trusted_here(vault, &server), "and this computer's agreement");
         assert!(dir.path().join("Syn/connectors.json").exists() && !dir.path().join("Syn/mcp.json").exists());
-        assert!(dir.path().join(".synabit/connectors-trusted.json").exists());
+        // Moved into this device's approvals, and the old file put away.
+        assert!(dir.path().join(".synabit").join(crate::syn::approvals::FILE).exists());
+        assert!(!dir.path().join(".synabit/mcp-trusted.json").exists());
     }
 
     #[test]

@@ -632,14 +632,6 @@ pub fn find(db: &crate::db::DbBridge, vault_path: &str, need: &str) -> Value {
         let s = score(&need, &format!("{} {} {} {}", m.id, m.name, m.base_url, ops.join(" ")));
         found.push((s, json!({ "kind": "declared", "id": m.id, "name": m.name, "host": url::Url::parse(&m.base_url).ok().and_then(|u| u.host_str().map(str::to_string)), "operations": ops, "how": how })));
     }
-    for b in super::bundled::all() {
-        if in_vault.contains(b.id) {
-            continue;
-        }
-        let s = score(&need, &format!("{} {} {} {}", b.id, b.name, b.about, b.yaml));
-        found.push((s, json!({ "kind": "bundled", "id": b.id, "name": b.name, "about": b.about,
-            "how": format!("Ships with Synabit: connector_connect {{\"id\":\"{}\"}} adds it for the user to approve; no draft needed.", b.id) })));
-    }
     for server in super::provider::catalog_of(vault_path) {
         let Some(first) = server.tools.first() else { continue };
         let slug = super::provider::server_slug_of(&first.name).unwrap_or_default().to_string();
@@ -659,12 +651,6 @@ pub fn find(db: &crate::db::DbBridge, vault_path: &str, need: &str) -> Value {
     } else {
         json!({ "matched": matched, "note": "Use one of these rather than drafting a new one, unless none does what the user asked." })
     }
-}
-
-/// The declaration a bundled connector is filed as.
-pub fn bundled_note(id: &str) -> Option<(String, String)> {
-    let b = super::bundled::all().into_iter().find(|b| b.id == id)?;
-    Some((b.name.to_string(), format!("{}\n\n{}\n{}\n```\n", b.about.trim(), manifest::FENCE, b.yaml.trim())))
 }
 
 /// Whether a host is this machine or a private network: a draft that reaches

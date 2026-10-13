@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ChevronDown, ChevronRight, MessageSquarePlus } from 'lucide-vue-next';
 import { useSynDeclared } from '../composables/useSynDeclared';
 import { choicesFrom, hostOf, inputsOf, sends, type DeclaredView } from '../declared';
 import { askSynWith } from '../../../shared/syn/selectionAsk';
 import ConnectCard from './ConnectCard.vue';
+import { confirmDelete } from '../../../composables/useConfirmDelete';
 import SynConnectorSettings from './SynConnectorSettings.vue';
 
 /**
@@ -17,12 +18,11 @@ import SynConnectorSettings from './SynConnectorSettings.vue';
  * Advanced. See `docs/syn-connectors-simple-2026-10-12.md`.
  */
 const props = defineProps<{ vaultPath: string }>();
-const { t, te } = useI18n();
-const { declared, bundled, busy, error, load, loadBundled, validate, save, approve, remove } = useSynDeclared(() => props.vaultPath);
+const { t } = useI18n();
+const { declared, busy, error, load, validate, save, approve, remove } = useSynDeclared(() => props.vaultPath);
 
 onMounted(() => {
   void load();
-  void loadBundled();
 });
 
 /** The connection whose card is open. */
@@ -35,8 +35,7 @@ const idOf = (v: DeclaredView) => v.manifest?.id ?? v.node_id;
 const name = (v: DeclaredView) => {
   const m = v.manifest;
   if (!m) return v.title;
-  const key = `syn.library_${m.id}_name`;
-  return m.provenance === 'bundled' && te(key) ? t(key) : m.name;
+  return m.name;
 };
 const source = (v: DeclaredView) => {
   const m = v.manifest;
@@ -78,14 +77,16 @@ const kept = (v: DeclaredView) => {
   return ran.ok ? t('syn.connections_kept', { when }) : `${t('syn.state_failing')}: ${ran.said ?? ''}`;
 };
 
-/** The library, less what is already in the vault. */
-const library = computed(() => bundled.value.filter((b) => !declared.value.some((d) => d.manifest?.id === b.id)));
-const libName = (id: string, fallback: string) => (te(`syn.library_${id}_name`) ? t(`syn.library_${id}_name`) : fallback);
-const libAbout = (id: string, fallback: string) => (te(`syn.library_${id}_about`) ? t(`syn.library_${id}_about`) : fallback);
+/** A connection in use: its card only to change the key, not to connect again. */
+const changingKey = ref<string | null>(null);
+const hasKey = (v: DeclaredView) => !!v.manifest && inputsOf(v.manifest).some((i) => i.kind === 'secret');
 
-const add = async (id: string) => {
-  const b = bundled.value.find((x) => x.id === id);
-  if (b && (await save(b.yaml, b.about))) opened.value = id;
+/** Stop using it: approval, key and declaration go — the last to the trash. */
+const stop = async (v: DeclaredView) => {
+  if (!v.manifest) return;
+  if (!(await confirmDelete({ name: name(v), toTrash: true }))) return;
+  await remove(v.manifest.id);
+  opened.value = null;
 };
 
 const toggleKeep = async (v: DeclaredView, on: boolean) => {
@@ -130,41 +131,45 @@ const keepPasted = async () => {
           <component :is="opened === idOf(v) ? ChevronDown : ChevronRight" class="w-4 h-4 text-gray-500 shrink-0" aria-hidden="true" />
         </button>
         <div v-if="opened === idOf(v)" class="px-3 pb-3 space-y-2">
-          <ConnectCard v-if="v.manifest" :vault-path="vaultPath" :connector-id="v.manifest.id" @done="opened = null; load()" />
-          <ul v-else class="text-xs text-red-600 dark:text-red-400 space-y-0.5">
-            <li v-for="p in v.problems" :key="p.code + p.at">{{ p.said }}</li>
-          </ul>
-          <div v-if="v.standing.state === 'approved'" class="flex flex-wrap items-center gap-3 text-xs">
-            <label v-if="v.manifest?.mirrors?.length" class="flex items-center gap-1.5 cursor-pointer text-text dark:text-text-dark">
+          <!-- In use: what it does, and the two things to do about it — change
+               the key, or stop. The connect card only to change the key. -->
+          <template v-if="v.standing.state === 'approved' && v.manifest">
+            <p class="text-xs text-gray-600 dark:text-gray-300">{{ t('syn.connections_in_use', { where: where(v) }) }}</p>
+            <label v-if="v.manifest.mirrors?.length" class="flex items-center gap-1.5 cursor-pointer text-xs text-text dark:text-text-dark">
               <input type="checkbox" class="accent-accent" :checked="!!v.instance?.mirrors?.length" data-test="keep" @change="toggleKeep(v, ($event.target as HTMLInputElement).checked)" />
               {{ t('syn.connections_keep') }}
             </label>
-            <button type="button" class="ml-auto text-red-600 dark:text-red-400 hover:underline cursor-pointer" :disabled="busy" data-test="stop" @click="v.manifest && remove(v.manifest.id)">
-              {{ t('syn.connections_stop') }}
-            </button>
-          </div>
+            <ConnectCard v-if="changingKey === idOf(v)" :vault-path="vaultPath" :connector-id="v.manifest.id" @done="changingKey = null; load()" />
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <button v-if="hasKey(v) && changingKey !== idOf(v)" type="button" class="btn-secondary" data-test="change-key" @click="changingKey = idOf(v)">
+                {{ t('syn.connections_change_key') }}
+              </button>
+              <button
+                type="button"
+                class="px-3 py-1.5 rounded-lg text-sm font-medium border border-red-300 dark:border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 cursor-pointer disabled:opacity-40"
+                :disabled="busy"
+                data-test="stop"
+                @click="stop(v)"
+              >
+                {{ t('syn.connections_stop') }}
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <ConnectCard v-if="v.manifest" :vault-path="vaultPath" :connector-id="v.manifest.id" @done="opened = null; load()" />
+            <ul v-else class="text-xs text-red-600 dark:text-red-400 space-y-0.5">
+              <li v-for="p in v.problems" :key="p.code + p.at">{{ p.said }}</li>
+            </ul>
+            <div class="flex justify-end">
+              <button type="button" class="text-xs text-gray-500 dark:text-gray-400 hover:underline cursor-pointer" :disabled="busy" data-test="remove" @click="stop(v)">
+                {{ t('syn.connections_remove') }}
+              </button>
+            </div>
+          </template>
         </div>
       </li>
     </ul>
     <p v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.connections_none') }}</p>
-
-    <div v-if="library.length" class="space-y-1.5">
-      <p class="text-xs font-medium text-gray-600 dark:text-gray-300">{{ t('syn.connections_library') }}</p>
-      <div class="grid gap-2 sm:grid-cols-2">
-        <button
-          v-for="b in library"
-          :key="b.id"
-          type="button"
-          class="text-left rounded-lg bg-gray-50 dark:bg-white/5 px-3 py-2 hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer"
-          :data-test="`library-${b.id}`"
-          :disabled="busy"
-          @click="add(b.id)"
-        >
-          <p class="text-sm text-text dark:text-text-dark">{{ libName(b.id, b.name) }}</p>
-          <p class="text-xs text-gray-500 dark:text-gray-400">{{ libAbout(b.id, b.about) }}</p>
-        </button>
-      </div>
-    </div>
 
     <p v-if="error" class="text-xs text-red-600 dark:text-red-400 break-words">{{ error }}</p>
 

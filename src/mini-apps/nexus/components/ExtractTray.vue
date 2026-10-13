@@ -126,10 +126,19 @@ interface Editing {
 const editing = ref<string | null>(null);
 const form = ref<Editing | null>(null);
 const adding = ref('');
+/**
+ * How much it cost is asked only of what is about money: most moments — a
+ * walk, a feeling, the weather — have no amount, and an empty Amount box on
+ * every one of them is noise. It is there when the reading found one or the
+ * kind is spending, and one tap away otherwise.
+ */
+const amountAsked = ref(false);
+const showsAmount = computed(() => amountAsked.value || form.value?.category === 'spending');
 
 const startEditing = (p: Proposal) => {
     editing.value = p.id;
     adding.value = '';
+    amountAsked.value = !!p.amount;
     form.value = {
         title: p.title,
         from: p.happened_from,
@@ -584,9 +593,12 @@ const details = (p: Proposal) =>
                                             @blur="addKind()"
                                         />
                                     </div>
-                                    <div class="flex flex-wrap gap-1">
-                                        <input v-model="form.amount" data-field-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
-                                        <input v-model="form.unit" data-field-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        <template v-if="showsAmount">
+                                            <input v-model="form.amount" data-field-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                            <input v-model="form.unit" data-field-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
+                                        </template>
+                                        <button v-else type="button" data-ask-amount class="h-6 px-1 text-xs text-gray-500 hover:text-accent dark:text-gray-400 dark:hover:text-accent-dark" @click="amountAsked = true">+ {{ $t('nexus.extract_field_amount') }}</button>
                                         <input v-model="form.about" data-field-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-border-subtle-dark dark:bg-[#1c1c1e] dark:text-gray-100" />
                                     </div>
                                 </div>

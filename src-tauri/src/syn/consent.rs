@@ -12,7 +12,7 @@
 //!
 //! # Where consent is kept, and why it does not travel
 //!
-//! `{vault}/.synabit/consent.json`. A dotfile, which `sync/utils.rs` skips and
+//! The `consent` section of `{vault}/.synabit/approvals.json` (`syn::approvals`). A dotfile, which `sync/utils.rs` skips and
 //! `is_in_unscanned_dir` skips, and both of those are load-bearing rather than
 //! incidental: **allowing something on a laptop is not allowing it on a
 //! phone.** A grant is a judgement made in one place, about one device, with
@@ -280,36 +280,18 @@ pub struct Ledger {
     pub grants: Vec<Grant>,
 }
 
-fn ledger_path(vault_path: &str) -> AppResult<std::path::PathBuf> {
-    let dir = std::path::Path::new(vault_path).join(".synabit");
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| AppError::General(format!("Failed to create .synabit: {e}")))?;
-    Ok(dir.join("consent.json"))
-}
-
 /// Read what has been decided. An unreadable ledger is an empty one.
 ///
 /// Empty, and therefore asking again — which is the safe direction. A ledger
 /// that failed to parse and was treated as "everything allowed" would turn a
-/// corrupt file into a silent grant.
+/// corrupt file into a silent grant. Kept in this device's approvals; see
+/// `syn::approvals`.
 pub fn load(vault_path: &str) -> Ledger {
-    let Ok(path) = ledger_path(vault_path) else {
-        return Ledger::default();
-    };
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return Ledger::default();
-    };
-    serde_json::from_str(&content).unwrap_or_else(|e| {
-        log::warn!("[Syn] Consent ledger is unreadable, asking again: {e}");
-        Ledger::default()
-    })
+    crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::Consent)
 }
 
 fn save(vault_path: &str, ledger: &Ledger) -> AppResult<()> {
-    let path = ledger_path(vault_path)?;
-    let bytes = serde_json::to_string_pretty(ledger)?;
-    crate::path_utils::write_atomic(&path, bytes.as_bytes())
-        .map_err(|e| AppError::General(format!("Failed to write the consent ledger: {e}")))
+    crate::syn::approvals::write(vault_path, crate::syn::approvals::Section::Consent, ledger)
 }
 
 /// What to do about a capability, right now.
@@ -554,7 +536,8 @@ mod tests {
         record(&vault, &Capability::NetRead { domain: "example.com".into() }, Answer::Always, at(NOW))
             .expect("recorded");
 
-        let path = ledger_path(&vault).expect("a path");
+        let path = std::path::Path::new(&vault).join(".synabit").join(crate::syn::approvals::FILE);
+        assert!(path.exists());
         let relative = path
             .strip_prefix(&vault)
             .expect("inside the vault")
@@ -793,7 +776,8 @@ mod tests {
     #[test]
     fn an_unreadable_ledger_is_an_empty_one() {
         let (_dir, vault) = vault();
-        let path = ledger_path(&vault).expect("a path");
+        let path = std::path::Path::new(&vault).join(".synabit").join(crate::syn::approvals::FILE);
+        std::fs::create_dir_all(path.parent().unwrap()).expect("dir");
         std::fs::write(&path, "{ this is not json").expect("written");
 
         assert!(load(&vault).grants.is_empty());

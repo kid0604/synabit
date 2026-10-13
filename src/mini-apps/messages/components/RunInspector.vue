@@ -39,7 +39,14 @@ const props = defineProps<{
    * `null` for the ordinary case — somebody pressed the inspector button and
    * wants the runs.
    */
-  initialTab?: 'memory' | 'skills' | null;
+  initialTab?: 'memory' | 'skills' | 'permissions' | null;
+  /**
+   * Shown inside a page rather than as a drawer over it: no overlay, no
+   * header of its own, one tab — the page picks which. The Syn page uses it
+   * for what Syn remembers, its skills and its permissions, which belong to
+   * the person, while the drawer stays for reading what a run did.
+   */
+  embedded?: boolean;
   /**
    * The id to scroll to and ring, when one was named.
    *
@@ -506,22 +513,22 @@ onMounted(() => {
       if (props.initialRun) void openRun(props.initialRun);
     });
   }
-  window.addEventListener('keydown', onKeydown);
+  if (!props.embedded) window.addEventListener('keydown', onKeydown);
 });
 onUnmounted(() => window.removeEventListener('keydown', onKeydown));
 </script>
 
 <template>
-  <Teleport to="body">
-    <div class="fixed inset-0 z-[998] bg-black/40 backdrop-blur-sm" @click="emit('close')" />
+  <Teleport to="body" :disabled="embedded">
+    <div v-if="!embedded" class="fixed inset-0 z-[998] bg-black/40 backdrop-blur-sm" @click="emit('close')" />
 
     <div
-      class="fixed right-0 top-0 bottom-0 z-[999] w-[860px] max-w-full flex flex-col
-             bg-white dark:bg-[#13141a] border-l border-gray-200 dark:border-gray-800/60
-             shadow-2xl shadow-black/20"
+      :class="embedded
+        ? 'flex-1 flex flex-col min-h-0'
+        : 'fixed right-0 top-0 bottom-0 z-[999] w-[860px] max-w-full flex flex-col bg-white dark:bg-[#13141a] border-l border-gray-200 dark:border-gray-800/60 shadow-2xl shadow-black/20'"
     >
       <!-- Header -->
-      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800/60">
+      <div v-if="!embedded" class="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800/60">
         <div class="flex items-center gap-4">
           <h2 class="text-lg font-semibold text-text dark:text-text-dark">{{ t('syn.inspector') }}</h2>
           <div class="flex gap-1 p-0.5 rounded-lg bg-gray-100 dark:bg-gray-800/60">

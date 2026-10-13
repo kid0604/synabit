@@ -77,6 +77,9 @@ interface Form {
 }
 const form = ref<Form | null>(null);
 const adding = ref('');
+/** Amount only where it is about money, as in the extract tray: one tap away otherwise. */
+const amountAsked = ref(false);
+const showsAmount = computed(() => amountAsked.value || form.value?.category === 'spending');
 
 const load = async (path: string) => {
     reading.value = true;
@@ -84,6 +87,7 @@ const load = async (path: string) => {
     try {
         const found = await invoke<MomentDetail>('timeline_moment', { vaultPath: props.vaultPath, path });
         moment.value = found;
+        amountAsked.value = !!found.amount;
         form.value = {
             title: found.title,
             from: found.happened_from,
@@ -260,9 +264,12 @@ const letGo = async () => {
                 </select>
             </div>
 
-            <div class="flex flex-wrap gap-1">
-                <input v-model="form.amount" data-moment-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
-                <input v-model="form.unit" data-moment-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+            <div class="flex flex-wrap items-center gap-1">
+                <template v-if="showsAmount">
+                    <input v-model="form.amount" data-moment-amount type="number" min="0" :placeholder="$t('nexus.extract_field_amount')" :aria-label="$t('nexus.extract_field_amount')" class="h-6 w-24 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                    <input v-model="form.unit" data-moment-unit type="text" :aria-label="$t('nexus.extract_field_unit')" class="h-6 w-14 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
+                </template>
+                <button v-else type="button" data-ask-amount class="h-6 px-1 text-xs text-gray-500 hover:text-accent dark:text-gray-400 dark:hover:text-accent-dark" @click="amountAsked = true">+ {{ $t('nexus.extract_field_amount') }}</button>
                 <input v-model="form.about" data-moment-about type="text" :placeholder="$t('nexus.extract_field_about')" :aria-label="$t('nexus.extract_field_about')" class="h-6 min-w-0 flex-1 rounded border border-gray-200 bg-white px-1 text-xs dark:border-[#3a3a3c] dark:bg-[#1c1c1e] dark:text-gray-100" />
             </div>
 
