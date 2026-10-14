@@ -212,6 +212,7 @@ pub fn from_openapi(
             // A GET reads; anything else sends, until the person says otherwise.
             effect: if manifest::effect_ceiling(method) == Effect::Read { Effect::Read } else { Effect::Write },
             call: Call { method: method.to_ascii_uppercase(), path: path_t, query, headers: Default::default(), json: json_body, form: Default::default(), body: None },
+            command: Vec::new(),
             params,
             paginate: None,
             result: ResultSpec { each: "$".into(), ..Default::default() },
@@ -324,6 +325,31 @@ mod tests {
         let listed = list(&spec());
         let keys: Vec<&str> = listed.iter().map(|l| l.key.as_str()).collect();
         assert!(keys.contains(&"GET /tasks") && keys.contains(&"POST /tasks") && keys.contains(&"POST /tasks/{id}/close"), "{keys:?}");
+    }
+
+    /// Asked for one more command, the model drafts that command alone; the
+    /// ones the connector had stay, unless it says to drop them.
+    #[test]
+    fn a_redraft_adds_to_what_was_there() {
+        let pi = |ops: &str| {
+            manifest::parse(&format!(
+                "Pi.\n\n```connector\nid: pi\nname: Pi\ntransport: ssh\nbase_url: \"{{{{input.host}}}}\"\nauth: {{ type: ssh, secret: login }}\ninputs:\n  - {{ name: host, kind: address, label: {{ en: Address }} }}\noperations:\n{ops}```\n"
+            ))
+            .expect("reads")
+        };
+        let op = |name: &str, cmd: &str| format!("  - name: {name}\n    description: {name}\n    effect: read_attested\n    command: [{cmd}]\n");
+        let before = pi(&(op("hostname", "hostname") + op("uptime", "uptime").as_str()));
+
+        let mut m = pi(&op("disk", "df, -h"));
+        assert_eq!(keep_operations(&mut m, &before, &[]), ["hostname", "uptime"]);
+        let names: Vec<&str> = m.operations.iter().map(|o| o.name.as_str()).collect();
+        assert_eq!(names, ["disk", "hostname", "uptime"]);
+
+        // A name in both is the new draft's; a dropped one goes.
+        let mut m = pi(&op("uptime", "uptime, -p"));
+        assert_eq!(keep_operations(&mut m, &before, &["hostname"]), Vec::<String>::new());
+        assert_eq!(m.operations.len(), 1);
+        assert_eq!(m.operations[0].command, ["uptime", "-p"]);
     }
 
     /// The model chooses; Rust writes. What it writes reads, and has no problems.
@@ -556,6 +582,44 @@ pub async fn draft<R: tauri::Runtime>(ctx: &crate::syn::tools::ToolContext<'_, R
         }
     }
     m.id = id.to_string();
+    // A machine is one connector. Asked to stop a process on the Pi it already
+    // reached, the model drafted `raspberry_pi_stop` beside `raspberry_pi_ssh`,
+    // and the person got an empty card asking for the Pi's address and
+    // password all over again (2026-10-13). A second ssh connector is drafted
+    // only when the model says it is another machine.
+    if existing.is_none() && m.transport == manifest::Transport::Ssh && args.get("new_machine").and_then(Value::as_bool) != Some(true) {
+        let machines: Vec<Value> = {
+            let db = ctx.db.lock().unwrap_or_else(|e| e.into_inner());
+            manifest::all(&db).unwrap_or_default()
+        }
+        .into_iter()
+        .filter_map(|f| f.manifest.ok())
+        .filter(|o| o.transport == manifest::Transport::Ssh && o.provenance == Provenance::Syn)
+        .map(|o| json!({ "id": o.id, "name": o.name, "operations": o.operations.iter().map(|op| op.name.clone()).collect::<Vec<_>>() }))
+        .collect();
+        if !machines.is_empty() {
+            return Drafted {
+                content: json!({
+                    "error": "A machine reached over ssh is one connector, and these already exist. To add a command to one of them, call connector_draft again with its id and name and only the new operation — what it has is kept. Only if the user means a different machine, call again with `new_machine: true`.",
+                    "ssh_connectors": machines,
+                }),
+                read_spec,
+            };
+        }
+    }
+    // A draft over one Syn already wrote adds to it. Asked for disk usage, the
+    // model wrote a declaration with `df -h` alone, and the Pi's hostname and
+    // uptime were gone; asked about a service next, `df -h` went too
+    // (2026-10-13). What it means to take away it names in `drop`.
+    let dropped: Vec<&str> = args
+        .get("drop")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let kept = match existing.as_ref().and_then(|f| f.manifest.as_ref().ok()) {
+        Some(before) => keep_operations(&mut m, before, &dropped),
+        None => Vec::new(),
+    };
     let problems = check(&m, said, spec_url);
     if !problems.is_empty() {
         return Drafted { content: said_problems(&problems), read_spec };
@@ -585,10 +649,25 @@ pub async fn draft<R: tauri::Runtime>(ctx: &crate::syn::tools::ToolContext<'_, R
                 "does": format!("{} {}", o.call.method, o.call.path),
                 "sends": o.effect >= Effect::Write,
             })).collect::<Vec<_>>(),
+            "kept_from_before": kept,
             "note": "Drafted, not usable yet. Call connector_connect with this id so the user can approve it.",
         }),
         read_spec,
     }
+}
+
+/// Carry into `m` the operations of `before` it does not name, except those in
+/// `dropped`; a name in both is the new draft's. Returns what was carried.
+fn keep_operations(m: &mut Manifest, before: &Manifest, dropped: &[&str]) -> Vec<String> {
+    let mut kept = Vec::new();
+    for op in &before.operations {
+        if dropped.contains(&op.name.as_str()) || m.operations.iter().any(|o| o.name == op.name) {
+            continue;
+        }
+        kept.push(op.name.clone());
+        m.operations.push(op.clone());
+    }
+    kept
 }
 
 pub const FIND_TOOL: &str = "connector_find";
@@ -699,6 +778,7 @@ pub async fn try_once(m: &Manifest, op_name: &str, args: &Value, said: &[String]
         mirrors: Default::default(),
         folder: None,
         inputs: Default::default(),
+        operations: Default::default(),
         approved: "a try".into(),
         approved_at: String::new(),
     };
@@ -725,6 +805,10 @@ pub async fn try_once(m: &Manifest, op_name: &str, args: &Value, said: &[String]
 /// `transport: { type: http }` block, `method` beside `call`, until it ran out
 /// of rounds.
 pub const EXAMPLE: &str = "id: rates\nname: Rates\nbase_url: https://api.example.com/v1\nauth: { type: none }   # or { type: bearer, secret: rates_token }\noperations:\n  - name: on_date\n    description: Rates on one day.\n    effect: read          # read | write | irreversible\n    call: { method: GET, path: \"/{{date}}\", query: { from: \"{{from}}\" } }\n    params:\n      date: { required: true, description: \"YYYY-MM-DD\" }\n      from: { description: \"Currency code\" }\n    result: { each: \"$\" }  # or \"$.items[*]\"; the rows\n";
+
+/// The same for a machine reached over SSH: the address and the login typed
+/// on the card, one command per thing to do.
+pub const SSH_EXAMPLE: &str = "id: pi\nname: Raspberry Pi\ntransport: ssh\nbase_url: \"{{input.host}}\"\nauth: { type: ssh, secret: login }\ninputs:\n  - { name: host, kind: address, label: { en: Address, vi: Địa chỉ }, example: \"ssh://pi@raspberrypi.local\" }\n  - { name: login, kind: secret, label: { en: Password or private key, vi: Mật khẩu hoặc khoá riêng } }\noperations:\n  - name: restart_service\n    description: Restart one service.\n    effect: write         # read_attested for one that only looks\n    command: [sudo, systemctl, restart, \"{{unit}}\"]\n    params:\n      unit: { required: true, description: \"The service, e.g. nginx\" }\n";
 
 fn placeholders_in(v: &Value, out: &mut Vec<String>) {
     match v {
@@ -794,9 +878,16 @@ pub fn normalize(mut m: Value, args: &Value) -> Value {
     // Who wrote it is set after, never read from here.
     top.remove("provenance");
 
+    let ssh = top.get("transport").and_then(Value::as_str) == Some("ssh");
     if let Some(ops) = top.get_mut("operations").and_then(Value::as_array_mut) {
         for op in ops.iter_mut() {
             let Some(o) = op.as_object_mut() else { continue };
+            // An ssh operation is a command: written as one string, it is
+            // split into its words; nothing is guessed about a call.
+            if ssh || o.contains_key("command") {
+                normalize_command(o);
+                continue;
+            }
             if let Some(Value::String(c)) = o.get("call").cloned() {
                 let (method, path) = c.trim().split_once(' ').unwrap_or(("GET", c.trim()));
                 o.insert("call".into(), json!({ "method": method, "path": path.trim() }));
@@ -843,6 +934,38 @@ pub fn normalize(mut m: Value, args: &Value) -> Value {
     m
 }
 
+/// An ssh operation as a model writes it: `command: "df -h {x}"` as words,
+/// `{x}` as `{{x}}`, a missing effect as a send, missing params for the
+/// placeholders. A command written as one string is split at spaces only —
+/// quoting is not read, so `"a b"` stays two words and the card shows them.
+fn normalize_command(o: &mut serde_json::Map<String, Value>) {
+    if let Some(Value::String(line)) = o.get("command").cloned() {
+        o.insert("command".into(), json!(line.split_whitespace().collect::<Vec<_>>()));
+    }
+    let mut command = o.get("command").cloned().unwrap_or_else(|| json!([]));
+    doubled_in(&mut command);
+    let mut wanted = Vec::new();
+    placeholders_in(&command, &mut wanted);
+    o.insert("command".into(), command);
+    if !o.contains_key("description") {
+        let d = o.get("summary").cloned().or_else(|| o.get("name").cloned()).unwrap_or(json!(""));
+        o.insert("description".into(), d);
+    }
+    o.remove("summary");
+    o.entry("effect").or_insert(json!("write"));
+    let params = o.entry("params").or_insert_with(|| json!({}));
+    if let Some(p) = params.as_object_mut() {
+        for v in p.values_mut() {
+            if let Value::String(t) = v {
+                *v = json!({ "type": t });
+            }
+        }
+        for name in wanted.into_iter().filter(|n| !n.starts_with("input.")) {
+            p.entry(name).or_insert_with(|| json!({ "required": true }));
+        }
+    }
+}
+
 /// What `yaml` in `connector_draft` holds, read: a declaration, made
 /// readable where it is only written differently, or — for a model that
 /// pasted the service's OpenAPI instead — that spec, imported as a spec is.
@@ -855,7 +978,7 @@ pub fn read_written(text: &str, args: &Value) -> Result<Written, manifest::Probl
     let raw: Value = serde_yaml::from_str(text).map_err(|e| manifest::Problem {
         code: "not_readable",
         at: String::new(),
-        said: format!("not YAML: {e}. The format:\n{EXAMPLE}"),
+        said: format!("not YAML: {e}. The format:\n{EXAMPLE}\nFor a machine reached over SSH:\n{SSH_EXAMPLE}"),
     })?;
     if raw.get("openapi").is_some() || raw.get("swagger").is_some() || raw.get("paths").is_some() {
         return Ok(Written::Spec(raw));
@@ -863,7 +986,7 @@ pub fn read_written(text: &str, args: &Value) -> Result<Written, manifest::Probl
     let shaped = serde_yaml::to_string(&normalize(raw, args)).map_err(|e| manifest::Problem { code: "not_readable", at: String::new(), said: e.to_string() })?;
     manifest::parse_yaml(&shaped).map(Written::Declaration).map_err(|mut p| {
         if p.code == "not_readable" {
-            p.said = format!("{}. The format:\n{EXAMPLE}", p.said);
+            p.said = format!("{}. The format:\n{EXAMPLE}\nFor a machine reached over SSH:\n{SSH_EXAMPLE}", p.said);
         }
         p
     })

@@ -100,7 +100,7 @@ const forget = async (memory: Memory) => {
 
 const {
   ordered: orderedSkills, error: skillError, trials, trialling, recipeProblems,
-  load: loadSkills, setEnabled, usageOf, trial, create: createSkill, decideRevision,
+  load: loadSkills, setEnabled, useHere, usageOf, trial, create: createSkill, decideRevision,
   save: saveSkill,
 } = useSynSkills(() => props.vaultPath);
 
@@ -1078,7 +1078,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown));
                      text-text dark:text-text-dark whitespace-pre-wrap overflow-x-auto"
             >{{ skill.body.trim() }}</pre>
 
+            <p v-if="skill.waiting_here" class="mt-2 text-xs text-amber-600" data-test="skill-waiting-here">
+              {{ t('syn.skill_waiting_here') }}
+            </p>
             <div class="mt-3 flex gap-2">
+              <button
+                v-if="skill.waiting_here"
+                class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg
+                       bg-accent text-white hover:bg-accent/90"
+                data-test="skill-use-here"
+                @click="useHere(skill)"
+              >
+                {{ t('syn.skill_use_here') }}
+              </button>
               <button
                 v-if="editingSkill !== skill.id"
                 class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg

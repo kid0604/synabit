@@ -75,7 +75,7 @@ async fn harness_runs_the_product_path() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
         checks: vec![
             Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) },
             Check::Called("update_node"),
@@ -103,7 +103,7 @@ async fn saying_done_is_not_doing_it() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
         checks: vec![Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) }],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
@@ -134,7 +134,7 @@ async fn a_stop_is_answered_and_counted() {
         }],
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
         checks: vec![Check::AskedConsent, Check::Visited("kotlin-2-4"), Check::AnswerHas(&["2026-09-18"])],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;

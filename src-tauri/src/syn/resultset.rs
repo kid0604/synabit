@@ -192,6 +192,24 @@ pub(crate) const SCHEMA: &str = "
         PRIMARY KEY (scope, handle, row_no)
     );";
 
+/// Bring a `result_sets` made by an older build up to `SCHEMA`. `CREATE TABLE
+/// IF NOT EXISTS` leaves an existing table as it was, so a column added later
+/// has to be added here too, or every insert fails on it.
+pub(crate) fn upgrade(conn: &Connection) -> rusqlite::Result<()> {
+    let has_exposure: bool = conn
+        .query_row(
+            "SELECT 1 FROM pragma_table_info('result_sets', 'state') WHERE name = 'exposure'",
+            [],
+            |_| Ok(true),
+        )
+        .optional()?
+        .unwrap_or(false);
+    if !has_exposure {
+        conn.execute_batch("ALTER TABLE state.result_sets ADD COLUMN exposure TEXT NOT NULL DEFAULT 'full'")?;
+    }
+    Ok(())
+}
+
 /// File a table and return its handle.
 pub fn create(conn: &Connection, mut set: NewSet, now: i64) -> AppResult<String> {
     if set.rows.len() > MAX_ROWS {
@@ -620,6 +638,23 @@ mod tests {
             .collect();
         let (columns, rows) = from_objects(&items);
         NewSet { scope: scope.into(), run_id: "run-1".into(), source: Source { kind: "connector".into(), ..Default::default() }, columns, rows, missing: vec![], exposure: Exposure::Full, ttl_hours: 0 }
+    }
+
+    #[test]
+    fn a_table_from_before_exposure_takes_a_set() {
+        let c = Connection::open_in_memory().expect("open");
+        c.execute_batch(
+            "ATTACH DATABASE ':memory:' AS state;
+             CREATE TABLE state.result_sets (scope TEXT NOT NULL, handle TEXT NOT NULL, run_id TEXT NOT NULL,
+                 source TEXT NOT NULL, columns TEXT NOT NULL, missing TEXT NOT NULL, row_count INTEGER NOT NULL,
+                 created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY (scope, handle));",
+        )
+        .expect("old table");
+        c.execute_batch(SCHEMA).expect("schema");
+        upgrade(&c).expect("upgrade");
+        upgrade(&c).expect("a second upgrade is a no-op");
+        let h = create(&c, set("conv-a", 3), 1_000).expect("create");
+        assert_eq!(load(&c, "conv-a", &h, 1_001).expect("load").expect("there").rows.len(), 3);
     }
 
     #[test]

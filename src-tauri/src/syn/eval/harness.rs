@@ -90,6 +90,8 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         Some(crate::syn::connector::fake_rest::serve(routes).await)
     };
     super::connectors::declare(&vault, &task.declared, rest.as_ref().map(|r| r.base.as_str()));
+    let pi = if task.ssh { Some(crate::syn::connector::ssh::tests::pi().await) } else { None };
+    let pi_host = pi.as_ref().map(|(port, ..)| format!("127.0.0.1:{port}")).unwrap_or_default();
     for (path, text) in &task.files {
         let at = match path.strip_prefix("@downloads/") {
             Some(rest) => std::path::Path::new(&super::connectors::downloads(&vault)).join(rest),
@@ -120,7 +122,8 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         let mut message = match rest.as_ref() {
             Some(r) => turn.ask.replace("BASE", &r.base),
             None => turn.ask.to_string(),
-        };
+        }
+        .replace("PIHOST", &pi_host);
         let mut resume = None;
         let mut carried_on = 0;
         for _ in 0..=MAX_ANSWERS_PER_TURN {
@@ -173,13 +176,23 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                     let mut ask_counted = 0usize;
                     if let Some(m) = drafted {
                         let given = |name: &str| task.connect.iter().find(|(k, _)| *k == name).map(|(_, v)| v.replace("BASE", &base));
+                        // A machine over SSH: whatever Syn named its inputs,
+                        // the person types its address and their password.
+                        let typed = |i: &crate::syn::connector::manifest::Input| {
+                            given(&i.name).or_else(|| {
+                                (task.ssh && i.kind == crate::syn::connector::manifest::InputKind::Address).then(|| format!("ssh://pi@{pi_host}"))
+                            })
+                        };
                         let inputs: std::collections::BTreeMap<String, String> = m
                             .inputs
                             .iter()
                             .filter(|i| i.kind != crate::syn::connector::manifest::InputKind::Secret)
-                            .filter_map(|i| given(&i.name).map(|v| (i.name.clone(), v)))
+                            .filter_map(|i| typed(i).map(|v| (i.name.clone(), v)))
                             .collect();
-                        let secret = m.auth.secret().and_then(given);
+                        let secret = m
+                            .auth
+                            .secret()
+                            .and_then(|name| given(name).or_else(|| task.ssh.then(|| crate::syn::connector::ssh::tests::PASSWORD.to_string())));
                         if let (Some(name), Some(value)) = (m.auth.secret(), secret.as_ref()) {
                             crate::syn::connector::declared::TEST_SECRETS
                                 .lock()
@@ -188,13 +201,24 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                         }
                         ask_counted = super::connectors::asked_on_card(&m);
                         let network = crate::syn::connector::instance::network_for(&m.with_inputs(&inputs).base_url);
-                        if let Ok(inst) = crate::syn::connector::instance::approve(
-                            &vault.path,
-                            &m,
-                            crate::syn::connector::instance::Choices { network, inputs, ..Default::default() },
-                            &chrono::Utc::now().to_rfc3339(),
-                        ) {
-                            approved = crate::commands::connector::probe(&m, &inst, secret.as_deref()).await.ok;
+                        let mut pinned = None;
+                        // Twice at most: the second time with the machine's key
+                        // pinned, as "This is my machine" does when it is shown.
+                        for _ in 0..2 {
+                            let Ok(inst) = crate::syn::connector::instance::approve(
+                                &vault.path,
+                                &m,
+                                crate::syn::connector::instance::Choices { network, inputs: inputs.clone(), pinned_cert: pinned.clone(), ..Default::default() },
+                                &chrono::Utc::now().to_rfc3339(),
+                            ) else {
+                                break;
+                            };
+                            let tried = crate::commands::connector::probe(&m, &inst, secret.as_deref()).await;
+                            approved = tried.ok;
+                            match (tried.code.as_deref(), tried.cert) {
+                                (Some("host_key_unknown"), Some(key)) if pinned.is_none() => pinned = Some(key),
+                                _ => break,
+                            }
                         }
                     }
                     card_questions += ask_counted;

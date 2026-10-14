@@ -13,6 +13,8 @@
 //! | `read_only` | which of a server's tools were believed to only read | `connector::config` |
 //! | `instances` | declared connectors approved, with their choices | `connector::instance` |
 //! | `routines` | routines approved to run here | `syn::routine` |
+//! | `skills` | skills allowed into the prompt here, as they were | `syn::skill` |
+//! | `provider` | which AI provider, at which address, this device sends to | `syn::settings` |
 //!
 //! They were five files with five readers and five writers. One file is one
 //! place to see what this device has agreed to, one place to forget it, and one
@@ -52,6 +54,8 @@ pub enum Section {
     ReadOnly,
     Instances,
     Routines,
+    Skills,
+    Provider,
 }
 
 impl Section {
@@ -62,6 +66,8 @@ impl Section {
             Section::ReadOnly => "read_only",
             Section::Instances => "instances",
             Section::Routines => "routines",
+            Section::Skills => "skills",
+            Section::Provider => "provider",
         }
     }
 
@@ -73,6 +79,7 @@ impl Section {
             Section::ReadOnly => &["connectors-read-only.json", "mcp-read-only.json"],
             Section::Instances => &["connector-instances.json"],
             Section::Routines => &["routines-approved.json"],
+            Section::Skills | Section::Provider => &[],
         }
     }
 }

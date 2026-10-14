@@ -164,6 +164,7 @@ fn ensure_schema(conn: &Connection) -> AppResult<()> {
     )
     .map_err(|e| AppError::General(format!("State DB Schema Error: {e}")))?;
     conn.execute_batch(crate::syn::resultset::SCHEMA)
+        .and_then(|_| crate::syn::resultset::upgrade(conn))
         .map_err(|e| AppError::General(format!("State DB Schema Error: {e}")))
 }
 

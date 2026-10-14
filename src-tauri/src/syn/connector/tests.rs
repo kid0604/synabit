@@ -249,11 +249,14 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         seen: &[],
         ledger,
         allowed_until_done: until_done,
+        call_allowed_until_done: false,
+        call_declined: false,
         skills_opened: 0,
         plan_only: false,
         sub_run: false,
         untrusted_before: false,
         reach: None,
+        rides_prompt: false,
         now: "2026-09-27T10:00:00+00:00",
         safe: &|_, h| Err(format!("no Safe item `{h}` in this test")),
     }
@@ -322,7 +325,7 @@ mod secrets {
     #[test]
     fn what_the_safe_refuses_is_refused_in_its_words() {
         let ledger = granted(&[(&write(), Answer::Always)]);
-        let no = |_: &Capability| false;
+        let no = |c: &Capability| *c == write();
         let safe = |_: &str, h: &str| -> Result<crate::safe::bridge::Route, String> { Err(format!("`{h}` may not go there")) };
         let decided = decide(TOOL, &args(), Some(&write()), &with_safe(&ledger, &safe, &no));
         match decided.gate {
@@ -333,7 +336,9 @@ mod secrets {
 
     #[test]
     fn an_allowed_pair_is_asked_about_once_then_remembered() {
-        let no = |_: &Capability| false;
+        // A send through an MCP tool is never remembered (`declared::write_may_be_remembered`):
+        // its "yes" here is the one given for this piece of work.
+        let no = |c: &Capability| *c == write();
         let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
 
         let first = granted(&[(&write(), Answer::Always)]);
@@ -354,7 +359,9 @@ mod secrets {
     /// or another item that took the name since, is asked about afresh.
     #[test]
     fn an_always_covers_one_tool_of_one_item_only() {
-        let no = |_: &Capability| false;
+        // A send through an MCP tool is never remembered (`declared::write_may_be_remembered`):
+        // its "yes" here is the one given for this piece of work.
+        let no = |c: &Capability| *c == write();
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
         let other_tool = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> {
             Ok(crate::safe::bridge::Route { tool: "create_gist".into(), ..route() })
@@ -375,15 +382,18 @@ mod secrets {
         let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Always)]);
         let after = gate::View { untrusted_before: true, ..with_safe(&ledger, &safe, &no) };
+        // The send is asked again first; the secret after it.
         match decide(TOOL, &args(), Some(&write()), &after).gate {
-            Gate::Ask(ask) => assert_eq!(ask.capability, secret()),
+            Gate::Ask(ask) => assert_eq!(ask.capability, write()),
             other => panic!("expected the card again, got {other:?}"),
         }
     }
 
     #[test]
     fn a_never_for_the_pair_is_final() {
-        let no = |_: &Capability| false;
+        // A send through an MCP tool is never remembered (`declared::write_may_be_remembered`):
+        // its "yes" here is the one given for this piece of work.
+        let no = |c: &Capability| *c == write();
         let safe = |_: &str, _: &str| -> Result<crate::safe::bridge::Route, String> { Ok(route()) };
         let ledger = granted(&[(&write(), Answer::Always), (&secret(), Answer::Never)]);
         assert!(matches!(

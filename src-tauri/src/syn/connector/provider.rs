@@ -371,8 +371,8 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
             super::declared::refresh(ctx.vault_path, &db, &mcp_slugs)
         };
         for d in &declared {
-            for op in &d.manifest.operations {
-                let capability = super::declared::capability(d, op);
+            for op in &super::declared::operations(d) {
+                let capability = super::declared::capability(d, op, &Value::Null);
                 if crate::syn::registry::is_switched_off(&capability, &ledger, &now) {
                     continue;
                 }
@@ -386,11 +386,11 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
         offered
     }
 
-    fn capability(&self, tool: &str, _args: &Value) -> Option<Capability> {
+    fn capability(&self, tool: &str, args: &Value) -> Option<Capability> {
         if !is_connector_tool(tool) {
             return None;
         }
-        capability_by_name(tool).or_else(|| super::declared::find_anywhere(tool).map(|(d, op)| super::declared::capability(&d, &op)))
+        capability_by_name(tool).or_else(|| super::declared::find_anywhere(tool).map(|(d, op)| super::declared::capability(&d, &op, args)))
     }
 
     /// Not reached from a run: a call is a network request, which the engine

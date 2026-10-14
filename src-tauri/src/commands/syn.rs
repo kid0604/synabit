@@ -904,7 +904,7 @@ fn gather<R: tauri::Runtime>(
 
     // The skill index, on the same terms. Only what the user enabled is
     // named, because a name in this list is an invitation.
-    let skills = crate::syn::skill::all(&db).unwrap_or_else(|e| {
+    let skills = crate::syn::skill::all_here(&db, vault_path).unwrap_or_else(|e| {
         log::warn!("[Syn] Could not read skills: {e}");
         Vec::new()
     });
@@ -2471,10 +2471,43 @@ pub async fn syn_answer_consent(
         return Ok(false);
     };
 
+    // "Always" where the card did not offer it is "this time": a send whose
+    // arguments are free is not remembered. See `declared::write_may_be_remembered`.
+    let answer = if answer == crate::syn::consent::Answer::Always && !ask.can_be_remembered {
+        crate::syn::consent::Answer::Once
+    } else {
+        answer
+    };
+    // Not now and this session are answers about one call, and only a card
+    // about one call offers them; to any other they are "this time" and "no".
+    let answer = match answer {
+        crate::syn::consent::Answer::Session if !ask.per_call => crate::syn::consent::Answer::Once,
+        crate::syn::consent::Answer::NotNow if !ask.per_call => crate::syn::consent::Answer::Never,
+        a => a,
+    };
     crate::syn::consent::record(&vault_path, &ask.capability, answer, chrono::Utc::now())?;
-    if answer == crate::syn::consent::Answer::Once {
-        if let Some(conversation_id) = run.conversation_id.as_deref() {
-            crate::syn::consent::allow_until_done(conversation_id, &ask.capability);
+    if let Some(conversation_id) = run.conversation_id.as_deref() {
+        let call = run.pending_call.as_ref();
+        match answer {
+            crate::syn::consent::Answer::Once => {
+                crate::syn::consent::allow_until_done(conversation_id, &ask.capability);
+                // And the call itself, which is what counts once the conversation
+                // has read something untrusted. See `consent::allow_call_until_done`.
+                if let Some(call) = call {
+                    crate::syn::consent::allow_call_until_done(conversation_id, &call.function.name, &call.function.arguments);
+                }
+            }
+            crate::syn::consent::Answer::Session => {
+                if let Some(call) = call {
+                    crate::syn::consent::allow_call_in_session(conversation_id, &call.function.name, &call.function.arguments);
+                }
+            }
+            crate::syn::consent::Answer::NotNow => {
+                if let Some(call) = call {
+                    crate::syn::consent::decline_call_until_done(conversation_id, &call.function.name, &call.function.arguments);
+                }
+            }
+            _ => {}
         }
     }
     crate::syn::audit::record_best_effort(
@@ -2483,7 +2516,7 @@ pub async fn syn_answer_consent(
         &ask.tool,
         &ask.capability,
         match answer {
-            crate::syn::consent::Answer::Never => crate::syn::audit::Outcome::Refused,
+            crate::syn::consent::Answer::Never | crate::syn::consent::Answer::NotNow => crate::syn::audit::Outcome::Refused,
             _ => crate::syn::audit::Outcome::Allowed,
         },
         run.surface,
@@ -2501,6 +2534,8 @@ pub async fn syn_answer_consent(
                 crate::syn::consent::Answer::Once => "just this once",
                 crate::syn::consent::Answer::Always => "always",
                 crate::syn::consent::Answer::Never => "never",
+                crate::syn::consent::Answer::NotNow => "not now, to this call",
+                crate::syn::consent::Answer::Session => "yes to this call for the rest of the conversation",
             }
         ),
     );
@@ -2989,14 +3024,37 @@ pub async fn syn_delete_run(vault_path: String, run_id: String) -> Result<(), Ap
 ///
 /// Both, unlike the index the model is given. The screen is where a person
 /// turns one on, and they cannot turn on something they cannot see.
+///
+/// Each as this device may use it: one switched on in its file but not yet
+/// allowed here says `waiting_here`, and the screen offers to allow it.
 #[tauri::command]
 pub async fn syn_list_skills(
+    vault_path: String,
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::syn::skill::Skill>, AppError> {
     let db = state
         .lock()
         .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
-    crate::syn::skill::all(&db)
+    crate::syn::skill::all_here(&db, &vault_path)
+}
+
+/// Allow a skill on this device, as it now is: after the person turned it on,
+/// saved it or took a revision on the Skills screen here, or pressed "Use on
+/// this device" for one that changed elsewhere. See `skill::all_here`.
+#[tauri::command]
+pub async fn syn_skill_approve_here(
+    vault_path: String,
+    skill_id: String,
+    state: tauri::State<'_, crate::db::DbState>,
+) -> Result<(), AppError> {
+    let db = state
+        .lock()
+        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+    let skill = crate::syn::skill::all(&db)?
+        .into_iter()
+        .find(|s| s.id == skill_id)
+        .ok_or_else(|| AppError::General(format!("No skill at {skill_id}")))?;
+    crate::syn::skill::approve_here(&vault_path, &skill)
 }
 
 /// Which skills have actually been opened, and when.
@@ -3212,7 +3270,7 @@ pub async fn syn_preview_prompt(
                     crate::syn::memory::memory_block(&m, crate::syn::memory::MEMORY_BUDGET_CHARS)
                 })
                 .unwrap_or(None),
-            crate::syn::skill::all(&db)
+            crate::syn::skill::all_here(&db, &vault_path)
                 .map(|s| {
                     crate::syn::skill::index_block(&s, crate::syn::skill::INDEX_BUDGET_CHARS)
                 })

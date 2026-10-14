@@ -118,15 +118,20 @@ pub enum Auth {
     Header { name: String, secret: String },
     Query { name: String, secret: String },
     Basic { user: String, secret: String },
+    /// An `ssh` connector's login: a password, or a private key (Ed25519 or
+    /// ECDSA, without a passphrase) — whichever the person pastes on the card.
+    Ssh { secret: String },
 }
 
 impl Auth {
     pub fn secret(&self) -> Option<&str> {
         match self {
             Auth::None => None,
-            Auth::Bearer { secret } | Auth::Header { secret, .. } | Auth::Query { secret, .. } | Auth::Basic { secret, .. } => {
-                Some(secret)
-            }
+            Auth::Bearer { secret }
+            | Auth::Header { secret, .. }
+            | Auth::Query { secret, .. }
+            | Auth::Basic { secret, .. }
+            | Auth::Ssh { secret } => Some(secret),
         }
     }
 }
@@ -288,6 +293,11 @@ pub struct Operation {
     /// The request, for `http`. A `device` operation has none.
     #[serde(default, skip_serializing_if = "Call::is_empty")]
     pub call: Call,
+    /// The program and its arguments, for `ssh`: one word each, `{{param}}`
+    /// filled into a word and quoted for the shell on the other side. The
+    /// program is written here, never filled. See `connector::ssh`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub command: Vec<String>,
     /// The bridge it reads, for `device`. See `connector::device`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
@@ -427,6 +437,9 @@ impl Manifest {
             }
             if let Some(b) = &mut op.call.body {
                 *b = plain(b);
+            }
+            for word in &mut op.command {
+                *word = plain(word);
             }
         }
         m
@@ -643,8 +656,9 @@ pub fn problems(m: &Manifest) -> Vec<Problem> {
         out.push(problem("bad_name", "name", "a name is needed, without ':'"));
     }
     let device = m.transport == Transport::Device;
-    if m.transport != Transport::Http && !device {
-        out.push(problem("transport_not_yet", "transport", format!("{:?} is not available yet; only http and device are", m.transport).to_lowercase()));
+    let ssh = m.transport == Transport::Ssh;
+    if m.transport != Transport::Http && !device && !ssh {
+        out.push(problem("transport_not_yet", "transport", format!("{:?} is not available yet; only http, ssh and device are", m.transport).to_lowercase()));
     }
     if device {
         // A bridge is the app's own code on this device: no host, no secret.
@@ -695,6 +709,10 @@ pub fn problems(m: &Manifest) -> Vec<Problem> {
         }
     } else if m.base_url.contains("{{") {
         out.push(problem("template_in_host", "base_url", "base_url cannot hold a {{placeholder}}; only paths, queries, headers and bodies can"));
+    } else if ssh {
+        if let Err(said) = super::ssh::target(&m.base_url) {
+            out.push(problem("bad_url", "base_url", said));
+        }
     } else {
         match url::Url::parse(&m.base_url) {
             Ok(u) => {
@@ -728,6 +746,14 @@ pub fn problems(m: &Manifest) -> Vec<Problem> {
                 }
             }
         }
+    }
+
+    // An ssh connector logs in with what the person pastes; nothing else does.
+    match (&m.auth, ssh) {
+        (Auth::Ssh { .. }, true) => {}
+        (_, true) => out.push(problem("ssh_auth", "auth", "an ssh connector logs in with { type: ssh, secret: <name> }: a password or a private key, typed on the card")),
+        (Auth::Ssh { .. }, false) => out.push(problem("ssh_auth", "auth", "type: ssh is the login of an ssh connector")),
+        _ => {}
     }
 
     if m.operations.is_empty() {
@@ -780,37 +806,60 @@ pub fn problems(m: &Manifest) -> Vec<Problem> {
         if op.bridge.is_some() || !op.filter.is_empty() {
             out.push(problem("bridge_on_http", at(".bridge"), "a bridge belongs to a device connector"));
         }
-        let method = op.call.method.to_ascii_uppercase();
-        if !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "PROPFIND", "REPORT"].contains(&method.as_str()) {
-            out.push(problem("bad_method", at(".call.method"), format!("`{}` is not a method this executor sends", op.call.method)));
-        }
-        if op.effect < effect_ceiling(&method) {
-            out.push(problem(
-                "effect_above_ceiling",
-                at(".effect"),
-                format!("a {method} cannot be declared `read`: only GET, HEAD, PROPFIND and REPORT can be. Use read_attested if the token can only read, or write."),
-            ));
-        }
-        if !op.call.path.starts_with('/') && !op.call.path.is_empty() {
-            out.push(problem("bad_path", at(".call.path"), "a path starts with /"));
-        }
-        if op.call.path.contains("://") || op.call.path.starts_with("//") {
-            out.push(problem("template_in_host", at(".call.path"), "a path cannot name another host"));
-        }
-        for name in op.call.headers.keys() {
-            if FORBIDDEN_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
-                out.push(problem("forbidden_header", at(".call.headers"), format!("`{name}` cannot be set; the executor sets what it needs")));
+        if ssh {
+            if !op.call.is_empty() {
+                out.push(problem("ssh_has_call", at(".call"), "an ssh operation runs a command, not a call"));
             }
+            if op.effect == Effect::Read {
+                out.push(problem(
+                    "effect_above_ceiling",
+                    at(".effect"),
+                    "nothing proves a command only reads: declare read_attested for one that only looks, which the person vouches for, or write",
+                ));
+            }
+            if op.paginate.is_some() {
+                out.push(problem("bad_paginate", at(".paginate"), "a command runs once; it has no pages"));
+            }
+            for said in super::ssh::command_problems(&op.command) {
+                out.push(problem("bad_command", at(".command"), said));
+            }
+        } else if !op.command.is_empty() {
+            out.push(problem("command_on_http", at(".command"), "a command belongs to an ssh connector"));
         }
-        if op.sink.as_deref().is_some_and(|s| !["spreadsheet", "html", "markdown", "plain"].contains(&s)) {
-            out.push(problem("bad_sink", at(".sink"), "a sink is spreadsheet, html, markdown or plain"));
-        }
-        if [op.call.json.is_some(), !op.call.form.is_empty(), op.call.body.is_some()].iter().filter(|b| **b).count() > 1 {
-            out.push(problem("two_bodies", at(".call"), "a call has one body: json, form or body"));
+        let method = op.call.method.to_ascii_uppercase();
+        if !ssh {
+            if !["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "PROPFIND", "REPORT"].contains(&method.as_str()) {
+                out.push(problem("bad_method", at(".call.method"), format!("`{}` is not a method this executor sends", op.call.method)));
+            }
+            if op.effect < effect_ceiling(&method) {
+                out.push(problem(
+                    "effect_above_ceiling",
+                    at(".effect"),
+                    format!("a {method} cannot be declared `read`: only GET, HEAD, PROPFIND and REPORT can be. Use read_attested if the token can only read, or write."),
+                ));
+            }
+            if !op.call.path.starts_with('/') && !op.call.path.is_empty() {
+                out.push(problem("bad_path", at(".call.path"), "a path starts with /"));
+            }
+            if op.call.path.contains("://") || op.call.path.starts_with("//") {
+                out.push(problem("template_in_host", at(".call.path"), "a path cannot name another host"));
+            }
+            for name in op.call.headers.keys() {
+                if FORBIDDEN_HEADERS.contains(&name.to_ascii_lowercase().as_str()) {
+                    out.push(problem("forbidden_header", at(".call.headers"), format!("`{name}` cannot be set; the executor sets what it needs")));
+                }
+            }
+            if op.sink.as_deref().is_some_and(|s| !["spreadsheet", "html", "markdown", "plain"].contains(&s)) {
+                out.push(problem("bad_sink", at(".sink"), "a sink is spreadsheet, html, markdown or plain"));
+            }
+            if [op.call.json.is_some(), !op.call.form.is_empty(), op.call.body.is_some()].iter().filter(|b| **b).count() > 1 {
+                out.push(problem("two_bodies", at(".call"), "a call has one body: json, form or body"));
+            }
         }
 
         // Every placeholder names a parameter, and every parameter is used.
         let mut used = placeholders(&op.call.path);
+        op.command.iter().for_each(|w| used.extend(placeholders(w)));
         op.call.query.values().chain(op.call.headers.values()).chain(op.call.form.values()).chain(op.call.body.iter()).for_each(|v| used.extend(placeholders(v)));
         if let Some(j) = &op.call.json {
             json_placeholders(j, &mut used);

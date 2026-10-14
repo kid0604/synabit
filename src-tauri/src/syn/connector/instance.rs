@@ -77,6 +77,11 @@ pub struct Instance {
     /// inputs. Secrets are in the keychain, never here.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub inputs: BTreeMap<String, String>,
+    /// Each operation approved, by name, as `operation_print` renders it — so
+    /// a card asking again can say which commands are new. Not part of the
+    /// stamp: `approved` already covers them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operations: BTreeMap<String, String>,
     /// `manifest::fingerprint` of what was approved, and of these choices.
     pub approved: String,
     pub approved_at: String,
@@ -135,17 +140,24 @@ fn save(vault_path: &str, all: &BTreeMap<String, Instance>) -> AppResult<()> {
 /// private address, or a name a home network gives (`nas`, `nas.local`,
 /// `router.lan`) is the person's own network; anything else is public — and
 /// a public name that resolves to a private address is refused when called.
+///
+/// A Tailscale address (100.64.0.0/10) or MagicDNS name (`*.ts.net`) is the
+/// person's own network too: their machines, reached from anywhere. A host
+/// approved as public would refuse it — it is not a public address.
 pub fn network_for(base_url: &str) -> Network {
     let Some(host) = url::Url::parse(base_url).ok().and_then(|u| u.host_str().map(str::to_lowercase)) else { return Network::Public };
     let host = host.trim_matches(|c| c == '[' || c == ']').to_string();
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         let private = match ip {
-            std::net::IpAddr::V4(v) => v.is_loopback() || v.is_private() || v.is_link_local(),
+            std::net::IpAddr::V4(v) => {
+                let [a, b, ..] = v.octets();
+                v.is_loopback() || v.is_private() || v.is_link_local() || (a == 100 && (64..128).contains(&b))
+            }
             std::net::IpAddr::V6(v) => v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80,
         };
         return if private { Network::Internal } else { Network::Public };
     }
-    let home = ["localhost", ".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain"];
+    let home = ["localhost", ".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".ts.net"];
     if !host.contains('.') || home.iter().any(|h| host == h.trim_start_matches('.') || host.ends_with(h)) {
         Network::Internal
     } else {
@@ -191,7 +203,13 @@ pub fn approve(vault_path: &str, m: &Manifest, choices: Choices, now: &str) -> A
                 return Err(crate::error::AppError::General(format!("format:{}", input.name)));
             }
         }
-        if input.kind == manifest::InputKind::Address && !url::Url::parse(&v).is_ok_and(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some()) {
+        // An address is the kind the connector speaks: ssh://user@host for ssh.
+        let fits = if m.transport == manifest::Transport::Ssh {
+            super::ssh::target(&v).is_ok()
+        } else {
+            url::Url::parse(&v).is_ok_and(|u| matches!(u.scheme(), "https" | "http") && u.host_str().is_some())
+        };
+        if input.kind == manifest::InputKind::Address && !fits {
             return Err(crate::error::AppError::General(format!("format:{}", input.name)));
         }
         inputs.insert(input.name.clone(), v);
@@ -208,6 +226,7 @@ pub fn approve(vault_path: &str, m: &Manifest, choices: Choices, now: &str) -> A
         mirrors: choices.mirrors.clone(),
         folder: choices.folder.clone(),
         inputs: choices.inputs.clone(),
+        operations: m.operations.iter().map(|o| (o.name.clone(), operation_print(o))).collect(),
         approved: stamp(m, &choices),
         approved_at: now.to_string(),
     };
@@ -219,6 +238,26 @@ pub fn approve(vault_path: &str, m: &Manifest, choices: Choices, now: &str) -> A
     all.insert(m.id.clone(), instance.clone());
     save(vault_path, &all)?;
     Ok(instance)
+}
+
+/// One operation, as one string: what it is approved as.
+pub fn operation_print(op: &manifest::Operation) -> String {
+    use sha2::{Digest, Sha256};
+    hex::encode(Sha256::digest(serde_json::to_string(op).unwrap_or_default().as_bytes()))
+}
+
+/// The operations of `m` that `inst` did not approve as they now are: new, or
+/// changed since. Empty where the approval predates keeping them, since then
+/// nothing can be told apart.
+pub fn not_yet_approved(inst: &Instance, m: &Manifest) -> Vec<String> {
+    if inst.operations.is_empty() {
+        return Vec::new();
+    }
+    m.operations
+        .iter()
+        .filter(|o| inst.operations.get(&o.name) != Some(&operation_print(o)))
+        .map(|o| o.name.clone())
+        .collect()
 }
 
 pub fn remove(vault_path: &str, manifest_id: &str, name: &str) -> AppResult<()> {

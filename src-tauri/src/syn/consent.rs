@@ -124,6 +124,13 @@ pub enum Answer {
     Always,
     /// No, and stop asking. Kept until the user changes their mind.
     Never,
+    /// Not this one, and nothing more: the call is not made, and nothing is
+    /// switched off. For a card about one exact call (`Ask::per_call`), where
+    /// "never" would refuse every command to come for the sake of one.
+    NotNow,
+    /// Yes to this exact call for the rest of the conversation, until the app
+    /// closes. Held in memory, never in the ledger.
+    Session,
 }
 
 /// What to do with a capability, having consulted the ledger.
@@ -259,6 +266,15 @@ pub struct Ask {
     /// Whether "always" is on offer. False for money and for running code.
     pub can_be_remembered: bool,
     pub asked_at: String,
+    /// What exactly would be done, where Rust can say it rather than the
+    /// model: the command line an ssh connector would send, quoted as sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// The question is about this one call, not about the tool: an ssh `run`,
+    /// whose every call is another command. The card answers it with
+    /// not now / this time / this session rather than never / always.
+    #[serde(default)]
+    pub per_call: bool,
 }
 
 impl Ask {
@@ -269,6 +285,8 @@ impl Ask {
             can_be_remembered: capability.can_be_remembered(),
             capability: capability.clone(),
             asked_at: now.to_string(),
+            detail: None,
+            per_call: false,
         }
     }
 }
@@ -370,7 +388,8 @@ pub fn record(
     answer: Answer,
     now: chrono::DateTime<chrono::Utc>,
 ) -> AppResult<()> {
-    if answer == Answer::Once {
+    // Answers about this moment, or this conversation: nothing to write down.
+    if matches!(answer, Answer::Once | Answer::NotNow | Answer::Session) {
         return Ok(());
     }
 
@@ -491,6 +510,70 @@ pub fn allowed_until_done(conversation_id: &str, capability: &Capability) -> boo
         Ok(held) => held.contains(&in_force_key(conversation_id, capability)),
         Err(_) => false,
     }
+}
+
+/// What a `Once` for one exact call is filed under: the call as
+/// `writes::hash` renders it, so other arguments are another call.
+fn call_key(conversation_id: &str, tool: &str, args: &serde_json::Value) -> String {
+    format!("{conversation_id}\u{1f}call:{}", crate::syn::writes::hash(tool, args))
+}
+
+/// Let this one call, exactly as it was shown on the card, stand until the
+/// work is done.
+///
+/// # Why a scope is not enough
+///
+/// After the conversation has read a stranger's words, a send is not allowed by
+/// its scope — "yes to `hostname` on the Pi" would carry whatever the next
+/// round put in it (`gate`, `untrusted_before`). That was right, and it was
+/// also the only thing a "Yes, for this" put in force. So the yes counted for
+/// nothing, the run carried on, the gate asked the same question again, and
+/// the person was asked eighteen times about one `hostname` before giving up
+/// and pressing Never (2026-10-13).
+///
+/// The card showed the call. Saying yes to it is saying yes to *that*, which
+/// is the one thing nothing read can have changed.
+pub fn allow_call_until_done(conversation_id: &str, tool: &str, args: &serde_json::Value) {
+    if let Ok(mut held) = IN_FORCE.lock() {
+        held.insert(call_key(conversation_id, tool, args));
+    }
+}
+
+/// Whether yes was said about exactly this call: for this work, or for the
+/// rest of the conversation.
+pub fn call_allowed_until_done(conversation_id: &str, tool: &str, args: &serde_json::Value) -> bool {
+    let key = call_key(conversation_id, tool, args);
+    IN_FORCE.lock().is_ok_and(|held| held.contains(&key)) || SESSION.lock().is_ok_and(|held| held.contains(&key))
+}
+
+/// Calls said yes to for the rest of their conversation: `Answer::Session`.
+/// Not cleared when the work is done, and gone when the app closes.
+static SESSION: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashSet::new()));
+
+/// Let this exact call stand for the rest of the conversation.
+pub fn allow_call_in_session(conversation_id: &str, tool: &str, args: &serde_json::Value) {
+    if let Ok(mut held) = SESSION.lock() {
+        held.insert(call_key(conversation_id, tool, args));
+    }
+}
+
+fn declined_key(conversation_id: &str, tool: &str, args: &serde_json::Value) -> String {
+    format!("{conversation_id}\u{1f}declined:{}", crate::syn::writes::hash(tool, args))
+}
+
+/// "Not now" to this exact call: it is refused, not asked again, until the
+/// work is done. Without it the run carrying on would make the call again and
+/// put the same card back up.
+pub fn decline_call_until_done(conversation_id: &str, tool: &str, args: &serde_json::Value) {
+    if let Ok(mut held) = IN_FORCE.lock() {
+        held.insert(declined_key(conversation_id, tool, args));
+    }
+}
+
+/// Whether "not now" was said about exactly this call in this work.
+pub fn call_declined(conversation_id: &str, tool: &str, args: &serde_json::Value) -> bool {
+    IN_FORCE.lock().is_ok_and(|held| held.contains(&declined_key(conversation_id, tool, args)))
 }
 
 /// The work is finished; anything granted for it stops standing.

@@ -399,7 +399,7 @@ pub fn apply<R: tauri::Runtime>(
             change.error = Some(format!("{CHANGED_SINCE}{id}"));
             continue;
         }
-        let said = crate::syn::tools::execute_tool(&ctx, &change.tool, &change.args);
+        let said = crate::syn::tools::as_approved(|| crate::syn::tools::execute_tool(&ctx, &change.tool, &change.args));
         let error = match said {
             Ok(out) => serde_json::from_str::<Value>(&out).ok().and_then(|v| {
                 v.get("error").or_else(|| v.get("refused")).map(|e| e.as_str().map(str::to_string).unwrap_or_else(|| e.to_string()))

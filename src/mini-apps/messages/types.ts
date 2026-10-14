@@ -579,10 +579,14 @@ export interface ConsentAsk {
   /** Whether "always" is on offer. False for money and for running code. */
   can_be_remembered: boolean;
   asked_at: string;
+  /** What exactly would be done, as Rust will do it: an ssh command line. */
+  detail?: string | null;
+  /** About this one call, not the tool: answered not now / this time / this session. */
+  per_call?: boolean;
 }
 
 /** What the user said. */
-export type ConsentAnswer = 'once' | 'always' | 'never';
+export type ConsentAnswer = 'once' | 'always' | 'never' | 'not_now' | 'session';
 
 /** One decision, written down. */
 export interface Grant {
@@ -655,6 +659,12 @@ export interface Skill {
   revision_because?: string | null;
   /** The steps, in Markdown. */
   body: string;
+  /**
+   * On in its file, but not yet allowed on this device as it now is —
+   * written or changed on another device, or by hand. Kept out of the prompt
+   * until allowed here. See `skill::all_here` in Rust.
+   */
+  waiting_here?: boolean;
 }
 
 /** One question, answered with a skill and without it. */

@@ -505,6 +505,7 @@ mod tests {
             pending_revision: None,
             revision_because: None,
             body: String::new(),
+            waiting_here: false,
         }
     }
 

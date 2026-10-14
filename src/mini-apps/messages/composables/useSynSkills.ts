@@ -61,7 +61,7 @@ export function useSynSkills(vaultPath: () => string) {
     error.value = null;
     try {
       const [rows, used, problems] = await Promise.all([
-        invoke<Skill[]>('syn_list_skills'),
+        invoke<Skill[]>('syn_list_skills', { vaultPath: vaultPath() }),
         invoke<SkillUsage[]>('syn_skill_usage', { vaultPath: vaultPath() }),
         invoke<Record<string, string[]>>('syn_recipe_problems'),
       ]);
@@ -91,6 +91,25 @@ export function useSynSkills(vaultPath: () => string) {
    * A property patch: keys not named are left exactly as they are on disk, so
    * saving here cannot delete a field somebody added to the file by hand.
    */
+  /**
+   * Allow a skill on this device, as it now is. Every change the person makes
+   * here ends with this; one made on another device waits for it. See
+   * `skill::all_here` in Rust.
+   */
+  const allowHere = (skill: Skill) => invoke('syn_skill_approve_here', { vaultPath: vaultPath(), skillId: skill.id });
+
+  /** Use, on this device, a skill that was turned on or changed elsewhere. */
+  const useHere = async (skill: Skill) => {
+    error.value = null;
+    try {
+      await allowHere(skill);
+      await load();
+    } catch (e) {
+      logger.error('[Syn] Failed to allow a skill on this device', e);
+      error.value = asMessage(e);
+    }
+  };
+
   const setEnabled = async (skill: Skill, enabled: boolean) => {
     error.value = null;
     try {
@@ -100,6 +119,7 @@ export function useSynSkills(vaultPath: () => string) {
         title: skill.title,
         properties: { enabled },
       });
+      if (enabled) await allowHere(skill);
       await load();
     } catch (e) {
       logger.error('[Syn] Failed to change whether a skill is enabled', e);
@@ -126,6 +146,7 @@ export function useSynSkills(vaultPath: () => string) {
           ? { version: skill.version + 1, pending_revision: '', revision_because: '' }
           : { pending_revision: '', revision_because: '' },
       });
+      if (accept && skill.enabled) await allowHere(skill);
       await load();
     } catch (e) {
       logger.error('[Syn] Failed to decide on a revision', e);
@@ -164,6 +185,7 @@ export function useSynSkills(vaultPath: () => string) {
           version: skill.version + 1,
         },
       });
+      if (skill.enabled || skill.waiting_here) await allowHere(skill);
       await load();
       return true;
     } catch (e) {
@@ -222,6 +244,6 @@ export function useSynSkills(vaultPath: () => string) {
 
   return {
     skills, usage, ordered, isLoading, error, trials, trialling, recipeProblems,
-    load, setEnabled, usageOf, trial, create, decideRevision, save,
+    load, setEnabled, useHere, usageOf, trial, create, decideRevision, save,
   };
 }

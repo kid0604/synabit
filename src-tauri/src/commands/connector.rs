@@ -162,6 +162,10 @@ pub struct DeclaredView {
     pub effects: std::collections::BTreeMap<String, manifest::Effect>,
     /// Whether this device holds the declaration's secret.
     pub secret_here: bool,
+    /// Operations not approved here as they now are — added or changed since
+    /// the last approval. Empty when never approved, or approved before this
+    /// was kept. See `instance::not_yet_approved`.
+    pub not_yet_approved: Vec<String>,
     /// How each of its mirrors last went on this device, by mirror name.
     #[serde(default)]
     pub mirrors_ran: std::collections::BTreeMap<String, crate::syn::connector::mirror::Ran>,
@@ -200,7 +204,8 @@ fn declared_views(app: &tauri::AppHandle, vault_path: &str) -> Result<Vec<Declar
                             .map(|r| (mi.name.clone(), crate::syn::connector::mirror::Ran { staged_keys: Default::default(), ..r.clone() }))
                     })
                     .collect();
-                DeclaredView { node_id: f.node_id, title: f.title, manifest: Some(m), problems, standing, instance: inst, effects, secret_here, mirrors_ran }
+                let not_yet_approved = inst.as_ref().map(|i| instance::not_yet_approved(i, &m)).unwrap_or_default();
+                DeclaredView { node_id: f.node_id, title: f.title, manifest: Some(m), problems, standing, instance: inst, effects, secret_here, not_yet_approved, mirrors_ran }
             }
             Err(p) => DeclaredView {
                 node_id: f.node_id,
@@ -211,6 +216,7 @@ fn declared_views(app: &tauri::AppHandle, vault_path: &str) -> Result<Vec<Declar
                 instance: None,
                 effects: Default::default(),
                 secret_here: false,
+                not_yet_approved: Vec::new(),
                 mirrors_ran: Default::default(),
             },
         })
@@ -307,7 +313,9 @@ pub struct Connected {
     pub ok: bool,
     /// `missing`, `format`, `credential_rejected`, `unreachable`, `self_signed`,
     /// `not_found`, `rate_limited`, `server_error`, `shape_changed`,
-    /// `permission_needed`, `folder_needed`, `untested` (ok, nothing to try).
+    /// `permission_needed`, `folder_needed`, `untested` (ok, nothing to try),
+    /// and for ssh `host_key_unknown` (met for the first time) and
+    /// `host_key_changed` (not the machine that was approved).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     /// The input the card should point at, for `missing` and `format`.
@@ -316,7 +324,8 @@ pub struct Connected {
     /// How many rows the try read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows: Option<usize>,
-    /// For `self_signed`: the certificate the server showed, to trust with one tap.
+    /// For `self_signed`: the certificate the server showed, to trust with one
+    /// tap. For `host_key_*`: the SSH host key's fingerprint, the same way.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cert: Option<String>,
     /// The server's or the system's own words, for the card's details.
@@ -417,6 +426,15 @@ pub async fn probe(m: &Manifest, inst: &instance::Instance, secret: Option<&str>
         if bridges.contains(&"android.notifications") && !device::android_call("notificationAccess").unwrap_or(false) {
             return not_connected("permission_needed", None, "");
         }
+    }
+    // Reaching the machine and logging in is the try: no command has been
+    // allowed yet. The host key it was shown, when that stopped it, goes to
+    // the card to be confirmed and pinned, as an unvouched certificate does.
+    if m.transport == manifest::Transport::Ssh {
+        return match crate::syn::connector::ssh::check(&m.with_inputs(&inst.inputs), inst, secret).await {
+            Ok(()) => Connected { ok: true, ..Default::default() },
+            Err(n) => Connected { ok: false, code: n.failed.code.map(str::to_string), cert: n.host_key, said: n.failed.said, ..Default::default() },
+        };
     }
     // Something to read with nothing to fill: a `discover` operation first.
     let ready = |o: &&manifest::Operation| o.effect == manifest::Effect::Read && o.params.values().all(|p| !p.required);

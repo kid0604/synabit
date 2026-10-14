@@ -5,6 +5,7 @@ import { CircleCheck, HelpCircle, Lock, Plug } from 'lucide-vue-next';
 import { useSynDeclared } from '../composables/useSynDeclared';
 import {
   bridgesOf,
+  commandText,
   hostOf,
   inLang,
   inputsOf,
@@ -52,6 +53,7 @@ const secrets = ref<Record<string, string>>({});
 const open = ref<string | null>(null);
 
 const isDevice = computed(() => m.value?.transport === 'device');
+const isSsh = computed(() => m.value?.transport === 'ssh');
 const bridges = computed(() => (m.value ? bridgesOf(m.value) : []));
 const packages = computed(() => (m.value ? notificationPackages(m.value) : []));
 const folder = ref<string | null>(null);
@@ -86,6 +88,19 @@ const problem = computed(() => {
   return te(key) ? t(key, { field: label, host: where.value }) : t('syn.connect_error_server_error', { host: where.value });
 });
 
+/** What trusting what the server showed is called: a certificate, or the
+ * machine itself, first met or met again with a new key. */
+const TRUST: Record<string, string> = {
+  self_signed: 'syn.connect_trust',
+  host_key_unknown: 'syn.connect_trust_host',
+  host_key_changed: 'syn.connect_trust_new_key',
+};
+const trustLabel = computed(() => {
+  const code = result.value?.code;
+  return code && result.value?.cert && TRUST[code] ? t(TRUST[code]) : null;
+});
+const hostKey = computed(() => (result.value?.code?.startsWith('host_key_') ? (result.value.cert ?? null) : null));
+
 const connect = async (trustCert: string | null = null) => {
   if (!m.value || busy.value) return;
   busy.value = true;
@@ -108,6 +123,26 @@ const recheckAccess = async () => {
   access.value = await declared.device.access();
 };
 
+/**
+ * Approved here before, and changed since — by Syn adding a command, most
+ * often. The address and the key are already known, so the card is about what
+ * changed: the new commands first, the fields folded away. Shown open, they
+ * read as being asked for the password again, which nobody was (2026-10-13).
+ */
+const again = computed(() => view.value?.standing.state === 'changed' && !!view.value.instance);
+const editing = ref(false);
+const kept = computed(
+  () =>
+    again.value &&
+    !editing.value &&
+    !result.value?.field &&
+    inputs.value.every((i) => (i.kind === 'secret' ? !!view.value?.secret_here : !!values.value[i.name])),
+);
+/** The operations not approved as they now are, and the rest. */
+const fresh = computed(() => new Set(again.value ? (view.value?.not_yet_approved ?? []) : []));
+const newOps = computed(() => (m.value?.operations ?? []).filter((op) => fresh.value.size === 0 || fresh.value.has(op.name)));
+const oldOps = computed(() => (fresh.value.size ? (m.value?.operations ?? []).filter((op) => !fresh.value.has(op.name)) : []));
+
 const ready = computed(
   () =>
     !bridges.value.includes('folder.watch') || !!folder.value,
@@ -122,12 +157,49 @@ const ready = computed(
     </div>
 
     <template v-if="m">
-      <p class="text-xs text-gray-600 dark:text-gray-300" data-test="connect-what">
+      <p v-if="again" class="text-xs font-medium text-text dark:text-text-dark" data-test="connect-again">
+        {{ fresh.size ? t('syn.connect_again_add', { where }) : t('syn.connect_again_intro', { where }) }}
+      </p>
+      <p v-else-if="isSsh" class="text-xs text-gray-600 dark:text-gray-300" data-test="connect-what">
+        {{ t('syn.connect_runs_at', { where }) }} {{ t('syn.connect_runs_ask') }}
+      </p>
+      <p v-else class="text-xs text-gray-600 dark:text-gray-300" data-test="connect-what">
         {{ t('syn.connect_reads_at', { where }) }}
         {{ sends(m) ? t('syn.connect_sends_ask') : t('syn.connect_sends_nothing') }}
       </p>
 
-      <div v-for="input in inputs" :key="input.name" class="space-y-1" :data-test="`input-${input.name}`">
+      <div v-if="isSsh" class="space-y-1 text-xs" data-test="connect-commands">
+        <p v-if="!again" class="text-gray-600 dark:text-gray-300">{{ t('syn.connect_commands') }}</p>
+        <ul class="rounded-lg bg-gray-50 dark:bg-white/5 px-3 py-2 space-y-1.5">
+          <li v-for="op in newOps" :key="op.name" :data-test="`command-${op.name}`">
+            <p class="flex items-center gap-1.5 text-text dark:text-text-dark">
+              <span
+                v-if="fresh.has(op.name)"
+                class="rounded px-1.5 py-px text-[10px] font-medium bg-accent/15 text-accent dark:text-accent-dark"
+                data-test="command-new"
+              >{{ t('syn.connect_new_badge') }}</span>
+              {{ op.description }}
+            </p>
+            <code class="block font-mono text-gray-600 dark:text-gray-300 break-all">{{ commandText(op.command) }}</code>
+          </li>
+        </ul>
+        <div v-if="oldOps.length" class="space-y-1 pt-1 text-gray-500 dark:text-gray-400" data-test="commands-allowed">
+          <p>{{ t('syn.connect_already_allowed') }}</p>
+          <ul class="space-y-0.5 px-3">
+            <li v-for="op in oldOps" :key="op.name"><code class="font-mono break-all">{{ commandText(op.command) }}</code></li>
+          </ul>
+        </div>
+      </div>
+
+      <div v-if="kept" class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-600 dark:text-gray-300" data-test="connect-kept">
+        <Lock class="w-3 h-3" aria-hidden="true" />
+        <span v-if="inputs.some((i) => i.kind === 'secret')">{{ t('syn.connect_kept_summary') }}</span>
+        <button type="button" class="text-accent dark:text-accent-dark cursor-pointer" data-test="connect-change" @click="editing = true">
+          {{ t('syn.connect_change_details') }}
+        </button>
+      </div>
+
+      <div v-for="input in kept ? [] : inputs" :key="input.name" class="space-y-1" :data-test="`input-${input.name}`">
         <label class="text-xs font-medium text-gray-600 dark:text-gray-300" :for="`connect-${input.name}`">{{ inLang(input.label, lang) }}</label>
         <input
           v-if="input.kind === 'secret'"
@@ -189,7 +261,7 @@ const ready = computed(
         </div>
       </div>
 
-      <p v-if="inputs.some((i) => i.kind === 'secret')" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+      <p v-if="!kept && inputs.some((i) => i.kind === 'secret')" class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
         <Lock class="w-3 h-3" aria-hidden="true" />{{ t('syn.connect_secret_note') }}
       </p>
 
@@ -199,8 +271,9 @@ const ready = computed(
       </p>
       <div v-else-if="problem" class="space-y-1.5 text-xs" data-test="connect-problem">
         <p class="text-red-600 dark:text-red-400">{{ problem }}</p>
-        <button v-if="result?.code === 'self_signed' && result.cert" type="button" class="btn-secondary" data-test="trust" @click="connect(result.cert)">
-          {{ t('syn.connect_trust') }}
+        <code v-if="hostKey" class="block font-mono text-text dark:text-text-dark break-all" data-test="host-key">{{ hostKey }}</code>
+        <button v-if="trustLabel && result?.cert" type="button" class="btn-secondary" data-test="trust" @click="connect(result.cert)">
+          {{ trustLabel }}
         </button>
         <details v-if="result?.said" class="text-gray-500 dark:text-gray-400">
           <summary class="cursor-pointer">{{ t('syn.connect_details') }}</summary>
@@ -217,7 +290,7 @@ const ready = computed(
           :disabled="busy || !ready || (packages.length > 0 && !agreed)"
           @click="connect()"
         >
-          {{ busy ? t('syn.connect_trying') : t('syn.connect_go') }}
+          {{ busy ? t('syn.connect_trying') : again ? t('syn.connect_allow') : t('syn.connect_go') }}
         </button>
       </div>
     </template>

@@ -1112,11 +1112,18 @@ mod tests {
     /// crates with it (smartstring, thin-vec, no-std-compat, rhai_codegen);
     /// pure Rust, so nothing to build for Android. Chosen over Starlark, which
     /// brought 52 crates — a REPL, an LSP and a debugger among them.
+    /// `russh` (Syn's `ssh` connectors, 2026-10-13): about 0.8 MB on a stripped,
+    /// LTO, opt-level "s" arm64 binary, measured against one that already had
+    /// `ring` and `ed25519-dalek`. Pinned to 0.61.2, the release that wants the
+    /// same `ed25519-dalek`/`curve25519-dalek` release candidates iroh pins, so
+    /// they are shared rather than doubled. `ring` for the crypto, no RSA, no
+    /// aws-lc: pure Rust plus `ring`'s C, which the build already compiles for
+    /// Android through rustls.
     const REVIEWED_CRATES: &[&str] = &[
         "aes", "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20", "chacha20poly1305", "chrono", "chrono-tz",
         "ctor", "feed-rs", "flate2", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
         "iroh", "jni", "keyring", "libc", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
-        "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rhai", "rusqlite", "rustls", "scraper",
+        "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rhai", "rusqlite", "russh", "rustls", "scraper",
         "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "synabit_protocol", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",
         "tauri-plugin-notification", "tauri-plugin-opener", "tauri-plugin-os", "tauri-plugin-process",

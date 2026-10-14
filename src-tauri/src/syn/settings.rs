@@ -7,9 +7,50 @@ use crate::error::{AppError, AppResult};
 use crate::models::syn::SynSettings;
 use std::path::Path;
 
-/// Load settings from `{vault}/Syn/settings.json`.
+/// Where this device sends what Syn is asked: the provider and its address.
+///
+/// # Why it is not in the synced file
+///
+/// `settings.json` syncs, so another device — or a sync service, or anything
+/// that can write into the vault folder — can change it. Most of it is
+/// harmless to share. These three are not: the provider and the address are
+/// where this device's own API key and every prompt, with the notes in it,
+/// are sent. Changed elsewhere to `https://evil.example/v1`, this device
+/// would have sent both there. So they are kept per device, beside what this
+/// device has agreed to (`syn::approvals`), and written only when settings
+/// are saved here.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
+struct SendsTo {
+    provider: Option<crate::models::syn::SynProvider>,
+    openai_base_url: Option<String>,
+    ollama_url: Option<String>,
+}
+
+fn sends_to(vault_path: &str) -> Option<SendsTo> {
+    crate::syn::approvals::has(vault_path, crate::syn::approvals::Section::Provider)
+        .then(|| crate::syn::approvals::read(vault_path, crate::syn::approvals::Section::Provider))
+}
+
+/// Load settings from `{vault}/Syn/settings.json`, with where this device
+/// sends taken from this device (`SendsTo`).
 /// Returns defaults if the file doesn't exist or contains invalid JSON.
 pub fn load_settings(vault_path: &str) -> AppResult<SynSettings> {
+    let mut settings = load_shared(vault_path)?;
+    if let Some(here) = sends_to(vault_path) {
+        if let Some(p) = here.provider {
+            settings.provider = p;
+        }
+        if let Some(u) = here.openai_base_url {
+            settings.openai_base_url = u;
+        }
+        if let Some(u) = here.ollama_url {
+            settings.ollama_url = u;
+        }
+    }
+    Ok(settings)
+}
+
+fn load_shared(vault_path: &str) -> AppResult<SynSettings> {
     let settings_path = Path::new(vault_path).join("Syn").join("settings.json");
     if !settings_path.exists() {
         return Ok(SynSettings::default());
@@ -31,6 +72,16 @@ pub fn load_settings(vault_path: &str) -> AppResult<SynSettings> {
 /// Save settings to `{vault}/Syn/settings.json`.
 /// Creates the `Syn/` directory if it doesn't exist.
 pub fn save_settings(vault_path: &str, settings: &SynSettings) -> AppResult<()> {
+    // Saved here, so where this device sends is what was just saved.
+    crate::syn::approvals::write(
+        vault_path,
+        crate::syn::approvals::Section::Provider,
+        &SendsTo {
+            provider: Some(settings.provider),
+            openai_base_url: Some(settings.openai_base_url.clone()),
+            ollama_url: Some(settings.ollama_url.clone()),
+        },
+    )?;
     let syn_dir = Path::new(vault_path).join("Syn");
     std::fs::create_dir_all(&syn_dir)
         .map_err(|e| AppError::General(format!("Failed to create Syn directory: {}", e)))?;
@@ -44,6 +95,29 @@ pub fn save_settings(vault_path: &str, settings: &SynSettings) -> AppResult<()> 
 mod tests {
     use super::*;
     use crate::models::syn::SynProvider;
+
+    /// Another device rewrites the synced file to send elsewhere: this one
+    /// keeps sending where it was set to, here.
+    #[test]
+    fn where_this_device_sends_is_not_changed_by_a_synced_file() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut mine = SynSettings::default();
+        mine.provider = SynProvider::OpenAiCompat;
+        mine.openai_base_url = "https://api.openai.com/v1".into();
+        save_settings(vault, &mine).expect("saved here");
+
+        let mut theirs = mine.clone();
+        theirs.openai_base_url = "https://evil.example/v1".into();
+        theirs.provider = SynProvider::Anthropic;
+        theirs.temperature = 0.2;
+        crate::syn::vault_json::write(&dir.path().join("Syn").join("settings.json"), &theirs).expect("synced in");
+
+        let now = load_settings(vault).expect("loads");
+        assert_eq!(now.openai_base_url, "https://api.openai.com/v1");
+        assert_eq!(now.provider, SynProvider::OpenAiCompat);
+        assert_eq!(now.temperature, 0.2, "the rest is shared as before");
+    }
 
     /// A vault written before the switch existed is a vault where Syn was on.
     ///

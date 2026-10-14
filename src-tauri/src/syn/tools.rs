@@ -643,7 +643,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "connector_draft".to_string(),
-                description: "Write a connector for a service the user wants Syn to reach, as a declaration (never code). Look first with connector_find: one already in the vault needs no new draft. Two ways: give `openapi_url` alone to list the spec's operations, then call again with `operations` (\"GET /tasks\"…) chosen from that list — Rust writes the declaration; or give `yaml`. What only the user knows — a key, their account, their own server's address — is declared as `inputs` (kind secret, account or address) with a `guide`: where to get it, in steps, and a link on the service's site. Choose everything else yourself; never ask the user technical questions. The host must be one the user named, or an address input. The draft does nothing until connector_connect. Problems come back with codes; fix and call again.".to_string(),
+                description: "Write a connector for a service the user wants Syn to reach, as a declaration (never code). Look first with connector_find: one already in the vault needs no new draft. Two ways: give `openapi_url` alone to list the spec's operations, then call again with `operations` (\"GET /tasks\"…) chosen from that list — Rust writes the declaration; or give `yaml`. What only the user knows — a key, their account, their own server's address — is declared as `inputs` (kind secret, account or address) with a `guide`: where to get it, in steps, and a link on the service's site. Choose everything else yourself; never ask the user technical questions. The host must be one the user named, or an address input. For a machine the user reaches over SSH — a Raspberry Pi, a NAS, a server — write `yaml` with transport: ssh, base_url \"{{input.host}}\" (an address input, example ssh://pi@raspberrypi.local), auth {type: ssh, secret: login} (a secret input: their password or private key), and one operation per thing to do, each `command: [program, arg, \"{{param}}\"]` with effect write, or read_attested for one that only looks; a filled word can never be the program or follow a shell. Once approved, every ssh connector also has `connector__<id>__run`: one command line, shown to the user and asked about each time — use it for one-off commands instead of drafting an operation; declare operations only for what is done again and again. One machine is one connector: to add a command to a machine or service Syn already has, draft it again under the same id with only what is new: the operations it had are kept unless named in `drop`. The draft does nothing until connector_connect. Problems come back with codes; fix and call again.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["id", "name"],
@@ -654,6 +654,8 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "openapi_url": { "type": "string", "description": "Address of the service's OpenAPI spec (JSON or YAML)." },
                         "base_url": { "type": "string", "description": "Optional: the API's address, when it is not the one the spec gives." },
                         "operations": { "type": "array", "items": { "type": "string" }, "description": "With openapi_url: the operations to keep, as listed, e.g. \"GET /tasks\"." },
+                        "new_machine": { "type": "boolean", "description": "For transport: ssh, when one ssh connector already exists: true only if the user means another machine. A command for the same machine goes into its existing connector." },
+                        "drop": { "type": "array", "items": { "type": "string" }, "description": "Redrafting one Syn wrote: names of its operations to remove. Every other operation it had is kept." },
                         "auth": { "type": "object", "description": "How it authenticates: {\"type\":\"bearer\",\"secret\":\"todoist_token\"}, header (+name), query (+name), basic (+user), or none. The user types the secret's value on the approval card; never ask for it in the chat." },
                         "guide": { "type": "object", "description": "With openapi_url: how the user gets the key the spec asks for — {\"link\": \"https://…\", \"steps\": {\"en\": [\"…\"], \"vi\": [\"…\"]}}, from the service's own documentation." },
                         "yaml": { "type": "string", "description": "Instead of openapi_url, for a service with documentation but no spec: the whole declaration — id, name, base_url (or \"{{input.server}}\" for the user's own server), auth, inputs: [{name, kind: secret|account|address, label: {en, vi}, example, guide: {link, steps: {en: [...], vi: [...]}}}], operations: [{name, description, effect: read|write|irreversible, call: {method, path, query}, params, result: {each: \"$\" or \"$.items[*]\"}}], with `{{param}}` placeholders. Try a read with connector_try before proposing." }
@@ -1665,6 +1667,19 @@ pub fn execute_tool<R: tauri::Runtime>(
         }
     }
 
+    // What rides in every prompt is changed by the model only as a change the
+    // person approved (`syn::changes`), whichever way the call came: the gate
+    // holds it in a run, and this refuses it in a recipe's step. The app's
+    // own writes (`model: None`) are the person's.
+    if ctx.model.is_some() && !APPROVED.with(|a| a.get()) && rides_prompt(&*lock(ctx)?, name, args) {
+        log::warn!("[Syn Tools] Refused `{name}`: it changes what rides in every prompt");
+        return Ok(serde_json::json!({
+            "error": "This changes what Syn is told on every question (the user's instructions, a memory or a skill). \
+                      It is changed only as a change the user approves in the app."
+        })
+        .to_string());
+    }
+
     // The app lock: a model may not read or change a protected note, nor
     // anything of a protected app. Checked here, once, so every tool — and
     // every recipe step, which arrives here too — meets it without knowing it
@@ -1708,7 +1723,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         // for, and the description above says which one to reach for.
         "remember" => tool_remember(ctx, args),
         name if name == CAPTURE_TOOL => tool_capture(ctx, args),
-        name if name == crate::syn::skill::LOAD_TOOL => tool_load_skill(&*lock(ctx)?, args),
+        name if name == crate::syn::skill::LOAD_TOOL => tool_load_skill(&*lock(ctx)?, ctx.vault_path, args),
         name if name == crate::syn::recipe::RUN_TOOL => tool_run_recipe(ctx, args),
         "recall" => tool_recall(&*lock(ctx)?, args),
         name if name == LOOK_BACK_TOOL => tool_look_back(ctx, args),
@@ -1786,14 +1801,23 @@ pub fn execute_tool<R: tauri::Runtime>(
         if crate::syn::taint::untrusted_read(name) && !found_nothing {
             taint.set();
         }
-        // A clipped page, read whole: a note by every measure but whose words it holds.
-        if name == "get_node"
-            && serde_json::from_str::<Value>(out)
-                .ok()
-                .and_then(|v| v.get("properties").cloned())
-                .is_some_and(|p| crate::syn::taint::from_outside(&p))
-        {
-            taint.set();
+        // A clipped page, or a note a tainted run wrote, read whole: a note
+        // by every measure but whose words it holds.
+        if name == "get_node" {
+            if let Some(p) = serde_json::from_str::<Value>(out).ok().and_then(|v| v.get("properties").cloned()) {
+                crate::syn::taint::note_stamp(taint, &p);
+            }
+        }
+        // The same notes, listed: a title and the fields a query shows are
+        // enough to carry an instruction.
+        if LISTS_NOTES.contains(&name) {
+            if let Ok(db) = lock(ctx) {
+                for id in listed_ids(out) {
+                    if let Ok(Some(n)) = db.get_node(&id) {
+                        crate::syn::taint::note_stamp(taint, &n.properties);
+                    }
+                }
+            }
         }
         // A note a mirror wrote, from whichever tool showed it.
         for id in crate::syn::taint::mirrored_in(out) {
@@ -2321,7 +2345,7 @@ fn tool_recall(db: &DbBridge, args: &Value) -> AppResult<String> {
 /// A name that is not there returns the names that are. The alternative — an
 /// error saying "not found" — makes the model guess again, and it guesses at
 /// the same wrong name surprisingly often.
-fn tool_load_skill(db: &DbBridge, args: &Value) -> AppResult<String> {
+fn tool_load_skill(db: &DbBridge, vault_path: &str, args: &Value) -> AppResult<String> {
     use crate::syn::skill;
 
     let name = args
@@ -2331,7 +2355,7 @@ fn tool_load_skill(db: &DbBridge, args: &Value) -> AppResult<String> {
         .filter(|n| !n.is_empty())
         .ok_or_else(|| AppError::General("Missing required parameter: name".to_string()))?;
 
-    let skills = skill::all(db)?;
+    let skills = skill::all_here(db, vault_path)?;
     let Some(found) = skill::find(&skills, name) else {
         let offered: Vec<&str> = skills
             .iter()
@@ -2387,7 +2411,7 @@ fn tool_run_recipe<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     // of the job.
     let found = {
         let db = lock(ctx)?;
-        skill::find(&skill::all(&db)?, name).cloned()
+        skill::find(&skill::all_here(&db, ctx.vault_path)?, name).cloned()
     };
     let Some(found) = found else {
         return Ok(serde_json::json!({ "error": format!("No skill called `{name}`.") }).to_string());
@@ -2854,6 +2878,13 @@ fn write_tool_node<R: tauri::Runtime>(
 ) -> AppResult<(String, String)> {
     use crate::commands::nodes::{free_node_path, write_node_inner};
 
+    // Written by a run that read something from outside: it carries that
+    // with it. See `taint::WRITTEN_AFTER_READING`.
+    let mut properties = properties;
+    if let (Some(stamp), Some(map)) = (ctx.model.and_then(crate::syn::taint::stamp), properties.as_object_mut()) {
+        map.insert(crate::syn::taint::WRITTEN_AFTER_READING.to_string(), stamp);
+    }
+
     // Sanitize title for filename: remove unsafe characters
     let safe_title: String = title
         .chars()
@@ -2912,6 +2943,82 @@ fn write_tool_node<R: tauri::Runtime>(
 // ═══════════════════════════════════════════════════════════════
 //  GENERIC TOOLS
 // ═══════════════════════════════════════════════════════════════
+
+thread_local! {
+    /// Set while a change the person approved is carried out. See `as_approved`.
+    static APPROVED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Carry out `f` as a change the person approved on a card: what rides in
+/// every prompt may be changed inside it. `syn::changes::apply` only.
+pub fn as_approved<T>(f: impl FnOnce() -> T) -> T {
+    APPROVED.with(|a| a.set(true));
+    let out = f();
+    APPROVED.with(|a| a.set(false));
+    out
+}
+
+/// The tools that change or remove a note that already exists.
+const CHANGES_A_NOTE: &[&str] = &["update_node", "trash_node", "restore_node", "restore_version"];
+
+/// Whether a call changes something that rides in every prompt: the person's
+/// instructions (`SYN.md`), a memory, a skill. A new memory is `remember`'s,
+/// and creating any of Syn's kinds is refused by `taint::reserved_type`.
+pub fn rides_prompt(db: &DbBridge, tool: &str, args: &Value) -> bool {
+    if !CHANGES_A_NOTE.contains(&tool) {
+        return false;
+    }
+    let ids = std::iter::once(args.get("node_id"))
+        .flatten()
+        .chain(args.get("node_ids").and_then(Value::as_array).into_iter().flatten())
+        .filter_map(Value::as_str)
+        .map(|s| s.trim().trim_start_matches("./").to_string());
+    ids.into_iter().any(|id| {
+        id.eq_ignore_ascii_case(crate::syn::instructions::FILE)
+            || db.get_node(&id).ok().flatten().is_some_and(|n| {
+                n.node_type == crate::syn::memory::MEMORY_TYPE || n.node_type == crate::syn::skill::SKILL_TYPE
+            })
+    })
+}
+
+/// Tools whose answer lists notes by id — their titles and some fields.
+const LISTS_NOTES: &[&str] = &["query_nodes", "get_linked_nodes", "recall", "look_back", "timeline"];
+
+/// The note ids an answer lists: every `id` or `node_id` string in it, up to
+/// a hundred.
+fn listed_ids(out: &str) -> Vec<String> {
+    fn walk(v: &Value, out: &mut Vec<String>) {
+        if out.len() >= 100 {
+            return;
+        }
+        match v {
+            Value::Object(m) => {
+                for (k, x) in m {
+                    match (k.as_str(), x) {
+                        ("id" | "node_id", Value::String(s)) if s.ends_with(".md") => out.push(s.clone()),
+                        _ => walk(x, out),
+                    }
+                }
+            }
+            Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut ids = Vec::new();
+    if let Ok(v) = serde_json::from_str::<Value>(out) {
+        walk(&v, &mut ids);
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// A board a tainted run writes carries the taint, as a note does.
+fn stamp_board<R: tauri::Runtime>(ctx: &ToolContext<R>, board: &mut crate::syn::board::Board) {
+    if let Some(stamp) = ctx.model.and_then(crate::syn::taint::stamp) {
+        board.metadata.get_or_insert_with(Default::default).insert(crate::syn::taint::WRITTEN_AFTER_READING.to_string(), stamp);
+    }
+}
 
 /// Search and filter every node, whatever its type.
 ///
@@ -5991,6 +6098,9 @@ fn tool_read_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
     let name = args.get("board").and_then(|v| v.as_str()).unwrap_or("");
     let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
     let board = read_board_file(&path)?;
+    if let (Some(taint), Some(meta)) = (ctx.model, &board.metadata) {
+        crate::syn::taint::note_stamp(taint, &Value::Object(meta.clone()));
+    }
     // The path first, because a name is how a person says which board and a
     // path is how everything else says it: `edit_board` takes either, and the
     // conversation shows the picture by finding this line. Without it the
@@ -6022,7 +6132,8 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
         .map_err(|e| AppError::General(format!("That is not a drawing this can lay out: {e}")))?;
 
     let now = chrono::Utc::now().timestamp_millis();
-    let board = crate::syn::board::draw(title, &sketch, now).map_err(AppError::General)?;
+    let mut board = crate::syn::board::draw(title, &sketch, now).map_err(AppError::General)?;
+    stamp_board(ctx, &mut board);
 
     let dir = std::path::Path::new(ctx.vault_path).join(crate::syn::board::BOARDS_DIR);
     std::fs::create_dir_all(&dir)?;
@@ -6072,6 +6183,7 @@ fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
         let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
         board = read_board_file(&path)?;
         let done = crate::syn::board::apply(&mut board, &changes, now).map_err(AppError::General)?;
+        stamp_board(ctx, &mut board);
         // What was there before Syn's change, in the board's history, so the
         // change can be taken back from the History panel.
         crate::commands::whiteboards::keep_before_write(ctx.app, ctx.vault_path, &path, true);

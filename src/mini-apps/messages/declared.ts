@@ -23,6 +23,8 @@ export interface DeclaredOperation {
   effect: Effect;
   /** Absent on a device connector's operation, which has a bridge instead. */
   call?: { method: string; path: string; query?: Record<string, string> };
+  /** The program and its words, for an ssh connector. See `connector::ssh`. */
+  command?: string[];
   /** The device bridge it reads. See `connector::device`. */
   bridge?: string | null;
   filter?: Record<string, Array<string | number>>;
@@ -36,7 +38,8 @@ export type DeclaredAuth =
   | { type: 'bearer'; secret: string }
   | { type: 'header'; name: string; secret: string }
   | { type: 'query'; name: string; secret: string }
-  | { type: 'basic'; user: string; secret: string };
+  | { type: 'basic'; user: string; secret: string }
+  | { type: 'ssh'; secret: string };
 
 /** Text in the person's language: one string, or one per language code. */
 export type Words = string | Record<string, string>;
@@ -146,6 +149,8 @@ export interface DeclaredView {
   instance: Instance | null;
   effects: Record<string, Effect>;
   secret_here: boolean;
+  /** Operations added or changed since this device approved it. */
+  not_yet_approved?: string[];
   mirrors_ran?: Record<string, MirrorRan>;
 }
 
@@ -171,9 +176,22 @@ export function notificationPackages(m: Manifest): string[] {
   ];
 }
 
-/** Whether any operation sends. */
+/** Whether any operation sends. Nothing proves a command only reads, so
+ * every ssh command is asked about until the person vouches for it. */
 export function sends(m: Manifest): boolean {
+  if (m.transport === 'ssh') return m.operations.length > 0;
   return m.operations.some((o) => o.effect === 'write' || o.effect === 'irreversible');
+}
+
+/**
+ * A command as the card shows it: its words, a filled one as `<name>`.
+ * Quoted where it holds a space, so two words never read as one.
+ */
+export function commandText(command: string[] | undefined): string {
+  return (command ?? [])
+    .map((w) => w.replace(/\{\{\s*(?:input\.)?([A-Za-z0-9_]+)\s*\}\}/g, '<$1>'))
+    .map((w) => (/\s/.test(w) || w === '' ? `'${w}'` : w))
+    .join(' ');
 }
 
 /** Every input the card asks for, the auth's secret included when undeclared. */

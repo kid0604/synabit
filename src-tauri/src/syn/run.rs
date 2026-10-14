@@ -621,6 +621,10 @@ pub struct Run {
     /// on with, whether or not they are in its history.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_untrusted: bool,
+    /// Whether this device started this run — it has the run's guarded state
+    /// (`Guarded`). Not stored: worked out when the run is read.
+    #[serde(skip)]
+    pub started_here: bool,
     /// Where what made `read_untrusted` came from — `outside`, `connector:jira`
     /// — so a run carried on keeps the one thing that depends on it: going
     /// back to the same connector for more. Empty on runs from before it was
@@ -853,6 +857,7 @@ impl Run {
             error: None,
             plan_only: false,
             read_untrusted: false,
+            started_here: true,
             read_from: Vec::new(),
             changes: None,
             drafted_skills: Vec::new(),
@@ -1246,8 +1251,11 @@ pub fn continuable(vault_path: &str, conversation_id: &str) -> Option<Value> {
     if latest.carried_on_at.is_some() {
         return None;
     }
+    // Working, and alive in no process here: cut off when this app closed —
+    // if this device ran it. Another device's run reads as working while that
+    // device is still at it, and carrying it on here would do it twice.
     let interrupted = latest.state == RunState::Interrupted
-        || (latest.state == RunState::Working && !crate::syn::engine::is_live(&latest.id));
+        || (latest.state == RunState::Working && latest.started_here && !crate::syn::engine::is_live(&latest.id));
     let why = match latest.state {
         RunState::BudgetExhausted => "ceiling",
         _ if interrupted => "interrupted",
@@ -1345,11 +1353,79 @@ fn run_path(dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{id}.json"))
 }
 
+/// What in a run decides what it may do next, kept on this device too.
+///
+/// # Why
+///
+/// A run file is in `Syn/runs/`, which syncs. Two things in it are
+/// permissions: the sends the person approved in a plan (a call whose hash is
+/// approved goes without a card), and whether the run read a stranger's words.
+/// Another device — or anything that can write into the vault — could mark a
+/// send of its own approved, or the run clean, and the next answer to any card
+/// on that run would carry it out. So they are kept again in `.synabit/runs/`,
+/// which does not sync, and when a run is read the synced file is believed
+/// only as far as this copy agrees: an approval this device did not record is
+/// not one, and a taint either copy records stands. A run with no copy here
+/// was not started here; nothing in it was approved here, and it is read as
+/// having read something.
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct Guarded {
+    #[serde(default)]
+    approved: Vec<String>,
+    #[serde(default)]
+    read_untrusted: bool,
+    #[serde(default)]
+    read_from: Vec<String>,
+}
+
+fn guarded_path(vault_path: &str, id: &str) -> PathBuf {
+    Path::new(vault_path).join(".synabit").join("runs").join(format!("{id}.json"))
+}
+
+fn save_guarded(vault_path: &str, run: &Run) -> AppResult<()> {
+    let path = guarded_path(vault_path, &run.id);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| AppError::General(format!("Failed to create .synabit/runs: {e}")))?;
+    }
+    let g = Guarded {
+        approved: run.writes.as_ref().map(|p| p.approved()).unwrap_or_default(),
+        read_untrusted: run.read_untrusted,
+        read_from: run.read_from.clone(),
+    };
+    crate::path_utils::write_atomic(&path, serde_json::to_string(&g)?.as_bytes())
+        .map_err(|e| AppError::General(format!("Failed to write a run's guarded state: {e}")))
+}
+
+/// A run as read from the synced file, believed only as far as this device's
+/// own copy agrees. See `Guarded`.
+fn guard(vault_path: &str, mut run: Run) -> Run {
+    let here: Option<Guarded> = std::fs::read_to_string(guarded_path(vault_path, &run.id))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok());
+    run.started_here = here.is_some();
+    let here = here.unwrap_or(Guarded { read_untrusted: true, ..Default::default() });
+    if let Some(plan) = run.writes.as_mut() {
+        for r in plan.requests.iter_mut() {
+            if r.state == crate::syn::writes::State::Approved && !here.approved.contains(&r.hash) {
+                r.state = crate::syn::writes::State::Declined;
+            }
+        }
+    }
+    run.read_untrusted |= here.read_untrusted;
+    for k in here.read_from {
+        if !run.read_from.contains(&k) {
+            run.read_from.push(k);
+        }
+    }
+    run
+}
+
 /// Persist a run as it currently stands.
 ///
 /// Called after every step, so it has to stay cheap: one serialisation and one
 /// rename of a file measured in kilobytes.
 pub fn save_run(vault_path: &str, run: &Run) -> AppResult<()> {
+    save_guarded(vault_path, run)?;
     let dir = runs_dir(vault_path)?;
     // Keeps the `metadata` the sync layer stamped and sets `updated_at`, so a
     // save does not undo the stamp and cause a second write; see `vault_json`.
@@ -1434,7 +1510,7 @@ pub fn get_run(vault_path: &str, id: &str) -> AppResult<Run> {
         return Err(AppError::General(format!("Run not found: {id}")));
     }
     let content = std::fs::read_to_string(&path)?;
-    Ok(serde_json::from_str(&content)?)
+    Ok(guard(vault_path, serde_json::from_str(&content)?))
 }
 
 /// How often each tool has actually been called, and when it last was.
@@ -1555,7 +1631,7 @@ pub fn load_all(vault_path: &str) -> AppResult<Vec<Run>> {
             continue;
         };
         match serde_json::from_str::<Run>(&content) {
-            Ok(run) => runs.push(run),
+            Ok(run) => runs.push(guard(vault_path, run)),
             Err(e) => log::warn!("[Syn] Skipping corrupt run file {:?}: {}", path.file_name(), e),
         }
     }
@@ -2431,5 +2507,67 @@ mod agreement {
         assert_eq!(waiting[0]["run_id"], asked.id.as_str());
         assert_eq!(waiting[0]["conversation_id"], "conv-a");
         assert_eq!(waiting[0]["ask"]["tool"], "browse");
+    }
+}
+
+#[cfg(test)]
+mod guarded {
+    use super::*;
+
+    fn request(hash: &str, state: crate::syn::writes::State) -> crate::syn::writes::Request {
+        serde_json::from_value(serde_json::json!({
+            "tool": "connector__mail__send", "args": {}, "hash": hash, "connector": "mail", "operation": "send",
+            "effect": "irreversible", "shown": [], "state": state,
+        }))
+        .expect("a request")
+    }
+
+    /// The synced run file is rewritten elsewhere to approve a send of its
+    /// own and to forget what the run read: read back here, neither holds.
+    #[test]
+    fn a_synced_run_file_cannot_approve_a_send_or_clean_a_run() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut run = Run::new("gửi mail", Some("conv".into()), Budget::from_settings(&crate::models::syn::SynSettings::default()));
+        run.read_untrusted = true;
+        run.writes = Some(crate::syn::writes::Plan {
+            why: String::new(),
+            requests: vec![request("mine", crate::syn::writes::State::Approved), request("theirs", crate::syn::writes::State::Proposed)],
+            proposed_at: String::new(),
+        });
+        save_run(vault, &run).expect("saved here");
+
+        let path = dir.path().join("Syn").join("runs").join(format!("{}.json", run.id));
+        let mut edited: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        edited["writes"]["requests"][1]["state"] = serde_json::json!("approved");
+        edited["read_untrusted"] = serde_json::json!(false);
+        std::fs::write(&path, edited.to_string()).unwrap();
+
+        let back = get_run(vault, &run.id).expect("read");
+        assert_eq!(back.writes.as_ref().unwrap().approved(), vec!["mine".to_string()]);
+        assert!(back.read_untrusted);
+        assert!(back.started_here);
+    }
+
+    /// A run another device is working on: not offered to carry on here,
+    /// and nothing in it counts as approved here.
+    #[test]
+    fn another_devices_run_is_not_carried_on_here() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut run = Run::new("việc dài", Some("conv-b".into()), Budget::from_settings(&crate::models::syn::SynSettings::default()));
+        run.writes = Some(crate::syn::writes::Plan {
+            why: String::new(),
+            requests: vec![request("there", crate::syn::writes::State::Approved)],
+            proposed_at: String::new(),
+        });
+        save_run(vault, &run).expect("saved");
+        std::fs::remove_file(guarded_path(vault, &run.id)).unwrap();
+
+        let back = get_run(vault, &run.id).expect("read");
+        assert!(!back.started_here);
+        assert!(back.writes.as_ref().unwrap().approved().is_empty());
+        assert!(back.read_untrusted, "read as having read something");
+        assert!(continuable(vault, "conv-b").is_none(), "it may still be running there");
     }
 }

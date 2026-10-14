@@ -1228,6 +1228,7 @@ pub fn run() {
             syn_commands::syn_open_thread,
             syn_commands::syn_move_thread,
             syn_commands::syn_list_skills,
+            syn_commands::syn_skill_approve_here,
             syn_commands::syn_skill_usage,
             syn_commands::syn_skill_trial,
             syn_commands::syn_narrate_person,

@@ -71,6 +71,13 @@ pub struct View<'a> {
     /// Whether "just this once" was said for this capability earlier in the
     /// same piece of work. See `consent::allowed_until_done`.
     pub allowed_until_done: &'a dyn Fn(&Capability) -> bool,
+    /// Whether "just this once" was said about this exact call — tool and
+    /// arguments — earlier in the same work. See
+    /// `consent::allow_call_until_done`.
+    pub call_allowed_until_done: bool,
+    /// Whether "not now" was said about this exact call earlier in the same
+    /// work. See `consent::decline_call_until_done`.
+    pub call_declined: bool,
     /// Skill bodies this run has already opened.
     pub skills_opened: usize,
     pub plan_only: bool,
@@ -88,6 +95,9 @@ pub struct View<'a> {
     /// the person named. `None` where nobody keeps them (a test, a caller
     /// with no run). See `taint::browse_carries_nothing`.
     pub reach: Option<&'a crate::syn::taint::Destinations>,
+    /// Whether the call changes something that rides in every prompt —
+    /// SYN.md, a memory, a skill. See `tools::rides_prompt`.
+    pub rides_prompt: bool,
 }
 
 /// `(tool, handle)` → where the item would go, or the sentence to tell the model.
@@ -253,6 +263,25 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
             audit: capability.map(|_| Outcome::Refused),
         };
     }
+    // What rides in every prompt — the person's standing instructions, what
+    // Syn remembers, the skills it follows — changes only when the person
+    // sees the change, read or not: one quiet edit there is every later
+    // run's instruction, Telegram's and the routines' included. Held for them
+    // in the app; elsewhere there is nobody to show it to. A plan describes it
+    // like anything else.
+    if view.rides_prompt && !view.plan_only {
+        if !view.sub_run && view.surface == crate::syn::surface::Surface::App {
+            return Decided::quietly(Gate::Go(How::Stage));
+        }
+        return Decided::quietly(Gate::Refuse {
+            said: format!(
+                "`{tool}` would change what Syn is told on every question — the user's instructions, a memory or \
+                 a skill. That is changed only in the app, where the user sees the change. Say what you would \
+                 change instead."
+            ),
+            note: Some(format!("Refused `{tool}`: it changes what rides in every prompt, away from the app.")),
+        });
+    }
     // A change to what was there, after reading: held for the person rather
     // than refused, where there is a person to show it to — the app, the run
     // they asked, not a helper or a plan. What was read may have asked for it,
@@ -324,11 +353,42 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // 5. Consent.
     let mut audit = None;
     if let Some(capability) = capability {
+        let sends = matches!(capability, Capability::NetWrite { .. });
+        let may_remember = !sends || crate::syn::connector::declared::write_may_be_remembered(tool);
         let mut decision = crate::syn::consent::decide(capability, view.ledger, view.now);
+        // A send said "always" to counts only where nothing in it can point
+        // elsewhere (`write_may_be_remembered`), and not in a conversation
+        // that has read a stranger's words: the "ok" this run answers may be
+        // theirs, as `untrusted_before` says for a Safe item.
+        if sends && decision == Decision::Allow && (!may_remember || view.untrusted_before) {
+            decision = Decision::Ask;
+        }
         // Only ever `Ask` to `Allow`. A `Never` recorded in between is a
         // decision made later about the same thing, and later wins.
-        if decision == Decision::Ask && (view.allowed_until_done)(capability) {
+        //
+        // A yes to this very call, as the card showed it, always stands. A yes
+        // to its scope does not after a stranger's words, nor for an ssh
+        // `run`, whose every call is another command: it would carry other
+        // arguments too.
+        let per_call = sends && crate::syn::connector::declared::asks_per_call(tool);
+        if decision == Decision::Ask
+            && (view.call_allowed_until_done
+                || ((view.allowed_until_done)(capability) && !(sends && (view.untrusted_before || per_call))))
+        {
             decision = Decision::Allow;
+        }
+        // "Not now" to this call: refused for the rest of the work, not asked
+        // again. See `consent::decline_call_until_done`.
+        if decision == Decision::Ask && view.call_declined {
+            return Decided {
+                gate: Gate::Refuse {
+                    said: "The user said not now to this exact call. It was not made; do not make it again or \
+                           look for another way to the same thing in this answer. Say it was not done."
+                        .to_string(),
+                    note: Some(format!("Refused `{tool}`: the user said not now to this call.")),
+                },
+                audit: Some(Outcome::Refused),
+            };
         }
         // Reading the web is asked about because an address can carry data
         // out. A search, a link a page offered, a site the person named, a
@@ -361,10 +421,11 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
                 };
             }
             Decision::Ask => {
-                return Decided {
-                    gate: Gate::Ask(Box::new(Ask::about(tool, capability, view.now))),
-                    audit,
-                };
+                let mut ask = Ask::about(tool, capability, view.now);
+                // No "always" on the card where it would not be honoured.
+                ask.can_be_remembered &= may_remember;
+                ask.per_call = per_call;
+                return Decided { gate: Gate::Ask(Box::new(ask)), audit };
             }
             // Told, not hidden. A silent failure would have the model try
             // again by another route, which is the opposite of respecting a no.
@@ -519,11 +580,14 @@ mod tests {
             seen: &[],
             ledger,
             allowed_until_done: until_done,
+            call_allowed_until_done: false,
+            call_declined: false,
             skills_opened: 0,
             plan_only: false,
             sub_run: false,
             untrusted_before: false,
             reach: None,
+            rides_prompt: false,
             now: NOW,
             safe: &|_, h| Err(format!("no Safe here ({h})")),
         }
@@ -551,6 +615,46 @@ mod tests {
         let d = decide("get_node", &args(), Some(&Capability::VaultRead), &view(&empty, &never_until_done));
         assert!(matches!(d.gate, Gate::Go(How::Execute)), "{d:?}");
         assert_eq!(d.audit, Some(Outcome::Allowed));
+    }
+
+    /// "Always send" is not "always send anything to anyone": a send whose
+    /// arguments nothing fixes — an MCP tool's, an ssh command's — is asked
+    /// each time, an old "always" included, and the card does not offer one.
+    #[test]
+    fn a_send_with_free_arguments_is_never_remembered() {
+        let send = Capability::NetWrite { domain: "Gmail".into(), tool: "send_email".into() };
+        let granted = ledger(&send, Answer::Always);
+        let v = view(&granted, &never_until_done);
+        let d = decide("connector__gmail__send_email", &serde_json::json!({ "to": "a@b.c" }), Some(&send), &v);
+        match d.gate {
+            Gate::Ask(ask) => assert!(!ask.can_be_remembered, "no always on the card"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// What rides in every prompt changes only where the person sees it —
+    /// clean run or not: held in the app, refused on the phone, in a routine
+    /// or a helper, described in a plan.
+    #[test]
+    fn what_rides_in_every_prompt_is_held_even_in_a_clean_run() {
+        let granted = ledger(&Capability::VaultWrite, Answer::Always);
+        let mut v = view(&granted, &always_until_done);
+        v.rides_prompt = true;
+        assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &v).gate, Gate::Go(How::Stage)));
+        for surface in [crate::syn::surface::Surface::Telegram, crate::syn::surface::Surface::Routine] {
+            let mut away = view(&granted, &always_until_done);
+            away.rides_prompt = true;
+            away.surface = surface;
+            assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &away).gate, Gate::Refuse { .. }), "{surface:?}");
+        }
+        let mut helper = view(&granted, &always_until_done);
+        helper.rides_prompt = true;
+        helper.sub_run = true;
+        assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &helper).gate, Gate::Refuse { .. }));
+        let mut plan = view(&granted, &always_until_done);
+        plan.rides_prompt = true;
+        plan.plan_only = true;
+        assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &plan).gate, Gate::Go(How::Describe(_))));
     }
 
     /// First, and before a grant: nothing after it may reopen what it closed.

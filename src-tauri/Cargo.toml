@@ -1,6 +1,6 @@
 [package]
 name = "synabit"
-version = "0.9.21"
+version = "0.9.23"
 description = "A unified, local-first productivity workspace"
 authors = ["Synabit"]
 edition = "2021"
@@ -104,6 +104,9 @@ chrono-tz = "0.10.4"
 iana-time-zone = "0.1.65"
 time = { version = "0.3.55", features = ["formatting"] }
 rhai = { version = "1.26", features = ["sync", "serde", "no_module", "no_custom_syntax"] }
+# Syn's `ssh` connectors: pure Rust, so it builds for Android too. `ring`
+# for the crypto, already in the build through rustls; no RSA, no aws-lc.
+russh = { version = "=0.61.2", default-features = false, features = ["ring"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # A hotkey that works while another app is focused only exists on desktop;

@@ -53,6 +53,7 @@ pub mod authoring;
 pub mod decode;
 pub mod device;
 pub mod mirror;
+pub mod ssh;
 pub mod transport_http;
 #[cfg(desktop)]
 pub mod transport_stdio;

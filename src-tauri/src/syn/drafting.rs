@@ -409,10 +409,17 @@ pub fn answer<R: tauri::Runtime>(
         crate::syn::tools::execute_tool(&ctx, "trash_node", &serde_json::json!({ "node_id": skill_id }))
     }
     .map_err(|e| e.to_string())?;
-    match serde_json::from_str::<Value>(&said).ok().and_then(|v| v.get("error").cloned()) {
-        Some(e) => Err(e.as_str().map(str::to_string).unwrap_or_else(|| e.to_string())),
-        None => Ok(()),
+    if let Some(e) = serde_json::from_str::<Value>(&said).ok().and_then(|v| v.get("error").cloned()) {
+        return Err(e.as_str().map(str::to_string).unwrap_or_else(|| e.to_string()));
     }
+    // Kept on this device, by the person, on the card: allowed here as it is.
+    if keep {
+        let db = db.lock().map_err(|e| e.to_string())?;
+        if let Some(s) = crate::syn::skill::all(&db).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == skill_id) {
+            crate::syn::skill::approve_here(vault_path, &s).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

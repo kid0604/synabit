@@ -268,7 +268,8 @@ pub fn prepare(m: &Manifest, op: &Operation, args: &Value, secret: Option<&str>,
             use base64::Engine;
             headers.push(("Authorization".into(), format!("Basic {}", base64::engine::general_purpose::STANDARD.encode(format!("{user}:{s}")))));
         }
-        (Auth::None | Auth::Query { .. }, _) => {}
+        // An ssh login is never a header; `problems` keeps it off http.
+        (Auth::None | Auth::Query { .. } | Auth::Ssh { .. }, _) => {}
         (_, None) => return Err(format!("{} needs its secret, and this device does not have it", m.name)),
     }
     if headers.iter().any(|(_, v)| v.contains(['\r', '\n'])) {
@@ -483,6 +484,7 @@ pub async fn fetch(m: &Manifest, inst: &Instance, op: &Operation, args: &Value, 
     let op = &m.operations.iter().find(|o| o.name == op.name).cloned().unwrap_or_else(|| op.clone());
     match m.transport {
         super::manifest::Transport::Device => super::device::run(m, inst, op, args).await,
+        super::manifest::Transport::Ssh => super::ssh::run(m, inst, op, args, secret).await,
         _ => run(m, inst, op, args, secret).await,
     }
 }

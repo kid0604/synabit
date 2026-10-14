@@ -68,6 +68,45 @@ pub fn refresh(vault_path: &str, db: &crate::db::DbBridge, mcp_slugs: &[String])
     approved
 }
 
+/// `run`, for a connector that reaches a machine over ssh. See `ssh::RUN_OP`.
+fn run_op(m: &Manifest) -> Operation {
+    serde_json::from_value(json!({
+        "name": super::ssh::RUN_OP,
+        "description": format!(
+            "Run one command line on {} and read what it prints. The person sees the line exactly as written and \
+             allows it before it runs, every time, so write the line you mean: a shell reads it. No terminal: \
+             interactive programs (htop, top without -b, less, vim, watch) do not work — use `top -bn1`, \
+             `ps aux --sort=-%cpu | head`. Use it for what the connector's own operations do not cover; \
+             do not draft a new operation for a one-off.",
+            m.name
+        ),
+        "effect": "write",
+        "params": { "command": { "type": "string", "required": true, "description": "The command line, e.g. `df -h /` or `systemctl --user stop openclaw-gateway`." } },
+    }))
+    .expect("run is an operation")
+}
+
+/// What `d` can be asked to do: what it declares, and `run` where it reaches a
+/// machine over ssh and declares no operation of that name.
+pub fn operations(d: &Declared) -> Vec<Operation> {
+    let mut ops = d.manifest.operations.clone();
+    if d.manifest.transport == manifest::Transport::Ssh && !ops.iter().any(|o| o.name == super::ssh::RUN_OP) {
+        ops.push(run_op(&d.manifest));
+    }
+    ops
+}
+
+/// Whether `op` is the ssh `run` rather than a declared operation.
+fn is_run(d: &Declared, op: &Operation) -> bool {
+    d.manifest.transport == manifest::Transport::Ssh && op.name == super::ssh::RUN_OP && op.command.is_empty()
+}
+
+/// Whether a yes to `tool` is a yes to one call, never to the tool: `run`,
+/// whose every call is a different command. See `gate`.
+pub fn asks_per_call(tool: &str) -> bool {
+    find_anywhere(tool).is_some_and(|(d, op)| is_run(&d, &op))
+}
+
 fn split(name: &str) -> Option<(&str, &str)> {
     name.strip_prefix(super::PREFIX)?.split_once("__")
 }
@@ -77,7 +116,7 @@ pub fn find(vault_path: &str, name: &str) -> Option<(Declared, Operation)> {
     let (id, op) = split(name)?;
     let all = DECLARED.read().ok()?;
     let d = all.get(vault_path)?.iter().find(|d| d.manifest.id == id)?.clone();
-    let op = d.manifest.operations.iter().find(|o| o.name == op)?.clone();
+    let op = operations(&d).into_iter().find(|o| o.name == op)?;
     Some((d, op))
 }
 
@@ -94,10 +133,41 @@ pub fn find_anywhere(name: &str) -> Option<(Declared, Operation)> {
         .values()
         .flatten()
         .filter(|d| d.manifest.id == id)
-        .filter_map(|d| d.manifest.operations.iter().find(|o| o.name == op_name).map(|o| (d.clone(), o.clone())))
+        .filter_map(|d| operations(d).into_iter().find(|o| o.name == op_name).map(|o| (d.clone(), o)))
         .collect();
     found.sort_by_key(|(d, o)| std::cmp::Reverse(instance::effect_here(&d.instance, o)));
     found.into_iter().next()
+}
+
+/// What a call would do, in words Rust vouches for, for the consent card: the
+/// command line an ssh operation would send, quoted as it would go. `None`
+/// for anything else, and for a call that would not be sent as it stands.
+pub fn detail(vault_path: &str, tool: &str, args: &Value) -> Option<String> {
+    let (d, op) = find(vault_path, tool)?;
+    if d.manifest.transport != manifest::Transport::Ssh {
+        return None;
+    }
+    if is_run(&d, &op) {
+        return super::ssh::run_line(args).ok();
+    }
+    let filled = d.manifest.with_inputs(&d.instance.inputs);
+    let op = filled.operations.iter().find(|o| o.name == op.name)?;
+    super::ssh::command_line(op, args).ok()
+}
+
+/// Whether "always" may be said about a send through `tool`.
+///
+/// A remembered send is a send nobody looks at again. That is fair where the
+/// declaration leaves nothing to point elsewhere — every parameter a switch
+/// or one of a fixed list — and not where a parameter is free text: "always
+/// send mail" is "always send any mail, to anyone, saying anything", which is
+/// what an instruction in a page asks for. So it is offered only for the
+/// first kind; an ssh command, whose words run on a machine, never; an MCP
+/// tool, whose parameters nothing here describes, never.
+pub fn write_may_be_remembered(tool: &str) -> bool {
+    let Some((d, op)) = find_anywhere(tool) else { return false };
+    d.manifest.transport != manifest::Transport::Ssh
+        && op.params.values().all(|p| p.ty == "boolean" || !p.choices.is_empty())
 }
 
 /// Whether a tool sends something that cannot be taken back.
@@ -107,8 +177,16 @@ pub fn is_irreversible(name: &str) -> bool {
 
 /// What permission an operation needs on this instance: reading from it, or
 /// sending to it. `read_attested` counts as reading only where the person
-/// vouched for it (`instance::effect_here`).
-pub fn capability(d: &Declared, op: &Operation) -> Capability {
+/// vouched for it (`instance::effect_here`). `run` reads when its line only
+/// looks (`ssh::reads_only`) and sends otherwise — and without its arguments,
+/// sends.
+pub fn capability(d: &Declared, op: &Operation, args: &Value) -> Capability {
+    if is_run(d, op) {
+        return match super::ssh::run_line(args) {
+            Ok(line) if super::ssh::reads_only(&line) => Capability::NetRead { domain: d.manifest.name.clone() },
+            _ => Capability::NetWrite { domain: d.manifest.name.clone(), tool: op.name.clone() },
+        };
+    }
     match instance::effect_here(&d.instance, op) {
         Effect::Read | Effect::ReadAttested => Capability::NetRead { domain: d.manifest.name.clone() },
         Effect::Write | Effect::Irreversible => Capability::NetWrite { domain: d.manifest.name.clone(), tool: op.name.clone() },
@@ -180,7 +258,7 @@ pub async fn call(vault_path: &str, found: (Declared, Operation), args: &Value, 
         Some(now) if now == d.instance => {}
         _ => return fail(format!("{} changed since it was approved on this device; it must be approved again.", d.manifest.name), false),
     }
-    let capability = capability(&d, &op);
+    let capability = capability(&d, &op, args);
     if consented != Some(&capability) {
         return fail(format!("`{}` changed since permission was weighed; ask for it again.", op.name), false);
     }
