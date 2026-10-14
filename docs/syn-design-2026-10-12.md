@@ -562,6 +562,35 @@ nào là gì) vào cùng file kỹ năng. Lần sau không phải dò lại.
 
 ---
 
+### 7.5 Một máy qua SSH — đã làm (2026-10-13)
+
+Kịch bản: máy A vào được con Raspberry Pi cùng mạng; tạo kết nối ở A; ở máy B cũng cài Synabit, dùng
+Syn điều khiển con Pi đó.
+
+- **Bản khai `transport: ssh`** (`connector/ssh.rs`). Địa chỉ `ssh://user@host[:port]`, hoặc một input
+  địa chỉ người gõ trên card. Đăng nhập `auth: { type: ssh, secret: … }`: dán mật khẩu hoặc khoá riêng
+  (Ed25519/ECDSA, không passphrase; dán vào ô một dòng vẫn đọc được). Mỗi thao tác là một
+  `command: [chương trình, đối số, "{{param}}"]`.
+- **Lệnh là của bản khai, không phải của model.** Mỗi giá trị điền vào là đúng một từ, được bọc nháy
+  theo shell POSIX, và dòng lệnh được đưa cho `/bin/sh -s` qua stdin — không bao giờ cho shell đăng nhập
+  (fish, cmd.exe đọc nháy khác). Giá trị biến thành option (`-…`) bị từ chối; chương trình không bao giờ
+  được điền; không giá trị nào nằm trong từ tuỳ chọn, sau một shell/trình thông dịch/công cụ chạy lệnh
+  (`sh -c`, `python3.11`, `sed`, `sqlite3`, `docker exec`, `git`, `find -exec`…), cũng không ở chỗ chương
+  trình sau `sudo`/`env`/`timeout`… (rà soát 2026-10-13).
+- **Máy là máy người đã gặp.** Lần đầu, card hiện dấu vân tay khoá máy chủ (`SHA256:…`) và nút “Đúng máy
+  của tôi”; khoá được ghim vào bản duyệt của thiết bị. Khoá khác về sau thì từ chối, card cảnh báo.
+- **Không gì chứng minh một lệnh chỉ đọc**, nên trần là `read_attested`, và chưa ai bảo đảm thì là gửi:
+  hỏi từng lệnh, không bao giờ có "Luôn cho phép". Thẻ xin phép hiện **đúng dòng lệnh sẽ gửi** (`Ask.detail`). Sau khi đọc nguồn ngoài, lệnh
+  phải qua kế hoạch gửi như mọi connector.
+- **Mạng:** địa chỉ LAN, `.local`, và Tailscale (`100.64/10`, `*.ts.net`) là mạng của người dùng.
+- **Hai máy:** bản khai đồng bộ theo vault; ở máy B, kết nối hiện “mới” — gõ lại mật khẩu (lưu trong
+  keychain của máy đó) và xác nhận khoá máy chủ một lần. Có chủ đích: file đồng bộ không được tự mở
+  đường ra ngoài trên máy khác.
+- **Syn tự soạn:** `connector_draft` biết dạng ssh; lệnh viết thành một chuỗi được tách thành từ.
+- Crate `russh` 0.61.2 (khoảng 0,8 MB trên arm64), chọn bản dùng chung `ed25519-dalek` với iroh.
+- **Còn lại:** dùng khoá SSH trong Safe (đồng bộ sẵn giữa các máy) thay cho dán khoá; lệnh dài hơn
+  120 giây; giữ kết nối giữa các lệnh.
+
 ## 8. Giao diện
 
 ### 8.1 Lần đầu
