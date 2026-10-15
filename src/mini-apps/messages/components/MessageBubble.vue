@@ -5,23 +5,12 @@ import { logger } from '../../../utils/logger';
 import { useSynDeveloper } from '../../../shared/syn/useSynDeveloper';
 import { toolLabel } from '../../../shared/syn/toolLabel';
 import { useDebounceFn } from '@vueuse/core';
-import { marked, Renderer, type Tokens } from 'marked';
 import { renderDiagram, diagramTheme } from '../../../shared/mermaid';
-import { markedHighlight } from 'marked-highlight';
-import hljs from 'highlight.js/lib/core';
-import javascript from 'highlight.js/lib/languages/javascript';
-import typescript from 'highlight.js/lib/languages/typescript';
-import python from 'highlight.js/lib/languages/python';
-import rust from 'highlight.js/lib/languages/rust';
-import json from 'highlight.js/lib/languages/json';
-import bash from 'highlight.js/lib/languages/bash';
-import css from 'highlight.js/lib/languages/css';
-import xml from 'highlight.js/lib/languages/xml';
-import sql from 'highlight.js/lib/languages/sql';
 import 'highlight.js/styles/github-dark.min.css';
 import DOMPurify from 'dompurify';
 import { MODEL_FORBID_TAGS, MODEL_FORBID_ATTR } from '../../../shared/syn/modelHtml';
-import { mathExtension, MATH_ATTRS, renderMathIn } from '../markdownMath';
+import { MATH_ATTRS, renderMathIn } from '../markdownMath';
+import { messageMarked } from '../messageMarkdown';
 import 'katex/dist/katex.min.css';
 import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard, ListChecks } from 'lucide-vue-next';
 import PlanList from '../../../shared/syn/PlanList.vue';
@@ -41,104 +30,6 @@ import type { WhiteboardData } from '../../whiteboard/boardFile';
 import { useEventBus } from '../../../composables/useEventBus';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('js', javascript);
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('ts', typescript);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('rust', rust);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('sh', bash);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('html', xml);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('sql', sql);
-// `markdown` and `md` are deliberately NOT registered.
-//
-// highlight.js's markdown grammar hangs this renderer. A 292-character block —
-// a daily-note template of headings and `- [ ]` items, which is exactly what
-// the assistant produces when asked for one — froze the page indefinitely.
-// The same grammar on the same input takes 2ms in Node, so this is a regex
-// that backtracks catastrophically in one engine and not the other; the
-// browser is the one that matters here.
-//
-// Established by intervention, not inference. Holding the conversation
-// constant and retagging every fence: `json` renders in 38MB and stays
-// responsive, no language at all renders fine, the block removed renders fine,
-// and `markdown` hangs. Every arm was run twice.
-//
-// A size cap would not have helped — 292 characters is already small. Nor
-// would a `try`/`catch`: it does not throw, it does not return. Not offering
-// the grammar is the only guard that works, and the cost is that a fenced
-// markdown block is shown unhighlighted, which for markdown inside markdown is
-// close to no cost at all.
-
-// Custom renderer to intercept mermaid code blocks
-const renderer = new Renderer();
-const originalCodeRenderer = renderer.code;
-let mermaidIdCounter = 0;
-
-renderer.code = function (token: Tokens.Code) {
-  if (token.lang === 'mermaid') {
-    const id = `mermaid-${Date.now()}-${mermaidIdCounter++}`;
-    return `<div class="mermaid-container"><pre class="mermaid" id="${id}">${token.text}</pre></div>`;
-  }
-  // Fall back to original renderer for non-mermaid code
-  return originalCodeRenderer.call(this, token);
-};
-
-/**
- * A code block as literal text, with the four characters that would otherwise
- * be markup taken out of play.
- *
- * `markedHighlight` treats whatever `highlight` returns as HTML, so the
- * unhighlighted path cannot hand back the source unescaped: a block containing
- * `<b>` would render as bold rather than as itself. DOMPurify would still keep
- * it safe; it would just be wrong.
- */
-const asPlainCode = (code: string): string =>
-  code
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-
-marked.use(markedHighlight({
-  langPrefix: 'hljs language-',
-  highlight(code, lang) {
-    if (lang === 'mermaid') return code; // Don't highlight mermaid — it's handled by the renderer
-    if (lang && hljs.getLanguage(lang)) {
-      // `ignoreIllegals`, because a block half-written by a stream is not yet
-      // valid in its own language and throwing over that is not useful.
-      return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-    }
-
-    // Deliberately no `highlightAuto`.
-    //
-    // It ran every registered grammar over the block to guess which language
-    // it was, and that guess is both expensive and, for anything that
-    // resembles no language, wrong — on a directory tree drawn with `├──` it
-    // answered "css". One 3,797-character answer containing a single
-    // ```text block was enough to leave the WebView unresponsive with the
-    // message half-drawn, while the Rust side had been finished for sixteen
-    // seconds.
-    //
-    // Found by bisecting a real conversation one message at a time in a
-    // browser: 39 messages rendered fine, 40 hung, and the fortieth was the
-    // only one in the whole conversation with a code fence.
-    //
-    // A block whose language nobody named is shown as what it is.
-    return asPlainCode(code);
-  },
-}));
-
-marked.use({ renderer });
-
-// Mathematics. Registered after the renderer so its own `renderer` entries are
-// the ones that answer for these tokens. See `markdownMath` for why all four
-// delimiters are inline-level and why the TeX waits in an attribute.
-marked.use(mathExtension);
 
 const props = defineProps<{
   message: SynMessage;
@@ -192,12 +83,6 @@ const formatArgs = (args: Record<string, unknown>) => {
   }
 };
 
-// Configure marked for clean output
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
-
 const debouncedContent = ref(props.message.content);
 
 const updateContent = useDebounceFn((content: string) => {
@@ -223,7 +108,7 @@ const renderedContent = computed(() => {
   // (`alt="[[…]]"`) closed that attribute and put whatever followed back into
   // the page — `style` included, on WebViews that leave `<` unescaped in
   // attributes.
-  const rawHtml = (marked.parse(debouncedContent.value) as string).replace(
+  const rawHtml = (messageMarked.parse(debouncedContent.value) as string).replace(
     /\[\[([^\]]+)\]\]/g,
     (_match, title) => `<a class="wikilink" data-wikilink="${title.replace(/"/g, '&quot;')}" href="#">${title}</a>`
   );

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import source from '../MessageBubble.vue?raw';
+import source from '../../messageMarkdown.ts?raw';
 import hljs from 'highlight.js/lib/core';
 import javascript from 'highlight.js/lib/languages/javascript';
 import css from 'highlight.js/lib/languages/css';
@@ -86,8 +86,8 @@ describe('highlighting a code block', () => {
   it('escapes an unhighlighted block, because the result is inserted as HTML', () => {
     // `markedHighlight` treats the return value as markup. Handing back the
     // source unescaped would render `<b>` inside a code block as bold.
-    const escape = source.split('const asPlainCode')[1]?.split('marked.use')[0] ?? '';
-    expect(escape, 'MessageBubble should still declare asPlainCode').toBeTruthy();
+    const escape = source.split('const asPlainCode')[1]?.split('const highlight')[0] ?? '';
+    expect(escape, 'messageMarkdown should still declare asPlainCode').toBeTruthy();
     for (const entity of ['&amp;', '&lt;', '&gt;', '&quot;']) {
       expect(escape).toContain(entity);
     }
