@@ -559,7 +559,7 @@ pub async fn send_message_inner<R: tauri::Runtime>(
     let held = conversation::hold(&request.conversation_id).await;
     let mut conv = conversation::get_conversation(vault_path, &request.conversation_id)?;
     drop(held);
-    let model = choose_model(&request, &conv, &settings);
+    let model = choose_model(&request, &conv, &settings, surface);
 
     // A question is answered once. Taken before anything is written, so a
     // second press — or a second device — is refused with nothing left behind.
@@ -659,9 +659,19 @@ pub async fn send_message_inner<R: tauri::Runtime>(
 /// started under a different provider has its pin ignored rather than sent
 /// to an endpoint that has never heard of it. A conversation written before
 /// providers existed records none, and those were all Ollama.
-fn choose_model(request: &SynChatRequest, conv: &SynConversationFull, settings: &SynSettings) -> String {
+///
+/// Telegram does not keep a pin at all: it answers with the default. Every
+/// turn writes what answered back as the pin, and nothing on the phone ever
+/// chooses a model, so the pin was only ever the default of the day the chat
+/// began. The Telegram conversation of 2026-09-13 was still answered by
+/// `gpt-5.6-luna` a month later, with the vault's default long since
+/// `gpt-6-luna` — and it was there, not in the app, that the Pi went
+/// unreached. Changing the default in settings has to reach the phone.
+fn choose_model(request: &SynChatRequest, conv: &SynConversationFull, settings: &SynSettings, surface: crate::syn::surface::Surface) -> String {
     let pinned_provider = conv.meta.provider.unwrap_or(SynProvider::Ollama);
-    let conversation_model = if pinned_provider == settings.provider {
+    let conversation_model = if surface == crate::syn::surface::Surface::Telegram {
+        None
+    } else if pinned_provider == settings.provider {
         conv.meta.model.clone()
     } else {
         if let Some(stale) = &conv.meta.model {
@@ -3659,14 +3669,23 @@ mod send_steps {
     fn a_model_pinned_under_another_provider_is_not_sent_to_this_one() {
         let settings = SynSettings { provider: SynProvider::Gemini, default_model: Some("gemini-3-flash".into()), ..Default::default() };
         let pinned_elsewhere = conversation(Some("ollama"), Some("gemma4:e4b"), vec![]);
-        assert_eq!(choose_model(&request("x"), &pinned_elsewhere, &settings), "gemini-3-flash");
+        assert_eq!(choose_model(&request("x"), &pinned_elsewhere, &settings, crate::syn::surface::Surface::App), "gemini-3-flash");
 
         let pinned_here = conversation(Some("gemini"), Some("gemini-3-pro"), vec![]);
-        assert_eq!(choose_model(&request("x"), &pinned_here, &settings), "gemini-3-pro");
+        assert_eq!(choose_model(&request("x"), &pinned_here, &settings, crate::syn::surface::Surface::App), "gemini-3-pro");
 
         let mut asked = request("x");
         asked.model = Some("gemini-2.5-flash".into());
-        assert_eq!(choose_model(&asked, &pinned_here, &settings), "gemini-2.5-flash", "what this send asked for wins");
+        assert_eq!(choose_model(&asked, &pinned_here, &settings, crate::syn::surface::Surface::App), "gemini-2.5-flash", "what this send asked for wins");
+    }
+
+    /// The phone answers with the default, whatever the conversation last used.
+    #[test]
+    fn telegram_answers_with_the_default() {
+        let settings = SynSettings { provider: SynProvider::OpenAiCompat, default_model: Some("gpt-6-luna".into()), ..Default::default() };
+        let telegram = conversation(Some("open_ai_compat"), Some("gpt-5.6-luna"), vec![]);
+        assert_eq!(choose_model(&request("x"), &telegram, &settings, crate::syn::surface::Surface::Telegram), "gpt-6-luna");
+        assert_eq!(choose_model(&request("x"), &telegram, &settings, crate::syn::surface::Surface::App), "gpt-5.6-luna", "the app keeps its pin");
     }
 
     #[test]
