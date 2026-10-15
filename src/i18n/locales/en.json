@@ -4318,6 +4318,7 @@
     "activity_stop": "Stop",
     "activity_waiting_badge": "{n} waiting for you",
     "activity_from_telegram": "from Telegram",
+    "run_asked_earlier": "Asked earlier",
     "tier_local": "On this computer",
     "tier_hosted": "Sent out",
     "tier_local_says": "This model runs here. Nothing Syn reads leaves this computer.",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { groupRuns, needsYou, RECENT_MS } from '../activity';
+import { askedEarlier, groupRuns, needsYou, RECENT_MS } from '../activity';
 import type { RunSummary } from '../types';
 
 const NOW = Date.parse('2026-09-26T12:00:00Z');
@@ -44,5 +44,22 @@ describe("Syn's recent work", () => {
   it('never lets something waiting age out', () => {
     const a = groupRuns([run('asked-long-ago', 'awaiting_consent', 7 * RECENT_MS)], NOW);
     expect(needsYou(a)).toBe(1);
+  });
+
+  /** The backend says what is still waiting: an answered question, or one the
+   *  conversation went on past, keeps its state but waits on nobody. */
+  it('lists only what still waits, and an answered question with what finished', () => {
+    const a = groupRuns(
+      [
+        { ...run('open', 'awaiting_consent', 1_000), waiting: true },
+        { ...run('answered', 'awaiting_consent', 2_000), waiting: false },
+        { ...run('gone-past', 'awaiting_choice', 7 * RECENT_MS), waiting: false },
+      ],
+      NOW,
+    );
+    expect(a.waiting.map(r => r.id)).toEqual(['open']);
+    expect(a.finished.map(r => r.id)).toEqual(['answered']);
+    expect(needsYou(a)).toBe(1);
+    expect(askedEarlier(a.finished[0])).toBe(true);
   });
 });

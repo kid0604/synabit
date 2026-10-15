@@ -107,6 +107,15 @@ describe('Connecting to a machine over SSH', () => {
     expect(commandText(['echo', '{{text}}', '--tail={{n}}', 'two words'])).toBe("echo <text> --tail=<n> 'two words'");
   });
 
+  it('can be closed when the connector is gone from the vault', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'syn_manifest_list' ? [] : null));
+    const w = show();
+    await flushPromises();
+    expect(w.find('[data-test="connect-missing"]').exists()).toBe(true);
+    await w.find('[data-test="connect-dismiss"]').trigger('click');
+    expect(w.emitted('done')).toEqual([[false]]);
+  });
+
   describe('approved before, and Syn added a command', () => {
     const changed: DeclaredView = {
       ...pi,

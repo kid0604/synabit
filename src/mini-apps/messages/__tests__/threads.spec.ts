@@ -877,7 +877,7 @@ describe('asking which one', () => {
    * that sentence away.
    */
   it('puts the answer in the composer instead of carrying on by itself', () => {
-    expect(choiceComposable).toContain("invoke('syn_answer_choice'");
+    expect(choiceComposable).toContain("invoke<boolean>('syn_answer_choice'");
     expect(app, 'the pick lands in the box').toContain('chatPanel.value?.prefill');
     expect(choiceComposable, 'and nothing here resumes a run').not.toContain('sendMessage');
     for (const locale of [en, vi]) {

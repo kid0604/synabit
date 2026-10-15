@@ -15,6 +15,7 @@ import { useI18n } from 'vue-i18n';
 import { ArrowUpRight, FileSearch, Square, Send } from 'lucide-vue-next';
 import type { RunSummary } from '../types';
 import { useSynActivity } from '../composables/useSynActivity';
+import { askedEarlier } from '../activity';
 
 const props = defineProps<{ vaultPath: string }>();
 const emit = defineEmits<{
@@ -69,7 +70,7 @@ const sections = [
               <div class="min-w-0 flex-1">
                 <p class="text-sm text-text dark:text-text-dark line-clamp-2">{{ run.goal }}</p>
                 <p class="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-gray-500 dark:text-gray-400">
-                  <span class="font-medium">{{ t(`syn.run_state_${run.state}`) }}</span>
+                  <span class="font-medium">{{ askedEarlier(run) ? t('syn.run_asked_earlier') : t(`syn.run_state_${run.state}`) }}</span>
                   <span>{{ when(run) }}</span>
                   <span v-if="run.tool_calls">{{ t('syn.tool_calls_count', { n: run.tool_calls }, run.tool_calls) }}</span>
                   <span v-if="run.trigger === 'schedule'" class="inline-flex items-center gap-0.5 text-accent dark:text-accent-dark">

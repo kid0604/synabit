@@ -4318,6 +4318,7 @@
     "activity_stop": "Dừng",
     "activity_waiting_badge": "{n} việc đang chờ bạn",
     "activity_from_telegram": "từ Telegram",
+    "run_asked_earlier": "Đã hỏi trước đó",
     "tier_local": "Trên máy này",
     "tier_hosted": "Gửi ra ngoài",
     "tier_local_says": "Mô hình này chạy ngay trên máy. Không có gì Syn đọc rời khỏi máy.",

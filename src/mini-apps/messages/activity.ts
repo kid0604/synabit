@@ -25,15 +25,24 @@ export const RECENT_MS = 24 * 60 * 60 * 1000;
 
 const WAITING = new Set(['awaiting_consent', 'awaiting_choice', 'awaiting_approval']);
 
+/** Whether a run still needs the person. The backend says, where it can: a
+ *  run whose question was answered, or that the conversation went on past,
+ *  keeps its `awaiting_*` state, and listing those as waiting put seventy-five
+ *  runs nobody could answer under "Waiting for you" (2026-10-15). */
+export const isWaiting = (r: RunSummary): boolean => r.waiting ?? WAITING.has(r.state);
+
+/** Asked something once, and no longer waiting on it. */
+export const askedEarlier = (r: RunSummary): boolean => WAITING.has(r.state) && !isWaiting(r);
+
 export function groupRuns(all: RunSummary[], now: number = Date.now()): Activity {
   // A helper's run is part of its parent's work, not a piece of its own: the
   // parent is what the person asked for, and it is the one listed.
   const runs = all.filter(r => !r.parent_run_id);
   const newest = (a: RunSummary, b: RunSummary) => b.updated_at.localeCompare(a.updated_at);
   const working = runs.filter(r => r.state === 'working').sort(newest);
-  const waiting = runs.filter(r => WAITING.has(r.state)).sort(newest);
+  const waiting = runs.filter(isWaiting).sort(newest);
   const finished = runs
-    .filter(r => r.state !== 'working' && !WAITING.has(r.state))
+    .filter(r => r.state !== 'working' && !isWaiting(r))
     .filter(r => {
       const at = Date.parse(r.updated_at);
       return Number.isFinite(at) && now - at <= RECENT_MS;

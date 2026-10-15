@@ -1084,6 +1084,7 @@ impl Run {
             created_at: self.created_at.clone(),
             updated_at: self.updated_at.clone(),
             parent_run_id: self.parent_run_id.clone(),
+            waiting: is_waiting(self),
         }
     }
 }
@@ -1100,6 +1101,37 @@ impl Run {
 /// that each result answers the call beside it — which providers check, and
 /// which fresh ids satisfy.
 pub fn replay(vault_path: &str, stopped: &Run) -> Vec<crate::syn::provider::ChatMessage> {
+    replay_at(vault_path, stopped, chrono::Utc::now())
+}
+
+/// How old a stopped run's reads may be before they are replayed with their
+/// age on them.
+const STALE_AFTER_MINUTES: i64 = 10;
+
+/// What a replayed result is prefixed with when it was read long enough ago
+/// to have changed: on 2026-10-15 a run carried on three weeks late replayed
+/// a daily note read empty on 2026-09-24 and told the person it was empty.
+/// It had been written that same afternoon.
+fn stale_line(read_at: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let at = chrono::DateTime::parse_from_rfc3339(read_at).ok()?.with_timezone(&chrono::Utc);
+    let age = now - at;
+    if age < chrono::Duration::minutes(STALE_AFTER_MINUTES) {
+        return None;
+    }
+    let ago = if age.num_days() >= 1 {
+        format!("{} days", age.num_days())
+    } else if age.num_hours() >= 1 {
+        format!("{} hours", age.num_hours())
+    } else {
+        format!("{} minutes", age.num_minutes())
+    };
+    Some(format!(
+        "[Read at {} UTC, {ago} ago. It may have changed since: call the tool again before saying anything about what it holds now.]\n",
+        at.format("%Y-%m-%d %H:%M")
+    ))
+}
+
+pub fn replay_at(vault_path: &str, stopped: &Run, now: chrono::DateTime<chrono::Utc>) -> Vec<crate::syn::provider::ChatMessage> {
     use crate::syn::provider::ChatMessage;
     let mut out = Vec::new();
     let mut rounds: std::collections::BTreeMap<u8, Vec<&Step>> = std::collections::BTreeMap::new();
@@ -1144,7 +1176,7 @@ pub fn replay(vault_path: &str, stopped: &Run) -> Vec<crate::syn::provider::Chat
             let whole = load_result(vault_path, &stopped.id, step.index).ok().flatten();
             out.push(ChatMessage {
                 role: "tool".to_string(),
-                content: whole.unwrap_or_else(|| step.preview.clone()),
+                content: format!("{}{}", stale_line(&step.at, now).unwrap_or_default(), whole.unwrap_or_else(|| step.preview.clone())),
                 tool_calls: None,
                 tool_call_id: Some(id(step)),
                 images: None,
@@ -1276,8 +1308,13 @@ pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
     let Ok(runs) = load_all(vault_path) else {
         return Vec::new();
     };
+    // Per conversation, its newest run — waiting or not. A question the
+    // conversation has gone on past is not asked again: a "which one" left on
+    // Telegram on 2026-09-24 came back as a card three weeks and thirty-odd
+    // messages later, was answered, and the run it woke said what it had read
+    // then as though it were true now.
     let mut newest: std::collections::BTreeMap<String, Run> = std::collections::BTreeMap::new();
-    for run in runs.into_iter().filter(|r| r.parent_run_id.is_none() && is_waiting(r)) {
+    for run in runs.into_iter().filter(|r| r.parent_run_id.is_none()) {
         let Some(conversation) = run.conversation_id.clone() else {
             continue;
         };
@@ -1290,6 +1327,7 @@ pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
     }
     newest
         .into_values()
+        .filter(is_waiting)
         .map(|run| match (&run.pending_consent, &run.pending_choice) {
             _ if run.pending_connector.is_some() && run.state == RunState::AwaitingApproval => serde_json::json!({
                 "run_id": run.id, "conversation_id": run.conversation_id, "connector": run.pending_connector,
@@ -1305,6 +1343,17 @@ pub fn waiting_questions(vault_path: &str) -> Vec<Value> {
             }),
         })
         .collect()
+}
+
+/// Whether the conversation `run` is in has a newer run: its question, if it
+/// asked one, is no longer the one in front of the person.
+pub fn superseded(vault_path: &str, run: &Run) -> bool {
+    let Some(conversation) = run.conversation_id.as_deref() else { return false };
+    load_all(vault_path).is_ok_and(|runs| {
+        runs.iter().any(|r| {
+            r.parent_run_id.is_none() && r.id != run.id && r.conversation_id.as_deref() == Some(conversation) && r.created_at > run.created_at
+        })
+    })
 }
 
 /// Whether a run is still waiting for somebody to answer it.
@@ -1336,6 +1385,13 @@ pub struct RunSummary {
     pub tool_calls: u32,
     pub created_at: String,
     pub updated_at: String,
+    /// Whether it is still waiting on the person: a question not answered, in
+    /// a conversation that has not gone on past it. Its `state` alone does not
+    /// say — answering clears the question and leaves the state as it was, and
+    /// "Syn's work" listed seventy-five runs as waiting that nobody could
+    /// answer (2026-10-15). See `is_waiting`, `superseded`.
+    #[serde(default)]
+    pub waiting: bool,
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1611,6 +1667,13 @@ pub fn list_runs(vault_path: &str, live: impl Fn(&str) -> bool) -> AppResult<Vec
     }
 
     summaries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    // Only a conversation's newest run can still be waiting: newest first, so
+    // the first of each conversation seen is it.
+    let mut seen = std::collections::HashSet::new();
+    for s in summaries.iter_mut().filter(|s| s.parent_run_id.is_none()) {
+        let newest = s.conversation_id.as_ref().is_none_or(|c| seen.insert(c.clone()));
+        s.waiting &= newest;
+    }
     Ok(summaries)
 }
 
@@ -2507,6 +2570,55 @@ mod agreement {
         assert_eq!(waiting[0]["run_id"], asked.id.as_str());
         assert_eq!(waiting[0]["conversation_id"], "conv-a");
         assert_eq!(waiting[0]["ask"]["tool"], "browse");
+    }
+
+    /// What a run read long ago is replayed with its age on it; what it read
+    /// a moment ago is replayed as it is.
+    #[test]
+    fn an_old_read_is_replayed_with_its_age() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut stopped = Run::new("ghi vào daily note", Some("conv-old".into()), super::tests_budget());
+        stopped.record_tool(0, "get_node", serde_json::json!({ "node_id": "Notes/x.md" }), true, crate::syn::registry::Reversal::Nothing, r#"{"content":""}"#, 3);
+        let read_at = chrono::DateTime::parse_from_rfc3339(&stopped.steps[0].at).expect("a time").with_timezone(&chrono::Utc);
+
+        let fresh = replay_at(vault, &stopped, read_at + chrono::Duration::minutes(2));
+        let result = fresh.iter().find(|m| m.role == "tool").expect("a result");
+        assert_eq!(result.content, r#"{"content":""}"#);
+
+        let late = replay_at(vault, &stopped, read_at + chrono::Duration::days(21));
+        let result = late.iter().find(|m| m.role == "tool").expect("a result");
+        assert!(result.content.starts_with("[Read at ") && result.content.contains("21 days ago"), "{}", result.content);
+        assert!(result.content.ends_with(r#"{"content":""}"#));
+    }
+
+    /// A question the conversation went on past is not asked again, and is
+    /// not answered: on 2026-10-15 a "which one" from three weeks earlier came
+    /// back as a card, and the run it woke said what it had read then.
+    #[test]
+    fn a_question_the_conversation_went_past_is_withdrawn() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut asked = Run::new("ghi vào daily note", Some("conv-tg".into()), super::tests_budget());
+        asked.pending_consent = Some(crate::syn::consent::Ask::about("browse", &crate::syn::consent::Capability::Browse, "2026-09-24T00:00:00Z"));
+        asked.finish(RunState::AwaitingConsent);
+        save_run(vault, &asked).expect("saved");
+        assert_eq!(waiting_questions(vault).len(), 1);
+        assert!(!superseded(vault, &asked));
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut later = Run::new("hôm nay thế nào", Some("conv-tg".into()), super::tests_budget());
+        later.finish(RunState::Done);
+        save_run(vault, &later).expect("saved");
+        assert!(waiting_questions(vault).is_empty(), "{:?}", waiting_questions(vault));
+        assert!(superseded(vault, &asked));
+        assert!(!superseded(vault, &later));
+
+        // And the list says so: the old run keeps its state, and waits on nobody.
+        let listed = list_runs(vault, |_| false).expect("listed");
+        let old = listed.iter().find(|r| r.id == asked.id).expect("there");
+        assert_eq!(old.state, RunState::AwaitingConsent);
+        assert!(!old.waiting);
     }
 }
 

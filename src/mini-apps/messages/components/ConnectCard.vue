@@ -294,6 +294,14 @@ const ready = computed(
         </button>
       </div>
     </template>
-    <p v-else-if="!declared.busy.value" class="text-xs text-red-600 dark:text-red-400" data-test="connect-missing">{{ t('syn.connect_missing') }}</p>
+    <!-- Gone from the vault — deleted, or never filed — and still asked about.
+         Without a button the card could not be closed, and the run behind it
+         waited for an answer nobody could give (2026-10-15). -->
+    <div v-else-if="!declared.busy.value" class="space-y-3">
+      <p class="text-xs text-red-600 dark:text-red-400" data-test="connect-missing">{{ t('syn.connect_missing') }}</p>
+      <div class="flex justify-end">
+        <button type="button" class="btn-secondary" data-test="connect-dismiss" @click="emit('done', false)">{{ t('syn.connect_not_now') }}</button>
+      </div>
+    </div>
   </div>
 </template>

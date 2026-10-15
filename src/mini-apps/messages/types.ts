@@ -393,6 +393,12 @@ export interface RunSummary {
   tool_calls: number;
   created_at: string;
   updated_at: string;
+  /**
+   * Still waiting on the person: its question unanswered, in a conversation
+   * that has not gone on past it. Its `state` alone does not say — answering
+   * leaves the state as it was. Absent from an older backend.
+   */
+  waiting?: boolean;
 }
 
 // ─── What Syn is actually told ───────────────────────────────

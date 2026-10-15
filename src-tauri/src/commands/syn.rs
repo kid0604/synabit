@@ -2403,11 +2403,16 @@ pub async fn syn_answer_choice(
     vault_path: String,
     run_id: String,
     node_id: String,
-) -> Result<(), AppError> {
+) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    // A question the conversation has gone on past is not answered: the run
+    // carrying on would act on what it read back then. See `run::superseded`.
+    if crate::syn::run::superseded(&vault_path, &run) {
+        return Ok(false);
+    }
     let Some(choice) = run.pending_choice.clone() else {
         // Already answered, or answered in another window. Not an error.
-        return Ok(());
+        return Ok(false);
     };
 
     // Written into the transcript, not only cleared. "Syn stopped, and the
@@ -2427,7 +2432,7 @@ pub async fn syn_answer_choice(
 
     run.pending_choice = None;
     crate::syn::run::save_run(&vault_path, &run)?;
-    Ok(())
+    Ok(true)
 }
 
 /// Answer the question a run stopped on.
@@ -2466,6 +2471,11 @@ pub async fn syn_answer_consent(
     answer: crate::syn::consent::Answer,
 ) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    // A question the conversation has gone on past is not answered: the run
+    // carrying on would act on what it read back then. See `run::superseded`.
+    if crate::syn::run::superseded(&vault_path, &run) {
+        return Ok(false);
+    }
     let Some(ask) = run.pending_consent.clone() else {
         // Already answered, or answered in another window. Not an error.
         return Ok(false);
@@ -2551,6 +2561,11 @@ pub async fn syn_answer_consent(
 #[tauri::command]
 pub async fn syn_answer_writes(vault_path: String, run_id: String, approved: Vec<String>) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    // A question the conversation has gone on past is not answered: the run
+    // carrying on would act on what it read back then. See `run::superseded`.
+    if crate::syn::run::superseded(&vault_path, &run) {
+        return Ok(false);
+    }
     let Some(plan) = run.writes.as_mut() else { return Ok(false) };
     if !plan.awaiting() {
         return Ok(false);
@@ -2671,6 +2686,11 @@ pub async fn syn_answer_skill_proposal(
 #[tauri::command]
 pub async fn syn_answer_connector(vault_path: String, run_id: String, approved: bool) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
+    // A question the conversation has gone on past is not answered: the run
+    // carrying on would act on what it read back then. See `run::superseded`.
+    if crate::syn::run::superseded(&vault_path, &run) {
+        return Ok(false);
+    }
     let Some(id) = run.pending_connector.clone() else { return Ok(false) };
     if run.state != crate::syn::run::RunState::AwaitingApproval {
         return Ok(false);

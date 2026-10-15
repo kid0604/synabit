@@ -91,8 +91,11 @@ export function useSynChoice(vaultPath: () => string) {
     error.value = null;
     const named =
       asked.choice.candidates.find(c => c.id === nodeId)?.title ?? nodeId;
+    let open = false;
     try {
-      await invoke('syn_answer_choice', {
+      // False when there was nothing left to answer: answered elsewhere, or a
+      // question the conversation has since gone on past.
+      open = await invoke<boolean>('syn_answer_choice', {
         vaultPath: vaultPath(),
         runId: asked.run_id,
         nodeId,
@@ -104,7 +107,7 @@ export function useSynChoice(vaultPath: () => string) {
     }
     const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;
     questions.value = rest;
-    return named;
+    return open ? named : null;
   };
 
   return { pending, pendingIn, error, answer, refresh: () => refreshWaitingChoices(vaultPath()) };
