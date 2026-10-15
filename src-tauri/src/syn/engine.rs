@@ -243,6 +243,37 @@ fn with_what_it_read(m: &SynMessage) -> String {
     )
 }
 
+/// An earlier answer with the tools it called named after it.
+///
+/// # Why
+///
+/// Without them the history misstates what happened: every earlier "Đã lưu
+/// vào QuickCap." came back as words alone, the `capture` that did the
+/// keeping left out — a dozen notes sent and "saved" answered, no tool
+/// between them. Twice on 2026-10-14 the model, `gpt-5.6-luna`, answered a
+/// note that way in one round with no call, and nothing was kept. Whether the
+/// history led it there is not shown: the same suspicion, measured for the
+/// Pi on 2026-10-15 (`eval::tasks`, `tg-pi-*`), did not hold on `gpt-6-luna`.
+///
+/// Named back, every "saved" in the history stands beside the call that made
+/// it true. Only the names, and only calls that went through: a refusal or an
+/// error did nothing to stand beside.
+fn with_what_it_did(m: &SynMessage, said: String) -> String {
+    if m.role != "assistant" {
+        return said;
+    }
+    let mut called: Vec<&str> = Vec::new();
+    for call in m.tool_calls_log.iter().flatten() {
+        if tool_succeeded(&call.result_preview) && !called.contains(&call.tool_name.as_str()) {
+            called.push(&call.tool_name);
+        }
+    }
+    if called.is_empty() {
+        return said;
+    }
+    format!("{said}\n\n(Tools called for this answer: {}.)", called.join(", "))
+}
+
 /// Trim a conversation to the last `max_msgs`, keeping the system prompt.
 ///
 /// The system message carries the personality and the RAG context, so dropping
@@ -251,7 +282,7 @@ fn with_what_it_read(m: &SynMessage) -> String {
 fn build_pruned_history(history: &[SynMessage], max_msgs: usize) -> Vec<ChatMessage> {
     let as_chat = |m: &SynMessage| ChatMessage {
         role: m.role.clone(),
-        content: with_what_it_read(m),
+        content: with_what_it_did(m, with_what_it_read(m)),
         tool_calls: None,
         tool_call_id: None,
         images: m.images.clone(),
@@ -3460,6 +3491,35 @@ mod tests {
         let mut from_a_note = answered_from(&[("Notes/tcb.md", "TCB")]);
         from_a_note.sources.as_mut().unwrap()[0].node_type = "note".into();
         assert_eq!(with_what_it_read(&from_a_note), "TCB đang ở 31.600 đ.");
+    }
+
+    /// "Đã lưu vào QuickCap." came back without the `capture` that made it
+    /// true, a dozen times, until the model answered a note with the words and
+    /// no call.
+    #[test]
+    fn an_earlier_answer_comes_back_with_the_tools_it_called() {
+        let call = |name: &str, result: &str| crate::models::syn::SynToolCallEvent {
+            conversation_id: String::new(),
+            tool_name: name.into(),
+            tool_args: serde_json::Value::Null,
+            result_preview: result.into(),
+            iteration: 0,
+        };
+        let mut saved = msg("assistant", "Đã lưu vào QuickCap.");
+        saved.tool_calls_log = Some(vec![
+            call("query_nodes", r#"{"nodes":[]}"#),
+            call("capture", r#"{"kept":true}"#),
+            call("capture", r#"{"kept":true}"#),
+            call("trash_node", r#"{"refused":"not after reading"}"#),
+        ]);
+        let seen = with_what_it_did(&saved, saved.content.clone());
+        assert_eq!(seen, "Đã lưu vào QuickCap.\n\n(Tools called for this answer: query_nodes, capture.)");
+
+        let plain = msg("assistant", "Chào.");
+        assert_eq!(with_what_it_did(&plain, plain.content.clone()), "Chào.", "nothing called, nothing added");
+
+        let out = build_pruned_history(&[msg("user", "Quick: gọi CMC"), saved], 50);
+        assert!(out[1].content.contains("capture"), "{}", out[1].content);
     }
 
     /// The history that emptied an answer: the last round asked for a page and
