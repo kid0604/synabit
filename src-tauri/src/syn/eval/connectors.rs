@@ -99,6 +99,61 @@ pub fn declare(vault: &super::fixture::Vault, yamls: &[&str], base: Option<&str>
     }
 }
 
+/// The author's `Raspberry Pi (SSH)` as Syn wrote it on 2026-10-13, less the
+/// operations that change anything: the address and password are inputs, and
+/// any other command goes through the transport's own `run`.
+pub const PI_SSH: &str = "id: raspberry_pi_ssh\nname: Raspberry Pi (SSH)\nversion: 1\nprovenance: syn\ntransport: ssh\ndecoder: json\nlogic: manifest\nbase_url: '{{input.host}}'\nauth:\n  type: ssh\n  secret: login\ninputs:\n- name: host\n  kind: address\n  label:\n    en: Raspberry Pi SSH address\n    vi: Địa chỉ SSH của Raspberry Pi\n  example: ssh://pi@raspberrypi.local\n- name: login\n  kind: secret\n  label:\n    vi: Mật khẩu SSH hoặc khóa riêng\noperations:\n- name: check_openclaw\n  description: Check whether OpenClaw processes or services are running.\n  effect: read_attested\n  command:\n  - sh\n  - -c\n  - ps aux | grep -i '[o]penclaw' || true\n  result:\n    each: ''\n";
+
+/// Files `PI_SSH` in the vault and approves it for the machine at `host`, as
+/// the connect card does once the address and password are typed and the
+/// machine's key is accepted.
+pub async fn connect_pi(vault: &super::fixture::Vault, host: &str) {
+    use crate::models::node::NodeMetadata;
+    let m = crate::syn::connector::manifest::parse_yaml(PI_SSH).expect("the Pi's declaration reads");
+    let body = format!("{}\n{}\n```\n", crate::syn::connector::manifest::FENCE, PI_SSH.trim());
+    vault
+        .db()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .upsert_node(&NodeMetadata {
+            id: format!("{}/{}.md", crate::syn::connector::manifest::CONNECTOR_FOLDER, m.id),
+            node_type: crate::syn::connector::manifest::CONNECTOR_TYPE.into(),
+            title: m.name.clone(),
+            content: body,
+            properties: serde_json::json!({}),
+            created_at: "2026-10-13 16:22:50".into(),
+            updated_at: "2026-10-13 17:06:23".into(),
+            timestamp: 0,
+            blocks: None,
+        })
+        .expect("filed");
+    let password = crate::syn::connector::ssh::tests::PASSWORD.to_string();
+    crate::syn::connector::declared::TEST_SECRETS
+        .lock()
+        .expect("secrets")
+        .insert(crate::commands::connector::secret_slot(&m.id, "login"), password.clone());
+    let inputs: std::collections::BTreeMap<String, String> = [("host".to_string(), format!("ssh://pi@{host}"))].into();
+    let network = crate::syn::connector::instance::network_for(&m.with_inputs(&inputs).base_url);
+    let mut pinned = None;
+    for _ in 0..2 {
+        let inst = crate::syn::connector::instance::approve(
+            &vault.path,
+            &m,
+            crate::syn::connector::instance::Choices { network, inputs: inputs.clone(), pinned_cert: pinned.clone(), ..Default::default() },
+            "2026-10-13T16:30:00Z",
+        )
+        .expect("approved");
+        let tried = crate::commands::connector::probe(&m, &inst, Some(&password)).await;
+        match (tried.code.as_deref(), tried.cert) {
+            (Some("host_key_unknown"), Some(key)) if pinned.is_none() => pinned = Some(key),
+            _ => {
+                assert!(tried.ok, "the Pi answers once connected: {:?}", tried.code);
+                return;
+            }
+        }
+    }
+}
+
 // ── A report: Jira worklogs → a sheet → a mail ─────────────────────────
 
 pub const JIRA_WORKLOGS: &str = "id: jira\nname: Jira\nbase_url: BASE/jira\noperations:\n  - name: worklogs\n    description: Every worklog of a month - issue, title, author, hours, day.\n    effect: read\n    call: { method: GET, path: /worklogs, query: { month: \"{{month}}\" } }\n    params:\n      month: { required: true, description: YYYY-MM }\n    result:\n      each: $.worklogs[*]\n      pick:\n        issue: issue\n        title: { path: title, free_text: true }\n        author: author\n        hours: { path: hours, type: number }\n        day: { path: day, type: time }\n";

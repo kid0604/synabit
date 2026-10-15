@@ -75,7 +75,7 @@ async fn harness_runs_the_product_path() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
         checks: vec![
             Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) },
             Check::Called("update_node"),
@@ -103,7 +103,7 @@ async fn saying_done_is_not_doing_it() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
         checks: vec![Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) }],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
@@ -134,7 +134,7 @@ async fn a_stop_is_answered_and_counted() {
         }],
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false,
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
         checks: vec![Check::AskedConsent, Check::Visited("kotlin-2-4"), Check::AnswerHas(&["2026-09-18"])],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
@@ -436,4 +436,77 @@ fn the_hard_vault_holds_what_its_answers_assume() {
     assert!(super::grade::check(&Check::AllUnder { prefix: "Meetings/", key: "tags", expect: Expect::Has("meeting") }, &e).is_ok());
     assert!(super::grade::check(&Check::NoNodeTitled("Export"), &e).is_ok());
     assert!(super::grade::check(&Check::AnyOf(vec![Check::AskedChoice, Check::StillThere("People/linh-pham.md")]), &e).is_ok());
+}
+
+/// A model that says what it is told to and keeps what it was sent.
+struct Listening {
+    replies: Arc<Mutex<VecDeque<ChatReply>>>,
+    heard: Arc<Mutex<Vec<(Vec<crate::syn::provider::ChatMessage>, Vec<String>)>>>,
+}
+
+#[async_trait]
+impl ChatProvider for Listening {
+    fn id(&self) -> SynProvider {
+        SynProvider::Ollama
+    }
+    async fn check_status(&self) -> AppResult<ProviderStatus> {
+        Ok(serde_json::from_value(serde_json::json!({ "connected": true, "version": null, "url": "scripted" })).expect("status"))
+    }
+    async fn list_models(&self) -> AppResult<Vec<ModelInfo>> {
+        Ok(Vec::new())
+    }
+    async fn chat(&self, req: ChatRequest<'_>) -> AppResult<ChatReply> {
+        let tools = req
+            .tools
+            .unwrap_or_default()
+            .iter()
+            .map(|t| format!("{}: {}", t.function.name, t.function.description))
+            .collect();
+        self.heard.lock().expect("lock").push((req.messages.to_vec(), tools));
+        Ok(self.replies.lock().expect("lock").pop_front().unwrap_or_else(|| text("")))
+    }
+    async fn chat_streaming(&self, req: ChatRequest<'_>, _sink: &StreamSink<'_>) -> AppResult<ChatReply> {
+        self.chat(req).await
+    }
+}
+
+/// The stale-answer tasks reach the model as the Telegram turn did: the held
+/// history in the messages, the Pi named in `find_tools`, and the connector's
+/// `run` reading the temperature off the machine the harness started.
+#[tokio::test]
+async fn a_held_history_and_a_connected_pi_reach_the_model() {
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let replies = Arc::new(Mutex::new(VecDeque::from(vec![
+        calls(crate::syn::toolset::FIND_TOOL, serde_json::json!({ "need": "connector:raspberry_pi_ssh" })),
+        calls("connector__raspberry_pi_ssh__run", serde_json::json!({ "command": "vcgencmd measure_temp" })),
+        // The reflection after the run that stopped to ask about the line.
+        text("{}"),
+        text("Pi đang 57.5°C."),
+    ])));
+    let (r, h) = (replies.clone(), heard.clone());
+    let _model = super::use_provider(Box::new(move |_| {
+        Box::new(Listening { replies: r.clone(), heard: h.clone() }) as Box<dyn ChatProvider>
+    }));
+
+    let task = super::tasks::selected("tg-pi-stale-vi").pop().expect("the task");
+    assert_eq!(task.surface, crate::syn::surface::Surface::Telegram);
+    let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
+
+    let heard = heard.lock().expect("lock");
+    let (messages, tools) = heard.first().expect("the model was asked");
+    let said = |text: &str| messages.iter().any(|m| m.content.contains(text));
+    assert!(said("Tao chưa có kết nối tới máy Pi"), "the old answer is in the history");
+    assert!(said("Mua sữa cho Cam"), "and what came before it");
+    let find = tools.iter().find(|t| t.starts_with("find_tools:")).expect("find_tools offered");
+    assert!(find.contains("connector:raspberry_pi_ssh (Raspberry Pi (SSH))"), "{find}");
+
+    assert!(outcome.error.is_none(), "{:?}", outcome.error);
+    assert!(outcome.passed, "{:?} {:?} {:?}", outcome.failures, outcome.trace, outcome.answer);
+    let read = heard.iter().flat_map(|(m, _)| m).any(|m| m.content.contains("temp=57.5'C"));
+    assert!(read, "the Pi's own answer reached the model");
+
+    let clean = super::tasks::selected("tg-pi-clean-vi").pop().expect("the task");
+    let said_there = |text: &str| clean.history.iter().any(|s| s.content.contains(text));
+    assert!(!said_there("chưa có kết nối"), "the clean history lacks the old answer");
+    assert!(said_there("Mua sữa cho Cam"), "and lacks nothing else");
 }

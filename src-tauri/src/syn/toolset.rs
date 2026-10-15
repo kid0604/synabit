@@ -321,6 +321,28 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
     groups
 }
 
+/// `find_tools`'s description, with the connected servers named in it.
+///
+/// The model is told `connector:<server>` exists and not which servers there
+/// are. Written after Telegram, on 2026-10-15, answered "Check cho tao nhiệt
+/// độ con Pi" by saying it had no connection to the Pi, with
+/// `raspberry_pi_ssh` connected. Measured afterwards (`eval::tasks`,
+/// `tg-pi-*`), it was not the cause: on `gpt-6-luna` the turn reached the Pi
+/// 20 times in 20 without the names, asking `find_tools` for "connected
+/// machines". The failing turn ran on `gpt-5.6-luna`, which Telegram is no
+/// longer pinned to. Kept because naming what is there costs a line and
+/// spares a weaker model the guess.
+pub fn naming_servers(description: &str, servers: &[(String, String)]) -> String {
+    if servers.is_empty() {
+        return description.to_string();
+    }
+    let named: Vec<String> = servers
+        .iter()
+        .map(|(slug, name)| if name == slug { format!("connector:{slug}") } else { format!("connector:{slug} ({name})") })
+        .collect();
+    format!("{description} Connected now: {}.", named.join(", "))
+}
+
 /// The groups `find_tools` loads for what the model asked it.
 ///
 /// A group named exactly, or every group whose name or description shares a
@@ -368,6 +390,20 @@ mod tests {
 
     fn groups(q: &str) -> Vec<String> {
         for_question(q, &[("jira".into(), "Jira".into())]).iter().map(Group::name).collect()
+    }
+
+    #[test]
+    fn find_tools_names_what_is_connected() {
+        let base = "Load more tools.";
+        assert_eq!(naming_servers(base, &[]), base);
+        let servers = [
+            ("raspberry_pi_ssh".to_string(), "Raspberry Pi (SSH)".to_string()),
+            ("jira".to_string(), "jira".to_string()),
+        ];
+        assert_eq!(
+            naming_servers(base, &servers),
+            "Load more tools. Connected now: connector:raspberry_pi_ssh (Raspberry Pi (SSH)), connector:jira."
+        );
     }
 
     #[test]

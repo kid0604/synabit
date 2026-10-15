@@ -796,6 +796,17 @@ impl SynEngine {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
+        // And named to the model in `find_tools`, so it need not guess what
+        // is connected. See `toolset::naming_servers`.
+        let all_tools: Vec<_> = all_tools
+            .into_iter()
+            .map(|mut t| {
+                if t.function.name == crate::syn::toolset::FIND_TOOL {
+                    t.function.description = crate::syn::toolset::naming_servers(&t.function.description, &servers);
+                }
+                t
+            })
+            .collect();
         let question = req
             .history
             .iter()

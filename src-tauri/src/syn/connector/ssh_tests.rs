@@ -38,6 +38,8 @@ impl Pi {
             l if l.starts_with("df") => (DF.to_string(), String::new(), 0),
             l if l.starts_with("uptime") => (" 09:12:01 up 3 days,  2:41,  1 user,  load average: 0.08, 0.05, 0.01\n".to_string(), String::new(), 0),
             l if l.contains("is-active") => ("active\n".to_string(), String::new(), 0),
+            l if l.contains("measure_temp") => ("temp=57.5'C\n".to_string(), String::new(), 0),
+            l if l.contains("thermal_zone") => ("57500\n".to_string(), String::new(), 0),
             _ => (line.clone(), String::new(), 0),
         };
         if !out.is_empty() {

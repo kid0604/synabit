@@ -68,6 +68,24 @@ fn request(conversation: &str, message: &str, resume: Option<String>) -> SynChat
     .expect("a chat request")
 }
 
+/// Write `history` into the conversation as turns already taken, a minute apart
+/// and a day before now, so the first turn is asked after them.
+fn hold(vault: &str, conversation: &str, history: &[super::tasks::Said]) {
+    let mut full = crate::syn::conversation::get_conversation(vault, conversation).expect("the conversation");
+    let start = chrono::Utc::now() - chrono::Duration::days(1);
+    for (i, said) in history.iter().enumerate() {
+        let message: SynMessage = serde_json::from_value(serde_json::json!({
+            "id": format!("held-{i}"),
+            "role": said.role,
+            "content": said.content,
+            "timestamp": (start + chrono::Duration::minutes(i as i64)).to_rfc3339(),
+        }))
+        .expect("a message");
+        full.messages.push(message);
+    }
+    crate::syn::conversation::save_conversation(vault, &full).expect("history written");
+}
+
 fn latest(vault: &str, conversation: &str) -> Option<Run> {
     crate::syn::run::latest_for(vault, conversation)
 }
@@ -92,6 +110,9 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     super::connectors::declare(&vault, &task.declared, rest.as_ref().map(|r| r.base.as_str()));
     let pi = if task.ssh { Some(crate::syn::connector::ssh::tests::pi().await) } else { None };
     let pi_host = pi.as_ref().map(|(port, ..)| format!("127.0.0.1:{port}")).unwrap_or_default();
+    if task.pi_connected {
+        super::connectors::connect_pi(&vault, &pi_host).await;
+    }
     for (path, text) in &task.files {
         let at = match path.strip_prefix("@downloads/") {
             Some(rest) => std::path::Path::new(&super::connectors::downloads(&vault)).join(rest),
@@ -116,6 +137,10 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
             conversation = crate::syn::conversation::create_conversation(&vault.path, Some(task.id.to_string()))
                 .expect("conversation")
                 .id;
+            // What it already held, before the first turn only.
+            if answers.is_empty() && !task.history.is_empty() {
+                hold(&vault.path, &conversation, &task.history);
+            }
         }
         // `BASE` in what the person says is the REST server's address, as in
         // a declaration: a spec to connect to is named by where it is.
@@ -131,7 +156,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                 vault.handle(),
                 &vault.path,
                 request(&conversation, &message, resume.take()),
-                crate::syn::surface::Surface::App,
+                task.surface,
             )
             .await;
             match sent {
