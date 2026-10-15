@@ -256,7 +256,11 @@ pub async fn syn_device_open_notification_access() -> Result<bool, AppError> {
 /// Every declared connector, and where each stands on this device.
 #[tauri::command]
 pub async fn syn_manifest_list(app: tauri::AppHandle, vault_path: String) -> Result<Vec<DeclaredView>, AppError> {
-    declared_views(&app, &vault_path)
+    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
+    let started = std::time::Instant::now();
+    let out = declared_views(&app, &vault_path);
+    log::info!("[perf] syn_manifest_list {} ms", started.elapsed().as_millis());
+    out
 }
 
 /// What is wrong with a declaration, without saving it.

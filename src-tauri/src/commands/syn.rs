@@ -1808,7 +1808,11 @@ pub async fn syn_save_routine(
 /// way. See `run::waiting_questions`.
 #[tauri::command]
 pub async fn syn_waiting(vault_path: String) -> Result<Vec<serde_json::Value>, AppError> {
-    Ok(crate::syn::run::waiting_questions(&vault_path))
+    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
+    let started = std::time::Instant::now();
+    let out = Ok(crate::syn::run::waiting_questions(&vault_path));
+    log::info!("[perf] syn_waiting {} ms", started.elapsed().as_millis());
+    out
 }
 
 /// Routines Syn wrote that are waiting for the person, each with the
@@ -2993,7 +2997,11 @@ pub async fn syn_cancel_run(run_id: String) -> Result<(), AppError> {
 /// ended is reported as interrupted rather than as still going.
 #[tauri::command]
 pub async fn syn_list_runs(vault_path: String) -> Result<Vec<RunSummary>, AppError> {
-    crate::syn::run::list_runs(&vault_path, crate::syn::engine::is_live)
+    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
+    let started = std::time::Instant::now();
+    let out = crate::syn::run::list_runs(&vault_path, crate::syn::engine::is_live);
+    log::info!("[perf] syn_list_runs {} ms", started.elapsed().as_millis());
+    out
 }
 
 /// One run in full, including every step.
@@ -3569,7 +3577,11 @@ pub async fn syn_get_conversation(
     vault_path: String,
     conversation_id: String,
 ) -> Result<SynConversationFull, AppError> {
-    conversation::get_conversation(&vault_path, &conversation_id)
+    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
+    let started = std::time::Instant::now();
+    let out = conversation::get_conversation(&vault_path, &conversation_id);
+    log::info!("[perf] syn_get_conversation {} ms", started.elapsed().as_millis());
+    out
 }
 
 /// Create a new empty conversation.

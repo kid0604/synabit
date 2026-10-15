@@ -11,6 +11,18 @@ import QuickEntry from "./QuickEntry.vue";
 import SafeQuick from "./SafeQuick.vue";
 import { installGlobalErrorLogging } from "./utils/globalErrors";
 
+// TEMP(perf 2026-10-15): opening a conversation froze the app once. A timer
+// that fires late says the page's thread was busy for that long. Remove when found.
+if (typeof window !== 'undefined') {
+  let last = performance.now();
+  setInterval(() => {
+    const now = performance.now();
+    const late = now - last - 100;
+    if (late > 300 && document.visibilityState === 'visible') logger.warn(`[perf] the page was blocked for ${Math.round(late)} ms`);
+    last = now;
+  }, 100);
+}
+
 /**
  * The quick-entry window mounts a different root.
  *
