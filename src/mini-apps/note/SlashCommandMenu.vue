@@ -63,7 +63,7 @@ defineExpose({ onKeyDown });
 </script>
 
 <template>
-  <div class="slash-command-menu" v-if="items.length > 0">
+  <div class="slash-command-menu" v-show="items.length > 0">
     <button
       v-for="(item, index) in items"
       :key="item.title"

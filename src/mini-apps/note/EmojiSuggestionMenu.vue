@@ -55,7 +55,7 @@ defineExpose({ onKeyDown });
 </script>
 
 <template>
-  <div class="emoji-suggestion-menu" v-if="items.length > 0">
+  <div class="emoji-suggestion-menu" v-show="items.length > 0">
     <button
       v-for="(item, index) in items"
       :key="item.shortcode"

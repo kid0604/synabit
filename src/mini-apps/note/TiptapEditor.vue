@@ -2,7 +2,7 @@
 import { watch, onBeforeUnmount, onMounted, ref, computed, inject } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { SYN_ASK, synAskFallback, askSynAbout } from '../../shared/syn/selectionAsk';
-import { useEditor, EditorContent, VueRenderer, VueNodeViewRenderer } from '@tiptap/vue-3';
+import { useEditor, EditorContent, VueNodeViewRenderer } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import { CustomImage } from './extensions/CustomImage';
@@ -36,7 +36,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import Suggestion from '@tiptap/suggestion';
-import tippy, { type Instance as TippyInstance } from 'tippy.js';
+import { suggestionPopup } from './editor/suggestionPopup';
 import type { SlashCommandItem } from './editor/config/slashCommandItems';
 import SlashCommandMenu from './SlashCommandMenu.vue';
 import NoteMentionMenu from './NoteMentionMenu.vue';
@@ -551,46 +551,7 @@ const editor = useEditor({
             item.title.toLowerCase().includes(q)
           );
         },
-        render: () => {
-          let component: VueRenderer;
-          let popup: TippyInstance;
-
-          return {
-            onStart: (props: any) => {
-              component = new VueRenderer(SlashCommandMenu, {
-                props,
-                editor: props.editor,
-              });
-              if (!props.clientRect) return;
-              popup = tippy(document.body, {
-                getReferenceClientRect: props.clientRect,
-                appendTo: () => document.body,
-                content: component.element as Element,
-                showOnCreate: true,
-                interactive: true,
-                trigger: 'manual',
-                placement: 'bottom-start',
-              });
-            },
-            onUpdate: (props: any) => {
-              component?.updateProps(props);
-              if (props.clientRect) {
-                popup?.setProps({ getReferenceClientRect: props.clientRect });
-              }
-            },
-            onKeyDown: (props: any) => {
-              if (props.event.key === 'Escape') {
-                popup?.hide();
-                return true;
-              }
-              return component?.ref?.onKeyDown(props.event);
-            },
-            onExit: () => {
-              popup?.destroy();
-              component?.destroy();
-            },
-          };
-        },
+        render: suggestionPopup(SlashCommandMenu),
       },
     }),
     Extension.create({
@@ -630,46 +591,7 @@ const editor = useEditor({
                 .run();
             },
             items: ({ query }) => searchMentions(query),
-            render: () => {
-              let component: any;
-              let popup: TippyInstance | undefined;
-
-              return {
-                onStart: (suggestionProps: any) => {
-                  component = new VueRenderer(NoteMentionMenu, {
-                    props: suggestionProps,
-                    editor: suggestionProps.editor,
-                  });
-                  if (!suggestionProps.clientRect) return;
-                  popup = tippy(document.body, {
-                    getReferenceClientRect: suggestionProps.clientRect,
-                    appendTo: () => document.body,
-                    content: component.element as Element,
-                    showOnCreate: true,
-                    interactive: true,
-                    trigger: 'manual',
-                    placement: 'bottom-start',
-                  });
-                },
-                onUpdate: (suggestionProps: any) => {
-                  component?.updateProps(suggestionProps);
-                  if (suggestionProps.clientRect) {
-                    popup?.setProps({ getReferenceClientRect: suggestionProps.clientRect });
-                  }
-                },
-                onKeyDown: (suggestionProps: any) => {
-                  if (suggestionProps.event.key === 'Escape') {
-                    popup?.hide();
-                    return true;
-                  }
-                  return component?.ref?.onKeyDown(suggestionProps.event);
-                },
-                onExit: () => {
-                  popup?.destroy();
-                  component?.destroy();
-                },
-              };
-            },
+            render: suggestionPopup(NoteMentionMenu, { showEmpty: true }),
           }),
         ];
       },
@@ -690,48 +612,7 @@ const editor = useEditor({
         command: ({ editor, range, props }: any) => {
           editor.chain().focus().deleteRange(range).insertContent(props.emoji).run();
         },
-        render: () => {
-          let component: VueRenderer;
-          let popup: TippyInstance;
-
-          const createPopup = (props: any) => {
-            component = new VueRenderer(EmojiSuggestionMenu, {
-              props,
-              editor: props.editor,
-            });
-            if (!props.clientRect) return;
-            popup = tippy(document.body, {
-              getReferenceClientRect: props.clientRect,
-              appendTo: () => document.body,
-              content: component.element as Element,
-              showOnCreate: props.items.length > 0,
-              interactive: true,
-              trigger: 'manual',
-              placement: 'bottom-start',
-            });
-          };
-
-          return {
-            onStart: (props: any) => { createPopup(props); },
-            onUpdate: (props: any) => {
-              if (!component) { createPopup(props); return; }
-              component.updateProps(props);
-              if (!props.items.length) { popup?.hide(); return; }
-              popup?.show();
-              if (props.clientRect) {
-                popup?.setProps({ getReferenceClientRect: props.clientRect });
-              }
-            },
-            onKeyDown: (props: any) => {
-              if (props.event.key === 'Escape') { popup?.hide(); return true; }
-              return component?.ref?.onKeyDown(props.event);
-            },
-            onExit: () => {
-              popup?.destroy();
-              component?.destroy();
-            },
-          };
-        },
+        render: suggestionPopup(EmojiSuggestionMenu),
       },
     }),
     TransclusionExtension,
