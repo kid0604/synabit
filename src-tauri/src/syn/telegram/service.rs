@@ -643,14 +643,38 @@ fn mapped_conversation(app: &AppHandle, chat_id: i64) -> Option<String> {
 }
 
 /// The conversation this chat writes into, made if there is none in this
-/// vault — the vault may have changed since, or the conversation been deleted.
-fn conversation_for(app: &AppHandle, vault: &str, chat_id: i64) -> AppResult<String> {
+/// vault — the vault may have changed since, or the conversation been deleted
+/// — or if the one there has gone quiet.
+///
+/// `resuming` is a pressed button carrying a stopped run on. That run belongs
+/// to the conversation it was asked in, however long the card waited.
+fn conversation_for(app: &AppHandle, vault: &str, chat_id: i64, resuming: bool) -> AppResult<String> {
     if let Some(id) = mapped_conversation(app, chat_id) {
-        if crate::syn::conversation::get_conversation(vault, &id).is_ok() {
-            return Ok(id);
+        if let Ok(conversation) = crate::syn::conversation::get_conversation(vault, &id) {
+            let last = conversation.messages.last().map(|m| m.timestamp.as_str());
+            if resuming || !gone_quiet(last.unwrap_or(&conversation.meta.created_at), chrono::Utc::now()) {
+                return Ok(id);
+            }
+            log::info!("[Telegram] Conversation {id} has been quiet since {last:?}; starting another");
         }
     }
     new_conversation(app, vault, chat_id)
+}
+
+/// How long a Telegram conversation may sit unused before the next message
+/// starts another.
+///
+/// Without it, every message from the phone went into one conversation for
+/// as long as nobody typed `/new` — seventy messages over a month, all of it
+/// sent back with each new one, paid for in tokens and in old questions
+/// brought into new answers. Three days of silence is a new subject; what was
+/// said before is still in the vault, where `look_back` finds it.
+const QUIET_FOR: chrono::Duration = chrono::Duration::days(3);
+
+/// Whether a conversation last spoken in at `last` has been quiet long enough
+/// to leave. A time that does not read is not a reason to leave it.
+fn gone_quiet(last: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
+    chrono::DateTime::parse_from_rfc3339(last).is_ok_and(|at| now.signed_duration_since(at) > QUIET_FOR)
 }
 
 fn new_conversation(app: &AppHandle, vault: &str, chat_id: i64) -> AppResult<String> {
@@ -768,7 +792,8 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
             tell_not_ready(app, &api, chat_id, &words.not_ready(words.no_vault())).await;
             return Some(NO_VAULT_RETRY);
         };
-        let conversation_id = match conversation_for(app, &vault, chat_id) {
+        let resuming = ours[0].resume_run.is_some();
+        let conversation_id = match conversation_for(app, &vault, chat_id, resuming) {
             Ok(id) => id,
             Err(e) => {
                 tell_not_ready(app, &api, chat_id, &words.not_ready(&e.to_string())).await;
@@ -1632,6 +1657,19 @@ fn compose(words: &Words, message: &SynMessage) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Three days of silence starts another conversation; anything less, or a
+    /// time that does not read, keeps the one there.
+    #[test]
+    fn a_conversation_quiet_for_three_days_is_left() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-15T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        assert!(gone_quiet("2026-10-12T11:59:00Z", now), "three days and a minute");
+        assert!(gone_quiet("2026-09-13T07:47:00+07:00", now), "the month-long one");
+        assert!(!gone_quiet("2026-10-12T12:01:00Z", now), "not quite three days");
+        assert!(!gone_quiet("2026-10-15T11:00:00.123456+00:00", now), "an hour ago");
+        assert!(!gone_quiet("", now));
+        assert!(!gone_quiet("yesterday", now));
+    }
 
     fn budget() -> crate::syn::run::Budget {
         crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default())
