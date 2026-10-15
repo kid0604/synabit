@@ -125,6 +125,7 @@ export const WhiteboardExtension = Node.create<WhiteboardEmbedOptions>({
           const attr = (value: unknown) => escapeAttribute(String(value ?? ''));
           const html = `<div data-type="whiteboard" data-board-id="${attr(a.boardId)}" data-board-path="${attr(a.boardPath)}" data-title="${attr(a.title || '')}" data-width="${attr(a.width || '100%')}" data-height="${attr(a.height || '240px')}" data-align="${attr(a.align || 'center')}"></div>\n`;
           state.write(html);
+          state.closeBlock(node);
         },
         parse: {
           setup(_markdownit: any) {

@@ -90,6 +90,7 @@ export const PdfExtension = Node.create<PdfOptions>({
           const src = node.attrs.src || '';
           const title = node.attrs.title || 'PDF Document';
           state.write(`<div data-pdf-embed="true" data-src="${src}" data-title="${title}"></div>\n`);
+          state.closeBlock(node);
         },
         parse: {
           setup(_markdownit: any) {

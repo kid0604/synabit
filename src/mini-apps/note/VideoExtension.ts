@@ -127,6 +127,7 @@ export const VideoExtension = Node.create<VideoOptions>({
             // but the stripLocalAssets handles that after markdown serialization!
             state.write(`<video src="${src}" controls="true"></video>\n`);
           }
+          state.closeBlock(node);
         },
         parse: {
           setup(_markdownit: any) {

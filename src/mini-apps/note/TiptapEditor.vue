@@ -27,6 +27,7 @@ import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
 import { DetailsExtension } from './extensions/DetailsExtension';
+import { HtmlBlockBreaks } from './extensions/HtmlBlockBreaks';
 import { RichTableExtension, RichTableOrphan } from './extensions/RichTableExtension';
 import { RichChartExtension } from './extensions/RichChartExtension';
 import { InlineFormula } from './extensions/InlineFormula';
@@ -513,6 +514,7 @@ const editor = useEditor({
     AudioExtension,
     PdfExtension,
     DetailsExtension,
+    HtmlBlockBreaks,
     Table.configure({
       resizable: true,
       allowTableNodeSelection: true,

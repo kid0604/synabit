@@ -104,6 +104,9 @@ export const DetailsExtension = Node.create<DetailsOptions>({
           state.write(`<details class="synabit-details">\n<summary>${summary}</summary>\n<div class="details-content">\n\n`);
           state.renderContent(node);
           state.write(`\n</div>\n</details>\n`);
+          // A blank line after, or the next paragraph is part of the HTML
+          // block and its markdown — a link — is lost when the note is opened.
+          state.closeBlock(node);
         },
         parse: {
           setup() {

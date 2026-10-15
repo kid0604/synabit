@@ -134,6 +134,7 @@ export const ImageGallery = Node.create<ImageGalleryOptions>({
           
           html += `</div>\n`;
           state.write(html);
+          state.closeBlock(node);
         },
         parse: {
           setup() {

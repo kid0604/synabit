@@ -152,6 +152,7 @@ export const LocationExtension = Node.create<LocationOptions>({
           }
           html += `></div>\n`;
           state.write(html);
+          state.closeBlock(node);
         },
         parse: {
           setup(_markdownit: any) {

@@ -119,6 +119,7 @@ export const AudioExtension = Node.create<AudioOptions>({
             // but the stripLocalAssets handles that after markdown serialization!
             state.write(`<audio src="${src}" controls="true"></audio>\n`);
           }
+          state.closeBlock(node);
         },
         parse: {
           setup(_markdownit: any) {
