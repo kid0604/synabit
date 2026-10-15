@@ -31,6 +31,7 @@ import type { Thread, FootingTally } from '../../../shared/syn/useThreads';
 import type { SynConversation } from '../types';
 import { grouped, closed, subtitle } from '../threads';
 import { useSynDeveloper } from '../../../shared/syn/useSynDeveloper';
+import { useRemembered } from '../../../composables/useRemembered';
 import type { HubTab } from './SynHub.vue';
 
 /** What the pane is showing. Explicit, so nothing has to guess it from an id. */
@@ -172,6 +173,26 @@ const chats = computed(() =>
     .slice()
     .sort((a, b) => Number(b.pinned) - Number(a.pinned)),
 );
+
+/**
+ * Whether the conversations are folded away.
+ *
+ * Forty-five of them pushed Syn's work, the hub and notifications a long
+ * scroll below the threads. Folded, the open one stays in view, so the list
+ * still says what the pane is showing; and a search unfolds it, because a
+ * search that finds nothing visible has not been answered. Remembered, like
+ * the whole sidebar is in `MessagesApp`.
+ */
+const chatsShown = useRemembered('syn.conversations.list', ['open', 'folded'] as const, 'open');
+const chatsFolded = computed(() => chatsShown.value === 'folded');
+const toggleChats = () => {
+  chatsShown.value = chatsFolded.value ? 'open' : 'folded';
+};
+
+const shownChats = computed(() => {
+  if (!chatsFolded.value || searchQuery.value.trim()) return chats.value;
+  return chats.value.filter((chat) => isOn('conversation', chat.id));
+});
 
 const isOn = (kind: string, id?: string) =>
   props.selection?.kind === kind
@@ -366,9 +387,15 @@ const when = (iso?: string) => {
 
       <!-- ─── Conversations ──────────────────────────────── -->
       <div class="flex items-center gap-1.5 px-2.5 pt-3 pb-1">
-        <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <button
+          class="flex items-center gap-1 text-xs uppercase tracking-wide text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 cursor-pointer"
+          :aria-expanded="!chatsFolded"
+          :title="chatsFolded ? t('syn.show_conversations') : t('syn.hide_conversations')"
+          @click="toggleChats"
+        >
+          <ChevronRight class="w-3 h-3 transition-transform" :class="chatsFolded ? '' : 'rotate-90'" aria-hidden="true" />
           {{ t('syn.conversations') }} · {{ conversations.length }}
-        </p>
+        </button>
         <button
           class="ml-auto shrink-0 p-1 rounded-md text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-black/5 dark:hover:bg-white/10 cursor-pointer"
           :title="t('syn.new_conversation')"
@@ -384,7 +411,7 @@ const when = (iso?: string) => {
       </p>
 
       <div
-        v-for="chat in chats"
+        v-for="chat in shownChats"
         :key="chat.id"
         class="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-xl text-left transition-colors cursor-pointer group"
         :class="isOn('conversation', chat.id) ? 'bg-accent/10' : 'hover:bg-gray-100 dark:hover:bg-white/5'"
