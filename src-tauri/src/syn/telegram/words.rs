@@ -208,6 +208,117 @@ impl Words {
         self.pick("Không", "No")
     }
 
+    /// The question on a permission card with more than one way to say yes.
+    pub fn needs(&self, about: &str, detail: Option<&str>) -> String {
+        let head = if self.vietnamese { format!("Syn cần quyền: {about}.") } else { format!("Syn needs permission to {about}.") };
+        match detail {
+            Some(d) => format!("{head}\n\n{d}"),
+            None => head,
+        }
+    }
+
+    pub fn always(&self) -> &'static str {
+        self.pick("Luôn cho phép", "Always allow")
+    }
+
+    pub fn never(&self) -> &'static str {
+        self.pick("Không bao giờ", "Never")
+    }
+
+    pub fn not_now(&self) -> &'static str {
+        self.pick("Để sau", "Not now")
+    }
+
+    pub fn this_session(&self) -> &'static str {
+        self.pick("Luôn cho phép trong phiên này", "Always allow in this session")
+    }
+
+    /// A plan of sends, one line per request.
+    pub fn plan(&self, why: &str, lines: &[String]) -> String {
+        let head = if self.vietnamese { "Syn muốn gửi đi:" } else { "Syn wants to send:" };
+        format!("{head} {why}\n\n{}", lines.join("\n"))
+    }
+
+    pub fn approve_all(&self) -> &'static str {
+        self.pick("Duyệt", "Approve")
+    }
+
+    /// Changes held after reading something from outside, one line each.
+    pub fn held(&self, because: &[String], lines: &[String]) -> String {
+        let from = because.join(", ");
+        let head = match (self.vietnamese, from.is_empty()) {
+            (true, true) => "Syn đã giữ lại các thay đổi này để bạn duyệt:".to_string(),
+            (true, false) => format!("Syn đã giữ lại các thay đổi này để bạn duyệt, vì trước đó đã đọc nội dung từ: {from}"),
+            (false, true) => "Syn held these changes for you to approve:".to_string(),
+            (false, false) => format!("Syn held these changes for you to approve, having read something from: {from}"),
+        };
+        format!("{head}\n\n{}", lines.join("\n"))
+    }
+
+    /// One held change, by what it does.
+    pub fn change(&self, kind: crate::syn::changes::Kind) -> &'static str {
+        use crate::syn::changes::Kind as K;
+        match kind {
+            K::Edit => self.pick("Sửa", "Change"),
+            K::Trash => self.pick("Xoá (vào thùng rác)", "Move to trash"),
+            K::Restore => self.pick("Khôi phục", "Restore"),
+            K::Version => self.pick("Quay về bản cũ", "Go back to a version"),
+            K::Memory => self.pick("Ghi nhớ", "Remember"),
+            K::Board => self.pick("Sửa bảng vẽ", "Change a board"),
+            K::Table => self.pick("Sửa bảng", "Change table rows"),
+            K::TransactionNew => self.pick("Thêm giao dịch", "Add a transaction"),
+            K::TransactionEdit => self.pick("Sửa giao dịch", "Change a transaction"),
+            K::TransactionDelete => self.pick("Xoá giao dịch", "Remove a transaction"),
+        }
+    }
+
+    pub fn apply(&self) -> &'static str {
+        self.pick("Áp dụng", "Apply")
+    }
+
+    pub fn discard(&self) -> &'static str {
+        self.pick("Bỏ", "Discard")
+    }
+
+    pub fn applied(&self, made: usize, failed: usize, let_go: usize) -> String {
+        if self.vietnamese {
+            format!("Đã áp dụng {made}, không áp dụng được {failed}, bỏ {let_go}.")
+        } else {
+            format!("Applied {made}, could not apply {failed}, let {let_go} go.")
+        }
+    }
+
+    /// A connector Syn wants to use, approved here before and changed since.
+    pub fn connector(&self, name: &str, lines: &[String]) -> String {
+        let head = if self.vietnamese {
+            format!("Syn muốn dùng connector “{name}” với:")
+        } else {
+            format!("Syn wants to use the connector “{name}” with:")
+        };
+        format!("{head}\n\n{}", lines.join("\n"))
+    }
+
+    /// A connector that needs something typed: never in a chat.
+    pub fn connector_in_app(&self, name: &str) -> String {
+        if self.vietnamese {
+            format!("Kết nối “{name}” cần gõ địa chỉ hoặc mật khẩu, việc chỉ làm trong app trên máy tính — thẻ đang chờ ở đó.")
+        } else {
+            format!("Connecting “{name}” needs an address or a password typed, which is done only in the app on the computer — the card is waiting there.")
+        }
+    }
+
+    pub fn connect(&self) -> &'static str {
+        self.pick("Cho phép", "Allow")
+    }
+
+    pub fn connect_failed(&self, said: &str) -> String {
+        if self.vietnamese {
+            format!("Chưa kết nối được: {said}\nMở app trên máy tính để xem.")
+        } else {
+            format!("Could not connect: {said}\nOpen the app on the computer to see.")
+        }
+    }
+
     pub fn card_gone(&self) -> &'static str {
         self.pick("Câu hỏi này không còn nữa.", "This question is no longer open.")
     }

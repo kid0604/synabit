@@ -788,7 +788,7 @@ mod tests {
     /// tools are offered to the app — their absence from Telegram's list is then
     /// the surface's doing rather than the empty vault's.
     #[tokio::test]
-    async fn a_question_from_telegram_is_offered_a_subset_of_the_app() {
+    async fn a_question_from_telegram_is_offered_what_the_app_is() {
         use crate::syn::surface::Surface;
 
         let dir = tempfile::tempdir().expect("temp");
@@ -833,15 +833,8 @@ mod tests {
         for name in ["query_nodes", "get_node", "create_node", "remember", "update_node", "trash_node"] {
             assert!(from_telegram.iter().any(|n| n == name), "Telegram lost `{name}`");
         }
-        for name in [
-            crate::syn::tools::BROWSE_TOOL,
-            "draw_board",
-            "edit_board",
-            "run_recipe",
-            "delete_kind",
-            "rename_kind",
-        ] {
-            assert!(!from_telegram.iter().any(|n| n == name), "Telegram was offered `{name}`");
+        for name in in_the_app.iter() {
+            assert!(from_telegram.contains(name), "Telegram was not offered `{name}`, which the app is");
         }
     }
 

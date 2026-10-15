@@ -1154,6 +1154,11 @@ async fn deliver(app: &AppHandle, api: &Api, words: &Words, turn: &Turn<'_>, mes
     if reply.answer && !send_answer(api, words, chat_id, message, reply_to.take()).await {
         return;
     }
+    // Changes held after reading something from outside wait on a card, here
+    // as in the app: the answer first, then what is waiting for a yes.
+    if let Some(run) = latest_run(turn.vault, turn.conversation_id) {
+        send_changes_card(app, api, words, chat_id, &run).await;
+    }
     if reply.lost {
         return;
     }
@@ -1178,6 +1183,38 @@ struct Card {
     #[serde(default)]
     candidates: Vec<(String, String)>,
     consent: bool,
+    /// What kind of question. Absent on a card sent before there were more
+    /// than two kinds: read as `consent` says.
+    #[serde(default)]
+    kind: CardKind,
+    /// What each button means, by its index, for every kind but `choice`.
+    #[serde(default)]
+    options: Vec<Choice>,
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+enum CardKind {
+    #[default]
+    Legacy,
+    Choice,
+    Consent,
+    Writes,
+    Changes,
+    Connector,
+}
+
+/// What one button says.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "snake_case")]
+enum Choice {
+    Once,
+    Always,
+    Never,
+    NotNow,
+    Session,
+    Yes,
+    No,
 }
 
 /// The question the conversation's latest run stopped on, if it stopped on one.
@@ -1186,13 +1223,46 @@ struct Card {
 /// but leaves the run's state as it was, and an older unanswered run is not
 /// what the message just delivered was about.
 fn pending_question(vault: &str, conversation_id: &str) -> Option<crate::syn::run::Run> {
+    let run = latest_run(vault, conversation_id)?;
+    open_kind(&run).is_some().then_some(run)
+}
+
+fn latest_run(vault: &str, conversation_id: &str) -> Option<crate::syn::run::Run> {
     let latest = crate::syn::run::list_runs(vault, crate::syn::engine::is_live)
         .ok()?
         .into_iter()
         .filter(|run| run.conversation_id.as_deref() == Some(conversation_id))
         .max_by(|a, b| a.updated_at.cmp(&b.updated_at))?;
-    let run = crate::syn::run::get_run(vault, &latest.id).ok()?;
-    (run.pending_choice.is_some() || run.pending_consent.is_some()).then_some(run)
+    crate::syn::run::get_run(vault, &latest.id).ok()
+}
+
+/// What a stopped run is waiting to be told, as a card kind.
+fn open_kind(run: &crate::syn::run::Run) -> Option<CardKind> {
+    let approval = run.state == crate::syn::run::RunState::AwaitingApproval;
+    if run.pending_choice.is_some() {
+        Some(CardKind::Choice)
+    } else if run.pending_consent.is_some() {
+        Some(CardKind::Consent)
+    } else if approval && run.pending_connector.is_some() {
+        Some(CardKind::Connector)
+    } else if approval && run.writes.as_ref().is_some_and(|p| p.awaiting()) {
+        Some(CardKind::Writes)
+    } else {
+        None
+    }
+}
+
+/// Whether the question a card asked is still open.
+fn still_open(vault: &str, run: &crate::syn::run::Run, kind: CardKind, consent: bool) -> bool {
+    match kind {
+        // Held changes wait whatever came after: they are the person's to see.
+        CardKind::Changes => run.changes.as_ref().is_some_and(|c| c.awaiting()),
+        CardKind::Legacy => {
+            let pending = if consent { run.pending_consent.is_some() } else { run.pending_choice.is_some() };
+            pending && !crate::syn::run::superseded(vault, run)
+        }
+        k => open_kind(run) == Some(k) && !crate::syn::run::superseded(vault, run),
+    }
 }
 
 fn short(text: &str, most: usize) -> String {
@@ -1209,39 +1279,27 @@ fn parse_press(data: &str) -> Option<(&str, usize)> {
     Some((nonce, option.parse().ok()?))
 }
 
-/// Ask a stopped run's question on the phone. `false` if there was none to ask
-/// or it could not be sent.
-async fn send_card(app: &AppHandle, api: &Api, words: &Words, chat_id: i64, run: &crate::syn::run::Run) -> bool {
+fn choice_label(words: &Words, c: Choice) -> &'static str {
+    match c {
+        Choice::Once => words.allow_once(),
+        Choice::Always => words.always(),
+        Choice::Never => words.never(),
+        Choice::NotNow => words.not_now(),
+        Choice::Session => words.this_session(),
+        Choice::Yes | Choice::No => "",
+    }
+}
+
+/// Send a card and keep what its buttons mean. `false` if it could not be sent.
+async fn post_card(app: &AppHandle, api: &Api, chat_id: i64, card: Card, rows: Vec<Vec<(String, usize)>>) -> bool {
     use base64::Engine;
     let nonce = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(rand::random::<[u8; 6]>());
-    let button = |text: &str, option: usize| (text.to_string(), format!("k:{nonce}:{option}"));
-
-    let (text, rows, candidates, consent) = if let Some(choice) = &run.pending_choice {
-        let offered: Vec<(String, String)> = choice
-            .candidates
-            .iter()
-            .take(MAX_CHOICES)
-            .map(|c| (c.id.clone(), c.title.clone()))
-            .collect();
-        let mut rows: Vec<Vec<(String, String)>> = offered
-            .iter()
-            .enumerate()
-            .map(|(i, (_, title))| vec![button(&short(title, 40), i)])
-            .collect();
-        rows.push(vec![button(words.none_of_these(), offered.len())]);
-        (words.which_one(&choice.tool, choice.candidates.len()), rows, offered, false)
-    } else if let Some(ask) = &run.pending_consent {
-        let rows = vec![vec![button(words.allow_once(), 0), button(words.decline(), 1)]];
-        (words.may_i(&ask.about), rows, Vec::new(), true)
-    } else {
-        return false;
-    };
-
-    if let Err(e) = api.send_buttons(chat_id, &render::escape(&text), &rows).await {
+    let rows: Vec<Vec<(String, String)>> =
+        rows.into_iter().map(|row| row.into_iter().map(|(text, option)| (text, format!("k:{nonce}:{option}"))).collect()).collect();
+    if let Err(e) = api.send_buttons(chat_id, &render::escape(&card.text), &rows).await {
         log::warn!("[Telegram] Could not send a question: {e}");
         return false;
     }
-    let card = Card { run_id: run.id.clone(), text, candidates, consent };
     let kept = serde_json::to_string(&card)
         .map_err(crate::error::AppError::from)
         .and_then(|json| with_db(app, |db| db.set_kv(&format!("{CARD_PREFIX}{nonce}"), &json)));
@@ -1251,6 +1309,116 @@ async fn send_card(app: &AppHandle, api: &Api, words: &Words, chat_id: i64, run:
         log::error!("[Telegram] Could not keep a card: {e}");
     }
     true
+}
+
+/// Ask a stopped run's question on the phone. `false` if there was none to ask
+/// or it could not be sent.
+///
+/// Every question the app asks, the phone asks too (2026-10-15): which note,
+/// a permission with the same answers the app's card gives, a plan of sends,
+/// a connector to allow. Only a connector that needs something typed — an
+/// address, a password — is sent to the app: those are never typed in a chat.
+async fn send_card(app: &AppHandle, api: &Api, words: &Words, chat_id: i64, run: &crate::syn::run::Run) -> bool {
+    let card = |text: String, kind: CardKind, options: Vec<Choice>| Card {
+        run_id: run.id.clone(),
+        text,
+        candidates: Vec::new(),
+        consent: kind == CardKind::Consent,
+        kind,
+        options,
+    };
+    let labelled = |options: &[Choice], label: &dyn Fn(Choice) -> &'static str| -> Vec<Vec<(String, usize)>> {
+        vec![options.iter().enumerate().map(|(i, c)| (label(*c).to_string(), i)).collect()]
+    };
+    match open_kind(run) {
+        Some(CardKind::Choice) => {
+            let Some(choice) = &run.pending_choice else { return false };
+            let offered: Vec<(String, String)> =
+                choice.candidates.iter().take(MAX_CHOICES).map(|c| (c.id.clone(), c.title.clone())).collect();
+            let mut rows: Vec<Vec<(String, usize)>> =
+                offered.iter().enumerate().map(|(i, (_, title))| vec![(short(title, 40), i)]).collect();
+            rows.push(vec![(words.none_of_these().to_string(), offered.len())]);
+            let mut c = card(words.which_one(&choice.tool, choice.candidates.len()), CardKind::Choice, Vec::new());
+            c.candidates = offered;
+            post_card(app, api, chat_id, c, rows).await
+        }
+        Some(CardKind::Consent) => {
+            let Some(ask) = &run.pending_consent else { return false };
+            let options: Vec<Choice> = if ask.per_call {
+                vec![Choice::NotNow, Choice::Once, Choice::Session]
+            } else if ask.can_be_remembered {
+                vec![Choice::Never, Choice::Once, Choice::Always]
+            } else {
+                vec![Choice::Never, Choice::Once]
+            };
+            let rows = labelled(&options, &|c| choice_label(words, c));
+            // One button per row on a phone: "Always allow in this session" does not fit beside two others.
+            let rows: Vec<Vec<(String, usize)>> = rows.into_iter().flatten().map(|b| vec![b]).collect();
+            post_card(app, api, chat_id, card(words.needs(&ask.about, ask.detail.as_deref()), CardKind::Consent, options), rows).await
+        }
+        Some(CardKind::Writes) => {
+            let Some(plan) = &run.writes else { return false };
+            let lines: Vec<String> = plan
+                .requests
+                .iter()
+                .filter(|r| r.state == crate::syn::writes::State::Proposed && r.problems.is_empty())
+                .map(|r| {
+                    let shown: Vec<String> = r.shown.iter().map(|v| format!("{}: {}", v.param, short(&v.value, 80))).collect();
+                    let detail = crate::syn::connector::declared::detail(&active_vault(app).unwrap_or_default(), &r.tool, &r.args);
+                    match (detail, shown.is_empty()) {
+                        (Some(line), _) => format!("• {} · {} — {line}", r.connector, r.operation),
+                        (None, true) => format!("• {} · {}", r.connector, r.operation),
+                        (None, false) => format!("• {} · {} ({})", r.connector, r.operation, shown.join(", ")),
+                    }
+                })
+                .collect();
+            let options = vec![Choice::No, Choice::Yes];
+            let rows = vec![vec![(words.decline().to_string(), 0), (words.approve_all().to_string(), 1)]];
+            post_card(app, api, chat_id, card(words.plan(&plan.why, &lines), CardKind::Writes, options), rows).await
+        }
+        Some(CardKind::Connector) => {
+            let (Some(id), Some(vault)) = (&run.pending_connector, active_vault(app)) else { return false };
+            // Gone from the vault, and still asked about: a card that can only
+            // say no, so the run is not left waiting on nothing.
+            let view = crate::commands::connector::phone_view(app, &vault, id).unwrap_or(crate::commands::connector::PhoneConnect {
+                name: id.clone(),
+                lines: Vec::new(),
+                ready: false,
+            });
+            if view.ready {
+                let options = vec![Choice::No, Choice::Yes];
+                let rows = vec![vec![(words.not_now().to_string(), 0), (words.connect().to_string(), 1)]];
+                post_card(app, api, chat_id, card(words.connector(&view.name, &view.lines), CardKind::Connector, options), rows).await
+            } else {
+                let options = vec![Choice::No];
+                let rows = vec![vec![(words.not_now().to_string(), 0)]];
+                post_card(app, api, chat_id, card(words.connector_in_app(&view.name), CardKind::Connector, options), rows).await
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Changes a finished run held for the person, as a card. `false` when there
+/// are none, or it could not be sent.
+async fn send_changes_card(app: &AppHandle, api: &Api, words: &Words, chat_id: i64, run: &crate::syn::run::Run) -> bool {
+    let Some(set) = run.changes.as_ref().filter(|c| c.awaiting()) else { return false };
+    let lines: Vec<String> = set
+        .changes
+        .iter()
+        .filter(|c| c.state == crate::syn::changes::State::Held)
+        .map(|c| format!("• {}: {}", words.change(c.kind), short(&c.titles.join(", "), 80)))
+        .collect();
+    let card = Card {
+        run_id: run.id.clone(),
+        text: words.held(&set.because, &lines),
+        candidates: Vec::new(),
+        consent: false,
+        kind: CardKind::Changes,
+        options: vec![Choice::No, Choice::Yes],
+    };
+    let rows = vec![vec![(words.discard().to_string(), 0), (words.apply().to_string(), 1)]];
+    post_card(app, api, chat_id, card, rows).await
 }
 
 /// Put a run's question away without carrying the work on, with the answer
@@ -1288,14 +1456,9 @@ async fn answer_card(app: &AppHandle, api: &Api, words: &Words, pressed: &Presse
         return true;
     };
 
-    // Answered already — in the app, or by a second press here.
-    let open = crate::syn::run::get_run(&vault, &card.run_id).is_ok_and(|run| {
-        if card.consent {
-            run.pending_consent.is_some()
-        } else {
-            run.pending_choice.is_some()
-        }
-    });
+    // Answered already — in the app, or by a second press here — or gone on
+    // past: a newer message in the conversation. See `run::superseded`.
+    let open = crate::syn::run::get_run(&vault, &card.run_id).is_ok_and(|run| still_open(&vault, &run, card.kind, card.consent));
     if !open {
         quiet(Some(words.card_gone())).await;
         let _ = api.edit(pressed.chat_id, pressed.message_id, &render::escape(&card.text)).await;
@@ -1314,23 +1477,103 @@ async fn answer_card(app: &AppHandle, api: &Api, words: &Words, pressed: &Presse
         album: None,
         resume_run,
     };
+    // Pressing a button on a phone *is* saying go on: the run carries on with
+    // the answer, a no included, which it says it cannot get round.
+    let carry_on = || Some(follow_up(String::new(), Some(card.run_id.clone())));
+    let picked = card.options.get(option).copied();
 
-    let answered: crate::error::AppResult<(String, Option<Entry>)> = match (card.consent, card.candidates.get(option)) {
-        // A note picked: recorded the way the app records it, then said to Syn
-        // — on a phone, pressing the button *is* saying go on.
-        (false, Some((id, title))) => crate::commands::syn::syn_answer_choice(vault.clone(), card.run_id.clone(), id.clone())
-            .await
-            .map(|_| (title.clone(), Some(follow_up(words.meant(title, id), None)))),
-        (false, None) => close_question(&vault, &card.run_id, false, "none of these")
-            .map(|_| (words.none_of_these().to_string(), None)),
-        (true, _) if option == 0 => crate::commands::syn::syn_answer_consent(
-            vault.clone(),
-            card.run_id.clone(),
-            crate::syn::consent::Answer::Once,
-        )
-        .await
-        .map(|_| (words.allow_once().to_string(), Some(follow_up(String::new(), Some(card.run_id.clone()))))),
-        (true, _) => close_question(&vault, &card.run_id, true, "no").map(|_| (words.decline().to_string(), None)),
+    let answered: crate::error::AppResult<(String, Option<Entry>)> = match card.kind {
+        CardKind::Choice | CardKind::Legacy if !card.consent => match card.candidates.get(option) {
+            // A note picked: recorded the way the app records it, then said to Syn.
+            Some((id, title)) => crate::commands::syn::syn_answer_choice(vault.clone(), card.run_id.clone(), id.clone())
+                .await
+                .map(|open| (title.clone(), open.then(|| follow_up(words.meant(title, id), None)))),
+            None => close_question(&vault, &card.run_id, false, "none of these").map(|_| (words.none_of_these().to_string(), None)),
+        },
+        // A card from before there were more answers: allow once, or no.
+        CardKind::Legacy => {
+            if option == 0 {
+                crate::commands::syn::syn_answer_consent(vault.clone(), card.run_id.clone(), crate::syn::consent::Answer::Once)
+                    .await
+                    .map(|_| (words.allow_once().to_string(), carry_on()))
+            } else {
+                close_question(&vault, &card.run_id, true, "no").map(|_| (words.decline().to_string(), None))
+            }
+        }
+        CardKind::Consent => {
+            let answer = match picked {
+                Some(Choice::Always) => crate::syn::consent::Answer::Always,
+                Some(Choice::Never) => crate::syn::consent::Answer::Never,
+                Some(Choice::NotNow) => crate::syn::consent::Answer::NotNow,
+                Some(Choice::Session) => crate::syn::consent::Answer::Session,
+                _ => crate::syn::consent::Answer::Once,
+            };
+            crate::commands::syn::syn_answer_consent(vault.clone(), card.run_id.clone(), answer)
+                .await
+                .map(|asked| (choice_label(words, picked.unwrap_or(Choice::Once)).to_string(), asked.then(carry_on).flatten()))
+        }
+        CardKind::Writes => {
+            let yes = picked == Some(Choice::Yes);
+            let approved: Vec<String> = if yes {
+                crate::syn::run::get_run(&vault, &card.run_id)
+                    .ok()
+                    .and_then(|r| r.writes)
+                    .map(|p| {
+                        p.requests
+                            .into_iter()
+                            .filter(|r| r.state == crate::syn::writes::State::Proposed && r.problems.is_empty())
+                            .map(|r| r.hash)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            crate::commands::syn::syn_answer_writes(vault.clone(), card.run_id.clone(), approved)
+                .await
+                .map(|asked| ((if yes { words.approve_all() } else { words.decline() }).to_string(), asked.then(carry_on).flatten()))
+        }
+        CardKind::Connector => {
+            let id = crate::syn::run::get_run(&vault, &card.run_id).ok().and_then(|r| r.pending_connector);
+            match (picked, id) {
+                (Some(Choice::Yes), Some(id)) => match crate::commands::connector::phone_connect(app, &vault, &id).await {
+                    Ok(c) if c.ok => crate::commands::syn::syn_answer_connector(vault.clone(), card.run_id.clone(), true)
+                        .await
+                        .map(|asked| (words.connect().to_string(), asked.then(carry_on).flatten())),
+                    // Not connected: said, and the question stays open in the app.
+                    Ok(c) => Ok((words.connect_failed(&c.said), None)),
+                    Err(e) => Ok((words.connect_failed(&e.to_string()), None)),
+                },
+                _ => crate::commands::syn::syn_answer_connector(vault.clone(), card.run_id.clone(), false)
+                    .await
+                    .map(|asked| (words.not_now().to_string(), asked.then(carry_on).flatten())),
+            }
+        }
+        CardKind::Changes => {
+            let yes = picked == Some(Choice::Yes);
+            let approved: Vec<String> = if yes {
+                crate::syn::run::get_run(&vault, &card.run_id)
+                    .ok()
+                    .and_then(|r| r.changes)
+                    .map(|set| set.changes.into_iter().filter(|c| c.state == crate::syn::changes::State::Held).map(|c| c.hash).collect())
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+            let db = app.state::<crate::db::DbState>();
+            crate::commands::syn::answer_changes(app, db.inner(), &vault, &card.run_id, &approved).map(|outcomes| {
+                let count = |s: crate::syn::changes::State| outcomes.iter().filter(|o| o.state == s).count();
+                (
+                    words.applied(
+                        count(crate::syn::changes::State::Applied),
+                        count(crate::syn::changes::State::Failed),
+                        count(crate::syn::changes::State::Declined),
+                    ),
+                    None,
+                )
+            })
+        }
+        CardKind::Choice => unreachable!("a choice card is answered above"),
     };
 
     let (said, next) = match answered {
@@ -1389,6 +1632,61 @@ fn compose(words: &Words, message: &SynMessage) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn budget() -> crate::syn::run::Budget {
+        crate::syn::run::Budget::from_settings(&crate::models::syn::SynSettings::default())
+    }
+
+    /// Every question the app asks has a card on the phone.
+    #[test]
+    fn every_question_has_a_card_kind() {
+        use crate::syn::consent::{Ask, Capability};
+        use crate::syn::run::{Run, RunState};
+        let mut asked = Run::new("x", Some("c".into()), budget());
+        assert_eq!(open_kind(&asked), None);
+        asked.pending_consent = Some(Ask::about("browse", &Capability::Browse, "now"));
+        assert_eq!(open_kind(&asked), Some(CardKind::Consent));
+
+        let mut connector = Run::new("x", Some("c".into()), budget());
+        connector.pending_connector = Some("pi".into());
+        connector.finish(RunState::AwaitingApproval);
+        assert_eq!(open_kind(&connector), Some(CardKind::Connector));
+
+        let mut plan = Run::new("x", Some("c".into()), budget());
+        plan.writes = Some(
+            crate::syn::writes::build(
+                &serde_json::json!({ "why": "x", "requests": [{ "tool": "connector__mail__send", "args": { "to": "a@b.c" } }] }),
+                &|_| Some(crate::syn::writes::Known { connector: "Mail".into(), operation: "send".into(), effect: Some("write"), roles: vec![] }),
+                &[],
+                &[],
+                &|_| None,
+                "now",
+            )
+            .expect("plan"),
+        );
+        plan.finish(RunState::AwaitingApproval);
+        assert_eq!(open_kind(&plan), Some(CardKind::Writes));
+    }
+
+    /// A card kept before there were five kinds still reads, as the kind its
+    /// `consent` flag says; and a question gone on past is not open.
+    #[test]
+    fn an_old_card_still_reads_and_a_passed_question_is_closed() {
+        let old: Card = serde_json::from_str(r#"{"run_id":"r","text":"t","candidates":[],"consent":true}"#).expect("reads");
+        assert_eq!(old.kind, CardKind::Legacy);
+        assert!(old.options.is_empty());
+
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let mut asked = crate::syn::run::Run::new("x", Some("conv".into()), budget());
+        asked.pending_consent = Some(crate::syn::consent::Ask::about("browse", &crate::syn::consent::Capability::Browse, "now"));
+        crate::syn::run::save_run(vault, &asked).expect("saved");
+        assert!(still_open(vault, &asked, CardKind::Consent, true));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        crate::syn::run::save_run(vault, &crate::syn::run::Run::new("later", Some("conv".into()), budget())).expect("saved");
+        assert!(!still_open(vault, &asked, CardKind::Consent, true));
+        assert!(!still_open(vault, &asked, CardKind::Legacy, true));
+    }
     use crate::models::syn::{SourceRef, SynToolCallEvent};
 
     fn answer(content: &str, tools: &[&str]) -> SynMessage {

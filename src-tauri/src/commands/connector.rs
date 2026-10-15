@@ -515,3 +515,49 @@ pub async fn syn_instance_peek_cert(url: String) -> Result<String, AppError> {
     crate::syn::connector::http::peek_certificate(&url).await.map_err(AppError::General)
 }
 
+
+/// A connector a run stopped on, as a card on the phone shows it.
+pub(crate) struct PhoneConnect {
+    pub name: String,
+    /// What it would do, one line per operation: the new or changed ones
+    /// where that is known, all of them otherwise.
+    pub lines: Vec<String>,
+    /// Whether it can be allowed with a button: approved here before, every
+    /// address and account known, the secret on this device, no folder to
+    /// pick. Otherwise something has to be typed, and that is the app's.
+    pub ready: bool,
+}
+
+/// How a connector looks from the phone. `None` when there is no readable
+/// declaration of that id.
+pub(crate) fn phone_view(app: &tauri::AppHandle, vault_path: &str, manifest_id: &str) -> Option<PhoneConnect> {
+    let view = declared_views(app, vault_path).ok()?.into_iter().find(|v| v.manifest.as_ref().is_some_and(|m| m.id == manifest_id))?;
+    let m = view.manifest?;
+    let fresh: Vec<&manifest::Operation> = if view.not_yet_approved.is_empty() {
+        m.operations.iter().collect()
+    } else {
+        m.operations.iter().filter(|o| view.not_yet_approved.contains(&o.name)).collect()
+    };
+    let lines = fresh
+        .iter()
+        .map(|o| {
+            let does = if o.command.is_empty() { format!("{} {}", o.call.method, o.call.path) } else { o.command.join(" ") };
+            format!("• {} — {}", o.description.trim(), does.trim())
+        })
+        .collect();
+    let ready = view.instance.as_ref().is_some_and(|inst| {
+        view.secret_here
+            && !crate::syn::connector::device::needs_folder(&m)
+            && m.inputs.iter().filter(|i| i.kind != manifest::InputKind::Secret).all(|i| inst.inputs.contains_key(&i.name))
+    });
+    Some(PhoneConnect { name: m.name.clone(), lines, ready })
+}
+
+/// Allow a connector from the phone with what this device already holds: the
+/// address and account it was approved with, its kept secret, its pinned key.
+pub(crate) async fn phone_connect(app: &tauri::AppHandle, vault_path: &str, manifest_id: &str) -> Result<Connected, AppError> {
+    let inst = instance::load(vault_path).get(manifest_id).cloned();
+    let inputs = inst.as_ref().map(|i| i.inputs.clone()).unwrap_or_default();
+    let folder = inst.and_then(|i| i.folder);
+    syn_connect(app.clone(), vault_path.to_string(), manifest_id.to_string(), inputs, Default::default(), None, folder).await
+}

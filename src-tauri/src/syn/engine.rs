@@ -4385,17 +4385,15 @@ mod driving {
         assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
     }
 
-    /// A question from Telegram cannot reach what Telegram is not offered, even
-    /// when the model asks for it by name.
+    /// A routine cannot reach what a routine is not offered, even when the
+    /// model asks for it by name: nobody is watching it.
     ///
-    /// Two ways it could go wrong, and both are the same failure seen from a
-    /// phone. `delete_kind` running would send every note of a type to the
-    /// trash, from a screen too small to show the list it was confirmed
-    /// against. `browse` *asking* would be worse than running: the run would
-    /// park on a consent card in a window on a desk, and the person holding the
-    /// phone would get nothing back at all.
+    /// `delete_kind` running would send every note of a type to the trash with
+    /// nobody there; `trash_node` would remove what was there. (This was
+    /// Telegram's test until 2026-10-15, when the phone became the person at
+    /// the computer, its questions asked on cards with buttons.)
     #[tokio::test]
-    async fn a_run_from_telegram_is_refused_what_telegram_is_not_offered() {
+    async fn a_routine_is_refused_what_a_routine_is_not_offered() {
         use crate::models::node::NodeMetadata;
 
         let dir = tempfile::tempdir().expect("temp");
@@ -4422,14 +4420,14 @@ mod driving {
         let browser_state = no_browser();
         let registry = Registry::for_chat();
 
-        let mut run = Run::new("dọn ghi chú rồi tìm tin", Some("conv-tg".into()), budget(12));
-        run.surface = crate::syn::surface::Surface::Telegram;
+        let mut run = Run::new("dọn ghi chú rồi tìm tin", Some("conv-routine".into()), budget(12));
+        run.surface = crate::syn::surface::Surface::Routine;
         let engine = SynEngine::new(Box::new(Scripted::new(
             &vault,
             &run.id,
             vec![
                 calls("delete_kind", serde_json::json!({ "node_type": "note", "confirm_nodes": 1 })),
-                calls("browse", serde_json::json!({ "what": "tin tức hôm nay" })),
+                calls("trash_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
                 text("việc này phải làm trên máy"),
             ],
         )));
@@ -4460,13 +4458,8 @@ mod driving {
         assert_eq!(run.spent.tool_calls, 0, "nothing ran");
         assert!(dir.path().join("Notes/keep.md").exists(), "and nothing was removed");
 
-        // The refusal of the one that would have left the machine is on the
-        // record, with where it came from.
         let audit = crate::syn::audit::read(&vault);
-        assert_eq!(audit.len(), 1, "{audit:?}");
-        assert_eq!(audit[0].tool, "browse");
-        assert_eq!(audit[0].outcome, crate::syn::audit::Outcome::Refused);
-        assert_eq!(audit[0].surface, crate::syn::surface::Surface::Telegram);
+        assert!(audit.iter().all(|e| e.surface == crate::syn::surface::Surface::Routine), "{audit:?}");
     }
 
     /// Three notes match, the model picks one, and the run stops to ask.
@@ -8150,7 +8143,9 @@ mod driving {
         )
         .await;
 
-        assert_eq!(refusals(&run), 1, "{:?}", run.steps);
+        // Held for the person, on a card on the phone: nothing is removed
+        // until they say so, seeing it came after somebody else's words.
+        assert!(run.changes.as_ref().is_some_and(|c| c.awaiting()), "{:?}", run.steps);
         assert!(dir.path().join("Notes/keep.md").exists());
     }
 
@@ -8777,7 +8772,9 @@ mod driving {
             .await
             .expect("finishes");
 
-        assert_eq!(refusals(&run), 1, "{:?}", run.steps);
+        // Held for the person, on a card on the phone: nothing is removed
+        // until they say so, seeing it came after somebody else's words.
+        assert!(run.changes.as_ref().is_some_and(|c| c.awaiting()), "{:?}", run.steps);
         assert!(dir.path().join("Notes/keep.md").exists());
     }
 
@@ -8904,15 +8901,18 @@ mod driving {
         offered
     }
 
-    /// Telegram is not sent what it would refuse: offering `browse` and then
-    /// saying no had the model plan around a tool it could not have.
+    /// A surface is not sent what it would refuse: offering `browse` and then
+    /// saying no had the model plan around a tool it could not have. The
+    /// phone is the person at the computer, and is sent what the app is.
     #[tokio::test]
     async fn a_surface_is_not_offered_what_it_would_refuse() {
         let phone = offered_on(crate::syn::surface::Surface::Telegram, "tin tức hôm nay", vec![text("xong")]).await;
-        assert!(!phone[0].contains(&"browse".to_string()), "{:?}", phone[0]);
+        assert!(phone[0].contains(&"browse".to_string()), "{:?}", phone[0]);
         assert!(phone[0].contains(&"query_nodes".to_string()));
         let app = offered_for("tin tức hôm nay", vec![text("xong")]).await;
         assert!(app[0].contains(&"browse".to_string()), "{:?}", app[0]);
+        let routine = offered_on(crate::syn::surface::Surface::Routine, "tin tức hôm nay", vec![text("xong")]).await;
+        assert!(!routine[0].contains(&"trash_node".to_string()), "{:?}", routine[0]);
     }
 
     /// A plain question is sent the core; one about money brings the finance
@@ -9041,11 +9041,10 @@ mod driving {
         crate::syn::connector::disconnect(&vault, None).await;
     }
 
-    /// A write asks about that one tool, and stops before anything is sent.
-    /// Asked from Telegram, it is refused without asking: nobody there could
-    /// answer the card.
+    /// A write asks about that one tool, and stops before anything is sent —
+    /// in the app and from Telegram alike, where the card comes to the phone.
     #[tokio::test]
-    async fn a_servers_write_tool_stops_to_ask_and_is_not_reachable_from_telegram() {
+    async fn a_servers_write_tool_stops_to_ask_in_the_app_and_on_the_phone() {
         use crate::syn::connector::fake;
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8").to_string();
@@ -9084,8 +9083,7 @@ mod driving {
             vec![calls("connector__jira_ask__create_issue", serde_json::json!({ "text": "x" })), text("xong")],
         )
         .await;
-        assert_eq!(from_phone.state, RunState::Done, "refused, not parked on a card");
-        assert_eq!(refusals(&from_phone), 1, "{:?}", from_phone.steps);
+        assert_eq!(from_phone.state, RunState::AwaitingConsent, "asked, on a card on the phone: {:?}", from_phone.steps);
         assert_eq!(server.calls_to("create_issue"), 0);
         crate::syn::connector::disconnect(&vault, None).await;
     }

@@ -324,7 +324,7 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
     /// step 1, `syn::writes`). A send not in view could be neither proposed
     /// nor, once approved, called — the 2026-10-11 eval found exactly that.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
-        if ctx.surface != crate::syn::surface::Surface::App {
+        if !ctx.surface.someone_answers() {
             return Vec::new();
         }
         // After reading anything: every send stays in view — the gate lets one

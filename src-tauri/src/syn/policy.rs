@@ -411,7 +411,10 @@ pub fn staged_after_reading(tool: &str) -> bool {
 pub fn on(tool: &str, surface: Surface) -> Option<bool> {
     of(tool).map(|p| match surface {
         Surface::App => p.app,
-        Surface::Telegram => p.telegram,
+        // Telegram is the person at the computer, from their phone
+        // (2026-10-15): what the app is offered, and `capture` besides. Its
+        // questions come to the phone as cards with buttons.
+        Surface::Telegram => p.app || p.telegram,
         Surface::Routine => p.routine,
     })
 }

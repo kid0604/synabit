@@ -220,7 +220,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // Only in the app, and never from a helper run. See `syn::writes`.
     if crate::syn::connector::is_connector_tool(tool)
         && !view.sub_run
-        && view.surface == crate::syn::surface::Surface::App
+        && view.surface.someone_answers()
         && view.approved_writes.contains(&crate::syn::writes::hash(tool, args))
     {
         return Decided { gate: Gate::Go(How::Connector), audit: capability.map(|_| Outcome::Allowed) };
@@ -270,7 +270,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // in the app; elsewhere there is nobody to show it to. A plan describes it
     // like anything else.
     if view.rides_prompt && !view.plan_only {
-        if !view.sub_run && view.surface == crate::syn::surface::Surface::App {
+        if !view.sub_run && view.surface.someone_answers() {
             return Decided::quietly(Gate::Go(How::Stage));
         }
         return Decided::quietly(Gate::Refuse {
@@ -289,7 +289,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     if view.tainted
         && !view.sub_run
         && !view.plan_only
-        && view.surface == crate::syn::surface::Surface::App
+        && view.surface.someone_answers()
         && crate::syn::policy::staged_after_reading(tool)
     {
         return Decided::quietly(Gate::Go(How::Stage));
@@ -633,20 +633,22 @@ mod tests {
     }
 
     /// What rides in every prompt changes only where the person sees it —
-    /// clean run or not: held in the app, refused on the phone, in a routine
-    /// or a helper, described in a plan.
+    /// clean run or not: held in the app and on the phone, refused in a
+    /// routine or a helper, described in a plan.
     #[test]
     fn what_rides_in_every_prompt_is_held_even_in_a_clean_run() {
         let granted = ledger(&Capability::VaultWrite, Answer::Always);
         let mut v = view(&granted, &always_until_done);
         v.rides_prompt = true;
         assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &v).gate, Gate::Go(How::Stage)));
-        for surface in [crate::syn::surface::Surface::Telegram, crate::syn::surface::Surface::Routine] {
-            let mut away = view(&granted, &always_until_done);
-            away.rides_prompt = true;
-            away.surface = surface;
-            assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &away).gate, Gate::Refuse { .. }), "{surface:?}");
-        }
+        let mut phone = view(&granted, &always_until_done);
+        phone.rides_prompt = true;
+        phone.surface = crate::syn::surface::Surface::Telegram;
+        assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &phone).gate, Gate::Go(How::Stage)));
+        let mut away = view(&granted, &always_until_done);
+        away.rides_prompt = true;
+        away.surface = crate::syn::surface::Surface::Routine;
+        assert!(matches!(decide("update_node", &args(), Some(&Capability::VaultWrite), &away).gate, Gate::Refuse { .. }));
         let mut helper = view(&granted, &always_until_done);
         helper.rides_prompt = true;
         helper.sub_run = true;
@@ -663,7 +665,7 @@ mod tests {
         let granted = ledger(&Capability::VaultWrite, Answer::Always);
         let mut v = view(&granted, &always_until_done);
         v.tainted = true;
-        // A change a person can be shown is held for them, in the app…
+        // A change a person can be shown is held for them, in the app or on the phone…
         let d = decide("trash_node", &args(), Some(&Capability::VaultWrite), &v);
         assert!(matches!(d.gate, Gate::Go(How::Stage)), "{d:?}");
         assert_eq!(d.audit, None, "no capability was weighed, so nothing to log");
@@ -674,7 +676,11 @@ mod tests {
         on_the_phone.tainted = true;
         on_the_phone.surface = crate::syn::surface::Surface::Telegram;
         let d = decide("trash_node", &args(), Some(&Capability::VaultWrite), &on_the_phone);
-        assert!(matches!(d.gate, Gate::Refuse { .. }), "{d:?}");
+        assert!(matches!(d.gate, Gate::Go(How::Stage)), "{d:?}");
+        let mut a_routine = view(&granted, &always_until_done);
+        a_routine.tainted = true;
+        a_routine.surface = crate::syn::surface::Surface::Routine;
+        assert!(matches!(decide("trash_node", &args(), Some(&Capability::VaultWrite), &a_routine).gate, Gate::Refuse { .. }));
         let mut a_helper = view(&granted, &always_until_done);
         a_helper.tainted = true;
         a_helper.sub_run = true;
@@ -692,8 +698,8 @@ mod tests {
     fn a_surface_refusal_is_logged_and_never_asks() {
         let empty = Ledger::default();
         let mut v = view(&empty, &never_until_done);
-        v.surface = Surface::Telegram;
-        let d = decide("browse", &serde_json::json!({ "what": "x" }), Some(&Capability::Browse), &v);
+        v.surface = Surface::Routine;
+        let d = decide("rename_kind", &serde_json::json!({}), Some(&Capability::VaultStructural), &v);
         assert!(matches!(d.gate, Gate::Refuse { .. }), "{d:?}");
         assert_eq!(d.audit, Some(Outcome::Refused));
     }

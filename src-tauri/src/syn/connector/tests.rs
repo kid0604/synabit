@@ -223,19 +223,19 @@ fn a_long_result_is_cut_and_says_so() {
 }
 
 /// Where the question came from decides whether a server's tools exist: all
-/// of them in the app, none from Telegram, and a routine only reads.
+/// of them in the app and from Telegram, where the person answers on the
+/// phone; a routine only reads.
 #[test]
-fn only_the_app_is_offered_or_may_call_a_servers_tools() {
+fn a_routine_only_reads_a_servers_tools() {
     let read = Capability::NetRead { domain: "Jira".into() };
     let write = Capability::NetWrite { domain: "Jira".into(), tool: "create_issue".into() };
     for capability in [&read, &write] {
         assert!(Surface::App.offers("connector__jira__x", Some(capability)));
-        assert!(!Surface::Telegram.offers("connector__jira__x", Some(capability)));
+        assert!(Surface::Telegram.offers("connector__jira__x", Some(capability)));
     }
     assert!(Surface::Routine.offers("connector__jira__x", Some(&read)), "a routine may read");
     assert!(!Surface::Routine.offers("connector__jira__x", Some(&write)), "and never send");
-    // Even misclassified as reading the vault, the name alone keeps it in the app.
-    assert!(!Surface::Telegram.offers("connector__jira__x", Some(&Capability::VaultRead)));
+    // Even misclassified as reading the vault, the name alone keeps it from a routine.
     assert!(!Surface::Routine.offers("connector__jira__x", Some(&Capability::VaultRead)));
 }
 
@@ -510,7 +510,7 @@ async fn the_audit_line_says_what_was_sent_and_to_whom() {
 /// The registry offers a connected server's tools to the app, and not to a
 /// run that has already read something.
 #[tokio::test]
-async fn the_registry_offers_connected_tools_to_the_app_only() {
+async fn the_registry_offers_connected_tools_where_someone_answers() {
     use crate::syn::registry::{Registry, RunContext};
     let dir = tempfile::tempdir().expect("temp");
     let vault = dir.path().to_str().expect("utf8");
@@ -529,7 +529,7 @@ async fn the_registry_offers_connected_tools_to_the_app_only() {
     };
     let clean = crate::syn::taint::Taint::new();
     assert_eq!(offered(Surface::App, &clean).len(), 3);
-    assert!(offered(Surface::Telegram, &clean).is_empty());
+    assert_eq!(offered(Surface::Telegram, &clean).len(), 3, "the phone is the person at the computer");
     assert!(offered(Surface::Routine, &clean).is_empty());
     // After reading a page: no read, and only the sends — which go only by an
     // approved plan (`syn::writes`). Before step 2 this was nothing at all.
