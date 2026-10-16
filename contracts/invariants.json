@@ -1,5 +1,5 @@
 {
-  "about": "What must always hold in Synabit, checked while it runs (a line `[invariant] {json}` in the log) and over a vault by `npm run audit`. Read by the front end (src/shared/invariants) and by Rust (src-tauri/src/invariants.rs), like the other contracts here. Add a rule here before checking it anywhere.",
+  "about": "What must always hold in Synabit, checked while it runs (a line `[invariant] {json}` in the log), over a vault by `npm run audit`, over random notes by the property test (`roundTrip.property.spec`) and over random use of the UI by `npm run monkey`. Read by the front end (src/shared/invariants) and by Rust (src-tauri/src/invariants.rs), like the other contracts here. Add a rule here before checking it anywhere.",
   "invariants": [
     {
       "id": "note.roundtrip",
@@ -7,7 +7,9 @@
       "rule": "A note saved and opened again holds every word and every link it held.",
       "checked": [
         "runtime",
-        "audit"
+        "audit",
+        "property",
+        "monkey"
       ]
     },
     {
@@ -23,7 +25,8 @@
       "layer": "ui",
       "rule": "Nothing holds the page's thread for more than half a second.",
       "checked": [
-        "runtime"
+        "runtime",
+        "monkey"
       ]
     },
     {
@@ -31,7 +34,8 @@
       "layer": "ui",
       "rule": "A visible window's page answers. One that stops is seen from outside it, since it cannot report itself.",
       "checked": [
-        "runtime"
+        "runtime",
+        "monkey"
       ]
     },
     {
@@ -39,7 +43,8 @@
       "layer": "ui",
       "rule": "No error reaches the top of the page uncaught.",
       "checked": [
-        "audit"
+        "audit",
+        "monkey"
       ]
     },
     {

@@ -706,6 +706,18 @@ const editor = useEditor({
       },
     }),
   ],
+  // Settled as soon as it is made. Some plugins change the document only when
+  // a transaction comes — TrailingNode adds a paragraph after a note that ends
+  // in a list — and the first one to come was a click's own `focus()`, which
+  // Tiptap runs at once in Safari. The click's transaction, made a moment
+  // before, no longer matched: ticking a task in a note ending in a checklist
+  // threw "Applying a mismatched transaction" and the tick was not saved, and
+  // a toolbar button as the first thing done would have too (found by the
+  // monkey test, `e2e/monkey.spec.ts`). An empty transaction makes no
+  // `update`, so nothing is saved by it.
+  onCreate: ({ editor: ed }) => {
+    ed.view.dispatch(ed.state.tr.setMeta('addToHistory', false));
+  },
   onUpdate: () => {
     serializer.schedule();
     setTimeout(updateBubbleMenu, 10);
