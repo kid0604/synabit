@@ -199,8 +199,18 @@ enum Ended {
     Soon,
 }
 
-/// How long to wait before asking the keychain again.
+/// How long to wait before asking the keychain again, the first time.
 const KEYCHAIN_RETRY: Duration = Duration::from_secs(15);
+/// The longest wait between asks.
+const KEYCHAIN_RETRY_MOST: Duration = Duration::from_secs(300);
+
+/// How long to wait after `misses` asks in a row went unanswered: doubling
+/// from 15 s to five minutes. Every 15 s it was 313 warnings in an hour on
+/// 2026-10-11, each ask a thread left blocked on the dialog until somebody
+/// answered it.
+fn keychain_wait(misses: u32) -> Duration {
+    KEYCHAIN_RETRY.saturating_mul(1 << misses.saturating_sub(1).min(5)).min(KEYCHAIN_RETRY_MOST)
+}
 
 enum Token {
     Ready(String),
@@ -345,10 +355,14 @@ async fn token(app: &AppHandle) -> Token {
 
 async fn supervise(app: AppHandle) {
     let mut generation = app.state::<TelegramState>().generation.subscribe();
+    let mut keychain_misses = 0u32;
     loop {
         let _ = generation.borrow_and_update();
         let ended = match token(&app).await {
-            Token::Ready(token) => poll(&app, &token, &mut generation).await,
+            Token::Ready(token) => {
+                keychain_misses = 0;
+                poll(&app, &token, &mut generation).await
+            }
             Token::None => {
                 update_live(&app, |live| live.problem = None);
                 Ended::Idle
@@ -360,6 +374,7 @@ async fn supervise(app: AppHandle) {
             // restarted, while messages sat unread on Telegram's side.
             Token::Unreadable => {
                 set_problem(&app, Problem::Keychain, "");
+                keychain_misses += 1;
                 Ended::Soon
             }
         };
@@ -377,7 +392,7 @@ async fn supervise(app: AppHandle) {
             Ended::Soon => {
                 tokio::select! {
                     changed = generation.changed() => if changed.is_err() { return },
-                    _ = tokio::time::sleep(KEYCHAIN_RETRY) => {}
+                    _ = tokio::time::sleep(keychain_wait(keychain_misses)) => {}
                 }
             }
         }
@@ -1819,6 +1834,12 @@ mod tests {
         assert!(reply_for(&answer("Bạn có 3 task.", &["query_nodes"])).answer);
         assert!(reply_for(&answer("   ", &[])).needs_the_app);
         assert!(reply_for(&answer("", &["trash_node"])).needs_the_app);
+    }
+
+    #[test]
+    fn an_unanswered_keychain_is_asked_less_and_less_often() {
+        let waits: Vec<u64> = (1..=8).map(|m| keychain_wait(m).as_secs()).collect();
+        assert_eq!(waits, vec![15, 30, 60, 120, 240, 300, 300, 300]);
     }
 
     /// The three answers from 2026-10-12 and -14 that said they kept
