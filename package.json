@@ -16,6 +16,7 @@
     "build:android:play": "tauri android build --aab --target aarch64 --target x86_64",
     "build:desktop": "tauri build",
     "test:unit": "vitest",
+    "audit": "vitest run src/audit/audit.spec.ts --reporter=dot",
     "lint": "eslint 'src/**/*.{ts,vue}'",
     "type-check": "vue-tsc --noEmit"
   },

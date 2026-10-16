@@ -917,10 +917,7 @@ const handleSelect = async (next: Selection) => {
   else if (next?.kind === 'routines') next = { kind: 'syn', tab: 'routines' };
   selection.value = next;
   if (next?.kind === 'conversation') {
-    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
-    const started = performance.now();
     await loadConversation(next.id);
-    logger.info(`[perf] open conversation ${Math.round(performance.now() - started)} ms`);
   } else if (next?.kind === 'notifications') {
     await markNotificationsRead();
   }

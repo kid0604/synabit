@@ -365,7 +365,7 @@ fn audit_detail(tool: &str, args: &serde_json::Value) -> Option<String> {
 /// and a dry run described something instead of doing it, and counting either
 /// as a success told `footing` the answer stood on a source it never opened,
 /// and spent a skill allowance on a skill that was never read.
-fn tool_succeeded(content: &str) -> bool {
+pub(crate) fn tool_succeeded(content: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(v) => ["error", "refused", "planned"].iter().all(|k| v.get(k).is_none()),
         Err(_) => true,
@@ -818,6 +818,10 @@ impl SynEngine {
         // And what the run it carries on from had loaded, so it is not sent
         // fewer tools than the call it is carrying on with needed.
         loaded.extend(run.tool_groups.iter().filter_map(|g| crate::syn::toolset::Group::from_name(g)));
+        // On the record from the start, not only once a tool is called: a run
+        // that called nothing is the one whose offered tools are in question.
+        // The Telegram turn that said it had no connection to the Pi left none.
+        run.tool_groups = loaded.iter().map(|g| g.name()).collect();
         // A connector tool that sends brings `propose_writes` with it: a send
         // after reading goes only through a plan. See `syn::writes`.
         let sends = |name: &str| {

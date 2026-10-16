@@ -68,6 +68,9 @@ import { useAssetPaths } from './editor/composables/useAssetPaths';
 import { useEditorModals } from './editor/composables/useEditorModals';
 import { useLocationPicker } from './editor/composables/useLocationPicker';
 import { createSlashCommandItems, visibleSlashItems } from './editor/config/slashCommandItems';
+import { lostOnReopen, savedMarkdown } from './editor/roundTrip';
+import { reportViolation } from '../../shared/invariants';
+import type { Node as PMNode } from '@tiptap/pm/model';
 import { splitMentionQuery } from './editor/mentionQuery';
 import { createDeferredSerializer } from './editor/deferredSerializer';
 import { contextTargetFor } from './editor/contextTarget';
@@ -253,12 +256,44 @@ const serializer = createDeferredSerializer({
   produce: () => {
     const ed = editor.value;
     if (!ed) return null;
-    let md = (ed.storage as any).markdown.getMarkdown();
-    md = md.replace(/<span[^>]*data-transclusion="([^"]+)"[^>]*>.*?<\/span>/g, (_m: string, target: string) => `![[${target}]]`);
+    const md = savedMarkdown(ed);
+    checkRoundTripLater(ed.state.doc, md);
     return stripLocalAssets(md);
   },
   emit: (value) => emit('update:modelValue', value),
 });
+
+// ── `note.roundtrip`: what was saved opens again whole ─────────
+// See `editor/roundTrip` and `shared/invariants`. Once typing pauses, against
+// the document as it was when the markdown was written; each kind of loss once
+// per note, since a note that loses something loses it on every save.
+const ROUND_TRIP_CHECK_MS = 1500;
+let roundTripTimer: ReturnType<typeof setTimeout> | undefined;
+const roundTripReported = new Set<string>();
+
+function checkRoundTripLater(doc: PMNode, md: string) {
+  clearTimeout(roundTripTimer);
+  roundTripTimer = setTimeout(() => {
+    const ed = editor.value;
+    if (!ed || ed.isDestroyed) return;
+    try {
+      const lost = lostOnReopen(ed, doc, md);
+      if (!lost.words && !lost.links) return;
+      const subject = props.currentNoteId ?? 'unsaved';
+      const key = `${subject}:${lost.words}:${lost.links}`;
+      if (roundTripReported.has(key)) return;
+      roundTripReported.add(key);
+      reportViolation({
+        invariant: 'note.roundtrip',
+        subject,
+        detail: { lost_words: lost.words, lost_links: lost.links, first_block: lost.firstBlock, chars: md.length },
+      });
+    } catch (e) {
+      logger.warn('[Editor] Could not check what saving keeps', e);
+    }
+  }, ROUND_TRIP_CHECK_MS);
+}
+onBeforeUnmount(() => clearTimeout(roundTripTimer));
 
 /**
  * Serialise right now, if anything is waiting.
@@ -268,6 +303,15 @@ const serializer = createDeferredSerializer({
  * of a second of writing is not missing from it.
  */
 const flushSerialize = () => serializer.flush();
+
+// Before the editor goes: a tab being closed or swapped out must not take the
+// last fraction of a second of typing with it. Registered here, ahead of
+// `useEditor`, because unmount hooks run in the order they were registered and
+// `useEditor` destroys the editor in its own. Flushed from the cleanup at the
+// end of this file, it ran against an editor already destroyed and threw, and
+// the typing was lost — found by `npm run audit`, which closes an editor with
+// a save still waiting.
+onBeforeUnmount(() => flushSerialize());
 
 // --- Toolbar Toggles ---
 const showBubble = ref(false);
@@ -935,9 +979,6 @@ watch(() => props.modelValue, (newVal) => {
 
 // --- Cleanup ---
 onBeforeUnmount(() => {
-  // Before the editor goes: a tab being closed or swapped out must not take
-  // the last fraction of a second of typing with it.
-  flushSerialize();
   if (editor.value) {
     editor.value.destroy();
   }

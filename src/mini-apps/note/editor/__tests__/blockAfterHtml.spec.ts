@@ -19,6 +19,7 @@ import { WhiteboardExtension } from '../../WhiteboardExtension';
 import { VideoExtension } from '../../VideoExtension';
 import { ImageGallery } from '../../extensions/ImageGallery';
 import { HtmlBlockBreaks, separateHtmlBlocks } from '../../extensions/HtmlBlockBreaks';
+import { CustomImage } from '../../extensions/CustomImage';
 
 /**
  * What follows a block written as HTML is still its own paragraph once saved.
@@ -45,7 +46,7 @@ const open = (content: string | object) => {
     element: document.createElement('div'),
     extensions: [
       StarterKit, Link, DetailsExtension, PdfExtension, LocationExtension, AudioExtension,
-      WhiteboardExtension, VideoExtension, ImageGallery, HtmlBlockBreaks, Markdown.configure({ html: true }),
+      WhiteboardExtension, VideoExtension, ImageGallery, CustomImage, HtmlBlockBreaks, Markdown.configure({ html: true }),
     ],
     content,
   });
@@ -143,5 +144,26 @@ describe('a note written the old way', () => {
     expect(separateHtmlBlocks(code), 'a code block is what it says').toBe(code);
     expect(separateHtmlBlocks('</details>\n<https://a.b/c>')).toBe('</details>\n\n<https://a.b/c>');
     expect(separateHtmlBlocks('<video src="a.mp4" controls="true"></video>\nXem')).toBe('<video src="a.mp4" controls="true"></video>\n\nXem');
+  });
+});
+
+/** An image is a block: what follows it keeps its own line, and its kind. */
+describe('a block after an image', () => {
+  it.each([
+    ['plain', { src: 'assets/a.png', alt: 'image.png' }],
+    ['with attributes', { src: 'assets/a.png', alt: 'image.png', width: '300', align: 'left' }],
+  ])('%s: a heading stays a heading', (_name, attrs) => {
+    const typed = open({
+      type: 'doc',
+      content: [
+        { type: 'image', attrs },
+        { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Unix Time' }] },
+      ],
+    });
+    const saved = markdownOf(typed);
+    expect(saved).toMatch(/\n\n## Unix Time/);
+    const reopened = open(saved);
+    expect(reopened.state.doc.lastChild?.type.name).toBe('heading');
+    expect(markdownOf(reopened)).toBe(saved);
   });
 });

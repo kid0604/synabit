@@ -10,18 +10,7 @@ import App from "./App.vue";
 import QuickEntry from "./QuickEntry.vue";
 import SafeQuick from "./SafeQuick.vue";
 import { installGlobalErrorLogging } from "./utils/globalErrors";
-
-// TEMP(perf 2026-10-15): opening a conversation froze the app once. A timer
-// that fires late says the page's thread was busy for that long. Remove when found.
-if (typeof window !== 'undefined') {
-  let last = performance.now();
-  setInterval(() => {
-    const now = performance.now();
-    const late = now - last - 100;
-    if (late > 300 && document.visibilityState === 'visible') logger.warn(`[perf] the page was blocked for ${Math.round(late)} ms`);
-    last = now;
-  }, 100);
-}
+import { watchPage } from "./shared/invariants/watchPage";
 
 /**
  * The quick-entry window mounts a different root.
@@ -56,3 +45,6 @@ app.use(i18n);
 logger.info("main.ts app created, mounting...");
 app.mount("#app");
 logger.info("main.ts mount called");
+// The main window only: the quick windows open and close in a moment, and a
+// beat from them would be taken for the main page's. See `invariants`.
+if (!isQuickEntry && !isSafeQuick) watchPage(() => router.currentRoute.value.fullPath);

@@ -1498,6 +1498,19 @@ impl SyncCoordinator {
             &all_files,
         )?;
         let edit_count = edits.len();
+        // Which notes, not only how many: "pushed=2" could not say whether the
+        // note that failed to reach the other device was one of them. Paths are
+        // the vault's own names for its files; a long list is cut.
+        if !edits.is_empty() {
+            const NAMED: usize = 20;
+            let named: Vec<&str> = edits.iter().take(NAMED).map(|c| c.rel_path.as_str()).collect();
+            let more = edits.len().saturating_sub(NAMED);
+            log::info!(
+                "Local changes: {}{}",
+                named.join(", "),
+                if more > 0 { format!(" and {more} more") } else { String::new() }
+            );
+        }
 
         // Notes this device has never synced wait for the pull before they are
         // published. Their history may be one the scan rebuilt from the file —

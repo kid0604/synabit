@@ -77,6 +77,10 @@ export const CustomImage = Image.extend({
             
             state.write(html);
           }
+          // An image is a block here: without a blank line after it, the
+          // heading below was saved on its line — `![…](…)## Unix Time` — and
+          // came back as text. Found by `npm run audit` (saving did not settle).
+          state.closeBlock(node);
         },
         parse: {
           setup() {

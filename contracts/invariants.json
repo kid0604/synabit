@@ -1,0 +1,120 @@
+{
+  "about": "What must always hold in Synabit, checked while it runs (a line `[invariant] {json}` in the log) and over a vault by `npm run audit`. Read by the front end (src/shared/invariants) and by Rust (src-tauri/src/invariants.rs), like the other contracts here. Add a rule here before checking it anywhere.",
+  "invariants": [
+    {
+      "id": "note.roundtrip",
+      "layer": "data",
+      "rule": "A note saved and opened again holds every word and every link it held.",
+      "checked": [
+        "runtime",
+        "audit"
+      ]
+    },
+    {
+      "id": "sync.converges",
+      "layer": "data",
+      "rule": "Two devices that have synced hold the same notes, byte for byte.",
+      "checked": [
+        "audit"
+      ]
+    },
+    {
+      "id": "ui.responsive",
+      "layer": "ui",
+      "rule": "Nothing holds the page's thread for more than half a second.",
+      "checked": [
+        "runtime"
+      ]
+    },
+    {
+      "id": "ui.page-alive",
+      "layer": "ui",
+      "rule": "A visible window's page answers. One that stops is seen from outside it, since it cannot report itself.",
+      "checked": [
+        "runtime"
+      ]
+    },
+    {
+      "id": "ui.no-uncaught-error",
+      "layer": "ui",
+      "rule": "No error reaches the top of the page uncaught.",
+      "checked": [
+        "audit"
+      ]
+    },
+    {
+      "id": "syn.claims-match-tools",
+      "layer": "syn",
+      "rule": "An answer that says something was saved, written, created or changed stands on a tool call that went through.",
+      "checked": [
+        "runtime",
+        "audit"
+      ]
+    }
+  ],
+  "claims": {
+    "about": "Words an answer uses to say it did something, in the person's languages. Matched case-insensitively where a word starts, in the answer's first 300 characters before any code fence: \"Đã cập nhật\" under a diagram the answer drew describes the answer, not a change. First person only in English: \"the note you saved\" is not a claim.",
+    "words": [
+      "đã lưu",
+      "đã ghi",
+      "đã tạo",
+      "đã thêm",
+      "đã xoá",
+      "đã xóa",
+      "đã cập nhật",
+      "đã sửa",
+      "đã đổi",
+      "đã đặt nhắc",
+      "đã gửi",
+      "đã chuyển",
+      "đã đánh dấu",
+      "i saved",
+      "i've saved",
+      "i have saved",
+      "i created",
+      "i've created",
+      "i added",
+      "i've added",
+      "i deleted",
+      "i've deleted",
+      "i updated",
+      "i've updated",
+      "i sent",
+      "i've sent"
+    ],
+    "cases": [
+      {
+        "answer": "Đã lưu vào QuickCap.",
+        "claims": true
+      },
+      {
+        "answer": "Đã ghi vào [[2026-10-11]].",
+        "claims": true
+      },
+      {
+        "answer": "Ok, đã tạo task “Gọi CMC” cho mày.",
+        "claims": true
+      },
+      {
+        "answer": "I've added it to your daily note.",
+        "claims": true
+      },
+      {
+        "answer": "[[2026-09-24]] hiện đang trống nội dung trong vault.",
+        "claims": false
+      },
+      {
+        "answer": "The note you saved last week says 52°C.",
+        "claims": false
+      },
+      {
+        "answer": "```mermaid\nflowchart LR\n```\n\nĐã cập nhật: các item dạng chấm tròn",
+        "claims": false
+      },
+      {
+        "answer": "Tao chưa thể kiểm tra trực tiếp nhiệt độ Pi.",
+        "claims": false
+      }
+    ]
+  }
+}

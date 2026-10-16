@@ -641,6 +641,22 @@ pub async fn send_message_inner<R: tauri::Runtime>(
         crate::syn::run::save_run_best_effort(vault_path, &run);
     }
 
+    // An answer that says it did something, with nothing behind it: three
+    // from Telegram on 2026-10-12 and -14 said "Đã lưu" and "Đã ghi" and
+    // called no tool, and nothing was kept. See `invariants`.
+    let went_through = assistant_message
+        .tool_calls_log
+        .iter()
+        .flatten()
+        .any(|call| crate::syn::engine::tool_succeeded(&call.result_preview));
+    if !went_through && crate::invariants::claims_action(&assistant_message.content) {
+        crate::invariants::report(
+            "syn.claims-match-tools",
+            Some(&run.id),
+            serde_json::json!({ "surface": format!("{surface:?}").to_lowercase(), "model": model, "tool_calls": run.spent.tool_calls }),
+        );
+    }
+
     // 10. Into the conversation file.
     let conv = write_turn(vault_path, &request, surface, conv, turn, &assistant_message, &model, &settings, &run.steered).await?;
 
@@ -1818,11 +1834,7 @@ pub async fn syn_save_routine(
 /// way. See `run::waiting_questions`.
 #[tauri::command]
 pub async fn syn_waiting(vault_path: String) -> Result<Vec<serde_json::Value>, AppError> {
-    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
-    let started = std::time::Instant::now();
-    let out = Ok(crate::syn::run::waiting_questions(&vault_path));
-    log::info!("[perf] syn_waiting {} ms", started.elapsed().as_millis());
-    out
+    Ok(crate::syn::run::waiting_questions(&vault_path))
 }
 
 /// Routines Syn wrote that are waiting for the person, each with the
@@ -3007,11 +3019,7 @@ pub async fn syn_cancel_run(run_id: String) -> Result<(), AppError> {
 /// ended is reported as interrupted rather than as still going.
 #[tauri::command]
 pub async fn syn_list_runs(vault_path: String) -> Result<Vec<RunSummary>, AppError> {
-    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
-    let started = std::time::Instant::now();
-    let out = crate::syn::run::list_runs(&vault_path, crate::syn::engine::is_live);
-    log::info!("[perf] syn_list_runs {} ms", started.elapsed().as_millis());
-    out
+    crate::syn::run::list_runs(&vault_path, crate::syn::engine::is_live)
 }
 
 /// One run in full, including every step.
@@ -3587,11 +3595,7 @@ pub async fn syn_get_conversation(
     vault_path: String,
     conversation_id: String,
 ) -> Result<SynConversationFull, AppError> {
-    // TEMP(perf 2026-10-15): opening a conversation froze the app once. Remove when found.
-    let started = std::time::Instant::now();
-    let out = conversation::get_conversation(&vault_path, &conversation_id);
-    log::info!("[perf] syn_get_conversation {} ms", started.elapsed().as_millis());
-    out
+    conversation::get_conversation(&vault_path, &conversation_id)
 }
 
 /// Create a new empty conversation.

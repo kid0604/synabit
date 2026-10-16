@@ -18,6 +18,7 @@ pub mod utils;
 
 pub mod chat_engine;
 pub mod feed_engine;
+pub mod invariants;
 pub mod file_index;
 pub mod file_text;
 pub mod safe;
@@ -616,6 +617,8 @@ pub fn run() {
         .manage(feeds::FeedSchedulerState::default())
         // A question from the quick-entry box, until the main window takes it.
         .manage(capture::QuickQuestion::default())
+        // The page's heartbeat, watched from here. See `invariants`.
+        .manage(invariants::Heartbeat::default())
         .on_window_event(|window, event| {
             // The browsing pane's top edge is a fixed number of pixels, not a
             // fraction of the window, because the app draws its address bar in
@@ -688,6 +691,7 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             log::info!("Starting Synabit Backend...");
+            invariants::watch(app.handle().clone());
 
             // Where the app lives, learnt from the app rather than written down:
             // it is `tauri://localhost` in a bundle and `http://localhost:1420`
@@ -879,6 +883,7 @@ pub fn run() {
             #[allow(clippy::type_complexity)]
             let commands: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
                 Box::new(tauri::generate_handler![
+            invariants::page_alive,
             // Nodes (Universal Architecture)
             nodes::scan_all_nodes,
             nodes::scan_specific_nodes,
