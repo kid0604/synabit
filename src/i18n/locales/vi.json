@@ -5215,7 +5215,8 @@
       "not_connected": "Thiết bị này chưa kết nối với máy chủ đồng bộ.",
       "offline": "Không kết nối được với thiết bị hoặc máy chủ kia. Hãy kiểm tra kết nối rồi thử lại.",
       "upgrade": "Bên kia đang dùng phiên bản Synabit khác. Hãy cập nhật cả hai rồi thử lại.",
-      "quota": "Máy chủ đồng bộ đã hết chỗ."
+      "quota": "Máy chủ đồng bộ đã hết chỗ.",
+      "keychain_waiting": "macOS đang hỏi quyền truy cập keychain cho Synabit. Bấm cho phép trong hộp thoại rồi đồng bộ lại."
     },
     "links": {
       "open_failed": "Không mở được liên kết này."

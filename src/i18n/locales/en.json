@@ -5215,7 +5215,8 @@
       "not_connected": "This device isn't connected to a sync server yet.",
       "offline": "Couldn't reach the other device or server. Check the connection and try again.",
       "upgrade": "The other side runs a different version of Synabit. Update both, then try again.",
-      "quota": "There's no more room on the sync server."
+      "quota": "There's no more room on the sync server.",
+      "keychain_waiting": "macOS is asking for permission to Synabit's keychain. Allow it in the dialog, then sync again."
     },
     "links": {
       "open_failed": "Couldn't open that link."

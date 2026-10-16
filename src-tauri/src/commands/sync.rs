@@ -174,6 +174,20 @@ pub async fn sync_connect(
     Ok("connected".to_string())
 }
 
+/// One sync runs at a time. See `sync_full`.
+static SYNC_RUN: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+/// What a sync asked for while another runs is answered with: not a failure,
+/// and the page treats it as one to try again later (`useSync`).
+pub const SYNC_BUSY: &str = "sync_busy: another sync is still running";
+
+/// What a sync answers when the keychain would not give the key in time.
+pub const KEYCHAIN_WAITING: &str = "keychain_waiting: the keychain did not answer — approve the macOS dialog and sync again";
+
+/// As long as a sync waits for the keychain. The same as Syn's
+/// (`commands::syn::KEYCHAIN_PATIENCE`), for the same dialog.
+const KEYCHAIN_PATIENCE: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// Run a full bidirectional sync against the connected Sync Server.
 ///
 /// This is the main sync entry point — it pushes local changes and pulls
@@ -189,6 +203,18 @@ pub async fn sync_full(
         return Err("vault_path must not be empty".to_string());
     }
 
+    // One sync at a time. A second that comes while one runs is turned away
+    // rather than run beside it: two runs share the outbox, and one moving an
+    // operation the other holds is "CAS state transition failed". On
+    // 2026-10-11 a window macOS had put to sleep let its periodic syncs pile
+    // up undelivered, each timing out in the page after 60 s while the next
+    // was asked for; woken, it sent 38 at once, and the log filled with CAS
+    // failures and dropped connections (found by `npm run audit`).
+    let Ok(_one_at_a_time) = SYNC_RUN.try_lock() else {
+        log::info!("sync_run trigger={} state=busy (a sync is already running)", trigger_reason.as_deref().unwrap_or("unknown"));
+        return Err(SYNC_BUSY.to_string());
+    };
+
     let run_context = SyncRunContext::new(&vault_path, trigger_reason.as_deref());
     log::info!(
         "sync_run run_id={} trigger={} vault_tag={} scope=command state=start cellular={}",
@@ -200,12 +226,26 @@ pub async fn sync_full(
 
     let device_id = ensure_device_id(&app_handle)?;
 
-    // 1. Get E2EE key (Required for both Server and P2P)
-    let e2ee_key_opt = crate::secrets::SecretManager::get_e2ee_key(Some(&app_handle));
-    if e2ee_key_opt.is_none() {
-        return Err("E2EE key not set up. Please set up encryption first.".to_string());
-    }
-    let e2ee_key = e2ee_key_opt.unwrap();
+    // 1. Get E2EE key (Required for both Server and P2P), within the same
+    // patience Syn gives the keychain: a read waits on a macOS permission
+    // dialog, which a development build earns on every rebuild, and a sync
+    // waiting on one held the lock above for as long as nobody clicked.
+    let reader = app_handle.clone();
+    let read = tokio::task::spawn_blocking(move || crate::secrets::SecretManager::get_e2ee_key(Some(&reader)));
+    let e2ee_key = match tokio::time::timeout(KEYCHAIN_PATIENCE, read).await {
+        Ok(Ok(Some(key))) => key,
+        Ok(Ok(None)) => return Err("E2EE key not set up. Please set up encryption first.".to_string()),
+        Ok(Err(e)) => return Err(format!("Reading the encryption key failed: {e}")),
+        Err(_) => {
+            log::warn!(
+                "sync_run trigger={} state=keychain_wait — the keychain did not answer within {}s; \
+                 most likely a macOS permission dialog is waiting",
+                trigger_reason.as_deref().unwrap_or("unknown"),
+                KEYCHAIN_PATIENCE.as_secs()
+            );
+            return Err(KEYCHAIN_WAITING.to_string());
+        }
+    };
 
     // 2. Read Server config from managed state, reconnecting if it is not there.
     //

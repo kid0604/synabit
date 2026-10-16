@@ -6,7 +6,7 @@ import { useAppStore } from '../stores/useAppStore';
 import { logger } from '../utils/logger';
 import { i18n } from '../i18n';
 import { usePlatform } from './usePlatform';
-import { syncErrorKey } from '../shared/syncErrorText';
+import { isSyncBusy, syncErrorKey } from '../shared/syncErrorText';
 
 export type SyncAdapterId = 'none' | 'local' | 'server';
 export type SyncTriggerReason = 'manual' | 'server_push' | 'periodic_timer' | 'app_foreground' | 'initial_connect' | 'watcher_create_delete' | 'watcher_modified' | 'queued_retry';
@@ -38,6 +38,8 @@ let queuedTimer: number | null = null;
 let unlistenFns: UnlistenFn[] = [];
 
 let syncAgain = false;
+/** How long to wait before asking again when a sync is still running. */
+const BUSY_RETRY_MS = 15_000;
 let syncQueuedReason: SyncTriggerReason = 'queued_retry';
 
 // References for global callbacks
@@ -155,9 +157,11 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
     currentSyncAbortController = new AbortController();
     const abortSignal = currentSyncAbortController.signal;
 
-    // Timeout logic: reject if takes longer than 60 seconds
+    // Timeout logic: reject if takes longer than 60 seconds. Cleared once the
+    // race is decided, or every sync left a timer behind for a minute.
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      timeout = setTimeout(() => {
         reject(new Error(i18n.global.t('shell.sync.timed_out')));
       }, 60000);
     });
@@ -170,7 +174,7 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       triggerReason,
     });
 
-    const result = await Promise.race([syncPromise, timeoutPromise]);
+    const result = await Promise.race([syncPromise, timeoutPromise]).finally(() => clearTimeout(timeout));
     
     if (abortSignal.aborted) {
        throw new Error(i18n.global.t('shell.sync.cancelled'));
@@ -217,6 +221,19 @@ async function doSync(triggerReason: SyncTriggerReason = 'manual') {
       });
     }
   } catch (e: any) {
+    // Another sync is still running in Rust — this page may have stopped
+    // waiting for it, it has not stopped. Not a failure: try again later,
+    // once it has had time to finish. See `commands::sync::SYNC_BUSY`.
+    if (isSyncBusy(e)) {
+      syncStatus.value = 'idle';
+      logger.info(`[${vType}] Sync skipped: another is still running; trying again shortly`);
+      if (queuedTimer !== null) window.clearTimeout(queuedTimer);
+      queuedTimer = window.setTimeout(() => {
+        queuedTimer = null;
+        doSync('queued_retry');
+      }, BUSY_RETRY_MS);
+      return;
+    }
     // The raw rejection goes to the log; the screen gets a sentence. Our own
     // two (timed out, cancelled) are already sentences.
     const t = i18n.global.t;
