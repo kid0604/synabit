@@ -87,7 +87,10 @@ function safeLog(level: LogLevel, message: unknown, ...args: any[]) {
 
   // Defer IPC if backgrounded to avoid Fetch cancellation error
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-    logQueue.push({ level, message: formatted });
+    // With the time it happened: the log stamps a line when it arrives, and
+    // these arrive together when the window is shown again. Thirty-eight
+    // sync failures from a hidden afternoon read as one second on 2026-10-11.
+    logQueue.push({ level, message: `(at ${new Date().toISOString().slice(11, 19)} UTC, while hidden) ${formatted}` });
     if (logQueue.length > MAX_QUEUED_LOGS) {
       // Drop the oldest, and say so once, so a truncated log does not read as
       // a complete one.
