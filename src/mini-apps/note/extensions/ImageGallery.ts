@@ -132,8 +132,10 @@ export const ImageGallery = Node.create<ImageGalleryOptions>({
             html += ` />\n`;
           });
           
-          html += `</div>\n`;
-          state.write(html);
+          html += `</div>`;
+          // Line by line, so inside a quote or a list every line gets the
+          // prefix: written whole, the lines after the first left the quote.
+          state.text(html, false);
           state.closeBlock(node);
         },
         parse: {

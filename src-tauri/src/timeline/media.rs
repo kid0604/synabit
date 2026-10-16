@@ -1135,12 +1135,15 @@ mod tests {
     /// `yaml` (Rich Tables, 2026-10-06) adds nothing: 2.9.0, the same copy
     /// `markmap-lib` already pulled into the editor's chunk — the build of
     /// 2026-10-02 carries it — now named because the editor imports it too.
+    /// `@tiptap/extension-hard-break` (2026-10-16) adds nothing either: 3.31.4,
+    /// the copy `@tiptap/starter-kit` already bundles, named because the note
+    /// editor now extends it (`LineBreak`).
     const REVIEWED_PACKAGES: &[&str] = &[
         "@tailwindcss/typography", "@tailwindcss/vite", "@tauri-apps/api", "@tauri-apps/plugin-autostart",
         "@tauri-apps/plugin-deep-link", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-fs", "@tauri-apps/plugin-log",
         "@tauri-apps/plugin-notification", "@tauri-apps/plugin-opener", "@tauri-apps/plugin-os",
         "@tauri-apps/plugin-process", "@tauri-apps/plugin-store", "@tauri-apps/plugin-updater",
-        "@tiptap/extension-blockquote", "@tiptap/extension-code-block-lowlight", "@tiptap/extension-color",
+        "@tiptap/extension-blockquote", "@tiptap/extension-code-block-lowlight", "@tiptap/extension-color", "@tiptap/extension-hard-break",
         "@tiptap/extension-highlight", "@tiptap/extension-image", "@tiptap/extension-link",
         "@tiptap/extension-placeholder", "@tiptap/extension-table", "@tiptap/extension-task-item",
         "@tiptap/extension-task-list", "@tiptap/extension-text-align", "@tiptap/extension-text-style",

@@ -60,7 +60,8 @@ export const CustomImage = Image.extend({
           
           if (!hasCustomAttrs) {
             // Standard markdown serialization
-            const altText = alt ? alt.replace(/([\[\]])/g, '\\$1') : '';
+            // `\` too: an alt of `\` escaped the `]` and the image was lost.
+            const altText = alt ? alt.replace(/([\\[\]])/g, '\\$1') : '';
             const titleText = title ? ` "${title.replace(/"/g, '\\"')}"` : '';
             state.write(`![${altText}](${src}${titleText})`);
           } else {

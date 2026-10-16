@@ -101,9 +101,13 @@ export const DetailsExtension = Node.create<DetailsOptions>({
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
 
-          state.write(`<details class="synabit-details">\n<summary>${summary}</summary>\n<div class="details-content">\n\n`);
+          // Line by line, so inside a quote or a list every line gets the
+          // prefix: written whole, the lines after the first left the quote.
+          state.text(`<details class="synabit-details">\n<summary>${summary}</summary>\n<div class="details-content">`, false);
+          state.ensureNewLine();
+          state.closeBlock(node);
           state.renderContent(node);
-          state.write(`\n</div>\n</details>\n`);
+          state.text(`</div>\n</details>`, false);
           // A blank line after, or the next paragraph is part of the HTML
           // block and its markdown — a link — is lost when the note is opened.
           state.closeBlock(node);

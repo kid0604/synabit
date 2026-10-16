@@ -28,6 +28,8 @@ import { WhiteboardExtension } from './WhiteboardExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
 import { DetailsExtension } from './extensions/DetailsExtension';
 import { HtmlBlockBreaks } from './extensions/HtmlBlockBreaks';
+import { LiteralText } from './extensions/LiteralText';
+import { LineBreak } from './extensions/LineBreak';
 import { RichTableExtension, RichTableOrphan } from './extensions/RichTableExtension';
 import { RichChartExtension } from './extensions/RichChartExtension';
 import { InlineFormula } from './extensions/InlineFormula';
@@ -418,7 +420,13 @@ const editor = useEditor({
     StarterKit.configure({
       codeBlock: false,
       blockquote: false,
+      // Ours, which saves `&amp;` typed as text so it reads back the same.
+      text: false,
+      // Ours, which keeps a line break inside a heading.
+      hardBreak: false,
     }),
+    LiteralText,
+    LineBreak,
     CustomBlockquote,
     TabIndentExtension,
     PlainTextPaste,
@@ -444,6 +452,26 @@ const editor = useEditor({
     CodeBlockLowlight.extend({
       addNodeView() {
         return VueNodeViewRenderer(CodeBlockComponent);
+      },
+      // Fenced with more backticks than any run inside it, as CommonMark
+      // allows: a block holding a line of ``` — markdown pasted into a code
+      // block — was closed by it, and what followed spilled out of the block
+      // (found by the note property test). Reading is tiptap-markdown's.
+      addStorage() {
+        return {
+          markdown: {
+            serialize(state: any, node: any) {
+              const text: string = node.textContent;
+              const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+              const fence = '`'.repeat(Math.max(3, longest + 1));
+              state.write(fence + (node.attrs.language || '') + '\n');
+              state.text(text, false);
+              state.ensureNewLine();
+              state.write(fence);
+              state.closeBlock(node);
+            },
+          },
+        };
       },
       addKeyboardShortcuts() {
         return {

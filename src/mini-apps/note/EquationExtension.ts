@@ -17,6 +17,8 @@ declare module '@tiptap/core' {
 // Regex for $$...$$
 const extractMathRule = /(?:\$\$)([^\$]+)(?:\$\$)\s$/;
 
+const MATH_INSTALLED = Symbol('math');
+
 export const EquationExtension = Node.create<EquationOptions>({
   name: 'equation',
 
@@ -46,14 +48,28 @@ export const EquationExtension = Node.create<EquationOptions>({
     };
   },
 
+  // An equation reads as its TeX wherever a node's text is taken. A table cell
+  // with nothing else in it was saved empty — tiptap-markdown skips a cell
+  // whose text is blank — and the equation was gone (found by the note
+  // property test). Copying it as plain text gives the TeX too.
+  extendNodeSchema(extension) {
+    return extension.name === 'equation' ? { leafText: (node: any) => `$${node.attrs.latex}$` } : {};
+  },
+
   addStorage() {
     return {
       markdown: {
         serialize(state: any, node: any) {
-          state.write(`$$${node.attrs.latex}$$ `);
+          // No space after: it came back as text, and each save added another
+          // (found by the note property test).
+          state.write(`$$${node.attrs.latex}$$`);
         },
         parse: {
           setup(markdownit: any) {
+            // Every parse runs this on the same instance; a rule added each
+            // time ran once per note opened. See `richTablePlugin`.
+            if (markdownit[MATH_INSTALLED]) return;
+            markdownit[MATH_INSTALLED] = true;
             markdownit.use((md: any) => {
               md.inline.ruler.after('escape', 'math', (state: any, silent: boolean) => {
                 const start = state.pos;
