@@ -1091,6 +1091,9 @@ struct Reply {
     answer: bool,
     /// Syn stopped to ask something only the app can show.
     needs_the_app: bool,
+    /// Syn's words say it did something, and no tool call went through: the
+    /// words are not sent, and the person is told nothing was done.
+    unbacked: bool,
 }
 
 /// What a `capture` kept, from what the call returned rather than from what the
@@ -1130,10 +1133,20 @@ fn reply_for(message: &SynMessage) -> Reply {
     // A short line beside a capture is Syn saying "saved", which the app's own
     // line already says — and says truthfully.
     let quiet = !captures.is_empty() && said.chars().count() <= QUIET_CONFIRMATION_CHARS;
+    // "Đã lưu vào QuickCap." with nothing called: three times in a week from
+    // Telegram, and nothing was kept. The line read like the truth on a phone,
+    // where nobody sees which tools ran. See `invariants`.
+    let went_through = message
+        .tool_calls_log
+        .iter()
+        .flatten()
+        .any(|call| crate::syn::engine::tool_succeeded(&call.result_preview));
+    let unbacked = !went_through && crate::invariants::claims_action(said);
     Reply {
         lost: !captures.is_empty() && kept.is_empty(),
-        answer: !said.is_empty() && !quiet,
+        answer: !said.is_empty() && !quiet && !unbacked,
         needs_the_app: said.is_empty() && captures.is_empty(),
+        unbacked,
         kept,
     }
 }
@@ -1175,6 +1188,9 @@ async fn deliver(app: &AppHandle, api: &Api, words: &Words, turn: &Turn<'_>, mes
     }
     if reply.lost {
         say_to(api, chat_id, words.not_kept(), reply_to.take()).await;
+    }
+    if reply.unbacked {
+        say_to(api, chat_id, words.unbacked(), reply_to.take()).await;
     }
     if reply.answer && !send_answer(api, words, chat_id, message, reply_to.take()).await {
         return;
@@ -1803,6 +1819,21 @@ mod tests {
         assert!(reply_for(&answer("Bạn có 3 task.", &["query_nodes"])).answer);
         assert!(reply_for(&answer("   ", &[])).needs_the_app);
         assert!(reply_for(&answer("", &["trash_node"])).needs_the_app);
+    }
+
+    /// The three answers from 2026-10-12 and -14 that said they kept
+    /// something and called nothing: not passed on, and the person is told.
+    #[test]
+    fn a_claim_with_nothing_behind_it_is_not_passed_on() {
+        for said in ["Đã lưu vào QuickCap.", "Đã ghi vào [[2026-10-11]].", "Đã lưu ý tưởng vào QuickCap."] {
+            let reply = reply_for(&answer(said, &[]));
+            assert!(reply.unbacked, "{said}");
+            assert!(!reply.answer, "{said} is not sent as it is");
+        }
+        let kept = reply_for(&answer("Đã lưu vào QuickCap.", &["capture"]));
+        assert!(!kept.unbacked, "a capture that went through stands behind it");
+        let plain = reply_for(&answer("Pi đang 57,5°C.", &[]));
+        assert!(!plain.unbacked && plain.answer, "an answer that claims nothing is sent");
     }
 
     #[test]

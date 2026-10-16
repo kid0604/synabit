@@ -157,6 +157,14 @@ impl Words {
         (!parts.is_empty()).then(|| parts.join(", "))
     }
 
+    /// Syn said it did something and nothing ran. Instead of its words.
+    pub fn unbacked(&self) -> &'static str {
+        self.pick(
+            "✗ Syn trả lời là đã làm, nhưng không có thao tác nào chạy — chưa lưu hay thay đổi gì. Gửi lại, hoặc nói rõ cần làm gì.",
+            "✗ Syn answered that it did it, but nothing ran — nothing was kept or changed. Send it again, or say what to do.",
+        )
+    }
+
     pub fn not_kept(&self) -> &'static str {
         self.pick(
             "✗ Chưa lưu được vào QuickCap — thử gửi lại.",

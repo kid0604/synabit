@@ -3716,6 +3716,7 @@
     "reopen_thread": "Pick this up again",
     "rename_conversation": "Rename",
     "search_placeholder": "Search…",
+    "unbacked_claim": "This answer says it did something, but nothing ran — nothing was saved or changed.",
     "conversations": "Conversations",
     "new_conversation": "New conversation",
     "no_conversations": "No conversations yet",

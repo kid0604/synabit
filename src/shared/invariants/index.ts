@@ -89,3 +89,26 @@ export function claimsAction(answer: string): boolean {
   });
 }
 
+/**
+ * Whether a tool's result is an answer rather than a refusal — as Rust's
+ * `engine::tool_succeeded`: an error, a refusal or a dry run did nothing.
+ */
+export function toolWentThrough(resultPreview: string): boolean {
+  try {
+    const v = JSON.parse(resultPreview);
+    return !(v && typeof v === 'object' && ('error' in v || 'refused' in v || 'planned' in v));
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * An answer that says it did something with nothing behind it — the
+ * `syn.claims-match-tools` breach, read off the message itself so a screen can
+ * say so under it. Telegram does the same before sending (`telegram::service`).
+ */
+export function claimsWithNothingDone(message: { role: string; content: string; tool_calls_log?: { result_preview: string }[] | null }): boolean {
+  if (message.role !== 'assistant') return false;
+  const wentThrough = (message.tool_calls_log ?? []).some((c) => toolWentThrough(c.result_preview));
+  return !wentThrough && claimsAction(message.content);
+}

@@ -3716,6 +3716,7 @@
     "reopen_thread": "Làm tiếp cái này",
     "rename_conversation": "Đổi tên",
     "search_placeholder": "Tìm…",
+    "unbacked_claim": "Câu trả lời này nói đã làm, nhưng không có thao tác nào chạy — chưa có gì được lưu hay thay đổi.",
     "conversations": "Hội thoại",
     "new_conversation": "Hội thoại mới",
     "no_conversations": "Chưa có cuộc trò chuyện nào",

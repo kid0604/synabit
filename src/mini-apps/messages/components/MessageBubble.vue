@@ -11,6 +11,7 @@ import DOMPurify from 'dompurify';
 import { MODEL_FORBID_TAGS, MODEL_FORBID_ATTR } from '../../../shared/syn/modelHtml';
 import { MATH_ATTRS, renderMathIn } from '../markdownMath';
 import { messageMarked } from '../messageMarkdown';
+import { claimsWithNothingDone } from '../../../shared/invariants';
 import 'katex/dist/katex.min.css';
 import { Check, FileText, Image as ImageIcon, Wrench, ChevronDown, ChevronRight, RefreshCw, Clipboard, ListChecks } from 'lucide-vue-next';
 import PlanList from '../../../shared/syn/PlanList.vue';
@@ -924,6 +925,18 @@ const copyContent = async () => {
             </button>
           </template>
         </div>
+
+        <!-- Said it did something, and nothing ran: three answers from
+             Telegram said "Đã lưu" with nothing kept. Said here, under the
+             words, so they are not taken at their word. See
+             `shared/invariants`. -->
+        <p
+          v-if="!isStreaming && claimsWithNothingDone(message)"
+          class="mt-2 text-[12px] text-amber-700 dark:text-amber-400"
+          role="note"
+        >
+          {{ $t('syn.unbacked_claim') }}
+        </p>
 
         <!-- What this answer stood on, and what it can point at. One rule
              above both, because they are the same statement at two levels of
