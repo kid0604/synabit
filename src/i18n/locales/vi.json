@@ -687,6 +687,8 @@
         "osm_hint": "Miễn phí · Tôn trọng quyền riêng tư",
         "google_hint": "Chi tiết · Ảnh vệ tinh",
         "search_failed": "Không tìm được. Hãy kiểm tra kết nối mạng.",
+        "link_failed": "Không mở được đường dẫn rút gọn. Hãy kiểm tra kết nối mạng.",
+        "link_unreadable": "Đã mở được đường dẫn nhưng không thấy tọa độ trong đó.",
         "directions": "Chỉ đường",
         "edit": "Sửa",
         "switch_to": "Chuyển sang {provider}",

@@ -687,6 +687,8 @@
         "osm_hint": "Free · Privacy-first",
         "google_hint": "Detailed · Satellite",
         "search_failed": "Could not search. Check your internet connection.",
+        "link_failed": "Could not open the short link. Check your internet connection.",
+        "link_unreadable": "The link opened, but no coordinates were found in it.",
         "directions": "Directions",
         "edit": "Edit",
         "switch_to": "Switch to {provider}",

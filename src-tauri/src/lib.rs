@@ -1048,6 +1048,7 @@ pub fn run() {
             commands::diagnostics::export_diagnostics,
             // Editor
             commands::paste::paste_as_plain_text,
+            commands::maps::resolve_map_link,
             // Watcher
             watcher::start_vault_watcher,
             // File dialogs opened by Rust, so a path written to is one picked.

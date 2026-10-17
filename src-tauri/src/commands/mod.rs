@@ -11,6 +11,7 @@ pub mod nexus;
 
 pub mod app_lock;
 pub mod feeds;
+pub mod maps;
 pub mod migration;
 pub mod nodes;
 pub mod paste;
