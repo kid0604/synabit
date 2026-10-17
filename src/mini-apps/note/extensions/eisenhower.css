@@ -1,0 +1,209 @@
+/*
+ * An Eisenhower matrix in a note. Two by two where there is room for it, one
+ * quadrant under another where there is not — measured on the block itself,
+ * so a note beside a side panel stacks as a phone does.
+ *
+ * Container size queries are Baseline Widely available (Safari 16), under the
+ * macOS 13.3 floor; see CLAUDE.md.
+ */
+.eis-matrix {
+  position: relative;
+  container-type: inline-size;
+  margin: 12px 0;
+}
+
+/* A header over the grid: what the block is, and the button that removes all
+   of it — above the quadrants rather than inside one, where it would read as
+   deleting that quadrant. */
+.eis-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  user-select: none;
+}
+.eis-bar-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.45;
+}
+.eis-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: inherit;
+  opacity: 0.45;
+  cursor: pointer;
+}
+.eis-matrix:hover .eis-delete,
+.eis-matrix:focus-within .eis-delete { opacity: 0.75; }
+.eis-delete:hover,
+.eis-delete:focus-visible {
+  opacity: 1;
+  color: var(--color-danger, #ef4444);
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+}
+
+.eis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
+/*
+ * Chosen as a whole — Backspace at the start of the line after it, or Delete
+ * at the end of the line before — and the next press removes it. Without a
+ * mark, nothing on screen says the second press will take all four quadrants.
+ */
+.eis-matrix.ProseMirror-selectednode {
+  outline: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
+@container (min-width: 480px) {
+  .eis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.eis-cell {
+  --eis-hue: #9ca3af;
+  min-height: 96px;
+  padding: 8px 10px 6px;
+  border: 1px solid color-mix(in srgb, var(--eis-hue) 30%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--eis-hue) 6%, transparent);
+}
+.eis-cell[data-quadrant="do_first"] { --eis-hue: #ef4444; }
+.eis-cell[data-quadrant="schedule"] { --eis-hue: #3b82f6; }
+.eis-cell[data-quadrant="delegate"] { --eis-hue: #f59e0b; }
+
+.eis-cell-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin-bottom: 4px;
+  user-select: none;
+  cursor: default;
+}
+.eis-cell-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--eis-hue) 80%, currentColor);
+}
+.eis-cell-desc {
+  font-size: 11.5px;
+  opacity: 0.6;
+}
+
+.eis-cell-body > :first-child { margin-top: 0; }
+.eis-cell-body > :last-child { margin-bottom: 0; }
+
+/* "→ task", at the end of a line that could become one. */
+.eis-to-task {
+  margin-left: 6px;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 16px;
+  vertical-align: 1px;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 120ms;
+}
+.eis-cell p:hover .eis-to-task,
+.eis-cell p:focus-within .eis-to-task,
+.eis-to-task:focus-visible { opacity: 0.7; }
+.eis-to-task:hover { opacity: 1; }
+.eis-to-task:disabled { opacity: 0.3; cursor: progress; }
+/* Nothing to hover with: always there, quietly. */
+@media (hover: none) {
+  .eis-to-task { opacity: 0.45; }
+}
+
+/* A task, drawn from the task as it is now. */
+.eis-task {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  max-width: 100%;
+  padding: 1px 6px 1px 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--eis-hue, #9ca3af) 12%, transparent);
+  vertical-align: baseline;
+}
+.eis-task.is-selected { outline: 2px solid color-mix(in srgb, var(--color-accent) 60%, transparent); }
+
+.eis-task-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid color-mix(in srgb, var(--eis-hue, #9ca3af) 70%, currentColor);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.eis-task-check:disabled { cursor: default; opacity: 0.5; }
+.eis-task.is-done .eis-task-check {
+  background: color-mix(in srgb, var(--eis-hue, #9ca3af) 70%, currentColor);
+  color: var(--color-surface);
+}
+
+.eis-task-title {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.eis-task-title:hover { text-decoration: underline; }
+.eis-task.is-done .eis-task-title { text-decoration: line-through; opacity: 0.55; }
+.eis-task.is-missing .eis-task-title { opacity: 0.55; font-style: italic; cursor: default; text-decoration: none; }
+
+.eis-task-due,
+.eis-task-elsewhere {
+  font-size: 11.5px;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+.eis-task-elsewhere {
+  padding: 0 5px;
+  border: 1px dashed color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+}
+
+/*
+ * Buttons in a line of text keep their drawn size on a touch screen, where
+ * every other button is raised to 44px (`style.css`): a checkbox 44px tall
+ * pushes its line apart. The reach comes from an invisible margin instead,
+ * as a switch's does.
+ */
+@media (pointer: coarse) {
+  .eis-task .eis-task-check,
+  .eis-task .eis-task-title,
+  .eis-cell .eis-to-task,
+  .eis-bar .eis-delete {
+    min-height: 0;
+  }
+  .eis-task .eis-task-check,
+  .eis-cell .eis-to-task,
+  .eis-bar .eis-delete {
+    position: relative;
+  }
+  .eis-task .eis-task-check::after,
+  .eis-cell .eis-to-task::after,
+  .eis-bar .eis-delete::after {
+    content: "";
+    position: absolute;
+    inset: -12px -6px;
+  }
+}

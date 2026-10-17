@@ -1,5 +1,6 @@
 import { ref, computed, watch, type Ref, type ComputedRef } from 'vue';
-import { type TaskMetadata, URGENCY_THRESHOLD_DAYS, getTodayStr, taskProperties } from '../types';
+import { type TaskMetadata, getTodayStr, taskProperties } from '../types';
+import { taskQuadrant } from '../quadrant';
 import { advanceRecurrence, repeats } from '../recurrence';
 import { logger } from '../../../utils/logger';
 import { taskViewInPlatformScope } from '../../../shared/platformScope';
@@ -91,29 +92,8 @@ export function useBoardLogic(
     return sorted;
   });
 
-  // Eisenhower Matrix logic
-  const getTaskQuadrant = (task: TaskMetadata): string => {
-    // Priority 1: Explicit override from drag-drop
-    if (task.custom_fields?.eisenhower_quadrant) {
-      return task.custom_fields.eisenhower_quadrant;
-    }
-    // Priority 2: Delegate = transferred tasks
-    if (task.is_transferred) return 'delegate';
-    // Derive importance & urgency
-    const isImportant = task.priority === 'P1' || task.priority === 'P2';
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const dueDate = task.due_date ? new Date(task.due_date) : null;
-    if (dueDate) dueDate.setHours(0, 0, 0, 0);
-    const daysUntilDue = dueDate ? Math.ceil((dueDate.getTime() - today.getTime()) / 86400000) : null;
-    const isUrgent = daysUntilDue !== null && daysUntilDue <= URGENCY_THRESHOLD_DAYS;
-    // Priority 3: Do First = Important (P1/P2) + Urgent (due ≤ 3 days)
-    if (isImportant && isUrgent) return 'do_first';
-    // Priority 4: Schedule = Has specific due date, not urgent yet
-    if (dueDate && !isUrgent) return 'schedule';
-    // Priority 5: Eliminate = Everything else
-    return 'eliminate';
-  };
+  // Eisenhower Matrix logic — shared with a note's matrix, see `quadrant.ts`.
+  const getTaskQuadrant = (task: TaskMetadata): string => taskQuadrant(task);
 
   const tasksByQuadrant = computed(() => {
     const grouped: Record<string, TaskMetadata[]> = {

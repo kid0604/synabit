@@ -610,6 +610,10 @@
       "template": {
         "title": "Mẫu",
         "desc": "Chèn một mẫu ghi chú vào đây"
+      },
+      "eisenhower": {
+        "title": "Ma trận Eisenhower",
+        "desc": "Xếp ý tưởng và công việc theo gấp và quan trọng"
       }
     },
     "editor": {
@@ -873,7 +877,16 @@
     "export_failed_retry": "Không xuất được ghi chú. Hãy thử lại, hoặc chọn thư mục khác.",
     "formatting_toolbar": "Thanh định dạng",
     "show_toolbar": "Hiện thanh định dạng",
-    "hide_toolbar": "Ẩn thanh định dạng"
+    "hide_toolbar": "Ẩn thanh định dạng",
+    "eisenhower": {
+      "to_task": "Chuyển thành công việc",
+      "task_missing": "Công việc này không còn nữa",
+      "open_task": "Mở công việc",
+      "elsewhere": "Bên Công việc: {quadrant}",
+      "convert_failed": "Không tạo được công việc",
+      "delete": "Xoá ma trận",
+      "deleted": "Đã xoá ma trận. Nhấn {key} để lấy lại."
+    }
   },
   "things": {
     "row_actions": "Thao tác với mục này",

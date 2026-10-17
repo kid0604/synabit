@@ -610,6 +610,10 @@
       "template": {
         "title": "Template",
         "desc": "Insert a note template here"
+      },
+      "eisenhower": {
+        "title": "Eisenhower Matrix",
+        "desc": "Sort ideas and tasks by urgent and important"
       }
     },
     "editor": {
@@ -873,7 +877,16 @@
     "export_failed_retry": "Couldn't export the note. Try again, or choose a different folder.",
     "formatting_toolbar": "Formatting toolbar",
     "show_toolbar": "Show the formatting toolbar",
-    "hide_toolbar": "Hide the formatting toolbar"
+    "hide_toolbar": "Hide the formatting toolbar",
+    "eisenhower": {
+      "to_task": "Make this a task",
+      "task_missing": "This task no longer exists",
+      "open_task": "Open task",
+      "elsewhere": "In Tasks: {quadrant}",
+      "convert_failed": "Could not create the task",
+      "delete": "Delete matrix",
+      "deleted": "Matrix deleted. {key} brings it back."
+    }
   },
   "things": {
     "row_actions": "Actions for this",

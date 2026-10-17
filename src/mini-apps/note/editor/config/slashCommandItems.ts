@@ -14,7 +14,8 @@ import {
   ChevronRight as ChevronRightIcon,
   LayoutTemplate as TemplateIcon,
   Sheet as RichTableIcon,
-  ChartColumn as RichChartIcon
+  ChartColumn as RichChartIcon,
+  Grid2x2 as MatrixIcon
 } from 'lucide-vue-next';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -327,6 +328,17 @@ export function createSlashCommandItems(deps: SlashCommandDeps): SlashCommandIte
       icon: RichChartIcon,
       command: ({ editor, range }: any) => {
         editor.chain().focus().deleteRange(range).insertRichChart('', '').run();
+      },
+    },
+    {
+      // Four quadrants of lines and tasks; a line becomes a task from its
+      // "→". See `EisenhowerExtension`.
+      title: 'Eisenhower Matrix',
+      titleKey: 'note.slash.eisenhower.title',
+      descriptionKey: 'note.slash.eisenhower.desc',
+      icon: MatrixIcon,
+      command: ({ editor, range }: any) => {
+        editor.chain().focus().deleteRange(range).insertEisenhower().run();
       },
     },
     {

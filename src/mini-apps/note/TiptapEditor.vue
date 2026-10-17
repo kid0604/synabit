@@ -32,6 +32,7 @@ import { LiteralText } from './extensions/LiteralText';
 import { LineBreak } from './extensions/LineBreak';
 import { RichTableExtension, RichTableOrphan } from './extensions/RichTableExtension';
 import { RichChartExtension } from './extensions/RichChartExtension';
+import { Eisenhower, EisenhowerCell, EisenhowerTask, EisenhowerConvert } from './extensions/EisenhowerExtension';
 import { InlineFormula } from './extensions/InlineFormula';
 import { BlockIdHider } from './extensions/BlockIdHider';
 import 'katex/dist/katex.min.css';
@@ -69,6 +70,8 @@ import { ArrowExtension, CustomBlockquote } from './editor/extensions/arrowTypog
 import { useAssetPaths } from './editor/composables/useAssetPaths';
 import { useEditorModals } from './editor/composables/useEditorModals';
 import { useLocationPicker } from './editor/composables/useLocationPicker';
+import { useMatrixTasks } from './editor/composables/useMatrixTasks';
+import { showAppNotice } from '../../composables/useAppNotice';
 import { createSlashCommandItems, visibleSlashItems } from './editor/config/slashCommandItems';
 import { lostOnReopen, savedMarkdown } from './editor/roundTrip';
 import { reportViolation } from '../../shared/invariants';
@@ -413,6 +416,22 @@ const slashCommandItems = (): SlashCommandItem[] => createSlashCommandItems({
 const offeredSlashItems = (): SlashCommandItem[] => visibleSlashItems(slashCommandItems(), simpleMode.value);
 const toolbarInsertItems = computed(() => (props.toolbar ? offeredSlashItems() : []));
 
+// An Eisenhower matrix's tasks: read, ticked, made from a line, opened.
+const matrixTasks = {
+  ...useMatrixTasks(() => props.currentNoteId),
+  openTask: (id: string) => emit('open-internal-note', { id, type: 'task' }),
+  onConvertFailed: (e: unknown) => {
+    logger.error('Could not make a task from a line in a matrix', e);
+    showAppNotice(t('note.eisenhower.convert_failed'), 'error');
+  },
+  // Said with the key rather than offered as a button: a button pressed after
+  // more typing would undo the typing, not the delete.
+  onDeleted: () => {
+    const key = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘Z' : 'Ctrl+Z';
+    showAppNotice(t('note.eisenhower.deleted', { key }));
+  },
+};
+
 // --- Editor ---
 const editor = useEditor({
   content: injectLocalAssets(props.modelValue),
@@ -604,6 +623,10 @@ const editor = useEditor({
     }),
     RichChartExtension,
     RichTableOrphan,
+    Eisenhower.configure({ onDeleted: matrixTasks.onDeleted }),
+    EisenhowerCell,
+    EisenhowerTask.configure(matrixTasks),
+    EisenhowerConvert.configure(matrixTasks),
     InlineFormula,
     TextAlign.configure({
       types: ['heading', 'paragraph'],
