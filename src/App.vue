@@ -154,7 +154,7 @@ import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link';
 import DesktopLayout from './layouts/DesktopLayout.vue';
 import MobileLayout from './layouts/MobileLayout.vue';
 import AskBar from './shared/syn/AskBar.vue';
-import AppDialog from './shared/components/AppDialog.vue';
+import SyncConflictsDialog from './shared/components/SyncConflictsDialog.vue';
 import { captureFocus, buildFocus, focusWithSelection, type SynFocus } from './shared/syn/focus';
 import { SYN_ASK, SYN_ASK_ABOUT, SYN_ASK_WITH, type AskAboutDetail } from './shared/syn/selectionAsk';
 import { routeQuickQuestion, QUICK_QUESTION_EVENT } from './shared/syn/quickAsk';
@@ -2017,34 +2017,15 @@ onUnmounted(() => {
 
   </div>
 
-    <!-- Files kept aside during sync. Deliberately not styled as an error: the
-         sync worked, and the only thing the user needs is where their file went. -->
-    <AppDialog
+    <!-- Files kept aside during sync, grouped by note and compared. -->
+    <SyncConflictsDialog
       :show="showSyncConflicts"
-      labelledby="sync-conflicts-title"
-      unstyled
+      :vault-path="vaultPath"
+      :conflicts="syncState.syncConflicts.value"
       @close="showSyncConflicts = false"
-    >
-      <div class="w-full rounded-2xl bg-white dark:bg-gray-900 shadow-xl border border-amber-200 dark:border-amber-900/50 overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-800">
-          <h2 id="sync-conflicts-title" class="text-base font-semibold text-gray-900 dark:text-gray-100">{{ $t('shell.conflicts.title', { count: syncConflictCount }, syncConflictCount) }}</h2>
-          <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-            {{ $t('shell.conflicts.body') }}
-          </p>
-        </div>
-        <ul class="max-h-72 overflow-y-auto px-5 py-3 space-y-3">
-          <li v-for="c in syncState.syncConflicts.value" :key="c.kept_as" class="text-sm">
-            <div class="text-gray-500 dark:text-gray-400 line-through break-all">{{ c.rel_path }}</div>
-            <div class="font-medium text-gray-900 dark:text-gray-100 break-all">{{ c.kept_as }}</div>
-          </li>
-        </ul>
-        <div class="px-5 py-3 bg-gray-50 dark:bg-gray-800/50 flex justify-end">
-          <button @click="syncState.dismissConflicts(); showSyncConflicts = false" class="btn-primary">
-            {{ $t('shell.conflicts.got_it') }}
-          </button>
-        </div>
-      </div>
-    </AppDialog>
+      @forget="syncState.forgetConflicts"
+      @open="(relPath, type) => { showSyncConflicts = false; void handleEditFromNexus(relPath, type); }"
+    />
 
     <!-- ═══ Ask Syn (Cmd/Ctrl+J) ═══ -->
     <!--

@@ -5139,9 +5139,23 @@
       "failed": "Sync failed"
     },
     "conflicts": {
-      "title": "{count} file kept | {count} files kept",
-      "body": "Another device saved its own file to the same place. Yours was not lost — it was renamed and is still in your folder.",
-      "got_it": "Got it"
+      "title": "{count} note has a copy from another device | {count} notes have copies from another device",
+      "body": "Two devices saved to the same place, so one version was set aside. Nothing was lost. Identical copies can go to the trash; copies that differ are worth a look.",
+      "checking": "Comparing the copies…",
+      "copies": "{count} copy | {count} copies",
+      "file": "File",
+      "identical": "Identical to the original",
+      "differs_properties": "Same text, different properties",
+      "differs_text": "Text differs",
+      "only_copy": "The original is gone — this is the only copy",
+      "trash_copies": "Trash copy | Trash {count} copies",
+      "open_copy": "Open copy",
+      "keep_all": "Keep all",
+      "trash_all": "Trash {count} identical copy | Trash {count} identical copies",
+      "got_it": "Got it",
+      "describe_failed": "Couldn't compare the copies. They're still in your folder.",
+      "trash_failed": "Couldn't move the copies to the trash.",
+      "changed_meanwhile": "Some copies changed since they were compared and were left in place."
     },
     "lock": {
       "enter_pin_for_app": "Enter PIN to open {app}",

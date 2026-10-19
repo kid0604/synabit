@@ -31,7 +31,7 @@ pub mod watcher;
 
 
 use commands::{
-    calendar_subs, capture, chat, feeds, files, finance, migration, nexus, nodes, people as people_commands,
+    calendar_subs, capture, chat, feeds, files, finance, kept_copies, migration, nexus, nodes, people as people_commands,
     syn as syn_commands,
     rename_property,
     sync as sync_cmds, thumbnails, trash, vault_health, versions, whiteboards,
@@ -989,6 +989,8 @@ pub fn run() {
             trash::restore_from_trash,
             trash::delete_trash_entry,
             vault_health::find_duplicate_notes,
+            kept_copies::describe_kept_copies,
+            kept_copies::trash_identical_kept_copies,
             versions::list_node_versions,
             versions::read_node_version,
             versions::diff_node_version,

@@ -306,8 +306,10 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
 
   const isSyncing = computed(() => ['checking', 'pulling', 'applying', 'pushing', 'waiting_for_assets'].includes(syncStatus.value));
 
-  const dismissConflicts = () => {
-    syncConflicts.value = [];
+  /** Drop these from the notice — trashed, kept on purpose, or already gone. */
+  const forgetConflicts = (keptAs: string[]) => {
+    const gone = new Set(keptAs);
+    syncConflicts.value = syncConflicts.value.filter((c) => !gone.has(c.kept_as));
   };
 
   return {
@@ -315,7 +317,7 @@ export function useSync(vaultPath: Ref<string>, vaultType: Ref<SyncAdapterId>) {
     syncStatus,
     syncError,
     syncConflicts,
-    dismissConflicts,
+    forgetConflicts,
     sync: doSync,
     cancelSync,
     setupAutoSync,

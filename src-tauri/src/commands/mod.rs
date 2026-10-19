@@ -7,6 +7,7 @@ pub mod e2ee;
 pub mod finance;
 pub mod connector;
 pub mod files;
+pub mod kept_copies;
 pub mod nexus;
 
 pub mod app_lock;

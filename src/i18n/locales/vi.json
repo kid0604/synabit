@@ -5139,9 +5139,23 @@
       "failed": "Đồng bộ thất bại"
     },
     "conflicts": {
-      "title": "Đã giữ {count} tệp | Đã giữ {count} tệp",
-      "body": "Một thiết bị khác đã lưu tệp của nó vào cùng chỗ. Tệp của bạn không mất — nó được đổi tên và vẫn nằm trong kho.",
-      "got_it": "Đã hiểu"
+      "title": "{count} ghi chú có bản sao từ máy khác | {count} ghi chú có bản sao từ máy khác",
+      "body": "Hai máy cùng lưu vào một chỗ nên một bản được để riêng ra. Không có gì bị mất. Bản giống hệt có thể bỏ vào thùng rác; bản khác nhau thì nên mở ra xem.",
+      "checking": "Đang so sánh các bản…",
+      "copies": "{count} bản sao | {count} bản sao",
+      "file": "Tệp",
+      "identical": "Giống hệt bản gốc",
+      "differs_properties": "Cùng nội dung, khác thuộc tính",
+      "differs_text": "Nội dung khác nhau",
+      "only_copy": "Bản gốc không còn — đây là bản duy nhất",
+      "trash_copies": "Xoá bản sao | Xoá {count} bản sao",
+      "open_copy": "Mở bản sao",
+      "keep_all": "Giữ tất cả",
+      "trash_all": "Xoá {count} bản giống hệt | Xoá {count} bản giống hệt",
+      "got_it": "Đã hiểu",
+      "describe_failed": "Không so sánh được các bản. Chúng vẫn nằm trong kho.",
+      "trash_failed": "Không chuyển được các bản sao vào thùng rác.",
+      "changed_meanwhile": "Vài bản đã thay đổi sau khi so sánh nên được giữ lại."
     },
     "lock": {
       "enter_pin_for_app": "Nhập mã PIN để mở {app}",
