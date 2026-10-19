@@ -29,7 +29,15 @@ const isGoogle = computed(() => provider.value === 'google');
 const isOsmRoute = computed(() => isRoute.value && provider.value === 'osm');
 const isGoogleRoute = computed(() => isRoute.value && provider.value === 'google');
 const blockWidth = computed(() => props.node.attrs.width || '100%');
-const blockHeight = computed(() => props.node.attrs.height || '200px');
+// No height chosen: as tall as half the width, so a full-width map is not a
+// strip; held between a size that still shows streets and one that does not
+// take over the note. The width is pinned because WebKit otherwise carries
+// the min and max height across the ratio onto the width, and the map is
+// placed absolutely because a percentage height does not resolve against a
+// height the ratio gives.
+const mapSizeStyle = computed(() => props.node.attrs.height
+  ? { height: props.node.attrs.height }
+  : { width: '100%', aspectRatio: '2 / 1', minHeight: '220px', maxHeight: '480px' });
 const blockAlign = computed(() => props.node.attrs.align || 'center');
 
 const alignStyle = computed(() => {
@@ -147,8 +155,10 @@ const googleEmbedUrl = computed(() => {
   if (isRoute.value && a.routeUrl) {
     return buildRouteEmbedUrl(a.routeUrl);
   }
-  const q = a.label ? encodeURIComponent(a.label) : `${a.lat},${a.lng}`;
-  return `https://maps.google.com/maps?q=${q}&z=${a.zoom || 15}&output=embed&t=m`;
+  // Always the coordinates: asked by its label, Google searches for the name
+  // and can land on another place of that name, with no pin. The label is the
+  // caption under the map.
+  return `https://maps.google.com/maps?q=${a.lat},${a.lng}&z=${a.zoom || 15}&output=embed&t=m`;
 });
 
 /** Convert a Google Maps directions URL → embeddable iframe URL */
@@ -394,15 +404,15 @@ watch(() => props.selected, (sel) => { if (!sel) editing.value = false; });
 
       <!-- Map -->
       <!-- Leaflet: pin mode (OSM provider) OR OSM route -->
-      <div v-if="(!isGoogle && !isRoute) || isOsmRoute" class="location-map-wrap" :style="{ height: blockHeight }">
-        <div ref="mapContainer" class="location-map" style="height: 100%" />
+      <div v-if="(!isGoogle && !isRoute) || isOsmRoute" class="location-map-wrap" :style="mapSizeStyle">
+        <div ref="mapContainer" class="location-map" style="position: absolute; inset: 0" />
         <div class="location-map-overlay" @click="selectNode" />
       </div>
       <!-- iframe: pin mode (Google provider) OR Google route -->
-      <div v-else class="location-map" :style="{ height: blockHeight }">
+      <div v-else class="location-map relative" :style="mapSizeStyle">
         <iframe
           :src="googleEmbedUrl"
-          class="w-full h-full border-0"
+          class="absolute inset-0 w-full h-full border-0"
           loading="lazy"
           referrerpolicy="no-referrer-when-downgrade"
           allowfullscreen

@@ -72,10 +72,16 @@ export const LocationExtension = Node.create<LocationOptions>({
         parseHTML: (el) => el.getAttribute('data-width') || '100%',
         renderHTML: (attrs) => ({ 'data-width': attrs.width }),
       },
+      // '' follows the width (see LocationNodeView); a height is one dragged
+      // to. 200px was the old default, written into every note whether or not
+      // anyone chose it, so it reads as no choice.
       height: {
-        default: '200px',
-        parseHTML: (el) => el.getAttribute('data-height') || '200px',
-        renderHTML: (attrs) => ({ 'data-height': attrs.height }),
+        default: '',
+        parseHTML: (el) => {
+          const h = el.getAttribute('data-height') || '';
+          return h === '200px' ? '' : h;
+        },
+        renderHTML: (attrs) => attrs.height ? { 'data-height': attrs.height } : {},
       },
       align: {
         default: 'center',
@@ -134,7 +140,6 @@ export const LocationExtension = Node.create<LocationOptions>({
               routeUrl: options.routeUrl,
               label: options.label || 'Directions',
               provider: options.provider || 'google',
-              height: '300px',
             },
           });
         },
@@ -146,7 +151,7 @@ export const LocationExtension = Node.create<LocationOptions>({
       markdown: {
         serialize(state: any, node: any) {
           const a = node.attrs;
-          let html = `<div data-type="location" data-mode="${a.mode || 'pin'}" data-lat="${a.lat}" data-lng="${a.lng}" data-label="${a.label || ''}" data-zoom="${a.zoom}" data-provider="${a.provider || 'osm'}" data-width="${a.width || '100%'}" data-height="${a.height || '200px'}" data-align="${a.align || 'center'}"`;
+          let html = `<div data-type="location" data-mode="${a.mode || 'pin'}" data-lat="${a.lat}" data-lng="${a.lng}" data-label="${a.label || ''}" data-zoom="${a.zoom}" data-provider="${a.provider || 'osm'}" data-width="${a.width || '100%'}"${a.height ? ` data-height="${a.height}"` : ''} data-align="${a.align || 'center'}"`;
           if (a.mode === 'route' && a.routeUrl) {
             html += ` data-route-url="${a.routeUrl}"`;
           }
