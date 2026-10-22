@@ -1283,17 +1283,46 @@ pub fn continuable(vault_path: &str, conversation_id: &str) -> Option<Value> {
     if latest.carried_on_at.is_some() {
         return None;
     }
-    // Working, and alive in no process here: cut off when this app closed —
-    // if this device ran it. Another device's run reads as working while that
-    // device is still at it, and carrying it on here would do it twice.
-    let interrupted = latest.state == RunState::Interrupted
-        || (latest.state == RunState::Working && latest.started_here && !crate::syn::engine::is_live(&latest.id));
     let why = match latest.state {
         RunState::BudgetExhausted => "ceiling",
-        _ if interrupted => "interrupted",
+        _ if cut_off(&latest) => "interrupted",
         _ => return None,
     };
     Some(serde_json::json!({ "run_id": latest.id, "why": why, "ceiling": latest.ceiling, "steps": latest.spent.tool_calls }))
+}
+
+/// Working, and alive in no process here: cut off when this app closed — if
+/// this device ran it. Another device's run reads as working while that device
+/// is still at it, and carrying it on here would do it twice.
+fn cut_off(run: &Run) -> bool {
+    run.state == RunState::Interrupted
+        || (run.state == RunState::Working && run.started_here && !crate::syn::engine::is_live(&run.id))
+}
+
+/// The run a turn begun at `since` left unfinished, to be carried on when the
+/// same words are answered again.
+///
+/// A Telegram message stays in the inbox until it has been answered, so a
+/// turn the app closed under is answered again when it opens. Answered as a
+/// new turn, it was done twice: on 2026-10-11 "9h sáng nhắc tao đưa vợ đi hàn
+/// răng" was cut off by a restart just after `create_node`, asked again, and
+/// left two tasks, each reminding on its own until it was ticked off. Carried
+/// on, the run replays the task it already made. A turn that failed after it
+/// had started is the same story with the app still open.
+///
+/// The first run since `since`: turns of one chat begin one after another,
+/// so a later run belongs to a later turn.
+pub fn unfinished_since(vault_path: &str, conversation_id: &str, since: &str) -> Option<String> {
+    let since = chrono::DateTime::parse_from_rfc3339(since).ok()?;
+    let at = |run: &Run| chrono::DateTime::parse_from_rfc3339(&run.created_at).ok();
+    load_all(vault_path)
+        .ok()?
+        .into_iter()
+        .filter(|r| r.parent_run_id.is_none() && r.conversation_id.as_deref() == Some(conversation_id))
+        .filter(|r| at(r).is_some_and(|at| at >= since))
+        .min_by_key(|r| at(r))
+        .filter(|r| r.carried_on_at.is_none() && (cut_off(r) || r.state == RunState::Failed))
+        .map(|r| r.id)
 }
 
 /// Every question still waiting for an answer, newest per conversation, in
@@ -1844,6 +1873,50 @@ mod carrying_on {
         cut.finish(RunState::Done);
         save_run(vault, &cut).expect("saved");
         assert!(continuable(vault, "c2").is_none(), "an answered run has nothing to carry on");
+    }
+
+    /// A Telegram message answered again after a restart carries on the run it
+    /// began, not one from before it, and not one that is already carried on
+    /// or finished.
+    #[test]
+    fn words_answered_again_carry_on_the_run_they_began() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8");
+        let budget = || Budget::from_settings(&crate::models::syn::SynSettings::default());
+        let at = |run: &mut Run, when: &str| run.created_at = when.to_string();
+
+        let mut before = Run::new("hôm qua", Some("tg".into()), budget());
+        at(&mut before, "2026-10-10T17:20:00+00:00");
+        before.state = RunState::Interrupted;
+        save_run(vault, &before).expect("saved");
+        let begun = "2026-10-10T17:27:29+00:00";
+        assert_eq!(unfinished_since(vault, "tg", begun), None, "a run from before the turn is not its run");
+
+        let mut cut = Run::new("9h sáng nhắc tao đưa vợ đi hàn răng", Some("tg".into()), budget());
+        at(&mut cut, "2026-10-10T17:27:30+00:00");
+        cut.record_tool(1, "create_node", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        save_run(vault, &cut).expect("saved working, then the app closed");
+        let mut later = Run::new("sau", Some("tg".into()), budget());
+        at(&mut later, "2026-10-10T17:28:00+00:00");
+        later.state = RunState::Interrupted;
+        save_run(vault, &later).expect("saved");
+        assert_eq!(unfinished_since(vault, "tg", begun), Some(cut.id.clone()), "the first run since it began");
+        assert_eq!(unfinished_since(vault, "other", begun), None);
+
+        claim_resume(vault, &cut.id).expect("carried on");
+        assert_eq!(unfinished_since(vault, "tg", begun), None, "carried on once");
+
+        let mut failed = Run::new("lỗi", Some("tg2".into()), budget());
+        at(&mut failed, "2026-10-10T17:27:30+00:00");
+        failed.fail("provider down");
+        save_run(vault, &failed).expect("saved");
+        assert_eq!(unfinished_since(vault, "tg2", begun), Some(failed.id.clone()), "failed after it began");
+
+        let mut answered = Run::new("xong", Some("tg3".into()), budget());
+        at(&mut answered, "2026-10-10T17:27:30+00:00");
+        answered.finish(RunState::Done);
+        save_run(vault, &answered).expect("saved");
+        assert_eq!(unfinished_since(vault, "tg3", begun), None, "an answered turn has nothing to carry on");
     }
 }
 

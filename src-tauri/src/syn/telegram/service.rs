@@ -796,6 +796,7 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
             Some(before) => ours.into_iter().take(before).collect(),
             None => ours,
         };
+        let mut ours = inbox::next_turn(ours);
         if ours.iter().any(|e| e.album.is_some()) && !waited_for_album {
             waited_for_album = true;
             tokio::time::sleep(ALBUM_WAIT).await;
@@ -807,7 +808,10 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
             tell_not_ready(app, &api, chat_id, &words.not_ready(words.no_vault())).await;
             return Some(NO_VAULT_RETRY);
         };
-        let resuming = ours[0].resume_run.is_some();
+        // Begun before is carried on in the conversation it was begun in,
+        // however long it has been.
+        let begun = ours[0].started_at.clone();
+        let resuming = ours[0].resume_run.is_some() || begun.is_some();
         let conversation_id = match conversation_for(app, &vault, chat_id, resuming) {
             Ok(id) => id,
             Err(e) => {
@@ -815,6 +819,19 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
                 return Some(NOT_READY_RETRY);
             }
         };
+        // What the turn begun for these words had done, carried on rather
+        // than done again. See `run::unfinished_since`.
+        let unfinished = begun.and_then(|at| crate::syn::run::unfinished_since(&vault, &conversation_id, &at));
+        if let Some(id) = &unfinished {
+            log::info!("[Telegram] Carrying on run {id}, which these messages began and did not finish");
+        }
+        let resume_run = unfinished.or_else(|| ours[0].resume_run.clone());
+        let now = chrono::Utc::now().to_rfc3339();
+        if let Err(e) = with_db(app, |db| inbox::mark_started(db, &mut ours, &now)) {
+            // Not written down, a restart now would start it over, as it
+            // always did. Not a reason to leave the person unanswered.
+            log::warn!("[Telegram] Could not note that a turn began: {e}");
+        }
 
         let asked_in = ours[0].message_id;
         let phase = Arc::new(AtomicU8::new(FOREGROUND));
@@ -822,6 +839,7 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
         let job = Job {
             chat_id,
             entries: ours,
+            resume_run,
             vault,
             conversation_id,
             phase: Arc::clone(&phase),
@@ -851,6 +869,9 @@ async fn drain_all(app: &AppHandle) -> Option<Duration> {
 struct Job {
     chat_id: i64,
     entries: Vec<Entry>,
+    /// The stopped run this turn carries on: the one an "allow once" names,
+    /// or the one these entries began before and did not finish.
+    resume_run: Option<String>,
     vault: String,
     conversation_id: String,
     phase: Arc<AtomicU8>,
@@ -878,7 +899,7 @@ async fn answer(
         temperature: None,
         images: (show_images && !prepared.images.is_empty()).then(|| prepared.images.clone()),
         focus: None,
-        resume_run: job.entries.first().and_then(|e| e.resume_run.clone()),
+        resume_run: job.resume_run.clone(),
         replacing: None,
         plan_only: false,
     };
@@ -1532,6 +1553,7 @@ async fn answer_card(app: &AppHandle, api: &Api, words: &Words, pressed: &Presse
         attachments: Vec::new(),
         album: None,
         resume_run,
+        started_at: None,
     };
     // Pressing a button on a phone *is* saying go on: the run carries on with
     // the answer, a no included, which it says it cannot get round.

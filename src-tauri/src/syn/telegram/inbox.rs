@@ -126,6 +126,12 @@ pub struct Entry {
     /// "allow once" on a card. The text is empty, and it is a turn on its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_run: Option<String>,
+    /// When Syn was last handed it, RFC 3339. Set on every entry of a turn
+    /// before the turn begins, so an entry still here with one was begun and
+    /// not answered — the app closed under it, or it failed — and the run it
+    /// began is found by it. See `run::unfinished_since`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
 }
 
 /// Zero-padded, so the store's plain string order is arrival order.
@@ -145,6 +151,23 @@ pub fn waiting(db: &DbBridge) -> AppResult<Vec<Entry>> {
         .into_iter()
         .filter_map(|(_, raw)| serde_json::from_str(&raw).ok())
         .collect())
+}
+
+/// Write down that a turn is beginning for `entries`, before it does.
+pub fn mark_started(db: &DbBridge, entries: &mut [Entry], at: &str) -> AppResult<()> {
+    for entry in entries {
+        entry.started_at = Some(at.to_string());
+        put(db, entry)?;
+    }
+    Ok(())
+}
+
+/// The first turn's worth of what waits: a turn begun before and not
+/// answered is taken again as it was, without what arrived since, and what
+/// arrived since is not taken with it.
+pub fn next_turn(entries: Vec<Entry>) -> Vec<Entry> {
+    let begun = entries.first().and_then(|e| e.started_at.clone());
+    entries.into_iter().take_while(|e| e.started_at == begun).collect()
 }
 
 pub fn remove(db: &DbBridge, entries: &[Entry]) -> AppResult<()> {
@@ -233,6 +256,7 @@ mod tests {
             attachments: Vec::new(),
             album: None,
             resume_run: None,
+            started_at: None,
         }
     }
 
@@ -279,6 +303,25 @@ mod tests {
         assert_eq!(waiting(&db).expect("read"), vec![b]);
         assert_eq!(clear(&db).expect("cleared"), 1);
         assert!(waiting(&db).expect("read").is_empty());
+    }
+
+    /// A turn begun and not answered is taken again on its own, as it was;
+    /// what arrived since waits for the turn after.
+    #[test]
+    fn a_turn_begun_before_is_taken_again_as_it_was() {
+        let db = DbBridge::new_in_memory_full().expect("schema");
+        let mut begun = vec![entry(1, "9h sáng nhắc tao"), entry(2, "đưa vợ đi hàn răng")];
+        mark_started(&db, &mut begun, "2026-10-10T17:27:29+00:00").expect("marked");
+        put(&db, &entry(3, "sau khi mở lại")).expect("kept");
+
+        let waiting = waiting(&db).expect("read");
+        assert!(waiting[..2].iter().all(|e| e.started_at.as_deref() == Some("2026-10-10T17:27:29+00:00")), "written down");
+        let first: Vec<i64> = next_turn(waiting.clone()).iter().map(|e| e.update_id).collect();
+        assert_eq!(first, vec![1, 2]);
+
+        remove(&db, &waiting[..2]).expect("answered");
+        let next: Vec<i64> = next_turn(super::waiting(&db).expect("read")).iter().map(|e| e.update_id).collect();
+        assert_eq!(next, vec![3], "what is new is one turn");
     }
 
     #[test]

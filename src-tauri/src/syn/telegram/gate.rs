@@ -146,6 +146,7 @@ pub fn classify(update: &Update, paired: Option<&Paired>, now: &str) -> Gate {
         attachments,
         album: message.rest.get("media_group_id").and_then(Value::as_str).map(str::to_string),
         resume_run: None,
+        started_at: None,
     })
 }
 

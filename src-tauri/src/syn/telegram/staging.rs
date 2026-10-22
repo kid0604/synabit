@@ -385,6 +385,7 @@ mod tests {
             attachments,
             album: None,
             resume_run: None,
+            started_at: None,
         }
     }
 
