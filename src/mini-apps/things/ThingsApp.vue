@@ -14,11 +14,13 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import type { Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Circle, Search, RefreshCw, ChevronRight, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes, Lock } from 'lucide-vue-next';
+import { Circle, Search, RefreshCw, PanelRight, PanelRightClose, Globe, ArrowUpDown, Rows3, Columns3, List, Table, Plus, Bookmark, Pin, PinOff, Trash2, Monitor, ArrowLeft, ArrowRight, History, Download, Boxes, Lock } from 'lucide-vue-next';
 import { useObservedTypes, isInternalType } from './composables/useObservedTypes';
 import { useSidebarResize } from '../../composables/useSidebarResize';
 import { useEventBus } from '../../composables/useEventBus';
 import { useRemembered } from '../../composables/useRemembered';
+import { useFold } from '../../composables/useFold';
+import FoldToggle from '../../shared/components/FoldToggle.vue';
 import { useThingsQuery } from './composables/useThingsQuery';
 import { useThingsNode } from './composables/useThingsNode';
 import { useThingsLinks } from './composables/useThingsLinks';
@@ -213,7 +215,19 @@ const links = useThingsLinks();
 const nodeLock = useThingsLock();
 
 const activeType = ref<string | null>(null);
-const showInternal = ref(false);
+/**
+ * Every section of the rail folds away, and stays folded on this device. The
+ * app's own files start folded, as they always have: they are real, and noise
+ * at the top of a list of what you keep.
+ *
+ * Recent is where opening a kind, a query or a saved view puts its answer, so
+ * each of those opens it — an answer under a folded heading looks like none.
+ */
+const kindsFold = useFold('things:sidebar:kinds');
+const internalFold = useFold('things:sidebar:internal', 'folded');
+const viewsFold = useFold('things:sidebar:views');
+const pinnedFold = useFold('things:sidebar:pinned');
+const recentFold = useFold('things:sidebar:recent');
 const selectedId = ref<string | null>(null);
 /**
  * Both edges are draggable, the same way Notes' are and through the same
@@ -402,6 +416,7 @@ const openType = (nodeType: string) => {
   detail.close();
   links.clear();
   typed.value = `type:${nodeType}`;
+  recentFold.open();
   arrange.reset();
   // The declared shape first: those are the fields somebody said this kind is
   // about, which is a better answer than whichever keys happen to be common.
@@ -419,6 +434,7 @@ const openType = (nodeType: string) => {
  */
 const runTyped = () => {
   activeType.value = null;
+  recentFold.open();
   rerun();
 };
 
@@ -1137,6 +1153,7 @@ const openView = (view: SavedView) => {
   detail.close();
   links.clear();
   typed.value = view.query;
+  recentFold.open();
   layout.value = view.layout;
   arrange.sortField.value = view.sort;
   arrange.sortDescending.value = view.sortDescending;
@@ -1248,8 +1265,10 @@ onBeforeUnmount(() => {
         </button>
       </div>
       <div class="px-4 pt-2 pb-2 flex items-center justify-between flex-shrink-0">
-        <h2 class="text-xs font-semibold text-gray-500 dark:text-gray-400">
-          {{ t('things.in_your_vault') }}
+        <h2 class="min-w-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+          <FoldToggle :folded="kindsFold.folded.value" @toggle="kindsFold.toggle">
+            {{ t('things.in_your_vault') }}
+          </FoldToggle>
         </h2>
         <span class="flex items-center gap-0.5">
           <button
@@ -1279,6 +1298,7 @@ onBeforeUnmount(() => {
         that declares it first.
       -->
       <div class="max-h-[38%] overflow-y-auto px-2 pb-2 flex-shrink-0">
+        <template v-if="!kindsFold.folded.value">
         <button
           v-for="entry in railKinds"
           :key="entry.node_type"
@@ -1358,18 +1378,16 @@ onBeforeUnmount(() => {
           whiteboard payloads — so it is here rather than hidden, and folded.
         -->
         <template v-if="internal.length">
-          <button
-            type="button"
-            @click="showInternal = !showInternal"
-            class="w-full flex items-center gap-1.5 px-2 py-1.5 mt-2 text-xs font-semibold uppercase
-                   tracking-wider text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300
-                   transition-colors cursor-pointer"
+          <FoldToggle
+            :folded="internalFold.folded.value"
+            @toggle="internalFold.toggle"
+            class="w-full px-2 py-1.5 mt-2 text-xs font-semibold uppercase
+                   tracking-wider text-gray-500 dark:text-gray-400"
           >
-            <ChevronRight class="w-3 h-3 transition-transform" :class="showInternal ? 'rotate-90' : ''" />
             {{ t('things.internal') }}
-          </button>
+          </FoldToggle>
           <button
-            v-for="entry in (showInternal ? internal : [])"
+            v-for="entry in (internalFold.folded.value ? [] : internal)"
             :key="entry.node_type"
             type="button"
             @click="openType(entry.node_type)"
@@ -1381,6 +1399,7 @@ onBeforeUnmount(() => {
             <span class="ml-auto text-xs text-gray-500 dark:text-gray-400 tabular-nums">{{ entry.count }}</span>
           </button>
         </template>
+        </template>
 
         <!--
           The ladder, as a list. A view saved here shows up under the types;
@@ -1388,11 +1407,15 @@ onBeforeUnmount(() => {
           which is a change to one field rather than a different feature.
         -->
         <template v-if="saved.views.value.length">
-          <div class="px-2 py-1.5 mt-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          <FoldToggle
+            :folded="viewsFold.folded.value"
+            @toggle="viewsFold.toggle"
+            class="w-full px-2 py-1.5 mt-3 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400"
+          >
             {{ t('things.saved_views') }}
-          </div>
+          </FoldToggle>
           <div
-            v-for="view in saved.views.value"
+            v-for="view in (viewsFold.folded.value ? [] : saved.views.value)"
             :key="view.id"
             class="group w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-sm
                    text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5 transition-colors"
@@ -1561,10 +1584,12 @@ onBeforeUnmount(() => {
       -->
       <div v-if="layout === 'list' && pinned.length" class="flex-shrink-0 px-2 pt-2">
         <h3 class="px-1.5 pb-1 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-          {{ t('things.pinned_section') }}
+          <FoldToggle :folded="pinnedFold.folded.value" @toggle="pinnedFold.toggle">
+            {{ t('things.pinned_section') }}
+          </FoldToggle>
         </h3>
         <button
-          v-for="row in railPinned"
+          v-for="row in (pinnedFold.folded.value ? [] : railPinned)"
           :key="row.id"
           type="button"
           @click="openRow(row)"
@@ -1581,7 +1606,7 @@ onBeforeUnmount(() => {
         </button>
 
         <button
-          v-if="pinnedTotal > PINNED_IN_RAIL"
+          v-if="!pinnedFold.folded.value && pinnedTotal > PINNED_IN_RAIL"
           type="button"
           @click="showAllPinned"
           class="w-full px-1.5 py-1.5 text-left rounded-lg text-xs cursor-pointer
@@ -1592,16 +1617,22 @@ onBeforeUnmount(() => {
         </button>
       </div>
 
+      <!--
+        Named whether or not anything is pinned: a heading that comes and goes
+        with the pins would leave a folded list with nothing to open it by.
+      -->
       <h3
-        v-if="layout === 'list' && pinned.length"
+        v-if="layout === 'list'"
         class="px-3.5 pt-3 pb-1 text-xs font-semibold uppercase tracking-wider
                text-gray-500 dark:text-gray-400 flex-shrink-0"
       >
-        {{ t('things.recent_section') }}
+        <FoldToggle :folded="recentFold.folded.value" @toggle="recentFold.toggle">
+          {{ t('things.recent_section') }}
+        </FoldToggle>
       </h3>
 
       <ListView
-        v-if="layout === 'list'"
+        v-if="layout === 'list' && !recentFold.folded.value"
         class="flex-1 min-h-0 border-t border-gray-100 dark:border-[#232326]"
         :result="railResult"
         :loading="loading"
@@ -1618,7 +1649,7 @@ onBeforeUnmount(() => {
         so, and the table is the screen that can actually hold them.
       -->
       <button
-        v-if="layout === 'list' && railCapped"
+        v-if="layout === 'list' && railCapped && !recentFold.folded.value"
         type="button"
         @click="layout = 'table'"
         class="flex-shrink-0 w-full px-3 py-2 text-left text-xs cursor-pointer

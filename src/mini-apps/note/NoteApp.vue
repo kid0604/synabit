@@ -35,6 +35,8 @@ import { resolveNoteId } from './resolveNoteId';
 
 // ── Composables ─────────────────────────────────────────────
 import { useSidebarResize } from '../../composables/useSidebarResize';
+import { useFold } from '../../composables/useFold';
+import FoldToggle from '../../shared/components/FoldToggle.vue';
 import { useNoteTabs } from './composables/useNoteTabs';
 import { useNoteExport } from './composables/useNoteExport';
 import { useNoteLock } from './composables/useNoteLock';
@@ -118,6 +120,17 @@ const lock = useNoteLock(appLockStore, handleNoteSelect, (id) => openHistory(id)
 const tags = useNoteTags(notes, currentNoteId, tabs.currentContent, ns, scanVault, () => flushActiveEditor());
 
 const search = useNoteSearch(notes, recentNoteIds, tags.selectedTags, vaultPathRef);
+
+// Each of the sidebar's sections folds away, and stays folded on this device.
+// Recent is where a search or a picked tag puts its answer, so asking either
+// opens it: an answer under a folded heading looks like no answer.
+const pinnedFold = useFold('notes:sidebar:pinned');
+const tagsFold = useFold('notes:sidebar:tags');
+const recentFold = useFold('notes:sidebar:recent');
+watch(
+  () => search.searchQuery.value.trim() !== '' || tags.selectedTags.value.size > 0,
+  (asking) => { if (asking) recentFold.open(); },
+);
 
 const manager = useNoteManager(notes, search.isCaseSensitiveSearch, vaultPathRef);
 
@@ -852,10 +865,10 @@ onMounted(async () => {
          <!-- Pinned Section -->
          <div class="mb-4" v-if="search.allPinnedNotes.value.length > 0">
              <div class="flex justify-between items-center px-4 mb-2 mt-3">
-                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.pinned_notes') }}</span>
+                 <FoldToggle :folded="pinnedFold.folded.value" @toggle="pinnedFold.toggle" class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.pinned_notes') }}</FoldToggle>
                  <button @click="manager.openNoteManager('pinned', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
-             <div class="px-2 space-y-0.5">
+             <div v-show="!pinnedFold.folded.value" class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.topPinnedNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="true"
                     @select="handleNoteSelect" @toggle-context="toggleContext"
@@ -870,9 +883,10 @@ onMounted(async () => {
          <!-- Tags Section -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.top_tags') }}</span>
+                 <FoldToggle :folded="tagsFold.folded.value" @toggle="tagsFold.toggle" class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.top_tags') }}</FoldToggle>
                  <button @click="manager.openNoteManager('tags', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
+             <template v-if="!tagsFold.folded.value">
              <div class="px-2 space-y-0.5" v-if="tags.topTags.value.length > 0">
                  <div v-for="tag in tags.topTags.value" :key="tag.name"
                       @click="tags.toggleTagSelection(tag.name)"
@@ -886,14 +900,16 @@ onMounted(async () => {
                  </div>
              </div>
              <div v-else class="text-center p-4 text-xs text-gray-500 dark:text-gray-400">{{ $t('note.no_tags_found') }}</div>
+             </template>
          </div>
 
          <!-- Recent Notes -->
          <div class="mb-4">
              <div class="flex justify-between items-center px-4 mb-2 mt-2">
-                 <span class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.recent_notes') }}</span>
+                 <FoldToggle :folded="recentFold.folded.value" @toggle="recentFold.toggle" class="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider">{{ $t('note.recent_notes') }}</FoldToggle>
                  <button @click="manager.openNoteManager('notes', () => { sidebar.showLeft.value = false; })" class="text-xs text-accent dark:text-accent-dark hover:underline font-medium p-2 -m-2">{{ $t('note.show_all') }}</button>
              </div>
+             <template v-if="!recentFold.folded.value">
              <div class="px-2 space-y-0.5">
                  <NoteListItem v-for="note in search.recentNotes.value" :key="note.id"
                     :note="note" :is-active="currentNoteId === note.id" :show-context-menu="activeContextMenu === note.id" :is-pinned-section="false"
@@ -904,6 +920,7 @@ onMounted(async () => {
              <div v-if="search.recentNotes.value.length === 0" class="p-8 text-center text-sm text-text-secondary dark:text-text-secondary-dark">
                {{ $t('note.no_notes_match') }}
              </div>
+             </template>
          </div>
       </div>
     </aside>
