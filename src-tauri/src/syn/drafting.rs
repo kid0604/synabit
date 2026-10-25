@@ -208,27 +208,61 @@ pub fn write<R: tauri::Runtime>(
 /// Nothing a recipe cannot call can be a step: a tool the engine runs, or one
 /// that reshapes a kind.
 pub fn recipe_from_run(run: &crate::syn::run::Run, chain: &[String]) -> Option<crate::syn::recipe::Recipe> {
+    let calls = ok_calls(run);
+    let first = pass_at(&calls, chain, 0)?;
+    let second = pass_at(&calls, chain, first + chain.len())?;
+    recipe_from_passes(&calls[first..first + chain.len()], &calls[second..second + chain.len()], chain)
+}
+
+/// The same job, done in two runs, as a recipe — `recipe_from_run` for the
+/// habit `skill::chain_across_runs` finds. `earlier` is the first pass and
+/// `now` the second, so what `now` found on the way is what cannot be a
+/// parameter.
+pub fn recipe_across_runs(
+    earlier: &crate::syn::run::Run,
+    now: &crate::syn::run::Run,
+    chain: &[String],
+) -> Option<crate::syn::recipe::Recipe> {
+    let (a, b) = (ok_calls(earlier), ok_calls(now));
+    let first = pass_at(&a, chain, 0)?;
+    let second = pass_at(&b, chain, 0)?;
+    recipe_from_passes(&a[first..first + chain.len()], &b[second..second + chain.len()], chain)
+}
+
+fn ok_calls(run: &crate::syn::run::Run) -> Vec<&crate::syn::run::Step> {
+    run.steps.iter().filter(|s| s.ok == Some(true) && s.tool.is_some()).collect()
+}
+
+/// Where `chain` next starts in `calls`, from `from` on.
+fn pass_at(calls: &[&crate::syn::run::Step], chain: &[String], from: usize) -> Option<usize> {
+    let len = chain.len();
+    (from..calls.len()).find(|&i| {
+        calls.get(i..i + len).is_some_and(|w| w.iter().zip(chain).all(|(s, t)| s.tool.as_deref() == Some(t)))
+    })
+}
+
+/// Two passes of `chain`, call for call, as a recipe. See `recipe_from_run`.
+fn recipe_from_passes(
+    first: &[&crate::syn::run::Step],
+    second: &[&crate::syn::run::Step],
+    chain: &[String],
+) -> Option<crate::syn::recipe::Recipe> {
     use crate::syn::recipe::{Param, Recipe, Step};
     if chain.iter().any(|t| crate::syn::policy::engine(t) || crate::syn::policy::of(t).is_none_or(|p| p.power == crate::syn::policy::Power::Structural)) {
         return None;
     }
-    let calls: Vec<&crate::syn::run::Step> =
-        run.steps.iter().filter(|s| s.ok == Some(true) && s.tool.is_some()).collect();
     let len = chain.len();
-    let matches_at = |i: usize| calls.get(i..i + len).is_some_and(|w| w.iter().zip(chain).all(|(s, t)| s.tool.as_deref() == Some(t)));
-    let first = (0..calls.len()).find(|&i| matches_at(i))?;
-    let second = (first + len..calls.len()).find(|&i| matches_at(i))?;
 
     let mut params: Vec<Param> = Vec::new();
     // Each pair of values that differ is one parameter, wherever it appears.
     let mut named: Vec<((Value, Value), String)> = Vec::new();
     let mut steps = Vec::new();
     for k in 0..len {
-        let a = calls[first + k].args.clone().unwrap_or(Value::Null);
-        let b = calls[second + k].args.clone().unwrap_or(Value::Null);
+        let a = first[k].args.clone().unwrap_or(Value::Null);
+        let b = second[k].args.clone().unwrap_or(Value::Null);
         // What the second pass had found by this step: a value found there is
         // picked from a result, not given.
-        let found: String = calls[second..second + k]
+        let found: String = second[..k]
             .iter()
             .map(|s| s.full.clone().unwrap_or_else(|| s.preview.clone()))
             .collect::<Vec<_>>()
@@ -490,6 +524,30 @@ mod tests {
         ]);
         let chain = vec!["query_nodes".to_string(), "get_node".to_string(), "list_schemas".to_string()];
         assert!(recipe_from_run(&run, &chain).is_none());
+    }
+
+    /// The habit across conversations reads its recipe off two runs exactly as
+    /// one run's two passes are read: what was said differently each week is
+    /// a parameter, and the pass is found wherever it sits in each run.
+    #[test]
+    fn a_job_done_in_two_runs_is_a_recipe_the_same_way() {
+        let last_week = run_of(vec![
+            step("get_node", json!({ "node_id": "Notes/a.md" }), "{}"),
+            step("query_nodes", json!({ "query": "type:task status:done since:2026-10-01" }), "[]"),
+            step("create_node", json!({ "node_type": "note", "title": "Tổng kết 2026-10-01" }), "{}"),
+            step("timeline", json!({ "span": "week" }), "{}"),
+        ]);
+        let this_week = run_of(vec![
+            step("query_nodes", json!({ "query": "type:task status:done since:2026-10-08" }), "[]"),
+            step("create_node", json!({ "node_type": "note", "title": "Tổng kết 2026-10-08" }), "{}"),
+            step("timeline", json!({ "span": "week" }), "{}"),
+        ]);
+        let chain = vec!["query_nodes".to_string(), "create_node".to_string(), "timeline".to_string()];
+        let r = recipe_across_runs(&last_week, &this_week, &chain).expect("a recipe");
+        assert_eq!(r.params.len(), 2, "{:?}", r.params);
+        assert_eq!(r.steps[0].args["query"], json!("{{query}}"));
+        assert_eq!(r.steps[1].args["node_type"], json!("note"));
+        assert!(recipe_across_runs(&last_week, &run_of(vec![]), &chain).is_none(), "no second pass, no recipe");
     }
 
     #[test]

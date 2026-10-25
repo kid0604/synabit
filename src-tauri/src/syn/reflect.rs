@@ -331,8 +331,9 @@ pub async fn suggest_skill(
     };
 
     let prompt = format!(
-        "An assistant just did this piece of work more than once in a single \
-         run, using the same tools in the same order each time:\n\n\
+        "An assistant has done this piece of work more than once — in one \
+         run, or on different days — using the same tools in the same \
+         order each time:\n\n\
          {}\n\n\
          What it was asked to do: {goal}\n\n\
          Write this up as a reusable skill, so the same job can be followed \
@@ -349,6 +350,63 @@ pub async fn suggest_skill(
         chain.join(" → "),
     );
 
+    ask_for_skill(provider, model, num_ctx, prompt, taken).await
+}
+
+/// Ask the model to write up the way a run found, after getting it wrong first.
+///
+/// Only called when `skill::hard_won` has seen a tool fail and later go through
+/// in a run long enough to be a job. Whether there is a procedure in it is the
+/// part arithmetic cannot decide, so the model may say `null` — and the list of
+/// what not to write is the one Hermes keeps in its own review prompt, from
+/// the library it watched fill up: failures of the network rather than of the
+/// approach, a mistyped argument put right, a job done once, a dead end
+/// written up as though it were the way.
+pub async fn suggest_from_hard_won(
+    provider: &dyn ChatProvider,
+    model: &str,
+    num_ctx: u32,
+    goal: &str,
+    tried: &str,
+    taken: &[String],
+) -> Option<SkillDraft> {
+    if tried.trim().is_empty() {
+        return None;
+    }
+    let existing = if taken.is_empty() { "(none yet)".to_string() } else { taken.join(", ") };
+
+    let prompt = format!(
+        "An assistant was asked to do something, got part of it wrong, and \
+         found its way to doing it. These are its tool calls, in order:\n\n\
+         {tried}\n\n\
+         What it was asked to do: {goal}\n\n\
+         If the way it found is worth following next time — so the same job is \
+         done right the first time instead of worked out again — write it up as \
+         a skill: the steps that worked, in order, with what it learned about \
+         each one, and none of the dead ends. Skills that already exist, whose \
+         names you must not reuse: {existing}\n\n\
+         Reply with ONLY a JSON object, no other text:\n\
+         {{\"name\": \"a short kebab-case handle, e.g. weekly-review\", \
+         \"description\": \"one line, in the user's own language, saying what it does\", \
+         \"when_to_use\": \"one line saying when to reach for it\", \
+         \"steps\": \"the procedure as Markdown, numbered, naming the tool at each step\"}}\n\n\
+         Reply with exactly: null — if what failed was the network or a \
+         service rather than the approach; if the fix was only a mistyped \
+         value put right; if this is a job somebody would ask for once; or if \
+         it never really worked. Most runs like this are not worth a skill.",
+    );
+
+    ask_for_skill(provider, model, num_ctx, prompt, taken).await
+}
+
+/// One question, one draft or none.
+async fn ask_for_skill(
+    provider: &dyn ChatProvider,
+    model: &str,
+    num_ctx: u32,
+    prompt: String,
+    taken: &[String],
+) -> Option<SkillDraft> {
     let messages = vec![ChatMessage::new("user", prompt)];
     let reply = match provider
         .chat(ChatRequest {

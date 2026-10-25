@@ -1255,13 +1255,17 @@ pub const ALREADY_ANSWERED: &str =
 /// Whether a turn of `conversation_id` before `run_id` read something
 /// untrusted, or itself followed one that did.
 pub fn untrusted_before(vault_path: &str, conversation_id: &str, run_id: &str) -> bool {
+    previous_in(vault_path, conversation_id, run_id).is_some_and(|r| r.read_untrusted || r.untrusted_before)
+}
+
+/// The turn of `conversation_id` before `run_id`: what a message answering it
+/// was answering.
+pub fn previous_in(vault_path: &str, conversation_id: &str, run_id: &str) -> Option<Run> {
     load_all(vault_path)
-        .ok()
+        .ok()?
         .into_iter()
-        .flatten()
         .filter(|r| r.parent_run_id.is_none() && r.id != run_id && r.conversation_id.as_deref() == Some(conversation_id))
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
-        .is_some_and(|r| r.read_untrusted || r.untrusted_before)
 }
 
 pub fn latest_for(vault_path: &str, conversation_id: &str) -> Option<Run> {

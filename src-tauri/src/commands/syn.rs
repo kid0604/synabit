@@ -1468,8 +1468,25 @@ async fn reflect_after<R: tauri::Runtime>(
         // A run that followed a skill and still went wrong may have something to
         // teach that skill. Whether it did is a fact on the transcript — a
         // failed call, or a ceiling — so nothing is asked of the model unless
-        // there is.
-        if let Some(name) = crate::syn::skill::skill_that_struggled(run) {
+        // there is. So is the other way a skill goes wrong: the person answering
+        // the turn that followed it with "không phải…". `correction` already
+        // decided that this message is one; what they said is the evidence, and
+        // the skill is the one the turn before this followed.
+        let revise = match crate::syn::skill::skill_that_struggled(run) {
+            Some(name) => Some((name, run.goal.clone(), crate::syn::skill::what_went_wrong(run))),
+            None if corrected => run
+                .conversation_id
+                .as_deref()
+                .and_then(|c| crate::syn::run::previous_in(vault_path, c, &run.id))
+                .and_then(|before| {
+                    crate::syn::skill::followed(&before).map(|name| {
+                        let said = format!("- the person answered what it gave them with: \"{}\"", question.trim());
+                        (name, before.goal.clone(), said)
+                    })
+                }),
+            None => None,
+        };
+        if let Some((name, goal, went_wrong)) = revise {
             let struggling = state
                 .lock()
                 .ok()
@@ -1487,8 +1504,6 @@ async fn reflect_after<R: tauri::Runtime>(
                 let vault = vault_path.to_string();
                 let model_name = model.to_string();
                 let num_ctx = settings.num_ctx;
-                let goal = run.goal.clone();
-                let went_wrong = crate::syn::skill::what_went_wrong(run);
                 let app_handle = app.clone();
 
                 tauri::async_runtime::spawn(async move {
@@ -1517,91 +1532,38 @@ async fn reflect_after<R: tauri::Runtime>(
             }
         }
 
-        // A run that did the same multi-step job twice may be worth writing
-        // down. The decision that it repeated itself is arithmetic and already
-        // made; the model is only asked to name the thing and write the steps,
-        // and only when there is something to name — so the great majority of
-        // runs, which repeat nothing, cost nothing here.
+        // A job that may be worth writing down. See `learn_a_skill`.
         //
         // Gated on the same switch as memory reflection. They are two jobs and
         // will want two switches, but adding a settings field is a migration
         // across both languages and this is the wrong change to bundle it with.
         // Stated rather than hidden: turning off reflection turns off both.
-        if let Some(chain) = crate::syn::skill::repeated_chain(run) {
-            if !crate::syn::skill::already_proposed(vault_path, &chain) {
-                let provider = provider_for(app, settings).await;
-                let vault = vault_path.to_string();
-                let model_name = model.to_string();
-                let goal = run.goal.clone();
-                let run_id_for_skill = run.id.clone();
-                let conversation_for_skill = run.conversation_id.clone();
-                let recipe = crate::syn::drafting::recipe_from_run(run, &chain);
-                let num_ctx = settings.num_ctx;
-                let app_handle = app.clone();
-                let taken: Vec<String> = state
-                    .lock()
-                    .ok()
-                    .and_then(|db| crate::syn::skill::all(&db).ok())
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|s| s.name)
-                    .collect();
-
-                tauri::async_runtime::spawn(async move {
-                    let Some(draft) = crate::syn::reflect::suggest_skill(
-                        provider.as_ref(),
-                        &model_name,
-                        num_ctx,
-                        &goal,
-                        &chain,
-                        &taken,
-                    )
-                    .await
-                    else {
-                        // Recorded even so. The model looked at this shape and
-                        // said no; asking it again on the next identical run
-                        // would spend the same tokens for the same answer.
-                        let _ = crate::syn::skill::remember_proposed(&vault, &chain);
-                        return;
-                    };
-
-                    let written = match write_suggested_skill(
-                        &app_handle,
-                        &vault,
-                        &draft,
-                        &chain,
-                        Some(&run_id_for_skill),
-                        recipe.as_ref(),
-                        conversation_for_skill.as_deref(),
-                    ) {
-                        Ok(id) => id,
-                        Err(e) => {
-                            log::warn!("[Syn] Could not write the suggested skill: {e}");
-                            return;
-                        }
-                    };
-                    // Its card, under the answer that did the job twice.
-                    if let Some(id) = written {
-                        use tauri::{Emitter, Manager};
-                        let state = app_handle.state::<crate::db::DbState>();
-                        let proposals: Vec<crate::syn::drafting::Proposal> = state
-                            .lock()
-                            .map(|db| crate::syn::drafting::waiting(&db).into_iter().filter(|p| p.skill_id == id).collect())
-                            .unwrap_or_default();
-                        if !proposals.is_empty() {
-                            let _ = app_handle.emit(
-                                crate::syn::drafting::EVENT,
-                                serde_json::json!({ "conversation_id": conversation_for_skill, "skills": proposals }),
-                            );
-                        }
-                    }
-                    let _ = crate::syn::skill::remember_proposed(&vault, &chain);
-                    log::info!(
-                        "[Syn] Suggested a skill `{}`, turned off until reviewed",
-                        draft.name
-                    );
-                });
-            }
+        let waiting = state
+            .lock()
+            .map(|db| crate::syn::drafting::waiting(&db).len())
+            .unwrap_or(0);
+        if waiting >= crate::syn::skill::MAX_WAITING {
+            log::info!(
+                "[Syn] Skill learning skipped: {waiting} suggested skills are still waiting for an answer (run {})",
+                run.id
+            );
+        } else {
+            let taken: Vec<String> = state
+                .lock()
+                .ok()
+                .and_then(|db| crate::syn::skill::all(&db).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|s| s.name)
+                .collect();
+            let app_handle = app.clone();
+            let vault = vault_path.to_string();
+            let settings = settings.clone();
+            let model_name = model.to_string();
+            let this_run = run.clone();
+            tauri::async_runtime::spawn(async move {
+                learn_a_skill(&app_handle, &vault, &settings, &model_name, &this_run, &taken).await;
+            });
         }
     } else {
         log::info!(
@@ -1614,6 +1576,117 @@ async fn reflect_after<R: tauri::Runtime>(
         );
     }
 
+}
+
+/// What a run showed Syn how to do, if anything, written up as a skill and put
+/// on a card under the answer.
+///
+/// Three ways of seeing a job, each decided by arithmetic before any model is
+/// asked, so the great majority of runs — which repeat nothing and found
+/// nothing hard — cost nothing here. At most one per run, surest first:
+///
+/// 1. the same calls twice in this run (`skill::repeated_chain`);
+/// 2. the same calls in runs on other days (`skill::chain_across_runs`),
+///    the habit nothing could see while only one run was read;
+/// 3. a way found after getting it wrong (`skill::hard_won`).
+///
+/// Spawned rather than awaited by the caller: the second reads every run on
+/// disk, two hundred files the person should not wait on for their answer.
+async fn learn_a_skill<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    vault: &str,
+    settings: &SynSettings,
+    model: &str,
+    run: &Run,
+    taken: &[String],
+) {
+    use crate::syn::skill;
+
+    enum Seen {
+        Twice(Vec<String>),
+        Habit(Vec<String>, Box<Run>),
+        HardWon,
+    }
+
+    let proposed = skill::proposed_chains(vault);
+    let seen = if let Some(chain) = skill::repeated_chain(run).filter(|c| !proposed.contains(c)) {
+        Seen::Twice(chain)
+    } else {
+        let all = crate::syn::run::load_all(vault).unwrap_or_default();
+        let habit = skill::chain_across_runs(run, &all)
+            .filter(|(chain, _)| !skill::already_covered(&proposed, chain))
+            .map(|(chain, earlier)| (chain, Box::new(earlier.clone())));
+        match habit {
+            Some((chain, earlier)) => Seen::Habit(chain, earlier),
+            None if skill::hard_won(run) && !proposed.contains(&skill::hard_won_key(run)) => Seen::HardWon,
+            None => {
+                log::info!("[Syn] Skill learning: nothing repeated, no habit, nothing hard won (run {})", run.id);
+                return;
+            }
+        }
+    };
+
+    let provider = provider_for(app, settings).await;
+    let (source, chain, recipe, key, draft) = match seen {
+        Seen::Twice(chain) => {
+            let recipe = crate::syn::drafting::recipe_from_run(run, &chain);
+            let draft = crate::syn::reflect::suggest_skill(provider.as_ref(), model, settings.num_ctx, &run.goal, &chain, taken).await;
+            ("repeated in one run", chain.clone(), recipe, chain, draft)
+        }
+        Seen::Habit(chain, earlier) => {
+            let recipe = crate::syn::drafting::recipe_across_runs(&earlier, run, &chain);
+            let draft = crate::syn::reflect::suggest_skill(provider.as_ref(), model, settings.num_ctx, &run.goal, &chain, taken).await;
+            ("repeated on other days", chain.clone(), recipe, chain, draft)
+        }
+        Seen::HardWon => {
+            let tried = skill::what_was_tried(run);
+            let draft =
+                crate::syn::reflect::suggest_from_hard_won(provider.as_ref(), model, settings.num_ctx, &run.goal, &tried, taken).await;
+            ("hard won", skill::calls_of(run), None, skill::hard_won_key(run), draft)
+        }
+    };
+
+    let Some(draft) = draft else {
+        // Recorded even so. The model looked at this shape and said no; asking
+        // it again on the next identical run would spend the same tokens for
+        // the same answer.
+        let _ = skill::remember_proposed(vault, &key);
+        log::info!("[Syn] Skill learning: a job {source} was not worth a skill (run {})", run.id);
+        return;
+    };
+
+    let written = match write_suggested_skill(
+        app,
+        vault,
+        &draft,
+        &chain,
+        Some(&run.id),
+        recipe.as_ref(),
+        run.conversation_id.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            log::warn!("[Syn] Could not write the suggested skill: {e}");
+            return;
+        }
+    };
+    // Its card, under the answer that did the job.
+    if let Some(id) = written {
+        use tauri::Manager;
+        let state = app.state::<crate::db::DbState>();
+        let proposals: Vec<crate::syn::drafting::Proposal> = state
+            .lock()
+            .map(|db| crate::syn::drafting::waiting(&db).into_iter().filter(|p| p.skill_id == id).collect())
+            .unwrap_or_default();
+        if !proposals.is_empty() {
+            let _ = app.emit(
+                crate::syn::drafting::EVENT,
+                serde_json::json!({ "conversation_id": run.conversation_id, "skills": proposals }),
+            );
+        }
+    }
+    let _ = skill::remember_proposed(vault, &key);
+    log::info!("[Syn] Suggested a skill `{}` ({source}), turned off until reviewed", draft.name);
 }
 
 /// Run one routine now, and hand over what it found. See `syn::routine`.

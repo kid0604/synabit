@@ -869,6 +869,36 @@ pub fn repeated_chain(run: &crate::syn::run::Run) -> Option<Vec<String>> {
     None
 }
 
+/// The skill a run was following: the first one the model opened, or else the
+/// one the harness put in its prompt.
+///
+/// Both, because a skill reaches a run two ways now and the harness's way is
+/// the one that fixed the 0-in-17. Reading only `load_skill` meant a chosen
+/// skill that went wrong was never revised — the path most skills take was the
+/// one path nothing learned from.
+pub fn followed(run: &crate::syn::run::Run) -> Option<String> {
+    run.steps
+        .iter()
+        .find_map(|step| {
+            if step.tool.as_deref() != Some(LOAD_TOOL) || step.ok != Some(true) {
+                return None;
+            }
+            step.args
+                .as_ref()
+                .and_then(|a| a.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|n| n.trim().to_string())
+                .filter(|n| !n.is_empty())
+        })
+        .or_else(|| {
+            run.skill_injected
+                .as_deref()
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(str::to_string)
+        })
+}
+
 /// A run that followed a skill and still went wrong.
 ///
 /// Returns the skill it was following, when there is one and the run has
@@ -879,17 +909,7 @@ pub fn repeated_chain(run: &crate::syn::run::Run) -> Option<Vec<String>> {
 /// A run that followed a skill and went fine teaches nothing. A run that went
 /// wrong without following one has no skill to blame.
 pub fn skill_that_struggled(run: &crate::syn::run::Run) -> Option<String> {
-    let followed = run.steps.iter().find_map(|step| {
-        if step.tool.as_deref() != Some(LOAD_TOOL) || step.ok != Some(true) {
-            return None;
-        }
-        step.args
-            .as_ref()
-            .and_then(|a| a.get("name"))
-            .and_then(|v| v.as_str())
-            .map(|n| n.trim().to_string())
-            .filter(|n| !n.is_empty())
-    })?;
+    let followed = followed(run)?;
 
     let something_failed = run.steps.iter().any(|s| s.ok == Some(false));
     // `error` carries what the engine had to say — a ceiling reached, a limit
@@ -924,6 +944,212 @@ pub fn what_went_wrong(run: &crate::syn::run::Run) -> String {
     } else {
         lines.join("\n")
     }
+}
+
+/// The most skills Syn wrote that may wait unanswered at once.
+///
+/// Two. Every way of noticing a skill — a chain repeated in a run or across
+/// runs, a job that took finding out — feeds the same cards, and the cards are
+/// only read while there are few of them. A third proposal on top of two
+/// nobody has answered is a queue nobody asked for; the shape is left
+/// unrecorded so it can be offered again once there is room.
+pub const MAX_WAITING: usize = 2;
+
+/// Runs, including this one, that must have done the same chain before it is
+/// worth writing down as a habit.
+///
+/// Three. Twice in a week is as often a coincidence of phrasing as a job; a
+/// third time is somebody who keeps asking for the same thing.
+pub const ACROSS_RUNS: usize = 3;
+
+/// Days those runs must span.
+///
+/// Days rather than conversations, measured on the real vault (2026-10-25).
+/// The habit it found was "ghi vào daily note: …" on five days — all from
+/// Telegram, which keeps one conversation for everything sent from there, so
+/// a rule about conversations could never have seen it. And the false one it
+/// found was a diagram sent back three times in one afternoon ("vẫn sai, sửa
+/// lại đi") across two conversations: that is one piece of work being put
+/// right, not somebody coming back to a job. Coming back is what a day
+/// measures.
+pub const ACROSS_DAYS: usize = 2;
+
+/// Tools that only find their way around the vault.
+///
+/// A chain of nothing but these is the shape of almost every answer —
+/// search, open, follow a link — rather than the shape of a job. Across two
+/// hundred runs it would repeat in all of them and name nothing.
+const LOOKING_AROUND: &[&str] = &["query_nodes", "get_node", "get_linked_nodes", "list_schemas", "recall"];
+
+/// Successful calls a run needs before finding its way counts as hard won.
+pub const HARD_WON_CALLS: usize = 6;
+
+/// Whether a run is evidence of a job at all.
+///
+/// A run that finished, that somebody asked for at the top level, and that was
+/// not already following a skill. A routine repeats because it was scheduled
+/// to — offering to write it up is offering what it already is. A sub-run's
+/// calls belong to its parent's job. And a run that followed a skill and did
+/// it again is the skill working, not a new one waiting to be written.
+fn may_teach(run: &crate::syn::run::Run) -> bool {
+    run.state == crate::syn::run::RunState::Done
+        && run.parent_run_id.is_none()
+        && run.surface != crate::syn::surface::Surface::Routine
+        && followed(run).is_none()
+}
+
+fn successful_calls(run: &crate::syn::run::Run) -> Vec<&str> {
+    run.steps
+        .iter()
+        .filter(|s| s.ok == Some(true))
+        .filter_map(|s| s.tool.as_deref())
+        .collect()
+}
+
+/// The same chain, done again on other days — the habit `repeated_chain`
+/// cannot see because it only reads one run.
+///
+/// Somebody who asks for last week's spending every Monday, each time in a new
+/// conversation, never repeats within a run, so the only detector Syn had
+/// would never offer them the skill they are most obviously owed.
+///
+/// Returns the longest chain of at least `MIN_CHAIN` successful calls of this
+/// run that `earlier` runs also made, contiguously, often enough to meet
+/// `ACROSS_RUNS` and `ACROSS_DAYS` — together with the newest of those
+/// runs, so a recipe can be read off two passes the way `repeated_chain`'s is.
+/// Arithmetic for the reason that one is: no model is asked whether a habit
+/// exists, only, once one does, what to call it.
+pub fn chain_across_runs<'a>(
+    run: &crate::syn::run::Run,
+    earlier: &'a [crate::syn::run::Run],
+) -> Option<(Vec<String>, &'a crate::syn::run::Run)> {
+    if !may_teach(run) {
+        return None;
+    }
+    let calls = successful_calls(run);
+    if calls.len() < MIN_CHAIN {
+        return None;
+    }
+    let others: Vec<(&crate::syn::run::Run, Vec<&str>)> = earlier
+        .iter()
+        .filter(|r| r.id != run.id && may_teach(r))
+        .map(|r| (r, successful_calls(r)))
+        .filter(|(_, c)| c.len() >= MIN_CHAIN)
+        .collect();
+
+    for len in (MIN_CHAIN..=calls.len()).rev() {
+        let mut tried = std::collections::HashSet::new();
+        for start in 0..=calls.len() - len {
+            let candidate = &calls[start..start + len];
+            if !tried.insert(candidate) || candidate.iter().all(|t| LOOKING_AROUND.contains(t)) {
+                continue;
+            }
+            let matching: Vec<&crate::syn::run::Run> = others
+                .iter()
+                .filter(|(_, c)| c.windows(len).any(|w| w == candidate))
+                .map(|(r, _)| *r)
+                .collect();
+            if matching.len() + 1 < ACROSS_RUNS {
+                continue;
+            }
+            let days: std::collections::HashSet<&str> = matching
+                .iter()
+                .map(|r| r.created_at.get(..10).unwrap_or(&r.created_at))
+                .chain(std::iter::once(run.created_at.get(..10).unwrap_or(&run.created_at)))
+                .collect();
+            if days.len() < ACROSS_DAYS {
+                continue;
+            }
+            let newest = matching.into_iter().max_by(|a, b| a.created_at.cmp(&b.created_at))?;
+            return Some((candidate.iter().map(|s| s.to_string()).collect(), newest));
+        }
+    }
+    None
+}
+
+/// Whether a chain is already offered, whole or as part of a longer one.
+///
+/// Across runs the detector sees every piece of a habit, and once the whole
+/// of it has been offered — kept or declined — offering its first three steps
+/// next week is asking the same question smaller.
+pub fn already_covered(proposed: &[Vec<String>], chain: &[String]) -> bool {
+    proposed
+        .iter()
+        .any(|p| p.len() >= chain.len() && p.windows(chain.len()).any(|w| w == chain))
+}
+
+/// A run that had to find out how to do its job, and did.
+///
+/// A tool that failed and later, in the same run, succeeded is Syn working
+/// something out — a field name, a query that the grammar accepts, the
+/// parameter a connector wanted. Next time that is either worked out again or
+/// read off a skill. Only a run long enough to be a job counts: a typo fixed
+/// on the second call of a three-call answer is not a procedure.
+///
+/// Not a run that read anything untrusted. The model writing this skill is
+/// shown what the run's calls were given, and a page that steered those calls
+/// would be writing the procedure — a standing instruction left by a page,
+/// which is the one thing the approval card is worst at catching.
+pub fn hard_won(run: &crate::syn::run::Run) -> bool {
+    if !may_teach(run) || run.read_untrusted {
+        return false;
+    }
+    let calls: Vec<&crate::syn::run::Step> =
+        run.steps.iter().filter(|s| s.tool.is_some() && s.ok.is_some()).collect();
+    if calls.iter().filter(|s| s.ok == Some(true)).count() < HARD_WON_CALLS {
+        return false;
+    }
+    calls.iter().enumerate().any(|(i, failed)| {
+        failed.ok == Some(false)
+            && calls[i + 1..].iter().any(|later| later.ok == Some(true) && later.tool == failed.tool)
+    })
+}
+
+/// The calls that went through, in order: what Syn watched a hard-won run do,
+/// kept on the skill as `from_chain`.
+pub fn calls_of(run: &crate::syn::run::Run) -> Vec<String> {
+    successful_calls(run).into_iter().map(str::to_string).collect()
+}
+
+/// What `remember_proposed` keeps for a hard-won run, so the same run shape is
+/// not offered twice.
+///
+/// One element, not the calls themselves. `already_covered` reads a remembered
+/// chain's every window as offered, and a twelve-call run that was not worth a
+/// skill would otherwise silence every habit inside it for good.
+pub fn hard_won_key(run: &crate::syn::run::Run) -> Vec<String> {
+    vec![format!("hard-won: {}", successful_calls(run).join(" → "))]
+}
+
+/// The run's calls in order, failures and all, for a model to write the way
+/// that worked.
+///
+/// Arguments and what came back are cut short: the model needs to see which
+/// call failed with what and which one then went through, not read the vault.
+pub fn what_was_tried(run: &crate::syn::run::Run) -> String {
+    let cut = |text: &str, n: usize| -> String {
+        let text = text.trim();
+        if text.chars().count() > n {
+            format!("{}…", text.chars().take(n).collect::<String>())
+        } else {
+            text.to_string()
+        }
+    };
+    run.steps
+        .iter()
+        .filter(|s| s.ok.is_some())
+        .filter_map(|s| s.tool.as_deref().map(|tool| (s, tool)))
+        .enumerate()
+        .map(|(i, (step, tool))| {
+            let args = step.args.as_ref().map(|a| cut(&a.to_string(), 200)).unwrap_or_default();
+            if step.ok == Some(true) {
+                format!("{}. `{tool}` {args} → ok", i + 1)
+            } else {
+                format!("{}. `{tool}` {args} → failed: {}", i + 1, cut(&step.preview, 200))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// How many proposed chains are remembered.
@@ -1420,6 +1646,168 @@ mod tests {
         );
     }
 
+    /// A skill the harness put in the prompt is followed as much as one the
+    /// model opened, and goes wrong the same way.
+    #[test]
+    fn a_skill_the_harness_chose_is_one_the_run_followed() {
+        let mut run = run_following(None, &["query_nodes"]);
+        run.skill_injected = Some("tong-ket-tuan".into());
+        assert_eq!(followed(&run).as_deref(), Some("tong-ket-tuan"));
+        assert_eq!(skill_that_struggled(&run).as_deref(), Some("tong-ket-tuan"));
+
+        let mut both = run_following(Some("weekly-review"), &[]);
+        both.skill_injected = Some("tong-ket-tuan".into());
+        assert_eq!(followed(&both).as_deref(), Some("weekly-review"), "the one it opened says more");
+    }
+
+    fn finished(tools: &[&str], conversation: &str, created_at: &str) -> crate::syn::run::Run {
+        let mut run = run_calling(tools);
+        run.state = crate::syn::run::RunState::Done;
+        run.conversation_id = Some(conversation.to_string());
+        run.created_at = created_at.to_string();
+        run
+    }
+
+    const WEEKLY: &[&str] = &["get_transactions", "crunch", "create_node"];
+
+    /// Monday's spending, asked for each week, is the
+    /// skill a person is most obviously owed and the one `repeated_chain`
+    /// could never see.
+    #[test]
+    fn the_same_job_in_three_runs_on_other_days_is_a_habit() {
+        let earlier = vec![
+            finished(&["query_nodes", "get_transactions", "crunch", "create_node"], "c1", "2026-10-06T08:00:00Z"),
+            finished(WEEKLY, "c2", "2026-10-13T08:00:00Z"),
+            finished(&["timeline", "get_node", "update_node"], "c3", "2026-10-14T08:00:00Z"),
+        ];
+        let now = finished(WEEKLY, "c4", "2026-10-20T08:00:00Z");
+
+        let (chain, newest) = chain_across_runs(&now, &earlier).expect("a habit");
+        assert_eq!(chain, WEEKLY);
+        assert_eq!(newest.created_at, "2026-10-13T08:00:00Z", "the recipe is read off the latest pass before this one");
+    }
+
+    #[test]
+    fn twice_is_not_yet_a_habit() {
+        let earlier = vec![finished(WEEKLY, "c1", "2026-10-13T08:00:00Z")];
+        assert!(chain_across_runs(&finished(WEEKLY, "c2", "2026-10-20T08:00:00Z"), &earlier).is_none());
+    }
+
+    /// Three passes in one afternoon is one piece of work being put right —
+    /// the diagram sent back with "vẫn sai, sửa lại đi" — even across
+    /// conversations. It is not somebody coming back to a job.
+    #[test]
+    fn three_times_in_one_sitting_is_not_a_habit() {
+        let earlier = vec![
+            finished(WEEKLY, "c1", "2026-10-13T08:00:00Z"),
+            finished(WEEKLY, "c2", "2026-10-13T08:05:00Z"),
+        ];
+        assert!(chain_across_runs(&finished(WEEKLY, "c2", "2026-10-13T08:10:00Z"), &earlier).is_none());
+    }
+
+    /// Telegram is one conversation for everything sent from there, and the
+    /// habit the real vault holds — a daily note written to from the phone
+    /// most evenings — lives entirely inside it.
+    #[test]
+    fn the_same_job_on_other_days_in_one_conversation_is_a_habit() {
+        let earlier = vec![
+            finished(WEEKLY, "telegram", "2026-10-13T20:00:00Z"),
+            finished(WEEKLY, "telegram", "2026-10-15T21:00:00Z"),
+        ];
+        assert!(chain_across_runs(&finished(WEEKLY, "telegram", "2026-10-18T20:30:00Z"), &earlier).is_some());
+    }
+
+    /// Searching, opening and following a link is how almost every answer
+    /// starts, and across two hundred runs it would be "a habit" in all of them.
+    #[test]
+    fn finding_your_way_around_the_vault_is_not_a_habit() {
+        let looking = &["query_nodes", "get_node", "get_linked_nodes"];
+        let earlier = vec![finished(looking, "c1", "2026-10-13T08:00:00Z"), finished(looking, "c2", "2026-10-14T08:00:00Z")];
+        assert!(chain_across_runs(&finished(looking, "c3", "2026-10-15T08:00:00Z"), &earlier).is_none());
+    }
+
+    /// A routine repeats because it was scheduled to, and a run following a
+    /// skill repeats because the skill works. Neither is a skill waiting to be
+    /// written.
+    #[test]
+    fn routines_and_skills_doing_their_job_are_not_habits() {
+        let mut routine = finished(WEEKLY, "c1", "2026-10-13T08:00:00Z");
+        routine.surface = crate::syn::surface::Surface::Routine;
+        let earlier = vec![routine, finished(WEEKLY, "c2", "2026-10-14T08:00:00Z")];
+        assert!(chain_across_runs(&finished(WEEKLY, "c3", "2026-10-15T08:00:00Z"), &earlier).is_none());
+
+        let earlier = vec![finished(WEEKLY, "c1", "2026-10-13T08:00:00Z"), finished(WEEKLY, "c2", "2026-10-14T08:00:00Z")];
+        let mut following = finished(WEEKLY, "c3", "2026-10-15T08:00:00Z");
+        following.skill_injected = Some("chi-tieu-tuan".into());
+        assert!(chain_across_runs(&following, &earlier).is_none());
+    }
+
+    /// Once the whole of a habit has been offered, its pieces have been too.
+    #[test]
+    fn a_piece_of_an_offered_chain_is_already_offered() {
+        let offered = vec![vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()]];
+        let piece = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(already_covered(&offered, &piece(&["b", "c", "d"])));
+        assert!(already_covered(&offered, &piece(&["a", "b", "c", "d"])));
+        assert!(!already_covered(&offered, &piece(&["a", "c", "d"])), "not contiguous");
+        assert!(!already_covered(&offered, &piece(&["a", "b", "c", "d", "e"])), "a longer job is a different one");
+    }
+
+    fn worked_out(untrusted: bool, recovered: bool) -> crate::syn::run::Run {
+        let mut run = finished(&["get_transactions", "crunch"], "c1", "2026-10-20T08:00:00Z");
+        run.record_tool(1, "connector__bank__list", serde_json::json!({ "since": "10/2026" }), false,
+            crate::syn::registry::Reversal::Nothing, "{\"error\":\"since must be YYYY-MM-DD\"}", 1);
+        if recovered {
+            run.record_tool(2, "connector__bank__list", serde_json::json!({ "since": "2026-10-01" }), true,
+                crate::syn::registry::Reversal::Nothing, "[]", 1);
+        }
+        for tool in ["crunch", "compute", "create_node", "get_node"] {
+            run.record_tool(3, tool, serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        }
+        run.read_untrusted = untrusted;
+        run
+    }
+
+    /// A tool that failed and then went through is Syn having worked something
+    /// out — here, the date format a bank wanted.
+    #[test]
+    fn a_way_found_after_getting_it_wrong_is_hard_won() {
+        assert!(hard_won(&worked_out(false, true)));
+        assert!(!hard_won(&worked_out(false, false)), "a failure never put right is not a way found");
+    }
+
+    /// A page that steered the calls would be writing the procedure.
+    #[test]
+    fn a_run_that_read_something_untrusted_teaches_nothing_by_struggling() {
+        assert!(!hard_won(&worked_out(true, true)));
+    }
+
+    #[test]
+    fn a_short_answer_with_a_typo_put_right_is_not_hard_won() {
+        let mut run = finished(&["query_nodes"], "c1", "2026-10-20T08:00:00Z");
+        run.record_tool(1, "get_node", serde_json::json!({}), false, crate::syn::registry::Reversal::Nothing, "not found", 1);
+        run.record_tool(1, "get_node", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        assert!(!hard_won(&run));
+    }
+
+    /// The model sees the failure and what put it right, in order.
+    #[test]
+    fn what_was_tried_shows_the_dead_end_and_the_way_through() {
+        let told = what_was_tried(&worked_out(false, true));
+        assert!(told.contains("failed: {\"error\":\"since must be YYYY-MM-DD\"}"), "{told}");
+        assert!(told.contains("2026-10-01") && told.contains("→ ok"), "{told}");
+    }
+
+    /// A hard-won run that was not worth a skill must not silence the habits
+    /// inside it.
+    #[test]
+    fn a_hard_won_key_covers_no_chain() {
+        let run = worked_out(false, true);
+        let key = hard_won_key(&run);
+        assert_eq!(key.len(), 1);
+        assert!(!already_covered(&[key], &calls_of(&run)[..3]));
+    }
+
     /// What the model is shown is the broken step, not the whole transcript.
     #[test]
     fn the_evidence_is_the_step_that_broke_and_what_it_said() {
@@ -1654,6 +2042,24 @@ mod what_syn_would_have_offered {
         }
         eprintln!("\n{offered} of {} runs would have prompted a skill.", runs.len());
         eprintln!("(runs with fewer than {} successful calls cannot, and are not listed)\n", MIN_CHAIN * 2);
+
+        // The two that read more than one run. Each run is judged against the
+        // runs before it, as it would have been when it finished.
+        eprintln!("═══ on other days, and hard won ═══");
+        let (mut habits, mut hard) = (0, 0);
+        for (i, run) in runs.iter().enumerate() {
+            if repeated_chain(run).is_some() {
+                continue;
+            }
+            if let Some((chain, earlier)) = chain_across_runs(run, &runs[i + 1..]) {
+                habits += 1;
+                eprintln!("  habit     {} → {}  (last before: {})", &run.id[..8], chain.join(" → "), &earlier.id[..8]);
+            } else if hard_won(run) {
+                hard += 1;
+                eprintln!("  hard won  {} → {}: {}", &run.id[..8], calls_of(run).len(), run.goal.chars().take(70).collect::<String>());
+            }
+        }
+        eprintln!("\n{habits} habit(s) and {hard} hard-won run(s), before the model is asked whether any is worth it.\n");
     }
 }
 
