@@ -94,6 +94,11 @@ fn latest(vault: &str, conversation: &str) -> Option<Run> {
 pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) -> Outcome {
     let started = Instant::now();
     let vault = fixture::build(task.preset, provider, model);
+    if !task.visuals {
+        let mut settings = crate::syn::settings::load_settings(&vault.path).expect("settings");
+        settings.visuals = false;
+        crate::syn::settings::save_settings(&vault.path, &settings).expect("settings");
+    }
     let _web = super::web::serve(task.web.clone());
     let _servers = super::connectors::start(&vault.path, &task.connectors).await;
     let rest = if task.rest.is_empty() {

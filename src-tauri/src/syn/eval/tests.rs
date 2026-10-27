@@ -75,7 +75,7 @@ async fn harness_runs_the_product_path() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true,
         checks: vec![
             Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) },
             Check::Called("update_node"),
@@ -103,7 +103,7 @@ async fn saying_done_is_not_doing_it() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true,
         checks: vec![Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) }],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
@@ -134,7 +134,7 @@ async fn a_stop_is_answered_and_counted() {
         }],
         connectors: Vec::new(),
         declared: Vec::new(),
-        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(),
+        rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true,
         checks: vec![Check::AskedConsent, Check::Visited("kotlin-2-4"), Check::AnswerHas(&["2026-09-18"])],
     };
     let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
@@ -509,4 +509,59 @@ async fn a_held_history_and_a_connected_pi_reach_the_model() {
     let said_there = |text: &str| clean.history.iter().any(|s| s.content.contains(text));
     assert!(!said_there("chưa có kết nối"), "the clean history lacks the old answer");
     assert!(said_there("Mua sữa cho Cam"), "and lacks nothing else");
+}
+
+/// A visual task, driven through the harness with a script for a model: the
+/// guide, then a visual with a slider, then words. It passes on what the
+/// vault holds — and the same script with the setting off keeps nothing.
+#[tokio::test]
+async fn a_visual_task_is_graded_by_the_visual_kept() {
+    let script = || {
+        vec![
+            calls(crate::syn::visual::tool::GUIDE_TOOL, serde_json::json!({ "kind": "simulation" })),
+            calls(
+                crate::syn::visual::tool::SHOW_TOOL,
+                serde_json::json!({ "title": "Con lắc đơn", "kind": "simulation", "html": "<input type=\"range\" id=\"l\"><canvas></canvas><script>/* swing */</script>" }),
+            ),
+            text("Chu kỳ T = 2π√(L/g): dây dài gấp bốn thì chu kỳ gấp đôi."),
+        ]
+    };
+    let pendulum = |id: &'static str| super::tasks::all().into_iter().find(|t| t.id == id).expect("the task");
+
+    let _model = scripted(script());
+    let drawn = super::harness::run(&pendulum("vz-pendulum-vi"), 1, SynProvider::Anthropic, "claude-opus-5-5").await;
+    drop(_model);
+    if !cfg!(desktop) {
+        return;
+    }
+    assert!(drawn.passed, "{drawn:#?}");
+
+    let _model = scripted(script());
+    let gated = super::harness::run(&pendulum("vz-gate-small"), 1, SynProvider::Anthropic, "claude-opus-5-5").await;
+    assert!(gated.passed, "{gated:#?}");
+    assert!(gated.trace.iter().all(|t| t.contains('!') || !t.starts_with("show_visual")), "{:?}", gated.trace);
+}
+
+/// The spending check reads the ledger: the September sums pass, a number
+/// the ledger does not hold fails, and so does a chart missing a group.
+#[test]
+fn spending_is_checked_against_the_ledger() {
+    use super::tasks::visual::{amounts, spending_from_the_ledger};
+    let vault = super::fixture::build(Preset::MoneyVault, SynProvider::Ollama, "x");
+    let e = super::grade::Evidence { vault: &vault, runs: &[], answers: &[], visited: &[], nodes_before: 0, sent: &[], card_questions: 0 };
+    let chart = |rows: &str| format!("<svg viewBox=\"0 0 600 400\"><path d=\"M100,200 L300,400\"/></svg><script>const data = [{rows}]; const max = 2000000;</script><p style=\"color:#150000\">2026</p>");
+
+    let right = chart("['Hoá đơn', 1500000], ['Ăn uống', 150000], ['Mua sắm', 120000], ['Cà phê', 45000]");
+    assert_eq!(spending_from_the_ledger(&[right], &e), Ok(()));
+    let raw = chart("['Hoá đơn', '1.500.000'], ['Ăn uống', 65000], ['Ăn uống', 85000], ['Mua sắm', 120000], ['Cà phê', 45000], 1815000");
+    assert_eq!(spending_from_the_ledger(&[raw], &e), Ok(()));
+
+    let made_up = chart("['Hoá đơn', 1500000], ['Ăn uống', 150000], ['Mua sắm', 120000], ['Cà phê', 45000], ['Giải trí', 350000]");
+    assert!(spending_from_the_ledger(&[made_up], &e).is_err_and(|w| w.contains("350000")));
+    let short = chart("['Hoá đơn', 1500000], ['Ăn uống', 150000]");
+    assert!(spending_from_the_ledger(&[short], &e).is_err_and(|w| w.contains("Cà phê")));
+    assert!(spending_from_the_ledger(&[], &e).is_err());
+
+    // Coordinates, colours, decimals and words are not amounts.
+    assert_eq!(amounts("<path d=\"M100,200\"/> #150000 0.150000 id150000 1,500,000"), [1_500_000].into());
 }

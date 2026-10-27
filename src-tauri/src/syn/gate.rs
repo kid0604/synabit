@@ -156,7 +156,8 @@ pub enum How {
     /// Held for the person: a change to what was there, asked for after the
     /// run read somebody else's words. See `syn::changes`.
     Stage,
-    /// A visual, looked at and kept, which reads the run. See `syn::visual::tool`.
+    /// A visual's guide, or a visual looked at and kept: both read the run,
+    /// which says whether it was offered them. See `syn::visual::tool`.
     ShowVisual,
     /// The registry runs it.
     Execute,
@@ -549,7 +550,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::DraftSkill
     } else if tool == crate::syn::routine::DRAFT_TOOL {
         How::DraftRoutine
-    } else if tool == crate::syn::visual::tool::SHOW_TOOL {
+    } else if tool == crate::syn::visual::tool::SHOW_TOOL || tool == crate::syn::visual::tool::GUIDE_TOOL {
         How::ShowVisual
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.

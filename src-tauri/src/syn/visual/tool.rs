@@ -110,6 +110,18 @@ fn refused(said: impl Into<String>) -> (String, Option<Shown>) {
     (json!({ "error": said.into() }).to_string(), None)
 }
 
+const NOT_HERE: &str = "Visuals are not available here. Answer in words; a Mermaid diagram if a picture is needed.";
+
+/// `visual_guide`, in a run: the guide where visuals are offered, refused
+/// where they are not. A run not offered the tool can still name it, and the
+/// guide would tell it how to draw what it may not show.
+pub fn read_guide(offered_here: bool, args: &Value) -> String {
+    if !offered_here {
+        return refused(NOT_HERE).0;
+    }
+    guide(args)
+}
+
 /// `show_visual`: look at the fragment, keep it, say what happened. What
 /// comes back is the tool's answer and, when a visual was kept, what it was.
 pub fn show<R: tauri::Runtime>(
@@ -122,7 +134,7 @@ pub fn show<R: tauri::Runtime>(
     args: &Value,
 ) -> (String, Option<Shown>) {
     if !offered_here {
-        return refused("Visuals are not available here. Answer in words; a Mermaid diagram if a picture is needed.");
+        return refused(NOT_HERE);
     }
     if !tried.guide_read {
         return refused(format!("Call {GUIDE_TOOL} with this visual's kind first: it says how a visual is drawn here."));

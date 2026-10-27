@@ -108,6 +108,10 @@ pub enum Check {
     NotSent(&'static str),
     /// No request to this path holds this text.
     NotSentTo { path: &'static str, text: &'static str },
+    /// What the visuals the vault holds afterwards say, HTML and all — every
+    /// one under `visual::store::FOLDER`, oldest first. A fresh vault holds
+    /// none, so these are the task's.
+    VisualHtml(fn(&[String], &Evidence) -> Result<(), String>),
 }
 
 /// What a task left behind.
@@ -176,7 +180,7 @@ pub fn nodes(vault: &Vault) -> Vec<(String, String, String, String, serde_json::
     .collect()
 }
 
-fn month(vault: &Vault, month: &str) -> Vec<serde_json::Value> {
+pub fn month(vault: &Vault, month: &str) -> Vec<serde_json::Value> {
     let state = vault.db();
     let db = state.lock().unwrap_or_else(|e| e.into_inner());
     db.get_node(&format!("Finance/{month}.json"))
@@ -462,6 +466,7 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
             }
             Err(format!("none of: {}", why.join(" | ")))
         }
+        Check::VisualHtml(judge) => judge(&visuals(e.vault), e),
         Check::Visited(what) => e
             .visited
             .iter()
@@ -469,6 +474,25 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
             .then_some(())
             .ok_or_else(|| format!("never looked up {what:?}")),
     }
+}
+
+/// The HTML of every visual kept in the vault, oldest first.
+pub fn visuals(vault: &Vault) -> Vec<String> {
+    let root = std::path::Path::new(&vault.path);
+    let mut kept: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(root.join(crate::syn::visual::store::FOLDER))
+        .map(|it| {
+            it.flatten()
+                .filter_map(|f| {
+                    let name = f.file_name().to_string_lossy().to_string();
+                    let id = name.strip_suffix(".md")?.to_string();
+                    let html = crate::syn::visual::store::load(root, &id)?.html;
+                    Some((f.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), html))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    kept.into_iter().map(|(_, html)| html).collect()
 }
 
 /// How many times the runs stopped to ask.

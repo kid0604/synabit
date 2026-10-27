@@ -1199,6 +1199,12 @@ impl SynEngine {
                             Err(e) => Err(e),
                         }
                     }
+                    crate::syn::gate::How::ShowVisual if tc.function.name == crate::syn::visual::tool::GUIDE_TOOL => {
+                        Ok(crate::syn::registry::ToolOutcome {
+                            content: crate::syn::visual::tool::read_guide(draws, &tc.function.arguments),
+                            reversal: crate::syn::registry::Reversal::Nothing,
+                        })
+                    }
                     crate::syn::gate::How::ShowVisual => {
                         let tried = crate::syn::visual::tool::Tried::from_steps(&run.steps);
                         let asked = crate::syn::visual::tool::Asked {
@@ -7010,6 +7016,9 @@ mod driving {
         .await;
         let folder = std::path::Path::new(&vault).join(crate::syn::visual::store::FOLDER);
         assert!(!folder.exists() || std::fs::read_dir(&folder).expect("dir").next().is_none(), "nothing kept: {:?}", run.steps);
+        // Nor is it told how to draw one (the eval of 2026-10-27, `vz-gate-small`).
+        let guide = run.steps.iter().find(|s| s.tool.as_deref() == Some("visual_guide")).expect("the call is on the record");
+        assert_eq!(guide.ok, Some(false), "{}", guide.preview);
     }
 
     /// Asking `find_tools` for a connector just approved brings its tools.
