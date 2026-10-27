@@ -1281,6 +1281,8 @@ pub fn run() {
             sync_cmds::sync_revoke_device,
             // System
             open_app_log_folder,
+            // Syn's visuals. See `syn::visual`.
+            syn::visual::store::syn_visual_meta,
             // Bước 0 of Syn's visuals: debug builds only.
             #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_ping,

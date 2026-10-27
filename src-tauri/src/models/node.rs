@@ -73,6 +73,14 @@ pub enum NodeType {
     /// file logged as a type no part of the app queries. See
     /// `syn::connector::manifest`.
     Connector,
+    /// An interactive visual Syn drew: a fragment of HTML or SVG, and the
+    /// question it answered.
+    ///
+    /// The user's work rather than storage, like a thread: it is found in
+    /// Nexus by its title and kept in a note. Spelled `syn_visual` on disk,
+    /// in `SynVisuals/`, never in `Syn/`, which the scan skips. See
+    /// `syn::visual::store`.
+    Visual,
     /// A kept way of looking at the vault: a query plus how to arrange it.
     ///
     /// Written by Things and read by nothing else. Deliberately not `Filter`,
@@ -114,6 +122,7 @@ impl NodeType {
         "syn_skill",
         "syn_thread",
         "syn_connector",
+        "syn_visual",
         "schema",
         "json",
         "canvas",
@@ -145,6 +154,7 @@ impl NodeType {
             NodeType::Skill => "syn_skill",
             NodeType::Thread => "syn_thread",
             NodeType::Connector => "syn_connector",
+            NodeType::Visual => "syn_visual",
             NodeType::Schema => "schema",
             NodeType::Json => "json",
             NodeType::Canvas => "canvas",
@@ -184,6 +194,7 @@ impl From<&str> for NodeType {
             "syn_skill" => NodeType::Skill,
             "syn_thread" => NodeType::Thread,
             "syn_connector" => NodeType::Connector,
+            "syn_visual" => NodeType::Visual,
             "schema" => NodeType::Schema,
             "json" => NodeType::Json,
             "canvas" => NodeType::Canvas,

@@ -55,6 +55,8 @@ pub(crate) fn folder_for_type(node_type: &str) -> String {
         "syn_skill" => crate::syn::skill::SKILL_FOLDER.to_string(),
         // Nor `Connectors`. See `connector::manifest`.
         "syn_connector" => crate::syn::connector::manifest::CONNECTOR_FOLDER.to_string(),
+        // Nor `Visuals`. See `syn::visual::store`.
+        "syn_visual" => crate::syn::visual::store::FOLDER.to_string(),
         // Nor `Threads`. A thread is the user's own work rather than Syn's
         // bookkeeping — see `syn/thread.rs` — but the folder is still prefixed,
         // because somebody's own `thread` kind has first claim on the word.

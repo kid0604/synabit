@@ -110,7 +110,6 @@ impl Reply {
         Reply { status: StatusCode::OK, content_type, body: Cow::Borrowed(text.as_bytes()), immutable: false }
     }
 
-    #[cfg_attr(not(debug_assertions), allow(dead_code))]
     fn page(html: String) -> Reply {
         Reply { status: StatusCode::OK, content_type: "text/html; charset=utf-8", body: Cow::Owned(html.into_bytes()), immutable: false }
     }
@@ -124,13 +123,19 @@ impl Reply {
     }
 }
 
-/// The answer for one path. Pure, so every route is tested without a webview.
-pub fn answer(method: &Method, path: &str, query: Option<&str>) -> Reply {
+/// The answer for one path. Pure, so every route is tested without a webview:
+/// `load` is what reads a kept visual's fragment by id (`store::load` on the
+/// open vault, in the app).
+pub fn answer(method: &Method, path: &str, query: Option<&str>, load: &dyn Fn(&str) -> Option<String>) -> Reply {
     if method != Method::GET {
         return Reply::refused(StatusCode::METHOD_NOT_ALLOWED);
     }
-    #[cfg(not(debug_assertions))]
-    let _ = query;
+    if let Some(id) = path.strip_prefix("/v/") {
+        return match super::store::is_id(id).then(|| load(id)).flatten() {
+            Some(fragment) => Reply::page(assemble(&fragment, Theme::from_query(query))),
+            None => Reply::refused(StatusCode::NOT_FOUND),
+        };
+    }
     match path {
         "/kit.js" => Reply::fixed(assets::KIT_JS, "text/javascript; charset=utf-8"),
         "/kit.css" => Reply::fixed(assets::KIT_CSS, "text/css; charset=utf-8"),
@@ -145,9 +150,15 @@ pub fn answer(method: &Method, path: &str, query: Option<&str>) -> Reply {
     }
 }
 
-/// The handler `lib.rs` registers for [`SCHEME`].
+/// The handler `lib.rs` registers for [`SCHEME`]: a kept visual is read from
+/// the vault that is open now, and from nowhere else.
 pub fn handle(request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-    let reply = answer(request.method(), request.uri().path(), request.uri().query());
+    let vault = crate::app_shell::vault::global().current().map(|open| open.canonical);
+    let load = |id: &str| vault.as_ref().and_then(|v| super::store::load(v, id)).map(|visual| visual.html);
+    respond(answer(request.method(), request.uri().path(), request.uri().query(), &load))
+}
+
+fn respond(reply: Reply) -> Response<Cow<'static, [u8]>> {
     Response::builder()
         .status(reply.status)
         .header(header::CONTENT_TYPE, reply.content_type)
@@ -236,6 +247,29 @@ mod tests {
         assert!(page.contains("http-equiv=\"Content-Security-Policy\""));
         assert!(page.contains("connect-src 'none'"));
         assert!(!page.contains("frame-ancestors"), "a meta policy cannot set it");
+    }
+
+    /// A kept visual by its id, made a page in the theme asked for; anything
+    /// that is not an id, or not kept, is a 404 — and the loader is never asked
+    /// about a path that is not an id.
+    #[test]
+    fn a_kept_visual_is_served_by_its_id() {
+        let id = "0123456789abcdef0123456789abcdef";
+        let asked = std::cell::RefCell::new(Vec::new());
+        let load = |wanted: &str| {
+            asked.borrow_mut().push(wanted.to_string());
+            (wanted == id).then(|| "<p id=\"kept\">kept</p>".to_string())
+        };
+        let page = answer(&Method::GET, &format!("/v/{id}"), Some("theme=dark"), &load);
+        assert_eq!(page.status, StatusCode::OK);
+        let html = String::from_utf8(page.body.to_vec()).expect("utf8");
+        assert!(html.contains("<p id=\"kept\">kept</p>") && html.contains("data-theme=\"dark\"") && html.contains("/kit.js"));
+
+        assert_eq!(answer(&Method::GET, "/v/ffffffffffffffffffffffffffffffff", None, &load).status, StatusCode::NOT_FOUND);
+        for bad in ["/v/../../../etc/passwd", "/v/", "/v/0123456789ABCDEF0123456789ABCDEF", "/v/0123456789abcdef0123456789abcdef/x"] {
+            assert_eq!(answer(&Method::GET, bad, None, &load).status, StatusCode::NOT_FOUND, "{bad}");
+        }
+        assert_eq!(asked.borrow().len(), 2, "only ids were looked up: {:?}", asked.borrow());
     }
 
     #[test]

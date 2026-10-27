@@ -33,7 +33,9 @@
 //! from this origin: a visual has no network to fetch anything else with.
 
 pub mod assets;
+pub mod check;
 pub mod protocol;
+pub mod store;
 
 #[cfg(debug_assertions)]
 pub mod spike;
