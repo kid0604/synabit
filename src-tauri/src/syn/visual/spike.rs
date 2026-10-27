@@ -93,3 +93,15 @@ pub fn visual_spike_keep(app: tauri::AppHandle, db: tauri::State<'_, crate::db::
     .map_err(|e| e.to_string())?;
     Ok((vault, id))
 }
+
+/// A file of the open vault, as text: the note the spike kept a visual in,
+/// read back from disk rather than from what the editor shows.
+#[tauri::command]
+pub fn visual_spike_read(rel_path: String) -> Result<String, String> {
+    let open = crate::app_shell::vault::global().current().ok_or("no vault is open")?;
+    let rel = std::path::Path::new(&rel_path);
+    if rel.is_absolute() || rel.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        return Err("a path inside the vault".into());
+    }
+    std::fs::read_to_string(std::path::Path::new(&open.given).join(rel)).map_err(|e| e.to_string())
+}

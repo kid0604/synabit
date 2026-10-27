@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
+import { titleFor, bodyFor, bodyForVisual, KEPT_IN } from '../keepAsNote';
 import bubble from '../components/MessageBubble.vue?raw';
 import en from '../../../i18n/locales/en.json';
 import vi from '../../../i18n/locales/vi.json';
@@ -217,5 +217,23 @@ describe('the room an answer gets', () => {
   it('scrolls a table rather than crushing its columns', () => {
     const rule = bubble.slice(bubble.indexOf(':deep(.prose table)'));
     expect(rule.slice(0, 160)).toContain('overflow-x: auto');
+  });
+});
+
+/**
+ * A visual is kept as one block naming it by id: the HTML stays in its own
+ * node (`SynVisuals/<id>.md`), and a note never carries model-written code.
+ */
+describe('keeping a visual', () => {
+  const ID = '0123456789abcdef0123456789abcdef';
+
+  it('writes one block that names it, and nothing else', () => {
+    expect(bodyForVisual(ID, 'Con lắc dài gấp đôi thì sao?')).toBe(`<div data-type="syn-visual" data-visual="${ID}"></div>\n`);
+  });
+
+  it('cannot be made to write more than an id', () => {
+    const body = bodyForVisual(`${ID}" onload="alert(1)`);
+    expect(body).toMatch(/^<div data-type="syn-visual" data-visual="[0-9a-f]+"><\/div>\n$/);
+    expect(body).not.toContain('onload');
   });
 });

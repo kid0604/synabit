@@ -186,6 +186,12 @@ describe('a kept visual in a note', () => {
     expect(markdownOf(open(md))).toBe(md);
   });
 
+  it('sits between two paragraphs without swallowing the blank lines around it', () => {
+    const md = markdownOf(open(`Trước hình.\n\n${BLOCK}\n\nSau hình.`));
+    expect(md).toContain(`Trước hình.\n\n${BLOCK}\n\nSau hình.`);
+    expect(markdownOf(open(md))).toBe(md);
+  });
+
   it('keeps only an id in the attribute', () => {
     const md = markdownOf(open(`<div data-type="syn-visual" data-visual="${ID}&quot; onload=&quot;x"></div>`));
     expect(md).toContain(`data-visual="${ID}"`);

@@ -1296,6 +1296,7 @@ pub fn run() {
             syn::visual::spike::visual_spike_report,
             #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_keep,
+            syn::visual::spike::visual_spike_read,
                 ]);
             move |invoke| {
                 if let Err(refused) = crate::app_shell::gate::check(&invoke) {

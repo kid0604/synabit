@@ -23,9 +23,13 @@ const mountIt = async () => {
   return wrapper;
 };
 
+const META = { id: ID, title: 'Con lắc đơn', kind: 'simulation', question: 'q' };
+const answering = (settings: Promise<unknown>) => (command: string) =>
+  command === 'syn_get_settings' ? settings : Promise.resolve(META);
+
 beforeEach(() => {
   invoke.mockReset();
-  invoke.mockResolvedValue({ id: ID, title: 'Con lắc đơn', kind: 'simulation', question: 'q' });
+  invoke.mockImplementation(answering(Promise.resolve({ visuals: true })));
 });
 
 describe('a visual in the chat', () => {
@@ -72,10 +76,45 @@ describe('a visual in the chat', () => {
   });
 
   it('says so when the visual is gone', async () => {
-    invoke.mockRejectedValue(new Error('There is no visual'));
+    invoke.mockImplementation((command: string) =>
+      command === 'syn_get_settings' ? Promise.resolve({ visuals: true }) : Promise.reject(new Error('There is no visual')));
     const wrapper = await mountIt();
     expect(wrapper.find('iframe').exists()).toBe(false);
     expect(wrapper.text()).toContain('syn.visual_missing');
+    wrapper.unmount();
+  });
+});
+
+describe('a visual where the setting is off', () => {
+  /** Decided 2026-10-27 (plan PR 6): the setting is the person saying no model-written code runs, in an old note too. */
+  it('shows its title and kind, and runs nothing', async () => {
+    invoke.mockImplementation(answering(Promise.resolve({ visuals: false })));
+    const wrapper = await mountIt();
+    expect(wrapper.find('iframe').exists()).toBe(false);
+    const held = wrapper.get('.syn-visual-held');
+    expect(held.text()).toContain('Con lắc đơn');
+    expect(held.text()).toContain('syn.visual_kind_simulation');
+    expect(held.text()).toContain('syn.visual_off');
+    expect(wrapper.text()).not.toContain('syn.visual_download');
+    wrapper.unmount();
+  });
+
+  it('frames nothing before the setting is read', async () => {
+    let read: (value: unknown) => void = () => {};
+    invoke.mockImplementation(answering(new Promise((resolve) => (read = resolve))));
+    const wrapper = await mountIt();
+    expect(wrapper.find('iframe').exists()).toBe(false);
+    read({ visuals: false });
+    await flushPromises();
+    expect(wrapper.find('iframe').exists()).toBe(false);
+    expect(wrapper.find('.syn-visual-held').exists()).toBe(true);
+    wrapper.unmount();
+  });
+
+  it('runs as before when the setting cannot be read', async () => {
+    invoke.mockImplementation(answering(Promise.reject(new Error('no settings'))));
+    const wrapper = await mountIt();
+    expect(wrapper.find('iframe').exists()).toBe(true);
     wrapper.unmount();
   });
 });

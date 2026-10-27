@@ -103,7 +103,7 @@ onMounted(() => {
   window.addEventListener('mouseup', endPaneDrag);
   // Bước 0 of Syn's visuals, unattended: only in a build made with
   // VITE_SYNVISUAL_SPIKE=1. See `shared/syn/visualSpike.ts`.
-  void autorunVisualSpike();
+  void autorunVisualSpike((id) => handleEditFromNexus(id, 'note'));
 });
 onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);

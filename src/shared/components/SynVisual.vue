@@ -9,9 +9,11 @@
  * says Syn drew it, the buttons, the error line. Nothing the model wrote can
  * add to them (`docs/syn-the-conversation-2026-09-10.md` §2).
  *
- * The frame is put in the page only once it scrolls near, and a phone shows
- * what the visual is rather than running it: visuals are a desktop thing
- * (plan §7).
+ * The frame is put in the page only once it scrolls near. A phone, or a
+ * vault with the `visuals` setting off, shows what the visual is — its title
+ * and kind — rather than running it: visuals are a desktop thing (plan §7),
+ * and the setting is the person saying no model-written code runs here, in a
+ * note kept before as much as in a new answer.
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -73,6 +75,13 @@ const errors = ref<{ kind: string; message: string }[]>([]);
 const showErrors = ref(false);
 const kept = ref<{ id: string; title: string; node_type: string } | null>(null);
 const busy = ref(false);
+/** The `visuals` setting is off: show what the visual is, run nothing. */
+const off = ref(false);
+/** The setting has been read: until then nothing runs, so an off switch is never late. */
+const settled = ref(false);
+const held = computed(() => isMobileOS.value || off.value);
+const KINDS = ['diagram', 'chart', 'explainer', 'simulation'];
+const kindLabel = computed(() => (meta.value && KINDS.includes(meta.value.kind) ? t(`syn.visual_kind_${meta.value.kind}`) : t('syn.visual_untitled')));
 
 const theme = computed<VisualTheme>(() => (diagramTheme.value === 'dark' ? 'dark' : 'light'));
 const context = computed<HostContext>(() => ({ theme: theme.value, locale: visualLocale(String(locale.value)) }));
@@ -111,6 +120,13 @@ onMounted(async () => {
     }, { rootMargin: '400px' });
     if (holder.value) observer.observe(holder.value);
   }
+  try {
+    const settings = await invoke<{ visuals?: boolean } | null>('syn_get_settings', { vaultPath: props.vaultPath });
+    off.value = settings?.visuals === false;
+  } catch {
+    // Unread settings are the default ones, and visuals are on by default.
+  }
+  settled.value = true;
   try {
     meta.value = await invoke<Meta>('syn_visual_meta', { vaultPath: props.vaultPath, id: props.visualId });
   } catch {
@@ -178,9 +194,12 @@ async function download() {
     </figcaption>
 
     <p v-if="missing" class="px-3 py-3 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.visual_missing') }}</p>
-    <p v-else-if="isMobileOS" class="px-3 py-3 text-xs text-gray-500 dark:text-gray-400">{{ t('syn.visual_desktop_only') }}</p>
+    <div v-else-if="held" class="syn-visual-held px-3 py-3 text-xs text-gray-500 dark:text-gray-400">
+      <p class="text-sm text-text dark:text-text-dark">{{ meta?.title || t('syn.visual_untitled') }}</p>
+      <p class="mt-0.5">{{ kindLabel }} · {{ off && !isMobileOS ? t('syn.visual_off') : t('syn.visual_desktop_only') }}</p>
+    </div>
     <iframe
-      v-else-if="near"
+      v-else-if="near && settled"
       ref="frame"
       :src="src"
       sandbox="allow-scripts"
@@ -201,7 +220,7 @@ async function download() {
       </ul>
     </div>
 
-    <div v-if="!missing && !isMobileOS" class="flex flex-wrap gap-1.5 px-3 py-1.5 border-t border-gray-100 dark:border-gray-800/50">
+    <div v-if="!missing && !held" class="flex flex-wrap gap-1.5 px-3 py-1.5 border-t border-gray-100 dark:border-gray-800/50">
       <button v-if="keepable" type="button" class="visual-action" :disabled="busy || !meta" @click="keep">
         {{ kept ? t('syn.keep_open_it', { title: kept.title }) : t('syn.keep_as_note') }}
       </button>

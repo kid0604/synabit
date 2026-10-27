@@ -159,13 +159,14 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * `into` is where the frame is shown; without one it is laid out off screen,
  * since a frame that is never laid out may never run.
  */
-export async function runVisualSpike(into?: HTMLElement, timeoutMs = 30_000): Promise<SpikeReport> {
+export async function runVisualSpike(into?: HTMLElement, timeoutMs = 30_000, openNote?: OpenNote): Promise<SpikeReport> {
   const userAgent = navigator.userAgent;
   const origin = visualOrigin(userAgent);
   const attack = await runAttack(origin, into, timeoutMs);
   const kit = await runKit(origin, into, timeoutMs);
   const chat = await runInChat(timeoutMs);
-  return summarise([...attack, ...kit, ...chat], userAgent, origin);
+  const keep = await runKeep(openNote, timeoutMs);
+  return summarise([...attack, ...kit, ...chat, ...keep], userAgent, origin);
 }
 
 /** A frame as a visual is framed: sandboxed to scripts, off screen unless shown. */
@@ -274,11 +275,11 @@ async function runKit(origin: string, into: HTMLElement | undefined, timeoutMs: 
  * report to Rust, which writes it to a file. This is how the spike runs on a
  * machine nobody is sitting at: `VITE_SYNVISUAL_SPIKE=1` at build time.
  */
-export async function autorunVisualSpike(): Promise<void> {
+export async function autorunVisualSpike(openNote?: OpenNote): Promise<void> {
   if (import.meta.env.VITE_SYNVISUAL_SPIKE !== '1') return;
   try {
     await wait(3000);
-    const report = await runVisualSpike();
+    const report = await runVisualSpike(undefined, 30_000, openNote);
     await invoke('visual_spike_report', { report });
   } catch (error) {
     console.error('[visual-spike] could not run', error);
@@ -374,4 +375,110 @@ async function runInChat(timeoutMs: number): Promise<SpikeRow[]> {
     holder.remove();
   }
   return judgeChat(seen);
+}
+
+/** How the app opens a note by its path: `App.vue`'s own handler, the one a chat's "open it" reaches. */
+export type OpenNote = (relPath: string) => unknown;
+
+/** What keeping a visual as a note, and opening that note, came to. */
+export interface KeepSeen {
+  skipped: string | null;
+  /** The button said "open it" once the note was written. */
+  keptLabel: boolean;
+  /** The note the second press asked to open. */
+  opened: { id: string; title: string; node_type: string } | null;
+  /** That note on disk. */
+  noteText: string;
+  id: string;
+  /** A frame inside the note editor's block. */
+  framed: boolean;
+  sandbox: string | null;
+  /** What the kit inside it reported. */
+  selftest: Record<string, unknown> | null;
+}
+
+/** Keeping a visual and opening its note, judged. */
+export function judgeKeep(seen: KeepSeen): SpikeRow[] {
+  if (seen.skipped) return [{ group: 'keep', name: 'keep it and open the note', outcome: 'unclear', detail: seen.skipped }];
+  const row = (name: string, ok: boolean, detail = ''): SpikeRow => ({ group: 'keep', name, outcome: ok ? 'ok' : 'error', detail });
+  const block = `<div data-type="syn-visual" data-visual="${seen.id}"></div>`;
+  const t = seen.selftest ?? {};
+  return [
+    row('Keep wrote a note and turned into "open it"', seen.keptLabel && seen.opened?.node_type === 'note', seen.opened?.id ?? ''),
+    row('the note on disk holds the block, and only an id', seen.id !== '' && seen.noteText.includes(block) && !/<script/i.test(seen.noteText)),
+    row('the note opened with the visual framed', seen.framed && seen.sandbox === 'allow-scripts', String(seen.sandbox)),
+    row('the kit ran inside the note', seen.selftest != null && t.d3 === true && t.katex === true),
+  ];
+}
+
+const until = async (test: () => boolean, timeoutMs: number): Promise<boolean> => {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    if (test()) return true;
+    await wait(100);
+  }
+  return test();
+};
+
+/**
+ * Keep a visual as a note with the chat's own button, open the note the way
+ * the chat's "open it" does, and see the visual run in the note editor.
+ * Needs the app's own way of opening a note, so only the unattended run does
+ * it; the panel in Syn's settings says so.
+ */
+async function runKeep(openNote: OpenNote | undefined, timeoutMs: number): Promise<SpikeRow[]> {
+  const seen: KeepSeen = { skipped: null, keptLabel: false, opened: null, noteText: '', id: '', framed: false, sandbox: null, selftest: null };
+  if (!openNote) return judgeKeep({ ...seen, skipped: 'not run: only the unattended run can open a note' });
+  let kept: [string, string];
+  try {
+    kept = await invoke<[string, string]>('visual_spike_keep');
+  } catch (error) {
+    return judgeKeep({ ...seen, skipped: `not run: ${String(error)}` });
+  }
+  const [vaultPath, id] = kept;
+  seen.id = id;
+  const [{ createApp, h }, { default: SynVisual }, { i18n }] = await Promise.all([
+    import('vue'),
+    import('../components/SynVisual.vue'),
+    import('../../i18n'),
+  ]);
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:640px;opacity:0.01;pointer-events:none;z-index:-1';
+  document.body.appendChild(holder);
+  const app = createApp({
+    render: () => h(SynVisual, { visualId: id, vaultPath, onOpen: (note: KeepSeen['opened']) => (seen.opened = note) }),
+  });
+  app.use(i18n);
+  app.mount(holder);
+  try {
+    const button = () => holder.querySelector<HTMLButtonElement>('button.visual-action');
+    await until(() => !!button() && !button()!.disabled, timeoutMs);
+    const before = button()?.textContent ?? '';
+    button()?.click();
+    seen.keptLabel = await until(() => !!button() && !button()!.disabled && button()!.textContent !== before, timeoutMs);
+    button()?.click();
+  } finally {
+    app.unmount();
+    holder.remove();
+  }
+  if (!seen.opened) return judgeKeep(seen);
+  seen.noteText = await invoke<string>('visual_spike_read', { relPath: seen.opened.id }).catch((e) => `unread: ${String(e)}`);
+
+  const reports: { source: MessageEventSource | null; params: Record<string, unknown> }[] = [];
+  const onMessage = (event: MessageEvent) => {
+    const message = event.data as { method?: string; params?: Record<string, unknown> };
+    if (message?.method === 'synabit/selftest') reports.push({ source: event.source, params: message.params ?? {} });
+  };
+  window.addEventListener('message', onMessage);
+  try {
+    openNote(seen.opened.id);
+    const frame = () => document.querySelector<HTMLIFrameElement>(`.syn-visual-block [data-visual="${id}"] iframe`);
+    seen.framed = await until(() => !!frame(), timeoutMs);
+    seen.sandbox = frame()?.getAttribute('sandbox') ?? null;
+    await until(() => reports.some((r) => r.source === frame()?.contentWindow), timeoutMs);
+    seen.selftest = reports.find((r) => r.source === frame()?.contentWindow)?.params ?? null;
+  } finally {
+    window.removeEventListener('message', onMessage);
+  }
+  return judgeKeep(seen);
 }
