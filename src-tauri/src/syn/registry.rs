@@ -144,6 +144,9 @@ pub struct RunContext<'a, R: tauri::Runtime> {
     /// Whether this run has read something written outside the vault. See
     /// `syn::taint`.
     pub taint: &'a crate::syn::taint::Taint,
+    /// Connectors the person approved on their card in this piece of work:
+    /// their reads stay offered after reading. See `Run::approved_in_work`.
+    pub approved_in_work: &'a [String],
 }
 
 impl<R: tauri::Runtime> RunContext<'_, R> {
@@ -813,6 +816,7 @@ mod tests {
                 app: app.handle(),
                 surface,
                 taint: &taint,
+                approved_in_work: &[],
             };
             registry.definitions(&ctx).into_iter().map(|d| d.function.name).collect()
         };

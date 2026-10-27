@@ -239,6 +239,9 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
                                 break;
                             };
                             let tried = crate::commands::connector::probe(&m, &inst, secret.as_deref()).await;
+                            if verbose() {
+                                eprintln!("[eval] {} probe of `{}`: ok {} code {:?} said {:?}", task.id, m.id, tried.ok, tried.code, tried.said);
+                            }
                             approved = tried.ok;
                             match (tried.code.as_deref(), tried.cert) {
                                 (Some("host_key_unknown"), Some(key)) if pinned.is_none() => pinned = Some(key),
@@ -335,6 +338,15 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         })
         .collect();
     let answer: String = answers.last().map(|m| m.content.chars().take(300).collect()).unwrap_or_default();
+    if verbose() {
+        for (n, run) in runs.iter().enumerate() {
+            eprintln!("[eval] {} trial {trial} run {n} ({:?})", task.id, run.state);
+            for step in run.steps.iter().filter(|s| s.kind == crate::syn::run::StepKind::ToolCall) {
+                let preview: String = step.preview.chars().take(300).collect();
+                eprintln!("[eval]   {}{} = {preview}", step.tool.clone().unwrap_or_default(), if step.ok == Some(false) { "!" } else { "" });
+            }
+        }
+    }
 
     Outcome {
         visited: visited.clone(),
@@ -358,4 +370,11 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         footing: top.last().and_then(|r| r.footing).map(|f| format!("{f:?}").to_lowercase()),
         error,
     }
+}
+
+/// `SYN_EVAL_VERBOSE=1`: what each probe of a connector came to, and what each
+/// tool call returned, on stderr. The report keeps only the calls; when a task
+/// fails on what a tool *said*, this is where it shows.
+fn verbose() -> bool {
+    std::env::var("SYN_EVAL_VERBOSE").is_ok_and(|v| !v.is_empty())
 }

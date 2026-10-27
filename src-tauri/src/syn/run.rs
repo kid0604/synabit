@@ -746,6 +746,16 @@ pub struct Run {
     /// on tells the model so instead of asking again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declined_connector: Option<String>,
+    /// Connectors the person approved on their card in this piece of work.
+    ///
+    /// Each may be *read* after the work has read something from outside —
+    /// with values from the person's words or its own answers only. Drafting
+    /// one from its documentation means reading the web first, and the
+    /// connector the person just approved was otherwise out of reach for the
+    /// rest of the work (eval of 2026-10-26, `cn-author-live-*`). Carried to
+    /// the run that continues it. See `gate::decide` step 1.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approved_in_work: Vec<String>,
     /// The call this run was about to make when it stopped for permission.
     ///
     /// # Why the answer is not enough on its own
@@ -866,6 +876,7 @@ impl Run {
             writes: None,
             pending_connector: None,
             declined_connector: None,
+            approved_in_work: Vec::new(),
             untrusted_before: false,
             plan: Vec::new(),
             ceiling: None,

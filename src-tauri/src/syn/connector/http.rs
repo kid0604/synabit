@@ -112,6 +112,17 @@ fn arg_text(args: &Value, name: &str) -> Option<String> {
     match args.get(name)? {
         Value::Null => None,
         Value::String(s) => Some(s.clone()),
+        // A list of plain values in a query, a path or a header is the comma
+        // list APIs read — `symbols=USD,JPY` — not its JSON. The 2026-10-26
+        // eval sent `symbols=["USD"]` and Frankfurter answered 404.
+        Value::Array(items) if items.iter().all(|v| !v.is_array() && !v.is_object()) => Some(
+            items
+                .iter()
+                .filter(|v| !v.is_null())
+                .map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string()))
+                .collect::<Vec<_>>()
+                .join(","),
+        ),
         other => Some(other.to_string()),
     }
 }
@@ -600,6 +611,16 @@ mod tests {
 
     fn todoist() -> Manifest {
         manifest::parse(TODOIST).expect("reads")
+    }
+
+    /// A list goes into a query as the comma list APIs read, not as JSON.
+    #[test]
+    fn a_list_in_a_query_is_a_comma_list() {
+        let m = todoist();
+        let p = prepare(&m, &m.operations[0], &json!({ "filter": ["USD", "JPY"] }), Some("tok"), &[]).expect("built");
+        assert_eq!(p.url.as_str(), "https://api.todoist.com/rest/v2/tasks?filter=USD%2CJPY");
+        let one = prepare(&m, &m.operations[0], &json!({ "filter": ["USD"] }), Some("tok"), &[]).expect("built");
+        assert_eq!(one.url.as_str(), "https://api.todoist.com/rest/v2/tasks?filter=USD");
     }
 
     #[test]

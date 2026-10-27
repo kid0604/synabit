@@ -58,8 +58,13 @@ pub struct View<'a> {
     /// When everything the run has read came from one connector, its slug:
     /// that connector's read tools stay open. See `taint::Origin`.
     pub only_connector: Option<&'a str>,
-    /// What a call back to that connector may carry: the person's question and
-    /// the connector's own earlier answers. See `taint::only_echoes`.
+    /// Connectors the person approved on their card in this piece of work.
+    /// Their reads stay open after reading, on the same terms as
+    /// `only_connector`'s. See `Run::approved_in_work`.
+    pub approved_in_work: &'a [String],
+    /// What a call back to that connector — or to one approved in this work —
+    /// may carry: the person's words and the connector's own earlier answers.
+    /// See `taint::only_echoes`.
     pub echoes: &'a [String],
     /// Hashes of the sends the person approved and that have not gone yet.
     /// See `syn::writes`.
@@ -186,13 +191,23 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
     // refusal on the record, because an attempt to reach a server after
     // reading something is exactly what the audit log is for. See `syn::connector`.
     //
-    // One exception, and only one: a run whose only outside reading is one
-    // connector's answer may *read* that same connector again — list the
-    // projects, then the issues of one. Nothing goes anywhere it was not
-    // already; a write, or any other server, is still refused.
+    // Two exceptions. A run whose only outside reading is one connector's
+    // answer may *read* that same connector again — list the projects, then
+    // the issues of one. Nothing goes anywhere it was not already.
+    //
+    // And a connector the person approved on its card in this work may be
+    // read after the work read anything: drafting one from its documentation
+    // means reading the web first, and the connector the person had just said
+    // yes to was otherwise out of reach (eval of 2026-10-26). Its host is
+    // theirs, chosen on the card; what goes to it is held below to their own
+    // words and its own answers, so neither the page nor the vault rides out.
+    //
+    // A write, or any other server, is still refused.
+    let slug = crate::syn::connector::provider::server_slug_of(tool);
     let back_to_the_same_reader = view.tainted
         && crate::syn::connector::is_connector_tool(tool)
-        && view.only_connector.is_some_and(|slug| crate::syn::connector::provider::server_slug_of(tool) == Some(slug))
+        && (view.only_connector.is_some_and(|only| slug == Some(only))
+            || slug.is_some_and(|s| view.approved_in_work.iter().any(|a| a == s)))
         && matches!(capability, Some(Capability::NetRead { .. }));
     // …and only with words it already had, or the person's. A value lifted
     // from a note would be the vault leaving by the same door.
@@ -202,7 +217,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
             return Decided {
                 gate: Gate::Refuse {
                     said: format!(
-                        "`{tool}` may be called again in this run only with words from the user's question or \
+                        "`{tool}` may be called in this run only with words from the user's question or \
                          from what this connector itself answered. \"{shown}\" is from neither — it would take \
                          something to the server that it did not have. Ask with values from its earlier answer, or \
                          tell the user what you found and let them ask in a new message."
@@ -574,6 +589,7 @@ mod tests {
         View {
             tainted: false,
             only_connector: None,
+            approved_in_work: &[],
             echoes: &[],
             approved_writes: &[],
             surface: Surface::App,

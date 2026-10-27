@@ -419,6 +419,17 @@ pub async fn syn_connect(
 }
 
 /// Try a connector once, the way it will be used, and say how it went.
+/// The operation a try calls: something to read with nothing to fill — a
+/// `discover` operation first. Nothing in its path to fill either: a path
+/// value is needed whatever the declaration says of it, and a try that calls
+/// `/v1/{{date}}` without one reports a working connector as broken.
+fn probe_operation(m: &Manifest) -> Option<&manifest::Operation> {
+    let ready = |o: &&manifest::Operation| {
+        o.effect == manifest::Effect::Read && o.params.values().all(|p| !p.required) && manifest::placeholders(&o.call.path).is_empty()
+    };
+    m.operations.iter().filter(ready).find(|o| o.role.as_deref() == Some("discover")).or_else(|| m.operations.iter().find(ready))
+}
+
 pub async fn probe(m: &Manifest, inst: &instance::Instance, secret: Option<&str>) -> Connected {
     use crate::syn::connector::device;
     if m.transport == manifest::Transport::Device {
@@ -436,9 +447,7 @@ pub async fn probe(m: &Manifest, inst: &instance::Instance, secret: Option<&str>
             Err(n) => Connected { ok: false, code: n.failed.code.map(str::to_string), cert: n.host_key, said: n.failed.said, ..Default::default() },
         };
     }
-    // Something to read with nothing to fill: a `discover` operation first.
-    let ready = |o: &&manifest::Operation| o.effect == manifest::Effect::Read && o.params.values().all(|p| !p.required);
-    let Some(op) = m.operations.iter().filter(ready).find(|o| o.role.as_deref() == Some("discover")).or_else(|| m.operations.iter().find(ready)) else {
+    let Some(op) = probe_operation(m) else {
         return Connected { ok: true, code: Some("untested".into()), ..Default::default() };
     };
     match crate::syn::connector::http::fetch(m, inst, op, &serde_json::json!({}), secret).await {
@@ -560,4 +569,28 @@ pub(crate) async fn phone_connect(app: &tauri::AppHandle, vault_path: &str, mani
     let inputs = inst.as_ref().map(|i| i.inputs.clone()).unwrap_or_default();
     let folder = inst.and_then(|i| i.folder);
     syn_connect(app.clone(), vault_path.to_string(), manifest_id.to_string(), inputs, Default::default(), None, folder).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn declared(yaml: &str) -> Manifest {
+        manifest::parse_yaml(yaml).expect("readable")
+    }
+
+    /// A try never calls an operation with a path value left out: that only
+    /// ever reports a working connector as broken.
+    #[test]
+    fn a_try_skips_an_operation_with_something_in_its_path() {
+        let m = declared(
+            "id: fx\nname: FX\nbase_url: https://api.example/v1\nauth: { type: none }\noperations:\n  - name: on_a_day\n    description: Rates on a day.\n    effect: read\n    call: { method: GET, path: \"/{{date}}\" }\n    params: { date: { type: string } }\n  - name: latest\n    description: Latest rates.\n    effect: read\n    call: { method: GET, path: /latest }\n",
+        );
+        assert_eq!(probe_operation(&m).map(|o| o.name.as_str()), Some("latest"));
+
+        let only_dated = declared(
+            "id: fx\nname: FX\nbase_url: https://api.example/v1\nauth: { type: none }\noperations:\n  - name: on_a_day\n    description: Rates on a day.\n    effect: read\n    call: { method: GET, path: \"/{{date}}\" }\n    params: { date: { type: string } }\n",
+        );
+        assert!(probe_operation(&only_dated).is_none(), "untested rather than failed");
+    }
 }

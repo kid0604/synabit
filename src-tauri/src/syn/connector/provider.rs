@@ -357,7 +357,10 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
                 // (`gate::decide`, `syn::writes`), and has to be in view to be
                 // proposed and then called. Other connectors' reads stay hidden.
                 only_from.as_ref().is_none_or(|slug| match capability_for(t) {
-                    Capability::NetRead { .. } => slug.as_deref().is_some_and(|s| server_slug_of(&t.name) == Some(s)),
+                    Capability::NetRead { .. } => {
+                        slug.as_deref().is_some_and(|s| server_slug_of(&t.name) == Some(s))
+                            || server_slug_of(&t.name).is_some_and(|s| ctx.approved_in_work.iter().any(|a| a == s))
+                    }
                     _ => true,
                 })
             })
@@ -377,7 +380,13 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
                     continue;
                 }
                 // As above: the same connector's reads, and sends (by plan only).
-                if only_from.as_ref().is_some_and(|slug| matches!(capability, Capability::NetRead { .. }) && slug.as_deref() != Some(d.manifest.id.as_str())) {
+                // And the reads of one the person approved on its card in this
+                // work — the gate holds what they may carry to the person's
+                // words and its own answers. See `Run::approved_in_work`.
+                let approved_now = ctx.approved_in_work.iter().any(|a| a == &d.manifest.id);
+                if only_from.as_ref().is_some_and(|slug| {
+                    matches!(capability, Capability::NetRead { .. }) && slug.as_deref() != Some(d.manifest.id.as_str()) && !approved_now
+                }) {
                     continue;
                 }
                 offered.push(super::declared::definition(d, op));

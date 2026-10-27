@@ -243,6 +243,7 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
     gate::View {
         tainted: false,
         only_connector: None,
+        approved_in_work: &[],
         echoes: &[],
         approved_writes: &[],
         surface: Surface::App,
@@ -524,7 +525,7 @@ async fn the_registry_offers_connected_tools_where_someone_answers() {
         .expect("mock app");
     let registry = Registry::for_chat();
     let offered = |surface, taint: &crate::syn::taint::Taint| -> Vec<String> {
-        let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface, taint };
+        let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface, taint, approved_in_work: &[] };
         registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect()
     };
     let clean = crate::syn::taint::Taint::new();
@@ -574,7 +575,7 @@ async fn after_reading_a_connector_its_reads_and_every_send_are_offered() {
     let registry = Registry::for_chat();
     let read_alpha = crate::syn::taint::Taint::new();
     read_alpha.note(crate::syn::taint::Origin::Connector("alpha".into()));
-    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha, approved_in_work: &[] };
     let offered: Vec<String> = registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect();
     let writes = |slug: &str| offered.iter().filter(|n| n.starts_with(&format!("connector__{slug}__")) && registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))).count();
     let reads = |slug: &str| offered.iter().filter(|n| n.starts_with(&format!("connector__{slug}__")) && registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetRead { .. }))).count();
@@ -585,7 +586,7 @@ async fn after_reading_a_connector_its_reads_and_every_send_are_offered() {
     // A plan's first send has answered: two connectors read. The next approved
     // send must still be callable; no reads now.
     read_alpha.note(crate::syn::taint::Origin::Connector("beta".into()));
-    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha, approved_in_work: &[] };
     let after: Vec<String> = registry.definitions(&ctx).into_iter().map(|d| d.function.name).filter(|n| is_connector_tool(n)).collect();
     let sends = after.iter().filter(|n| registry.capability_of(n, &json!({})).is_some_and(|c| matches!(c, Capability::NetWrite { .. }))).count();
     assert!(sends >= 4, "{after:?}");
@@ -593,7 +594,7 @@ async fn after_reading_a_connector_its_reads_and_every_send_are_offered() {
 
     // A page read too: still only sends, no reads.
     read_alpha.set();
-    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha };
+    let ctx = RunContext { run_id: "r", db: &db, vault_path: vault, app: app.handle(), surface: Surface::App, taint: &read_alpha, approved_in_work: &[] };
     assert!(registry
         .definitions(&ctx)
         .into_iter()
@@ -827,6 +828,51 @@ fn only_the_same_connector_may_be_read_again_and_only_with_its_own_words() {
 
     let outside = gate::View { only_connector: None, ..base };
     assert!(!goes("connector__tracker__issues", serde_json::json!({ "project_id": "p-17" }), &read, &outside), "read something else too");
+}
+
+/// A connector the person approved on its card in this work may be read after
+/// the work read a web page — the docs it was drafted from — but only with the
+/// person's words or its own answers. The eval of 2026-10-26 found it out of
+/// reach entirely; these are the edges of letting it back in.
+#[test]
+fn a_connector_approved_in_this_work_is_read_after_a_page_only_with_the_persons_words() {
+    use crate::syn::consent::{Answer, Capability};
+    let read = Capability::NetRead { domain: "Frankfurter".into() };
+    let write = Capability::NetWrite { domain: "Frankfurter".into(), tool: "subscribe".into() };
+    let ledger = granted(&[(&read, Answer::Always), (&write, Answer::Always)]);
+    let no = |_: &Capability| false;
+    let approved = vec!["frankfurter".to_string()];
+    // What the person said. The page's words and the vault's are not here.
+    let echoes = vec!["Tỷ giá EUR sang USD ngày 30/9/2026 là bao nhiêu?".to_string()];
+    let after_a_page = gate::View { tainted: true, only_connector: None, approved_in_work: &approved, echoes: &echoes, ..view(&ledger, &no) };
+    let goes = |tool: &str, args: serde_json::Value, cap: &Capability, v: &gate::View| {
+        matches!(gate::decide(tool, &args, Some(cap), v).gate, gate::Gate::Go(_))
+    };
+
+    assert!(
+        goes("connector__frankfurter__historical_rates", serde_json::json!({ "base": "EUR", "symbols": "USD", "date": "2026-09-30" }), &read, &after_a_page),
+        "the read the person asked for"
+    );
+    assert!(
+        !goes("connector__frankfurter__historical_rates", serde_json::json!({ "base": "EUR", "note": "Lương tháng 9 của Lan" }), &read, &after_a_page),
+        "a value from a note or the page rides out"
+    );
+    assert!(
+        !goes("connector__frankfurter__historical_rates", serde_json::json!({ "amount": 48_500_000 }), &read, &after_a_page),
+        "a large number from elsewhere"
+    );
+    assert!(!goes("connector__frankfurter__subscribe", serde_json::json!({ "base": "EUR" }), &write, &after_a_page), "a send still needs a plan");
+
+    let other = Capability::NetRead { domain: "Jira".into() };
+    let ledger2 = granted(&[(&other, Answer::Always)]);
+    let v2 = gate::View { tainted: true, only_connector: None, approved_in_work: &approved, echoes: &echoes, ..view(&ledger2, &no) };
+    assert!(!goes("connector__jira__search", serde_json::json!({ "text": "EUR" }), &other, &v2), "a connector not approved in this work");
+
+    let not_approved = gate::View { approved_in_work: &[], ..after_a_page };
+    assert!(
+        !goes("connector__frankfurter__historical_rates", serde_json::json!({ "base": "EUR" }), &read, &not_approved),
+        "without the card in this work, the old rule stands"
+    );
 }
 
 #[test]

@@ -1203,6 +1203,7 @@ fn carry_over(run: &mut Run, stopped: &Run) {
     // the replayed `connector_connect` is answered from these.
     run.pending_connector = stopped.pending_connector.clone();
     run.declined_connector = stopped.declined_connector.clone();
+    run.approved_in_work = stopped.approved_in_work.clone();
     run.resumed_from = Some(stopped.id.clone());
     // The rest of the round it stopped in, made after the call it was asked
     // about. See `Run::pending_rest`.

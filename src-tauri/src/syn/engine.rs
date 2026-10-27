@@ -735,6 +735,23 @@ impl SynEngine {
                     .and_then(|parent| parent.conversation_id)
             })
         };
+        // Connectors the person approved on a card in this work: their reads
+        // are offered after reading. With the one the run it carries on from
+        // stopped to ask about, when the person has approved it since — the
+        // tools are chosen now, before the replayed `connector_connect` says
+        // so. See `Run::approved_in_work`.
+        let approved_in_work: Vec<String> = {
+            let mut ids = run.approved_in_work.clone();
+            if let Some(id) = run.pending_connector.clone() {
+                let declined = run.declined_connector.as_deref() == Some(id.as_str());
+                let approved = draft_named(req, &serde_json::json!({ "id": id }))
+                    .is_some_and(|m| crate::syn::connector::instance::approved_here(req.vault_path, &m).is_some());
+                if approved && !declined && !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            ids
+        };
         let ctx = RunContext {
             run_id: &run_id,
             db: req.db,
@@ -742,6 +759,7 @@ impl SynEngine {
             app: req.app,
             surface: run.surface,
             taint: &taint,
+            approved_in_work: &approved_in_work,
         };
         // A helper is offered only what it may use, so it does not spend rounds
         // reaching for the rest. The gate refuses the rest anyway.
@@ -2508,10 +2526,22 @@ fn weigh<R: tauri::Runtime>(
     };
     let only_connector = taint.only_connector();
     let approved_writes: Vec<String> = run.writes.as_ref().map(|p| p.approved()).unwrap_or_default();
-    // What a call back to that connector may carry. Built only when
-    // there is one, from the question and that connector's answers.
-    let echoes: Vec<String> = match only_connector.as_deref() {
+    // What a call back to that connector — or to one the person approved on
+    // its card in this work — may carry. Built only for such a call, from
+    // the question and that connector's answers; for one approved in this
+    // work, everything else the person said in the conversation too.
+    let called = crate::syn::connector::provider::server_slug_of(&tc.function.name);
+    let approved_here = called.is_some_and(|s| run.approved_in_work.iter().any(|a| a == s));
+    let echo_slug = match (only_connector.as_deref(), called) {
+        (Some(only), Some(c)) if only == c => Some(only.to_string()),
+        (_, Some(c)) if approved_here => Some(c.to_string()),
+        (Some(only), _) => Some(only.to_string()),
+        _ => None,
+    };
+    let person: Vec<String> = if approved_here { said_by_person(req, run) } else { Vec::new() };
+    let echoes: Vec<String> = match echo_slug.as_deref() {
         Some(slug) => std::iter::once(run.goal.clone())
+            .chain(person)
             .chain(run.steps.iter().chain(earlier_steps.iter()).filter(|s| {
                 s.tool.as_deref().and_then(crate::syn::connector::provider::server_slug_of) == Some(slug)
                     // A try of it, and the spec it was drafted from,
@@ -2530,6 +2560,7 @@ fn weigh<R: tauri::Runtime>(
         &crate::syn::gate::View {
             tainted: taint.is_set(),
             only_connector: only_connector.as_deref(),
+            approved_in_work: &run.approved_in_work,
             echoes: &echoes,
             approved_writes: &approved_writes,
             untrusted_before: run.untrusted_before,
@@ -3103,6 +3134,11 @@ fn propose_connector<R: tauri::Runtime>(req: &DriveRequest<'_, R>, run: &mut Run
         if run.pending_connector.as_deref() == Some(id) {
             if let Some(conv) = run.conversation_id.as_deref() {
                 crate::syn::consent::allow_until_done(conv, &crate::syn::consent::Capability::NetRead { domain: m.name.clone() });
+            }
+            // And its reads stay open for the rest of the work, read or not.
+            // See `Run::approved_in_work`.
+            if !run.approved_in_work.iter().any(|a| a == id) {
+                run.approved_in_work.push(id.to_string());
             }
         }
         run.pending_connector = None;
@@ -6838,6 +6874,92 @@ mod driving {
         assert!(server.lines().iter().any(|l| l.starts_with("GET /api/tasks")), "{:?}", server.lines());
         assert!(!server.lines().iter().any(|l| l.starts_with("POST")), "a send after reading still needs a plan: {:?}", server.lines());
         crate::syn::consent::work_is_done("conv-author");
+    }
+
+    /// Asking `find_tools` for a connector just approved brings its tools.
+    ///
+    /// The eval of 2026-10-26 (`cn-author-live-*`): every trial that called
+    /// the new connector's tool straight after `connector_connect` passed;
+    /// every one that first asked `find_tools("connector:<id>")` never reached
+    /// it and fell back to opening the API's URL in `browse`.
+    #[tokio::test]
+    async fn find_tools_brings_a_connector_approved_in_this_work() {
+        use crate::syn::connector::fake_rest;
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        let state = app.state::<crate::db::DbState>();
+        let db = state.inner();
+        let server = fake_rest::serve(
+            [
+                ("/openapi.json", fake_rest::Answer::json(tasks_spec("/"))),
+                ("/api/tasks", fake_rest::Answer::json(serde_json::json!([{ "id": 1, "content": "Mua sữa" }]))),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .await;
+        let spec_url = format!("{}/openapi.json", server.base);
+        let host = url::Url::parse(&server.base).expect("url").host_str().expect("host").to_string();
+        crate::syn::consent::record(&vault, &crate::syn::consent::Capability::NetRead { domain: host }, crate::syn::consent::Answer::Always, chrono::Utc::now()).expect("granted");
+        let ask = format!("Nối Syn với task app của tao, spec ở {spec_url}, rồi cho tao biết còn việc gì");
+        let chosen = serde_json::json!({ "id": "tasks", "name": "Tasks", "openapi_url": spec_url, "operations": ["GET /api/tasks"] });
+
+        let mut first = Run::new(&ask, Some("conv-find-new".into()), budget(12));
+        drive_script_in(
+            &app,
+            &vault,
+            &mut first,
+            &ask,
+            vec![calls("connector_draft", chosen), calls("connector_connect", serde_json::json!({ "id": "tasks" })), text("unreached")],
+        )
+        .await;
+        assert_eq!(first.state, RunState::AwaitingApproval, "{:?}", first.steps);
+        // It read the API's documentation on the web before drafting, as the
+        // model does when it drafts from docs rather than a spec: the work has
+        // read something from outside. Every failing trial on 2026-10-26 had.
+        first.read_untrusted = true;
+        first.read_from = vec!["outside".into()];
+        let m = connector_draft(&vault, db, "tasks").expect("filed");
+        crate::syn::connector::instance::approve(
+            &vault,
+            &m,
+            crate::syn::connector::instance::Choices { network: crate::syn::connector::instance::Network::Internal, ..Default::default() },
+            "now",
+        )
+        .expect("approved");
+        crate::syn::run::save_run(&vault, &first).expect("saved");
+        assert!(crate::commands::syn::syn_answer_connector(vault.clone(), first.id.clone(), true).await.expect("answered"));
+        let answered = crate::syn::run::get_run(&vault, &first.id).expect("run");
+
+        let mut second = Run::new(&ask, Some("conv-find-new".into()), budget(12));
+        second.pending_connector = answered.pending_connector.clone();
+        second.read_untrusted = answered.read_untrusted;
+        second.read_from = answered.read_from.clone();
+        second.resumed_from = Some(answered.id.clone());
+        second.tool_groups = answered.tool_groups.clone();
+        drive_script_in(
+            &app,
+            &vault,
+            &mut second,
+            &ask,
+            vec![
+                calls("connector_connect", serde_json::json!({ "id": "tasks" })),
+                calls(crate::syn::toolset::FIND_TOOL, serde_json::json!({ "need": "connector:tasks" })),
+                calls("connector__tasks__list_tasks", serde_json::json!({})),
+                text("Còn 1 việc: Mua sữa."),
+            ],
+        )
+        .await;
+        let found = second
+            .steps
+            .iter()
+            .find(|s| s.tool.as_deref() == Some(crate::syn::toolset::FIND_TOOL))
+            .expect("find_tools ran");
+        assert!(found.preview.contains("connector__tasks__list_tasks"), "find_tools brought nothing: {}", found.preview);
+        assert!(server.lines().iter().any(|l| l.starts_with("GET /api/tasks")), "{:?}", server.lines());
+        crate::syn::consent::work_is_done("conv-find-new");
     }
 
     /// A spec that points somewhere the person never named is not drafted, and

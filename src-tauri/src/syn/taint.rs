@@ -174,11 +174,16 @@ pub fn only_echoes(args: &serde_json::Value, sources: &[String]) -> Result<(), S
     // writes it, "2026-09-30": the same date, not a new value. Seen in the
     // 2026-10-11 eval, where the read the person asked for was refused.
     let dates: std::collections::BTreeSet<String> = sources.iter().flat_map(|s| dates_in(s)).collect();
+    // A country the person named goes as the API names it, `VN` for "Việt
+    // Nam": the same country. Seen in the 2026-10-26 eval, where the holidays
+    // the person asked about were refused for the code.
+    let countries: std::collections::BTreeSet<&str> = sources.iter().flat_map(|s| country_codes_in(s)).collect();
     let found = |needle: &str| {
         let needle = needle.trim().to_lowercase();
         needle.is_empty()
             || lowered.iter().any(|s| s.contains(&needle))
             || iso_date(&needle).is_some_and(|d| dates.contains(&d) || plausible_date(&d))
+            || countries.contains(needle.as_str())
     };
     fn walk(v: &Value, check: &dyn Fn(&Value) -> Result<(), String>) -> Result<(), String> {
         match v {
@@ -221,6 +226,50 @@ fn plausible_date(iso: &str) -> bool {
     let Ok(d) = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d") else { return false };
     let today = chrono::Utc::now().date_naive();
     d >= today - chrono::Duration::days(5 * 366) && d <= today + chrono::Duration::days(2 * 366)
+}
+
+/// The ISO 3166 codes, two- and three-letter and lower case, of every country
+/// named in `text`, in Vietnamese or English.
+///
+/// Matched as whole words, and only names that are not also everyday words:
+/// not bare "Anh" (a pronoun), "Nhật" (Chủ nhật is Sunday) or "Ý" (an idea),
+/// which is why Britain, Japan and Italy are matched only by their longer
+/// names. A code lets two or three letters through, and only ones naming a
+/// country the person wrote.
+fn country_codes_in(text: &str) -> Vec<&'static str> {
+    const COUNTRIES: &[(&[&str], &str, &str)] = &[
+        (&["việt nam", "viet nam", "vietnam"], "vn", "vnm"),
+        (&["hoa kỳ", "mỹ", "united states", "america"], "us", "usa"),
+        (&["vương quốc anh", "anh quốc", "united kingdom", "britain", "england"], "gb", "gbr"),
+        (&["nhật bản", "japan"], "jp", "jpn"),
+        (&["trung quốc", "china"], "cn", "chn"),
+        (&["hàn quốc", "korea", "south korea"], "kr", "kor"),
+        (&["đài loan", "taiwan"], "tw", "twn"),
+        (&["hồng kông", "hong kong"], "hk", "hkg"),
+        (&["thái lan", "thailand"], "th", "tha"),
+        (&["singapore"], "sg", "sgp"),
+        (&["malaysia"], "my", "mys"),
+        (&["indonesia"], "id", "idn"),
+        (&["philippines"], "ph", "phl"),
+        (&["lào", "laos"], "la", "lao"),
+        (&["campuchia", "cambodia"], "kh", "khm"),
+        (&["ấn độ", "india"], "in", "ind"),
+        (&["úc", "australia"], "au", "aus"),
+        (&["canada"], "ca", "can"),
+        (&["pháp", "france"], "fr", "fra"),
+        (&["đức", "germany"], "de", "deu"),
+        (&["italia", "italy"], "it", "ita"),
+        (&["tây ban nha", "spain"], "es", "esp"),
+        (&["hà lan", "netherlands"], "nl", "nld"),
+        (&["nga", "russia"], "ru", "rus"),
+    ];
+    let words: Vec<String> = text.to_lowercase().split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).map(str::to_string).collect();
+    let padded = format!(" {} ", words.join(" "));
+    COUNTRIES
+        .iter()
+        .filter(|(names, ..)| names.iter().any(|n| padded.contains(&format!(" {n} "))))
+        .flat_map(|(_, two, three)| [*two, *three])
+        .collect()
 }
 
 /// Every date and month written in `text`, as `yyyy-mm-dd` and `yyyy-mm`:
@@ -786,6 +835,21 @@ mod tests {
         assert!(super::only_echoes(&serde_json::json!({ "start": "20261012T000000Z", "end": "20261019T000000Z" }), &said).is_ok(), "a week asked about: its days, written as CalDAV writes them");
         assert!(super::only_echoes(&serde_json::json!({ "date": "1899-09-29" }), &said).is_err(), "a day far from now is information");
         assert!(super::only_echoes(&serde_json::json!({ "q": "2026-09-30 mật khẩu" }), &said).is_err(), "a date is no cover for words");
+    }
+
+    /// A country the person named is the same country as the API's code for
+    /// it; a code for a country they did not name is not, and a word that is
+    /// only part of a name is not a country.
+    #[test]
+    fn a_country_is_an_echo_as_its_code() {
+        let said = vec!["năm 2026 Việt Nam có những ngày nghỉ lễ nào".to_string()];
+        assert!(super::only_echoes(&serde_json::json!({ "countryCode": "VN", "year": 2026 }), &said).is_ok());
+        assert!(super::only_echoes(&serde_json::json!({ "country": "VNM" }), &said).is_ok());
+        assert!(super::only_echoes(&serde_json::json!({ "countryCode": "US" }), &said).is_err(), "a country they did not name");
+        let sunday = vec!["chủ nhật này có gì".to_string()];
+        assert!(super::only_echoes(&serde_json::json!({ "countryCode": "JP" }), &sunday).is_err(), "Sunday is not Japan");
+        let brother = vec!["anh Minh hỏi lịch".to_string()];
+        assert!(super::only_echoes(&serde_json::json!({ "countryCode": "GB" }), &brother).is_err(), "a pronoun is not Britain");
     }
 
     use super::*;

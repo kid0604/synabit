@@ -397,6 +397,17 @@ mod tests {
         assert!(check(&m, &[], Some("https://api.example.com/openapi.json")).is_empty());
     }
 
+    /// A value the path needs is required, even when the draft declared it
+    /// without `required` — as gpt-6-luna drafted Frankfurter on 2026-10-26.
+    #[test]
+    fn a_value_in_the_path_is_required_whatever_the_draft_said() {
+        let yaml = "id: frankfurter\nname: Frankfurter\nbase_url: https://api.frankfurter.dev/v1\nauth: { type: none }\noperations:\n  - name: historical_rate\n    description: Rates on a day.\n    effect: read\n    call: { method: GET, path: \"/{{date}}\", query: { base: \"{{base}}\" } }\n    params:\n      date: { type: string }\n      base: { type: string }\n";
+        let Ok(Written::Declaration(m)) = read_written(yaml, &json!({})) else { panic!("unreadable") };
+        let op = &m.operations[0];
+        assert!(op.params["date"].required, "in the path");
+        assert!(!op.params["base"].required, "a query value stays as declared");
+    }
+
     /// The shapes gpt-6-luna wrote in the 2026-10-11 eval, each read as the
     /// declaration it meant — and with nothing more than it meant.
     #[test]
@@ -927,6 +938,16 @@ pub fn normalize(mut m: Value, args: &Value) -> Value {
                 }
                 for name in wanted {
                     p.entry(name.clone()).or_insert_with(|| json!({ "required": in_path.contains(&name) }));
+                }
+                // A value in the path is needed whatever the draft said of it:
+                // `/v1/{{date}}` without a date is no request at all. The
+                // 2026-10-26 eval: `date` declared without `required`, the
+                // card's try called the operation with nothing, and "`date` is
+                // needed" read as the connector not working.
+                for name in &in_path {
+                    if let Some(Value::Object(param)) = p.get_mut(name) {
+                        param.insert("required".into(), json!(true));
+                    }
                 }
             }
         }
