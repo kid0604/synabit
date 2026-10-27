@@ -181,10 +181,17 @@ const SMALLEST_FIGURE: f64 = 100.0;
 /// people put after them — `k`, `nghìn`, `triệu`, `tr`, `tỷ`, `million`.
 ///
 /// Leaves out years (1900–2100 written plainly), anything inside a date or a
-/// time (`2026-09-01`, `15/10`, `08:30`), anything in code, and whole numbers
-/// below a hundred.
+/// time (`2026-09-01`, `15/10`, `08:30`), anything in code or in a formula,
+/// and whole numbers below a hundred.
+///
+/// A formula is a constant and its variables — `\frac{4}{\pi}`, `(2k+1)`,
+/// `g = 9{,}81` — not a figure read from somewhere: "2k" there is two times
+/// k, and a check that read it as two thousand cried wolf under every answer
+/// with mathematics in it (2026-10-27, a Fourier series). Formulas are what
+/// the chat renders as one (`markdownMath.ts`).
 pub fn figures_in(text: &str) -> Vec<Figure> {
     let chars: Vec<char> = text.chars().collect();
+    let in_math = math_spans(&chars);
     let mut out = Vec::new();
     let mut i = 0;
     let mut in_code = false;
@@ -195,7 +202,7 @@ pub fn figures_in(text: &str) -> Vec<Figure> {
             i += 1;
             continue;
         }
-        if in_code || !c.is_ascii_digit() || (i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_')) {
+        if in_code || in_math[i] || !c.is_ascii_digit() || (i > 0 && (chars[i - 1].is_alphanumeric() || chars[i - 1] == '_')) {
             i += 1;
             continue;
         }
@@ -249,6 +256,43 @@ pub fn figures_in(text: &str) -> Vec<Figure> {
         out.push(Figure { written: raw, value });
     }
     out
+}
+
+/// Which characters sit inside a formula, by the chat's four delimiters:
+/// `$$…$$`, `\[…\]`, `\(…\)`, and `$…$` when it reads as mathematics rather
+/// than money — nothing against either dollar, no newline, no digit straight
+/// after the closing one (`markdownMath.ts`, `looksLikeMath`).
+fn math_spans(chars: &[char]) -> Vec<bool> {
+    let mut inside = vec![false; chars.len()];
+    let at = |i: usize, s: &str| s.chars().enumerate().all(|(k, c)| chars.get(i + k) == Some(&c));
+    let find = |from: usize, s: &str| (from..chars.len()).find(|&k| at(k, s));
+    let mut i = 0;
+    while i < chars.len() {
+        let pair = [("$$", "$$"), ("\\[", "\\]"), ("\\(", "\\)")].into_iter().find(|(open, _)| at(i, open));
+        if let Some((open, close)) = pair {
+            if let Some(end) = find(i + open.len(), close) {
+                let stop = end + close.len();
+                inside[i..stop].iter_mut().for_each(|m| *m = true);
+                i = stop;
+                continue;
+            }
+        }
+        if chars[i] == '$' {
+            let body_start = i + 1;
+            let end = (body_start..chars.len()).take_while(|&k| chars[k] != '\n').find(|&k| chars[k] == '$' && chars[k - 1] != '\\');
+            if let Some(end) = end {
+                let body = &chars[body_start..end];
+                let tight = !body.is_empty() && !body[0].is_whitespace() && !body[body.len() - 1].is_whitespace();
+                if tight && !chars.get(end + 1).is_some_and(|c| c.is_ascii_digit()) {
+                    inside[i..=end].iter_mut().for_each(|m| *m = true);
+                    i = end + 1;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+    inside
 }
 
 fn digits_ahead(chars: &[char], from: usize) -> usize {
@@ -728,6 +772,18 @@ mod tests {
         assert!(values("Ngày 2026-09-01, lúc 08:30, hạn 15/10/2026").is_empty());
         assert!(values("In 2026 there were 3 notes and 12 tasks").is_empty());
         assert!(values("`r12#4471` and v2.4").is_empty());
+    }
+
+    /// A Fourier series' `(2k+1)` was read as two thousand (2026-10-27).
+    #[test]
+    fn a_formula_holds_no_figures() {
+        let fourier = r"Mô hình: \(f_N(x)=\frac{4}{\pi}\sum_{k=0}^{N-1}\frac{\sin((2k+1)x)}{2k+1}\), biên độ \(\pm1\).";
+        assert!(values(fourier).is_empty(), "{:?}", values(fourier));
+        assert!(values(r"Chu kỳ $$T = 2\pi\sqrt{L/g}$$ với $g = 9{,}81$ m/s², và \[E = 1500k\].").is_empty());
+        // Money between dollars is still money, and still read.
+        assert_eq!(values("Từ $5 tới $1.500.000 thì sao?"), vec![1_500_000.0]);
+        assert_eq!(values("Tổng 993.000₫, công thức \\(x^2\\)."), vec![993_000.0]);
+        assert!(unbacked(fourier, &[]).is_empty());
     }
 
     #[test]

@@ -720,3 +720,27 @@ và test harness của eval đỏ khi tắt bản vá.
 Muốn khép mục 2 cho đúng thì harness phải giữ lại HTML của hình khi một lần thử trượt, rồi chạy lại riêng
 `vz-spending-vi`.
 
+## 2026-10-27 — bốn câu khó, không chấm (`tests::ask`, `gpt-6-luna`, mỗi câu một lần)
+
+Hỏi qua đúng đường của app (`tests::ask`, vault `MoneyVault`). Hình giữ lại bằng `SYN_EVAL_KEEP`, rồi mở trong
+trình duyệt để bấm thử. Không phải tác vụ: không chấm điểm, không tính vào gate.
+
+| Câu | Vòng 1 | Vòng 2 (sau luật mới trong guide) |
+| --- | --- | --- |
+| Quỹ đạo hành tinh, chỉnh vận tốc, kiểm tra năng lượng | Velocity Verlet, năng lượng đúng tính tay. Vệt chỉ giữ 1.200 bước trên khoảng 2.175 của một vòng, nên **không bao giờ thấy trọn elip**. Hiện "-0%" | Euler bán ẩn (symplectic). **Elip khép kín**, Mặt Trời ở tiêu điểm (cận nhật khoảng 0,57, khớp tính tay), lệch năng lượng 0,03% |
+| SIR, chỉnh β, γ, I₀ | RK4. Đỉnh 3.008 người và S∞ khoảng 595, khớp lời giải. Số người có phần lẻ | Như vòng 1, số người nguyên. Trục ghi "0k" |
+| Chuỗi Fourier, Gibbs | **Sai**: sóng vuông tham chiếu lật dấu so với chuỗi; đỉnh chỉ tìm trên [0; 0,5]. Câu trả lời bị gắn cảnh báo sai "Số `2`" | **Đúng**: tham chiếu là `sign(sin x)`, đỉnh tìm trên (0; π). Không có cảnh báo. Hai đường cùng tông xanh, trục ghi "1π" |
+| Chi tiêu tháng 9 theo nhóm và ngày, bấm để lọc | Số đúng, lọc đúng. Đường theo ngày **vẽ đè lên biểu đồ nhóm** với thang riêng, không trục. Ngày ghi "Sep" | **Hai biểu đồ, mỗi cái một trục**, ngày "15 thg 9", lọc đúng. Chưa có tiêu đề cho từng biểu đồ |
+
+Đã sửa giữa hai vòng:
+- **`chart.md`:** mỗi thước đo một biểu đồ có trục riêng; ngày theo locale.
+- **`simulation.md`:** hiện trọn chu kỳ; đường tham chiếu tính từ cùng định nghĩa, có một điểm kiểm tay; giá trị đọc
+  ra (đỉnh, cực đại) tìm trên toàn khoảng; số đếm là số nguyên.
+- **`explainer.md`:** luật đường tham chiếu, viết gọn.
+- **Kit:** `synabit.number` không hiện "-0".
+- **Đối chiếu số dưới câu trả lời (`answer::figures_in`):** bỏ qua số trong công thức (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`,
+  cùng luật với `markdownMath.ts`). "(2k+1)" từng bị đọc thành hai nghìn.
+- Mỗi bản sửa có test, và test đỏ khi tắt bản sửa.
+
+Một lần hỏi mỗi câu không đo được độ ổn định: vòng 2 tốt hơn có thể một phần do may. Các lỗi còn lại đều là trình bày,
+không còn lỗi đúng/sai.

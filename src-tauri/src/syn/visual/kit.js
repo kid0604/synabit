@@ -124,7 +124,11 @@
     },
     /** A number as the person's locale writes it, rounded: float noise never reaches the screen. */
     number(value, digits) {
-      return new Intl.NumberFormat(context.locale, { maximumFractionDigits: digits == null ? 2 : digits }).format(value);
+      const places = digits == null ? 2 : digits;
+      // A drift of -0.00001 rounds to "-0", which reads as a sign that means something.
+      const n = Number(value);
+      const shown = Math.abs(n) < 0.5 * 10 ** -places ? 0 : n;
+      return new Intl.NumberFormat(context.locale, { maximumFractionDigits: places }).format(shown);
     },
     /** A theme token's current value, for a canvas that cannot read CSS variables. */
     color(name) {
