@@ -111,6 +111,12 @@ export interface SynSettings {
    * the defaults in `loadSettings`.
    */
   family_safe: boolean;
+  /**
+   * Whether Syn may draw interactive visuals. It only ever applies to a model
+   * that can (`Capability.visuals`) and on a desktop; on by default, and for
+   * a file written before it existed (`#[serde(default = "default_visuals")]`).
+   */
+  visuals: boolean;
 }
 
 /**
@@ -142,6 +148,7 @@ const DEFAULT_SETTINGS: SynSettings = {
   max_history_messages: 50,
   memory_reflection: true,
   family_safe: false,
+  visuals: true,
 };
 
 export function useSynSettings(vaultPath: string) {

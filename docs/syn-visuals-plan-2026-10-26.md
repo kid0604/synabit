@@ -21,6 +21,7 @@ model cục bộ và Android là việc riêng, không nằm ở đây.
 | Bước 0, mục 3 | macOS 26: **0 lọt**. macOS 13.3, Windows, Linux: chưa chạy | Xem phụ lục A |
 | Bước 0, mục 4 | Chưa đo | — |
 | Bước 0, mục 5 | Chưa thêm tác vụ eval | — |
+| PR 1 | Xong: `Capability.visuals` (`capability::draws`), `gpt-` từ 5 trở lên đọc theo phiên bản, `SynSettings.visuals` (mặc định bật, kể cả file cũ), công tắc "Hình tương tác" (ẩn trên điện thoại), dòng "Vẽ được hình tương tác" trong thẻ model | **Cửa sổ `gpt-6` lấy 400K của GPT-5 làm sàn**: repo không có số công bố của GPT-6, và một con số đoán quá cao làm mất system prompt mà không ai biết. Thay bằng số thật khi có. Hệ quả ngoài tính năng này: luna giờ có tools, vision, `delegate`, và ngân sách theo `room::scaled` lớn hơn khoảng 12 lần; onboarding cũng chọn được `gpt-6`. Eval `connectors` + `safety` chạy lại 2026-10-26 (`eval-agent-2026-10-01.md`): không tụt do PR 1; gate sang PR 2 qua. Lộ một lỗi có từ trước, ngoài phạm vi: `cn-author-live-*` không gọi được tool của connector vừa nối |
 
 **Cách chạy bước 0 trên một máy khác:**
 

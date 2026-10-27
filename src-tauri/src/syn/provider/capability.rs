@@ -63,6 +63,9 @@ pub struct Capability {
     /// conservative guess described in the module docs, and the UI should say
     /// so rather than present it as a fact.
     pub known: bool,
+    /// Whether Syn may draw this model an interactive visual — HTML it writes
+    /// whole, run in `syn::visual`'s frame. See [`draws`].
+    pub visuals: bool,
 }
 
 /// What an unrecognised model on this machine is assumed to hold.
@@ -110,6 +113,7 @@ pub fn of(model: &str, hosted: bool) -> Capability {
             reasoning,
             hosted,
             known: true,
+            visuals: hosted && draws(&id),
         },
         None => Capability {
             context_window_tokens: if hosted { UNKNOWN_HOSTED_WINDOW } else { UNKNOWN_LOCAL_WINDOW },
@@ -118,8 +122,45 @@ pub fn of(model: &str, hosted: bool) -> Capability {
             reasoning: false,
             hosted,
             known: false,
+            visuals: false,
         },
     }
+}
+
+/// Whether a recognised model is one Syn lets write a visual.
+///
+/// # Why a list of families rather than a measure
+///
+/// A visual is a page of HTML the model writes whole, in one go, with no
+/// renderer of the app's own to fall back on. Google measured what that asks
+/// of a model: Gemini 2.0 Flash broke 29% of such pages and Flash-Lite 60%
+/// (arXiv 2604.09577). Nothing in this table — window, tools, thinking —
+/// predicts that, so the families that do it well are named, decided
+/// 2026-10-26 in `docs/syn-visuals-plan-2026-10-26.md` §7:
+///
+/// - Claude Opus and Sonnet in the new naming (4 on), Fable and Mythos;
+///   not Haiku, nothing from 3.x.
+/// - OpenAI's `gpt-` from 5 on, but not their `mini` or `nano`.
+/// - Gemini Pro from 2.5 on; not Flash.
+///
+/// Nothing that runs on this machine, whatever its name: [`of`] asks for
+/// `hosted` as well. A local model may earn it once it has been measured.
+fn draws(id: &str) -> bool {
+    if let Some(rest) = id.strip_prefix("claude-") {
+        let line = rest.split('-').next().unwrap_or("");
+        return matches!(line, "opus" | "sonnet" | "fable" | "mythos");
+    }
+    if let Some(rest) = id.strip_prefix("gemini-") {
+        let v = version(rest);
+        let at_least_2_5 = (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0)) >= (2, 5);
+        return at_least_2_5 && rest.contains("-pro");
+    }
+    if let Some(rest) = id.strip_prefix("gpt-") {
+        let major = version(rest).first().copied().unwrap_or(0);
+        let small = ["mini", "nano"].iter().any(|word| rest.contains(word));
+        return major >= 5 && !small;
+    }
+    false
 }
 
 /// A model id without its decoration: lower case, no owner or collection
@@ -201,8 +242,15 @@ fn openai(id: &str) -> Option<(u32, bool, bool, bool)> {
     if id.starts_with("gpt-oss") {
         return Some((K128, true, false, true));
     }
-    if id.starts_with("gpt-5") {
-        return Some((400_000, true, true, true));
+    // GPT-5 holds 400K and thinks. A later generation is read the way Claude
+    // is, from its version: `gpt-6-luna` was "unknown" — 32K, no tools — for
+    // as long as only `gpt-5` was listed, and every budget sized from that was
+    // a twelfth of what it could hold. 400K is GPT-5's number and so a floor
+    // for what comes after it, never a guess above what a model holds.
+    if let Some(rest) = id.strip_prefix("gpt-") {
+        if version(rest).first().is_some_and(|major| *major >= 5) {
+            return Some((400_000, true, true, true));
+        }
     }
     if id.starts_with("gpt-4.1") {
         return Some((1_047_576, true, true, false));
@@ -334,6 +382,58 @@ mod tests {
         assert!(of("o4-mini", true).vision);
         assert!(!of("o3-mini", true).vision);
         assert!(of("gpt-oss:20b", false).reasoning);
+    }
+
+    /// `gpt-6-luna` is what the evals run on, and was "unknown" — 32K, no
+    /// tools, no images — while only `gpt-5` was listed.
+    #[test]
+    fn a_later_gpt_generation_is_read_from_its_version() {
+        for model in ["gpt-6-luna", "gpt-6-sol", "gpt-6-astra", "gpt-6", "gpt-7-anything"] {
+            let cap = of(model, true);
+            assert!(cap.known && cap.tools && cap.vision && cap.reasoning, "{model}");
+            assert_eq!(cap.context_window_tokens, 400_000, "{model}");
+        }
+        assert_eq!(window("gpt-4o"), 128_000, "a letter after the digit is not a version");
+        assert!(!of("gpt-unreleased", true).known);
+    }
+
+    /// Who may draw: the families §7 of the visuals plan names, hosted only.
+    #[test]
+    fn only_the_named_families_draw_and_only_from_elsewhere() {
+        for model in [
+            "gpt-6-luna",
+            "gpt-6-sol",
+            "gpt-5.6-luna",
+            "gpt-5",
+            "claude-opus-5-5",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5-20250929",
+            "claude-fable-5-1",
+            "anthropic/claude-opus-4.6",
+            "gemini-2.5-pro",
+            "models/gemini-3-pro-preview",
+        ] {
+            assert!(of(model, true).visuals, "{model} should draw");
+        }
+        for model in [
+            "gpt-6-mini",
+            "gpt-5-nano",
+            "gpt-4.1",
+            "gpt-4o",
+            "o3",
+            "gpt-oss:120b",
+            "claude-haiku-4-5",
+            "claude-3-7-sonnet-20250219",
+            "gemini-3.8-flash",
+            "gemini-2.0-pro",
+            "gemma4:e2b",
+            "qwen3",
+            "my-finetune",
+        ] {
+            assert!(!of(model, true).visuals, "{model} should not draw");
+        }
+        assert!(!of("claude-opus-5", false).visuals, "nothing on this machine draws, whatever its name");
+        assert!(!of("gpt-6-luna", false).visuals);
     }
 
     /// "o" and a digit is the o-series; "o" and a letter is something else.

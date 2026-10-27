@@ -268,6 +268,10 @@ fn default_memory_reflection() -> bool {
     true
 }
 
+fn default_visuals() -> bool {
+    true
+}
+
 /// On, for a fresh vault and for every vault written before the switch
 /// existed. Somebody who installed a productivity app with an assistant in
 /// it did not install it to find the assistant switched off.
@@ -510,6 +514,15 @@ pub struct SynSettings {
     /// existing user gets.
     #[serde(default)]
     pub family_safe: bool,
+    /// Whether Syn may draw interactive visuals, where the model can
+    /// (`provider::capability::Capability::visuals`) and on a desktop.
+    ///
+    /// On by default and for files written before it existed: it only ever
+    /// applies to a model that draws, and nothing is drawn unasked for a
+    /// question text answers. A switch so that somebody who would rather have
+    /// words can say so once. See `docs/syn-visuals-plan-2026-10-26.md`.
+    #[serde(default = "default_visuals")]
+    pub visuals: bool,
 
     // Personality
     /// Kept only so an existing settings file still deserialises, and so
@@ -549,6 +562,7 @@ impl Default for SynSettings {
             graph_expansion_depth: 1,
             memory_reflection: default_memory_reflection(),
             family_safe: false,
+            visuals: default_visuals(),
             personality: None,
             custom_system_prompt: None,
         }

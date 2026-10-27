@@ -29,6 +29,8 @@ interface Capability {
   reasoning: boolean;
   hosted: boolean;
   known: boolean;
+  /** Whether Syn may draw this model interactive visuals. */
+  visuals: boolean;
 }
 
 const props = defineProps<{
@@ -90,6 +92,7 @@ watch(
         <li>{{ capability.tools ? $t('syn.tier_tools') : $t('syn.tier_no_tools') }}</li>
         <li v-if="capability.vision">{{ $t('syn.tier_vision') }}</li>
         <li v-if="capability.reasoning">{{ $t('syn.tier_reasoning') }}</li>
+        <li v-if="capability.visuals">{{ $t('syn.tier_visuals') }}</li>
       </ul>
       <p v-if="!capability.known" class="text-gray-500 dark:text-gray-400">{{ $t('syn.tier_guessed') }}</p>
     </section>

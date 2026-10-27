@@ -17,8 +17,10 @@ import { showAppNotice } from '../../../composables/useAppNotice';
 import { useAppStore } from '../../../stores/useAppStore';
 import type { ModelInfo } from '../types';
 import VisualSpikePanel from './VisualSpikePanel.vue';
+import { usePlatform } from '../../../composables/usePlatform';
 
 const visualSpikeBuild = import.meta.env.DEV || import.meta.env.VITE_SYNVISUAL_SPIKE === '1';
+const { isMobileOS } = usePlatform();
 
 /** Tuning — temperature, rounds, window, budgets — is for whoever asked to
  *  see Syn's workings; everybody else gets the defaults. See `synDeveloper`. */
@@ -260,6 +262,21 @@ watch(() => props.vaultPath, async () => {
           >
             {{ t('syn.family_safe_pin') }}
           </span>
+        </span>
+      </label>
+
+      <!-- Interactive visuals. Desktop only — the frame they run in is a
+           desktop thing — and only ever used with a model that draws
+           (`Capability.visuals`), so the hint says which those are. -->
+      <label
+        v-if="!isMobileOS"
+        class="flex items-start gap-3 p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 cursor-pointer"
+        data-syn-visuals
+      >
+        <input type="checkbox" v-model="settings.visuals" class="mt-0.5 w-4 h-4 accent-accent cursor-pointer" />
+        <span class="min-w-0">
+          <span class="block text-sm font-medium text-text dark:text-text-dark">{{ t('syn.visuals') }}</span>
+          <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{{ t('syn.visuals_hint') }}</span>
         </span>
       </label>
 
