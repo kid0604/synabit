@@ -66,6 +66,7 @@ pub enum Home {
     Authoring,
     Skills,
     Jobs,
+    Visuals,
 }
 
 impl Home {
@@ -87,6 +88,7 @@ impl Home {
             Home::Authoring => Group::Authoring,
             Home::Skills => Group::Skills,
             Home::Jobs => Group::Jobs,
+            Home::Visuals => Group::Visuals,
         }
     }
 }
@@ -249,6 +251,9 @@ pub static POLICIES: &[Policy] = &[
     // passed, out is a value. Reading from outside cannot make it reach
     // further, so it is everywhere a read is. See `syn::script`.
     Policy::read(crate::syn::script::TOOL, Home::Compute),
+    // How a visual is drawn here: text, in the app only, where a visual can
+    // be shown. Not in a helper, which answers its parent in words.
+    Policy::read(crate::syn::visual::tool::GUIDE_TOOL, Home::Visuals).app_only().no_helper(),
 
     // ── Reading somebody else's words ──────────────────────────────
     // A summary is as much the feed's words as the article is.
@@ -272,6 +277,13 @@ pub static POLICIES: &[Policy] = &[
     Policy::read(crate::syn::delegate::TOOL, Home::Core).no_helper().engine(),
     // Loads a group of tools; each is weighed again when it is called.
     Policy::read(crate::syn::toolset::FIND_TOOL, Home::Core).engine(),
+    // Keeps a new node — a visual — and shows it. After reading too (plan §7,
+    // decision 1): the frame has no network, no IPC and no storage, so a
+    // visual cannot carry anything out, and `visual::check` refuses one that
+    // points outside itself before it is kept. A new node, never a change to
+    // one that was there, so nothing is held for the person. The app only;
+    // the engine runs it, since it reads the run. See `syn::visual::tool`.
+    Policy::write(crate::syn::visual::tool::SHOW_TOOL, Home::Visuals).after_reading().engine(),
 
     // ── Making something new ───────────────────────────────────────
     // `create_node` refuses Syn's own kinds whatever the taint — see

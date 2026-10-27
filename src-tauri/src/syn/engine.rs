@@ -767,11 +767,20 @@ impl SynEngine {
         // And a tool that only pays for itself in a large window is not sent
         // to a small one. See `tools::LARGE_WINDOW_ONLY`.
         let room = self.window_tokens(req);
+        // And the two that draw a visual only where all of it holds: a model
+        // that draws, the setting on, a desktop, the app, not a helper. See
+        // `visual::tool::offered`.
+        let draws = {
+            let settings = crate::syn::settings::load_settings(req.vault_path).unwrap_or_default();
+            let capability = crate::syn::provider::capability::for_settings(&settings, Some(req.model));
+            crate::syn::visual::tool::offered(&capability, &settings, run.surface, sub_run)
+        };
         let all_tools: Vec<_> = req
             .registry
             .definitions(&ctx)
             .into_iter()
             .filter(|t| crate::syn::tools::offered_at(&t.function.name, room))
+            .filter(|t| draws || !crate::syn::visual::tool::TOOLS.contains(&t.function.name.as_str()))
             .filter(|t| {
                 !sub_run
                     || crate::syn::delegate::may_use(
@@ -1147,9 +1156,15 @@ impl SynEngine {
                 };
 
                 // Whatever it writes into the call is its own, and stays its own
-                // however the result echoes it. See `taint::Destinations`.
-                destinations.note_authored(&tc.function.arguments);
+                // however the result echoes it. See `taint::Destinations`. Not
+                // a visual's HTML: it goes into a frame with no network, never
+                // to a destination, and would be the largest thing on the record.
+                if tc.function.name != crate::syn::visual::tool::SHOW_TOOL {
+                    destinations.note_authored(&tc.function.arguments);
+                }
 
+                // The visual a `show_visual` kept, for what is recorded of the call.
+                let mut shown: Option<crate::syn::visual::tool::Shown> = None;
                 let call_started = std::time::Instant::now();
                 let outcome = match how {
                     crate::syn::gate::How::Describe(content)
@@ -1183,6 +1198,25 @@ impl SynEngine {
                             // anything: a failure leaves the gate open.
                             Err(e) => Err(e),
                         }
+                    }
+                    crate::syn::gate::How::ShowVisual => {
+                        let tried = crate::syn::visual::tool::Tried::from_steps(&run.steps);
+                        let asked = crate::syn::visual::tool::Asked {
+                            question: &run.goal,
+                            conversation: run.conversation_id.as_deref(),
+                            model: req.model,
+                        };
+                        let (content, kept) = crate::syn::visual::tool::show(
+                            req.app,
+                            req.db,
+                            req.vault_path,
+                            draws,
+                            tried,
+                            &asked,
+                            &tc.function.arguments,
+                        );
+                        shown = kept;
+                        Ok(crate::syn::registry::ToolOutcome { content, reversal: crate::syn::registry::Reversal::Nothing })
                     }
                     crate::syn::gate::How::Plan => {
                         // Kept on the run and shown as it changes. A plan the
@@ -1656,10 +1690,17 @@ impl SynEngine {
                 run.read_from = taint.keys();
                 run.destinations = destinations.clone();
                 run.tool_groups = loaded.iter().map(|g| g.name()).collect();
+                // A visual's HTML is kept once, in its node; the record of the
+                // call holds its id. See `visual::tool::compact`.
+                let recorded_args = if tc.function.name == crate::syn::visual::tool::SHOW_TOOL {
+                    crate::syn::visual::tool::compact(&tc.function.arguments, shown.as_ref())
+                } else {
+                    tc.function.arguments.clone()
+                };
                 run.record_tool(
                     iteration,
                     &tc.function.name,
-                    tc.function.arguments.clone(),
+                    recorded_args.clone(),
                     tool_succeeded(&content),
                     reversal,
                     &content,
@@ -1671,7 +1712,7 @@ impl SynEngine {
                 let event = SynToolCallEvent {
                     conversation_id: conversation_id.clone().unwrap_or_default(),
                     tool_name: tc.function.name.clone(),
-                    tool_args: tc.function.arguments.clone(),
+                    tool_args: recorded_args,
                     result_preview: content.chars().take(4000).collect(),
                     iteration,
                 };
@@ -6743,6 +6784,19 @@ mod driving {
         ask: &str,
         script: Vec<ChatReply>,
     ) {
+        drive_script_as(app, vault, run, ask, "scripted", script).await
+    }
+
+    /// As `drive_script_in`, with the model named: what a run is offered can
+    /// depend on it (`visual::tool::offered`).
+    async fn drive_script_as(
+        app: &tauri::AppHandle<tauri::test::MockRuntime>,
+        vault: &str,
+        run: &mut Run,
+        ask: &str,
+        model: &str,
+        script: Vec<ChatReply>,
+    ) {
         use tauri::Manager;
         let state = app.state::<crate::db::DbState>();
         let browser_state = no_browser();
@@ -6755,7 +6809,7 @@ mod driving {
                     app,
                     message_id: "m1",
                     history: &history(ask),
-                    model: "scripted",
+                    model,
                     temperature: None,
                     registry: &registry,
                     db: state.inner(),
@@ -6874,6 +6928,88 @@ mod driving {
         assert!(server.lines().iter().any(|l| l.starts_with("GET /api/tasks")), "{:?}", server.lines());
         assert!(!server.lines().iter().any(|l| l.starts_with("POST")), "a send after reading still needs a plan: {:?}", server.lines());
         crate::syn::consent::work_is_done("conv-author");
+    }
+
+    /// A model that draws, in the app, with the setting on: the guide, then the
+    /// visual, kept as a node — and what is kept of the calls holds its id,
+    /// never its HTML. A `show_visual` before the guide is refused.
+    #[tokio::test]
+    async fn a_visual_is_drawn_after_the_guide_and_kept_once() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(std::sync::Mutex::new(crate::db::DbBridge::new_in_memory_full().expect("db")));
+        crate::syn::settings::save_settings(
+            &vault,
+            &crate::models::syn::SynSettings { provider: crate::models::syn::SynProvider::Anthropic, ..Default::default() },
+        )
+        .expect("settings");
+        let marker = "PENDULUM_MARKER_7f3a";
+        // Past the 400 characters a refused call keeps of what it tried.
+        let html = format!("<input type=\"range\" id=\"l\">{}<p id=\"{marker}\"></p><script src=\"/lib/d3.v7.min.js\"></script>", "<p></p>".repeat(80));
+        let visual = serde_json::json!({ "title": "Con lắc đơn", "kind": "simulation", "html": html });
+        let ask = "mô phỏng con lắc đơn cho tao";
+        let mut run = Run::new(ask, Some("conv-visual".into()), budget(12));
+        drive_script_as(
+            &app,
+            &vault,
+            &mut run,
+            ask,
+            "claude-opus-5-5",
+            vec![
+                calls("show_visual", visual.clone()),
+                calls("visual_guide", serde_json::json!({ "kind": "simulation" })),
+                calls("show_visual", visual),
+                text("Kéo thanh trượt để đổi chiều dài."),
+            ],
+        )
+        .await;
+        if !cfg!(desktop) {
+            return;
+        }
+        let shows: Vec<_> = run.steps.iter().filter(|s| s.tool.as_deref() == Some("show_visual")).collect();
+        assert_eq!(shows.len(), 2, "{:?}", run.steps);
+        assert_eq!(shows[0].ok, Some(false), "before the guide: {}", shows[0].preview);
+        assert_eq!(shows[1].ok, Some(true), "after it: {}", shows[1].preview);
+        let id = shows[1].args.as_ref().and_then(|a| a.get("visual_id")).and_then(|v| v.as_str()).expect("the id is kept").to_string();
+        assert!(crate::syn::visual::store::load(std::path::Path::new(&vault), &id).is_some_and(|v| v.html.contains(marker)));
+
+        // The HTML is in the node and nowhere else on the record.
+        let record = serde_json::to_value(&run).expect("run");
+        let holding: Vec<String> = record
+            .as_object()
+            .expect("object")
+            .iter()
+            .filter(|(_, v)| v.to_string().contains(marker))
+            .map(|(k, v)| format!("{k}: {}", v.to_string().chars().take(300).collect::<String>()))
+            .collect();
+        assert!(holding.is_empty(), "the run's record holds the visual's HTML: {holding:#?}");
+        assert!(shows.iter().all(|s| s.args.as_ref().is_some_and(|a| a.get("html").is_none())));
+    }
+
+    /// A model that does not draw is not offered the tools, and a call to one
+    /// anyway keeps nothing.
+    #[tokio::test]
+    async fn a_model_that_does_not_draw_keeps_no_visual() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(std::sync::Mutex::new(crate::db::DbBridge::new_in_memory_full().expect("db")));
+        let ask = "mô phỏng con lắc đơn cho tao";
+        let mut run = Run::new(ask, Some("conv-small".into()), budget(12));
+        drive_script_as(
+            &app,
+            &vault,
+            &mut run,
+            ask,
+            "gemma4:e2b",
+            vec![
+                calls("visual_guide", serde_json::json!({ "kind": "simulation" })),
+                calls("show_visual", serde_json::json!({ "title": "x", "kind": "chart", "html": "<p>x</p>" })),
+                text("Chu kỳ T = 2π√(L/g)."),
+            ],
+        )
+        .await;
+        let folder = std::path::Path::new(&vault).join(crate::syn::visual::store::FOLDER);
+        assert!(!folder.exists() || std::fs::read_dir(&folder).expect("dir").next().is_none(), "nothing kept: {:?}", run.steps);
     }
 
     /// Asking `find_tools` for a connector just approved brings its tools.

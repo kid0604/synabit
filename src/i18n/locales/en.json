@@ -4469,6 +4469,8 @@
     "doing_table_rows": "Changing rows of a table",
     "doing_crunch": "Working out figures over a table",
     "doing_compute": "Working it out with a short script",
+    "doing_visual_guide": "Reading how to draw a visual",
+    "doing_show_visual": "Drawing a visual",
     "doing_skill_draft": "Writing down how to do this",
     "doing_routine_draft": "Setting up something to do on its own",
     "writes_plan_title": "Syn wants to send {n} thing — approve what may go | Syn wants to send {n} things — approve what may go",

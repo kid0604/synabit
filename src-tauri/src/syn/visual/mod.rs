@@ -36,6 +36,7 @@ pub mod assets;
 pub mod check;
 pub mod protocol;
 pub mod store;
+pub mod tool;
 
 #[cfg(debug_assertions)]
 pub mod spike;

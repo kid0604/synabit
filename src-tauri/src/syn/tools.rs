@@ -1516,7 +1516,48 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         },
     ];
     definitions.extend(phase_f_definitions());
+    definitions.extend(visual_definitions());
     definitions
+}
+
+/// `visual_guide` and `show_visual`. Declared for every run; the engine
+/// leaves them out of one where they are not offered — a model that does not
+/// draw, the setting off, a phone, Telegram, a routine, a helper. See
+/// `syn::visual::tool::offered`.
+fn visual_definitions() -> Vec<ToolDefinition> {
+    vec![
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                // Written out, not `visual::tool::GUIDE_TOOL`, for `toolLabel.spec.ts`.
+                name: "visual_guide".to_string(),
+                description: "Before drawing a visual, read how one is drawn here: the kit, the colours, the libraries, what the frame refuses, and how this kind is done well. Call it once per run, before show_visual.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["kind"],
+                    "properties": {
+                        "kind": { "type": "string", "enum": ["diagram", "chart", "explainer", "simulation"], "description": "What you are about to draw." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "show_visual".to_string(),
+                description: "Show an interactive visual under your answer: a diagram, a chart of the user's data, an explainer with sliders, or a simulation — HTML or SVG you write, run in a sandboxed frame with no network, kept in the vault. Only when seeing or moving something helps more than reading; answer in words otherwise. Read visual_guide first. The explanation goes in your answer, not in the visual.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "required": ["title", "kind", "html"],
+                    "properties": {
+                        "title": { "type": "string", "description": "What it shows, as the user would name the note. At most 120 characters." },
+                        "kind": { "type": "string", "enum": ["diagram", "chart", "explainer", "simulation"] },
+                        "html": { "type": "string", "description": "A fragment of HTML or SVG, with its <script>s. No <html>, <head> or <body>; nothing loaded from outside but /lib/d3.v7.min.js, /lib/katex.min.js and /lib/katex.min.css." }
+                    }
+                }),
+            },
+        },
+    ]
 }
 
 /// The four tools phase F added: correcting the ledger, and spreadsheets.
@@ -1717,6 +1758,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "table_rows" => tool_table_rows(ctx, args),
         name if name == crate::syn::crunch::TOOL => tool_crunch(ctx, args),
         name if name == crate::syn::script::TOOL => tool_compute(ctx, args),
+        name if name == crate::syn::visual::tool::GUIDE_TOOL => Ok(crate::syn::visual::tool::guide(args)),
 
         // What Syn knows about the person rather than about their vault.
         // Stored as nodes, so `trash_node` and `restore_node` already forget
@@ -6886,6 +6928,15 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // Drawing an interactive visual: the `visuals` group, brought by
+        // asking to see something, and left out of every run not offered it —
+        // a model that does not draw, the setting off, a phone, Telegram, a
+        // routine, a helper. See `visual::tool::offered`.
+        let visuals = crate::syn::visual::tool::TOOLS;
+        for tool in visuals {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -6907,6 +6958,7 @@ mod tests {
             .chain(authoring)
             .chain(staging)
             .chain(skills)
+            .chain(visuals)
             .collect();
         for name in &names {
             assert!(

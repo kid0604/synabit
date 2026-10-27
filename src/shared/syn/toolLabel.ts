@@ -19,6 +19,7 @@ export const LABELLED_TOOLS = [
   'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools', 'table_rows',
   'crunch', 'propose_writes', 'connector_draft', 'connector_connect', 'connector_find',
   'connector_try', 'stage_transactions', 'skill_draft', 'routine_draft', 'compute',
+  'visual_guide', 'show_visual',
 ] as const;
 
 export function toolLabel(t: (key: string, values?: Record<string, unknown>) => string, tool: string): string {

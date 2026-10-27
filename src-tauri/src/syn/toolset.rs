@@ -72,6 +72,9 @@ pub enum Group {
     /// Syn writing something to do on its own — at a time, or when something
     /// new comes in — for the person to turn on.
     Jobs,
+    /// Drawing an interactive visual: `visual_guide`, `show_visual`. Only in
+    /// runs offered them. See `syn::visual::tool::offered`.
+    Visuals,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -96,6 +99,7 @@ impl Group {
             Group::Authoring => "authoring".into(),
             Group::Skills => "skills".into(),
             Group::Jobs => "jobs".into(),
+            Group::Visuals => "visuals".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -118,6 +122,7 @@ impl Group {
             "authoring" => Group::Authoring,
             "skills" => Group::Skills,
             "jobs" => Group::Jobs,
+            "visuals" => Group::Visuals,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -148,6 +153,7 @@ impl Group {
             Group::Authoring => "connect to a new service: draft a connector from its API or OpenAPI spec, and ask the user to approve it".into(),
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
             Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
+            Group::Visuals => "draw an interactive visual under the answer: a diagram, a chart of the user's data, an explainer with sliders, a simulation".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
     }
@@ -245,6 +251,13 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "every day", "daily", "every week", "weekly", "every monday", "routine", "on a schedule",
             "automatically", "whenever a new",
         ],
+        // Asking to see something rather than read it. Not "giải thích" or
+        // "explain" alone: most answers explain, and most are words.
+        Group::Visuals => &[
+            "mô phỏng", "minh họa", "minh hoạ", "trực quan", "hình dung", "biểu đồ", "đồ thị", "tương tác",
+            "cho tao xem", "cho mình xem", "cho tôi xem", "visualize", "visualise", "visualization", "simulate",
+            "simulation", "interactive", "show me", "chart", "graph", "plot", "animate", "animation",
+        ],
         Group::Core | Group::Connector(_) | Group::Compute | Group::Writes => &[],
     }
 }
@@ -302,6 +315,7 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Authoring,
         Group::Skills,
         Group::Jobs,
+        Group::Visuals,
     ] {
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);
