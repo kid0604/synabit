@@ -27,7 +27,9 @@
 //!
 //! `SYN_EVAL_TASKS` picks `smoke`, `all` (the default) or a category name;
 //! `SYN_EVAL_TRIALS` how many times each task runs (default 3); `SYN_EVAL_OUT`
-//! where the report goes. `harness_runs_the_product_path` below runs without a
+//! where the report goes; `SYN_EVAL_KEEP` a folder for every visual a trial
+//! drew, as a page that stands alone. `tests::ask` asks questions that are not
+//! tasks the same way. `harness_runs_the_product_path` below runs without a
 //! model and is what keeps the harness itself honest in CI.
 
 pub mod connectors;

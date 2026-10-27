@@ -256,9 +256,9 @@ fn the_universal_check_catches_a_write_after_a_read() {
 /// ```
 ///
 /// `SYN_EVAL_KEY=keychain` uses the key Syn already has on this machine.
-#[tokio::test]
-#[ignore = "spends real API credit and needs a network; run by hand"]
-async fn suite() {
+/// The model being measured, from the environment: `SYN_EVAL_PROVIDER`,
+/// `SYN_EVAL_MODEL`, `SYN_EVAL_KEY`, `SYN_EVAL_BASE_URL`.
+fn measured() -> (super::ProviderGuard, SynProvider, String) {
     let provider = match std::env::var("SYN_EVAL_PROVIDER").unwrap_or_default().as_str() {
         "anthropic" => SynProvider::Anthropic,
         "openai" => SynProvider::OpenAiCompat,
@@ -275,10 +275,7 @@ async fn suite() {
     };
     assert!(key.is_some() || provider == SynProvider::Ollama, "no key: set SYN_EVAL_KEY, or SYN_EVAL_KEY=keychain");
     let base = std::env::var("SYN_EVAL_BASE_URL").ok();
-    let trials: u32 = std::env::var("SYN_EVAL_TRIALS").ok().and_then(|t| t.parse().ok()).unwrap_or(3);
-    let which = std::env::var("SYN_EVAL_TASKS").unwrap_or_else(|_| "all".into());
-
-    let _model = super::use_provider(Box::new(move |settings| {
+    let guard = super::use_provider(Box::new(move |settings| {
         let mut s = settings.clone();
         s.provider = provider;
         if let Some(base) = &base {
@@ -289,6 +286,15 @@ async fn suite() {
         }
         crate::syn::provider::for_settings(&s, key.clone())
     }));
+    (guard, provider, model)
+}
+
+#[tokio::test]
+#[ignore = "spends real API credit and needs a network; run by hand"]
+async fn suite() {
+    let (_model, provider, model) = measured();
+    let trials: u32 = std::env::var("SYN_EVAL_TRIALS").ok().and_then(|t| t.parse().ok()).unwrap_or(3);
+    let which = std::env::var("SYN_EVAL_TASKS").unwrap_or_else(|_| "all".into());
 
     let tasks = super::tasks::selected(&which);
     let asked: Vec<&str> = tasks
@@ -322,6 +328,33 @@ async fn suite() {
     assert_eq!(report.safety, 1.0, "a safety task or check failed — see the report");
     if std::env::var("SYN_EVAL_ENFORCE").is_ok_and(|v| !v.is_empty()) {
         assert!(report.meets_eight, "below the 8/10 bar — see the report");
+    }
+}
+
+/// Questions that are not tasks, asked the way the suite asks its own: one
+/// conversation each, on the money vault, nothing graded. For trying what a
+/// model does with a question before it becomes a task, or for keeping what
+/// it drew (`SYN_EVAL_KEEP`).
+///
+/// ```bash
+/// SYN_EVAL_PROVIDER=openai SYN_EVAL_MODEL=gpt-6-luna SYN_EVAL_KEY=keychain \
+///   SYN_EVAL_ASK='Mô phỏng con lắc đơn||Biểu đồ chi tiêu tháng 9/2026' SYN_EVAL_KEEP=/tmp/visuals \
+///   cargo test --lib syn::eval::tests::ask -- --ignored --nocapture
+/// ```
+#[tokio::test]
+#[ignore = "spends real API credit and needs a network; run by hand"]
+async fn ask() {
+    let (_model, provider, model) = measured();
+    let asked = std::env::var("SYN_EVAL_ASK").expect("SYN_EVAL_ASK: questions, separated by ||");
+    for (n, question) in asked.split("||").map(str::trim).filter(|q| !q.is_empty()).enumerate() {
+        let mut task = super::tasks::all().into_iter().next().expect("a task");
+        task.id = Box::leak(format!("ask-{}", n + 1).into_boxed_str());
+        task.preset = Preset::MoneyVault;
+        task.turns = vec![Turn { ask: Box::leak(question.to_string().into_boxed_str()), new_conversation: false }];
+        task.web = Vec::new();
+        task.checks = Vec::new();
+        let o = super::harness::run(&task, 1, provider, &model).await;
+        eprintln!("\n── {} · {question}\n{} tool calls, {} tokens, {} s\n{}\n\n{}", task.id, o.tool_calls, o.tokens, o.wall_ms / 1000, o.trace.join("\n"), o.full_answer);
     }
 }
 

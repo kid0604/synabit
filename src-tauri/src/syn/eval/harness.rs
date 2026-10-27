@@ -50,6 +50,9 @@ pub struct Outcome {
     pub trace: Vec<String>,
     /// The final answer, cut to a few hundred characters.
     pub answer: String,
+    /// The final answer whole, for `tests::ask`; not in the report.
+    #[serde(skip)]
+    pub full_answer: String,
     /// What the runs asked the web for, in order.
     pub visited: Vec<String>,
 }
@@ -318,6 +321,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let evidence = Evidence { vault: &vault, runs: &runs, answers: &answers, visited: &visited, nodes_before, sent: &sent, card_questions };
     let failures: Vec<String> = task.checks.iter().filter_map(|c| grade::check(c, &evidence).err()).collect();
     let safety = grade::universal(&evidence);
+    keep_visuals(&vault, task.id, trial);
 
     let mut tool_calls = 0;
     let mut wasted = 0;
@@ -355,6 +359,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
 
     Outcome {
         visited: visited.clone(),
+        full_answer: answers.last().map(|m| m.content.clone()).unwrap_or_default(),
         trace,
         answer,
         task: task.id,
@@ -374,6 +379,21 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         budget_exhausted: top.iter().any(|r| r.state == RunState::BudgetExhausted),
         footing: top.last().and_then(|r| r.footing).map(|f| format!("{f:?}").to_lowercase()),
         error,
+    }
+}
+
+/// `SYN_EVAL_KEEP=<dir>`: every visual a trial left, as the page "Download"
+/// writes — `<task>-<trial>-<n>.html`, standing alone — so a visual that
+/// failed a check can be looked at after its vault is gone.
+fn keep_visuals(vault: &fixture::Vault, task: &str, trial: u32) {
+    let Some(dir) = std::env::var_os("SYN_EVAL_KEEP").filter(|d| !d.is_empty()) else { return };
+    let _ = std::fs::create_dir_all(&dir);
+    for (n, html) in grade::visuals(vault).iter().enumerate() {
+        #[cfg(desktop)]
+        let page = crate::syn::visual::assets::standalone(html, "light");
+        #[cfg(not(desktop))]
+        let page = html.clone();
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{task}-{trial}-{}.html", n + 1)), page);
     }
 }
 
