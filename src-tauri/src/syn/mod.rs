@@ -55,6 +55,7 @@ pub mod taint;
 pub mod telegram;
 pub mod thread;
 pub mod toolset;
+pub mod visual;
 pub mod web;
 pub mod tempo;
 pub mod tools;

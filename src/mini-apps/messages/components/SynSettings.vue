@@ -16,6 +16,9 @@ import { needsPinToSave, setFamilySafe } from '../familySafe';
 import { showAppNotice } from '../../../composables/useAppNotice';
 import { useAppStore } from '../../../stores/useAppStore';
 import type { ModelInfo } from '../types';
+import VisualSpikePanel from './VisualSpikePanel.vue';
+
+const visualSpikeBuild = import.meta.env.DEV || import.meta.env.VITE_SYNVISUAL_SPIKE === '1';
 
 /** Tuning — temperature, rounds, window, budgets — is for whoever asked to
  *  see Syn's workings; everybody else gets the defaults. See `synDeveloper`. */
@@ -269,6 +272,9 @@ watch(() => props.vaultPath, async () => {
           <span class="block text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">{{ t('syn.developer_mode_hint') }}</span>
         </span>
       </label>
+
+      <!-- Bước 0 of Syn's visuals; only builds made for it carry the commands. -->
+      <VisualSpikePanel v-if="appStore.synDeveloper && visualSpikeBuild" />
 
       <!-- CONNECTION -->
       <SettingsSection id="ai-model" :title="t('syn.settings_ai_model')" :summary="aiModelSummary" default-open>

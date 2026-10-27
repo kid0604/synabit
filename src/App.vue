@@ -101,6 +101,9 @@ const startPaneDrag = () => {
 onMounted(() => {
   window.addEventListener('mousemove', onPaneDrag);
   window.addEventListener('mouseup', endPaneDrag);
+  // Bước 0 of Syn's visuals, unattended: only in a build made with
+  // VITE_SYNVISUAL_SPIKE=1. See `shared/syn/visualSpike.ts`.
+  void autorunVisualSpike();
 });
 onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
@@ -109,6 +112,7 @@ onUnmounted(() => {
 import { Loader2, FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
+import { autorunVisualSpike } from './shared/syn/visualSpike';
 import { runBeforeQuit } from './composables/useBeforeQuit';
 import { initEventBus, destroyEventBus, useEventBus } from './composables/useEventBus';
 import { useNodeService } from './composables/useNodeService';

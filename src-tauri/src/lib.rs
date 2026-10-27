@@ -869,6 +869,11 @@ pub fn run() {
 
             Ok(())
         })
+        // Syn's visuals, served from an origin of their own so that their
+        // scripts run under their CSP rather than the app's. See `syn::visual`.
+        .register_uri_scheme_protocol(syn::visual::protocol::SCHEME, |_ctx, request| {
+            syn::visual::protocol::handle(&request)
+        })
         // Every invoke in the app passes through here, which is the point:
         // the app's own commands skip Tauri's ACL, and every webview — remote
         // pages in the browsing pane included — is handed the means to call
@@ -1276,6 +1281,15 @@ pub fn run() {
             sync_cmds::sync_revoke_device,
             // System
             open_app_log_folder,
+            // Bước 0 of Syn's visuals: debug builds only.
+            #[cfg(debug_assertions)]
+            syn::visual::spike::visual_spike_ping,
+            #[cfg(debug_assertions)]
+            syn::visual::spike::visual_spike_pings,
+            #[cfg(debug_assertions)]
+            syn::visual::spike::visual_spike_reset,
+            #[cfg(debug_assertions)]
+            syn::visual::spike::visual_spike_report,
                 ]);
             move |invoke| {
                 if let Err(refused) = crate::app_shell::gate::check(&invoke) {
