@@ -8,6 +8,8 @@ import { readFile } from '@tauri-apps/plugin-fs';
 import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer, AmbiguousChoice, Tempo, PlanStep, RunProgress as Progress } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
+import SynVisual from '../../../shared/components/SynVisual.vue';
+import { visualsIn } from '../../../shared/syn/visualHost';
 import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
 import WritePlanCard from './WritePlanCard.vue';
@@ -123,16 +125,18 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null);
  * should read the sentence that will run before it runs — that is the whole
  * reason the roadmap asks for a skill to be runnable by hand.
  */
-defineExpose({
-  prefill(text: string) {
-    inputText.value = text;
-    void nextTick(() => {
-      textareaRef.value?.focus();
-      const end = textareaRef.value?.value.length ?? 0;
-      textareaRef.value?.setSelectionRange(end, end);
-    });
-  },
-});
+function prefill(text: string) {
+  inputText.value = text;
+  void nextTick(() => {
+    textareaRef.value?.focus();
+    const end = textareaRef.value?.value.length ?? 0;
+    textareaRef.value?.setSelectionRange(end, end);
+  });
+}
+defineExpose({ prefill });
+
+/** Visuals drawn so far in the run under way, shown before its answer is. */
+const visualsSoFar = computed(() => (props.isStreaming ? visualsIn(props.toolCalls) : []));
 const isComposing = ref(false);
 const pendingImages = ref<string[]>([]);
 
@@ -466,6 +470,7 @@ const handleStop = () => {
             @regenerate="$emit('regenerate', msg.id)"
             @arrange="(svg, title) => $emit('arrange', svg, title)"
             @open-board="(board) => $emit('open-board', board)"
+            @ask-visual="prefill"
           />
         </template>
 
@@ -481,6 +486,11 @@ const handleStop = () => {
           @open-source="$emit('open-source', $event)"
           @regenerate="() => {}"
         />
+
+        <!-- A visual is shown as soon as it is kept, not when the answer ends. -->
+        <div v-if="visualsSoFar.length && vaultPath" class="px-4">
+          <SynVisual v-for="id in visualsSoFar" :key="id" :visual-id="id" :vault-path="vaultPath" @ask="prefill" />
+        </div>
 
         <!-- Thinking indicator (shown when streaming but no content yet) -->
         <div

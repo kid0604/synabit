@@ -1283,6 +1283,8 @@ pub fn run() {
             open_app_log_folder,
             // Syn's visuals. See `syn::visual`.
             syn::visual::store::syn_visual_meta,
+            #[cfg(desktop)]
+            syn::visual::store::syn_visual_export,
             // Bước 0 of Syn's visuals: debug builds only.
             #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_ping,
@@ -1292,6 +1294,8 @@ pub fn run() {
             syn::visual::spike::visual_spike_reset,
             #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_report,
+            #[cfg(debug_assertions)]
+            syn::visual::spike::visual_spike_keep,
                 ]);
             move |invoke| {
                 if let Err(refused) = crate::app_shell::gate::check(&invoke) {

@@ -70,12 +70,69 @@ pub fn library(name: &str) -> Option<&'static Library> {
     LIBRARIES.iter().find(|l| l.name == name)
 }
 
+/// A visual as one file that opens anywhere: the kit and every library it
+/// loads written into it, KaTeX's fonts as `data:` URLs. What "Download"
+/// saves; nothing in it reaches for `synvisual://` or the network.
+#[cfg(desktop)]
+pub fn standalone(fragment: &str, theme: &str) -> String {
+    use base64::Engine as _;
+    let text = |name: &str| library(name).map(|l| String::from_utf8_lossy(l.bytes).into_owned()).unwrap_or_default();
+    let mut body = fragment.to_string();
+    for name in ["d3.v7.min.js", "katex.min.js"] {
+        for quote in ['"', '\''] {
+            let tag = format!("<script src={quote}/lib/{name}{quote}></script>");
+            body = body.replace(&tag, &format!("<script>{}</script>", text(name)));
+        }
+    }
+    let katex_css = || {
+        let mut css = text("katex.min.css");
+        for l in LIBRARIES.iter().filter(|l| l.name.starts_with("fonts/")) {
+            let data = format!("data:font/woff2;base64,{}", base64::engine::general_purpose::STANDARD.encode(l.bytes));
+            css = css.replace(&format!("url({})", l.name), &format!("url({data})"));
+        }
+        // The woff and ttf fallbacks after each woff2: every WebView and
+        // browser reads woff2, and a fallback left by URL points nowhere.
+        regex::Regex::new(r#",url\(fonts/[^)]+\) format\("(woff|truetype)"\)"#)
+            .map(|fallback| fallback.replace_all(&css, "").into_owned())
+            .unwrap_or(css)
+    };
+    for quote in ['"', '\''] {
+        let tag = format!("<link rel={quote}stylesheet{quote} href={quote}/lib/katex.min.css{quote}>");
+        if body.contains(&tag) {
+            body = body.replace(&tag, &format!("<style>{}</style>", katex_css()));
+        }
+    }
+    let theme = if theme == "dark" { "dark" } else { "light" };
+    format!(
+        "<!doctype html>\n<html lang=\"vi\" data-theme=\"{theme}\">\n<head>\n<meta charset=\"utf-8\">\n\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
+         <style>{css}</style>\n<script>{js}</script>\n</head>\n<body>\n{body}\n</body>\n</html>\n",
+        css = KIT_CSS,
+        js = KIT_JS,
+    )
+}
+
 #[cfg(all(test, desktop))]
 mod tests {
     use super::*;
 
     /// Every font KaTeX's stylesheet asks for in woff2 is served — the one
     /// format WebKit, WebView2 and WebKitGTK all read first.
+    /// Saved as a file, a visual needs nothing it had from the app: no
+    /// `/lib/` path, no `/kit.*`, no font by URL — and the kit knows it is
+    /// on its own.
+    #[test]
+    fn a_saved_visual_stands_alone() {
+        let fragment = r#"<link rel="stylesheet" href="/lib/katex.min.css"><p id="x"></p><script src="/lib/d3.v7.min.js"></script><script src="/lib/katex.min.js"></script>"#;
+        let page = standalone(fragment, "dark");
+        assert!(!page.contains("/lib/") && !page.contains("/kit."), "still points at the app");
+        assert!(!page.contains("url(fonts/"), "a font by URL");
+        assert!(page.contains("data:font/woff2;base64,"));
+        assert!(page.contains("d3js.org v7.9.0"));
+        assert!(page.contains("data-theme=\"dark\""));
+        assert!(page.contains("window.parent !== window"), "the kit's standalone mode is in");
+    }
+
     #[test]
     fn every_font_katex_asks_for_is_here() {
         let css = std::str::from_utf8(library("katex.min.css").expect("css").bytes).expect("utf8");

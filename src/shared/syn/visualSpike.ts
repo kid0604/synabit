@@ -36,10 +36,8 @@ export interface SpikeReport {
   unclear: number;
 }
 
-/** Where a custom scheme lives: its own scheme everywhere but Windows. */
-export function visualOrigin(userAgent: string): string {
-  return /Windows/i.test(userAgent) ? 'http://synvisual.localhost' : 'synvisual://localhost';
-}
+export { visualOrigin } from './visualHost';
+import { visualOrigin } from './visualHost';
 
 export interface HostSeen {
   /** What the page posted, or `null` if it never answered. */
@@ -166,7 +164,8 @@ export async function runVisualSpike(into?: HTMLElement, timeoutMs = 30_000): Pr
   const origin = visualOrigin(userAgent);
   const attack = await runAttack(origin, into, timeoutMs);
   const kit = await runKit(origin, into, timeoutMs);
-  return summarise([...attack, ...kit], userAgent, origin);
+  const chat = await runInChat(timeoutMs);
+  return summarise([...attack, ...kit, ...chat], userAgent, origin);
 }
 
 /** A frame as a visual is framed: sandboxed to scripts, off screen unless shown. */
@@ -284,4 +283,95 @@ export async function autorunVisualSpike(): Promise<void> {
   } catch (error) {
     console.error('[visual-spike] could not run', error);
   }
+}
+
+/** What the chat's own frame did with a kept visual. */
+export interface ChatSeen {
+  /** Why it could not run at all — no vault open, say — or `null`. */
+  skipped: string | null;
+  framed: boolean;
+  sandbox: string | null;
+  titleShown: boolean;
+  height: number;
+  selftest: Record<string, unknown> | null;
+  asked: string[];
+  appTheme: 'light' | 'dark';
+  exportStandsAlone: boolean;
+}
+
+/** The chat's frame, judged. `skipped` is a row of its own, not a failure of the frame. */
+export function judgeChat(seen: ChatSeen): SpikeRow[] {
+  if (seen.skipped) return [{ group: 'chat', name: 'run in the chat frame', outcome: 'unclear', detail: seen.skipped }];
+  const row = (name: string, ok: boolean, detail = ''): SpikeRow => ({ group: 'chat', name, outcome: ok ? 'ok' : 'error', detail });
+  const t = seen.selftest ?? {};
+  return [
+    row('SynVisual framed it', seen.framed && seen.sandbox === 'allow-scripts', String(seen.sandbox)),
+    row('its title came from the node', seen.titleShown),
+    row('the frame took its height', seen.height > 160 && seen.height <= 900, `${seen.height}px`),
+    row('the kit ran inside it', seen.selftest != null && t.d3 === true && t.katex === true && t.katexFont === true),
+    row("the app's theme reached it", t.themeOnPage === seen.appTheme, `${String(t.themeOnPage)} / app ${seen.appTheme}`),
+    row('a question reached the chat box handler', seen.asked.length === 1, seen.asked.join(' | ')),
+    row('the download stands alone', seen.exportStandsAlone),
+  ];
+}
+
+/**
+ * A visual kept in the open vault, shown by the chat's own `SynVisual` — the
+ * component, the meta command, `/v/<id>` and the host bridge together, under
+ * the app's CSP. Needs a vault: an unattended run opens a test one (see the
+ * plan's Bước 0 instructions).
+ */
+async function runInChat(timeoutMs: number): Promise<SpikeRow[]> {
+  const base: ChatSeen = {
+    skipped: null, framed: false, sandbox: null, titleShown: false, height: 0,
+    selftest: null, asked: [], appTheme: document.documentElement.classList.contains('dark') ? 'dark' : 'light', exportStandsAlone: false,
+  };
+  let kept: [string, string];
+  try {
+    kept = await invoke<[string, string]>('visual_spike_keep');
+  } catch (error) {
+    return judgeChat({ ...base, skipped: `not run: ${String(error)}` });
+  }
+  const [vaultPath, id] = kept;
+  const [{ createApp, h }, { default: SynVisual }, { i18n }] = await Promise.all([
+    import('vue'),
+    import('../components/SynVisual.vue'),
+    import('../../i18n'),
+  ]);
+  const seen: ChatSeen = { ...base };
+  const holder = document.createElement('div');
+  // In view, so the frame is put in the page; too faint to see.
+  holder.style.cssText = 'position:fixed;left:0;top:0;width:640px;opacity:0.01;pointer-events:none;z-index:-1';
+  document.body.appendChild(holder);
+  let done: () => void = () => {};
+  const finished = new Promise<void>((resolve) => { done = resolve; });
+  const onMessage = (event: MessageEvent) => {
+    const frame = holder.querySelector('iframe');
+    if (!frame || event.source !== frame.contentWindow) return;
+    const message = event.data as { method?: string; params?: Record<string, unknown> };
+    if (message?.method === 'synabit/selftest') {
+      seen.selftest = message.params ?? {};
+      done();
+    }
+  };
+  window.addEventListener('message', onMessage);
+  const app = createApp({ render: () => h(SynVisual, { visualId: id, vaultPath, onAsk: (text: string) => seen.asked.push(text) }) });
+  app.use(i18n);
+  app.mount(holder);
+  try {
+    await Promise.race([finished, wait(timeoutMs)]);
+    await wait(500);
+    const frame = holder.querySelector('iframe');
+    seen.framed = !!frame;
+    seen.sandbox = frame?.getAttribute('sandbox') ?? null;
+    seen.height = frame ? parseInt(frame.style.height, 10) || 0 : 0;
+    seen.titleShown = holder.textContent?.includes('Bước 0: kit trong khung của chat') ?? false;
+    const page = await invoke<string>('syn_visual_export', { vaultPath, id, theme: 'light' }).catch(() => '');
+    seen.exportStandsAlone = page.length > 100_000 && !page.includes('/lib/') && page.includes('data:font/woff2');
+  } finally {
+    window.removeEventListener('message', onMessage);
+    app.unmount();
+    holder.remove();
+  }
+  return judgeChat(seen);
 }

@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-import { visualOrigin, judge, judgeKit, summarise, asMarkdown, KIT_HOST_CONTEXT, type SpikeRow, type KitSeen } from '../visualSpike';
+import { visualOrigin, judge, judgeKit, judgeChat, summarise, asMarkdown, KIT_HOST_CONTEXT, type SpikeRow, type KitSeen, type ChatSeen } from '../visualSpike';
 
 const blocked: SpikeRow = { group: 'exfil', name: 'fetch https', outcome: 'blocked', detail: 'CSP' };
 
@@ -79,5 +79,27 @@ describe('the kit, judged', () => {
   it('fails a page that never sent its self-test', () => {
     const rows = judgeKit({ ...working, selftest: null });
     expect(rows.filter((r) => r.outcome === 'error').length).toBeGreaterThan(5);
+  });
+});
+
+describe("the chat's own frame, judged", () => {
+  const working: ChatSeen = {
+    skipped: null, framed: true, sandbox: 'allow-scripts', titleShown: true, height: 322,
+    selftest: { d3: true, katex: true, katexFont: true, themeOnPage: 'light' }, asked: ['q'], appTheme: 'light', exportStandsAlone: true,
+  };
+
+  it('passes a frame that did everything', () => {
+    expect(judgeChat(working).filter((r) => r.outcome !== 'ok')).toEqual([]);
+  });
+
+  it('fails a frame sandboxed more loosely', () => {
+    const rows = judgeChat({ ...working, sandbox: 'allow-scripts allow-same-origin' });
+    expect(rows.find((r) => r.name === 'SynVisual framed it')?.outcome).toBe('error');
+  });
+
+  it('reports a run with no vault as not run, not as broken', () => {
+    const rows = judgeChat({ ...working, skipped: 'not run: no vault is open' });
+    expect(rows).toHaveLength(1);
+    expect(summarise(rows, 'ua', 'o')).toMatchObject({ broken: 0, unclear: 1 });
   });
 });

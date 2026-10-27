@@ -89,7 +89,10 @@
     report();
   });
 
-  const ready = request('ui/initialize', {
+  // Opened on its own — a visual saved as a file and opened in a browser —
+  // there is no host to answer: the page's own theme and locale stand.
+  const framed = window.parent !== window;
+  const ready = !framed ? Promise.resolve(Object.assign({}, context)) : request('ui/initialize', {
     protocolVersion: '2026-01-26',
     appInfo: { name: 'synabit-visual', version: '1' },
     appCapabilities: {},

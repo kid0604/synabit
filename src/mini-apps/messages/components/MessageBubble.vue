@@ -21,6 +21,8 @@ import type { SynMessage, SourceRef } from '../types';
 import FootingMark from './FootingMark.vue';
 import KeepAsLens from './KeepAsLens.vue';
 import HowWorkedOut from './HowWorkedOut.vue';
+import SynVisual from '../../../shared/components/SynVisual.vue';
+import { visualsIn } from '../../../shared/syn/visualHost';
 import DiagramViewer from '../../../shared/components/DiagramViewer.vue';
 import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { linkCitations } from '../citations';
@@ -49,7 +51,12 @@ const emit = defineEmits<{
   'arrange': [svg: string, title: string];
   /** A board the answer names, opened beside the conversation. */
   'open-board': [board: { id: string; path: string; title: string; data: WhiteboardData }];
+  /** A question a visual asks back, for the chat box. See `SynVisual`. */
+  'ask-visual': [text: string];
 }>();
+
+/** The visuals this answer drew, from its tool log. See `visualHost.visualsIn`. */
+const visualIds = computed(() => visualsIn(props.message.tool_calls_log));
 
 const copied = ref(false);
 const showTools = ref(false);
@@ -834,6 +841,18 @@ const copyContent = async () => {
             </div>
           </Transition>
         </div>
+
+        <!-- What it drew, each in its own frame. See `SynVisual`. -->
+        <template v-if="message.role === 'assistant' && !isStreaming && vaultPath">
+          <SynVisual
+            v-for="id in visualIds"
+            :key="id"
+            :visual-id="id"
+            :vault-path="vaultPath"
+            @ask="(text) => emit('ask-visual', text)"
+            @open="(note) => emit('open-source', note as SourceRef)"
+          />
+        </template>
 
         <!-- How the figures were worked out: tables and crunch pipelines, from
              what the run did. See `syn::crunch`. -->

@@ -142,6 +142,15 @@ pub fn syn_visual_meta(vault_path: String, id: String) -> Result<Visual, AppErro
     load(Path::new(&vault_path), &id).ok_or_else(|| AppError::General(format!("There is no visual {id}.")))
 }
 
+/// A kept visual as one HTML file that opens in any browser, for "Download".
+/// Desktop only, where the libraries it writes in are. See `assets::standalone`.
+#[cfg(desktop)]
+#[tauri::command]
+pub fn syn_visual_export(vault_path: String, id: String, theme: String) -> Result<String, AppError> {
+    let visual = load(Path::new(&vault_path), &id).ok_or_else(|| AppError::General(format!("There is no visual {id}.")))?;
+    Ok(super::assets::standalone(&visual.html, &theme))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

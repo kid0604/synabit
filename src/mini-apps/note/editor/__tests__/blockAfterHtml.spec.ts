@@ -8,6 +8,7 @@ import { Markdown } from 'tiptap-markdown';
 vi.mock('../../nodes/DetailsNodeView.vue', () => ({ default: {} }));
 vi.mock('../../nodes/LocationNodeView.vue', () => ({ default: {} }));
 vi.mock('../../nodes/WhiteboardNodeView.vue', () => ({ default: {} }));
+vi.mock('../../nodes/SynVisualNodeView.vue', () => ({ default: {} }));
 vi.mock('../../nodes/ImageGalleryNode.vue', () => ({ default: {} }));
 vi.mock('@tiptap/vue-3', async (real) => ({ ...(await real<object>()), VueNodeViewRenderer: () => null }));
 
@@ -16,6 +17,7 @@ import { PdfExtension } from '../../PdfExtension';
 import { LocationExtension } from '../../LocationExtension';
 import { AudioExtension } from '../../AudioExtension';
 import { WhiteboardExtension } from '../../WhiteboardExtension';
+import { SynVisualExtension } from '../../SynVisualExtension';
 import { VideoExtension } from '../../VideoExtension';
 import { ImageGallery } from '../../extensions/ImageGallery';
 import { HtmlBlockBreaks, separateHtmlBlocks } from '../../extensions/HtmlBlockBreaks';
@@ -46,7 +48,7 @@ const open = (content: string | object) => {
     element: document.createElement('div'),
     extensions: [
       StarterKit, Link, DetailsExtension, PdfExtension, LocationExtension, AudioExtension,
-      WhiteboardExtension, VideoExtension, ImageGallery, CustomImage, HtmlBlockBreaks, Markdown.configure({ html: true }),
+      WhiteboardExtension, SynVisualExtension, VideoExtension, ImageGallery, CustomImage, HtmlBlockBreaks, Markdown.configure({ html: true }),
     ],
     content,
   });
@@ -165,5 +167,28 @@ describe('a block after an image', () => {
     const reopened = open(saved);
     expect(reopened.state.doc.lastChild?.type.name).toBe('heading');
     expect(markdownOf(reopened)).toBe(saved);
+  });
+});
+
+/**
+ * A visual kept from the chat is one line pointing at its node, and it stays
+ * that line, with the paragraph after it its own, through a save. Without its
+ * extension the editor would not know the block, and would drop it.
+ */
+describe('a kept visual in a note', () => {
+  const ID = '0123456789abcdef0123456789abcdef';
+  const BLOCK = `<div data-type="syn-visual" data-visual="${ID}"></div>`;
+
+  it('survives a save, and so does what follows it', () => {
+    const md = markdownOf(open(`${BLOCK}\n\nCon lắc đơn, chu kỳ theo chiều dài.`));
+    expect(md).toContain(BLOCK);
+    expect(md).toContain('\n\nCon lắc đơn, chu kỳ theo chiều dài.');
+    expect(markdownOf(open(md))).toBe(md);
+  });
+
+  it('keeps only an id in the attribute', () => {
+    const md = markdownOf(open(`<div data-type="syn-visual" data-visual="${ID}&quot; onload=&quot;x"></div>`));
+    expect(md).toContain(`data-visual="${ID}"`);
+    expect(md).not.toContain('onload');
   });
 });

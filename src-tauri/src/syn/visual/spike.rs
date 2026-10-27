@@ -69,3 +69,27 @@ pub fn visual_spike_report(report: serde_json::Value) -> Result<String, String> 
     );
     Ok(path.display().to_string())
 }
+
+/// A visual kept in the vault that is open, through `store::save` like one
+/// Syn draws: the kit page. For Bước 0's third part, which shows it with the
+/// chat's own `SynVisual`. Returns the vault and the visual's id.
+#[tauri::command]
+pub fn visual_spike_keep(app: tauri::AppHandle, db: tauri::State<'_, crate::db::DbState>) -> Result<(String, String), String> {
+    let open = crate::app_shell::vault::global().current().ok_or("no vault is open")?;
+    let vault = open.given.clone();
+    let id = super::store::save(
+        &app,
+        db.inner(),
+        &vault,
+        &super::store::Draft {
+            title: "Bước 0: kit trong khung của chat",
+            kind: "explainer",
+            html: KIT_PAGE,
+            question: "spike",
+            conversation: None,
+            model: None,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok((vault, id))
+}

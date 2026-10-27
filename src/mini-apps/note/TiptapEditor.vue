@@ -25,6 +25,7 @@ import { AudioExtension } from './AudioExtension';
 import { PdfExtension } from './PdfExtension';
 import { LocationExtension } from './LocationExtension';
 import { WhiteboardExtension } from './WhiteboardExtension';
+import { SynVisualExtension } from './SynVisualExtension';
 import { TransclusionExtension } from './extensions/TransclusionExtension';
 import { DetailsExtension } from './extensions/DetailsExtension';
 import { HtmlBlockBreaks } from './extensions/HtmlBlockBreaks';
@@ -594,6 +595,15 @@ const editor = useEditor({
     WhiteboardExtension.configure({
       HTMLAttributes: {},
     }).extend({
+      addStorage() {
+        return {
+          ...this.parent?.(),
+          vaultPath: props.vaultPath,
+        };
+      },
+    }),
+    // A visual Syn drew, kept from the chat. See `SynVisualExtension`.
+    SynVisualExtension.extend({
       addStorage() {
         return {
           ...this.parent?.(),

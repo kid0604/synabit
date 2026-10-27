@@ -89,3 +89,15 @@ export const titleFor = (code: string, around: string, fallback: string): string
  */
 export const bodyFor = (code: string): string =>
   ['```mermaid', code.trim(), '```', ''].join('\n');
+
+/**
+ * A visual Syn drew, as the body of a note: the block that shows it, and
+ * nothing else — for the reason `bodyFor` gives. The visual itself stays in
+ * its own node (`SynVisuals/<id>.md`, with the question it answered); the
+ * note points at it, as a note points at a whiteboard. See `SynVisualExtension`.
+ *
+ * `question` is taken for the day the note says what it answered; today it
+ * does not, like a diagram's note.
+ */
+export const bodyForVisual = (id: string, _question?: string): string =>
+  `<div data-type="syn-visual" data-visual="${id.replace(/[^0-9a-f]/g, '')}"></div>\n`;
