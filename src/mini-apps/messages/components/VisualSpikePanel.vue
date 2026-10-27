@@ -52,8 +52,8 @@ async function copy() {
     <div ref="stage" />
     <p v-if="failure" class="text-xs text-danger">{{ failure }}</p>
     <template v-if="report">
-      <p class="text-xs" :class="report.leaked ? 'text-danger' : 'text-gray-500 dark:text-gray-400'">
-        {{ t('syn.visual_spike_summary', { leaked: report.leaked, unclear: report.unclear, total: report.rows.length }) }}
+      <p class="text-xs" :class="report.leaked || report.broken ? 'text-danger' : 'text-gray-500 dark:text-gray-400'">
+        {{ t('syn.visual_spike_summary', { leaked: report.leaked, broken: report.broken, unclear: report.unclear, total: report.rows.length }) }}
       </p>
       <table class="w-full text-xs">
         <tr v-for="row in report.rows" :key="row.group + row.name">

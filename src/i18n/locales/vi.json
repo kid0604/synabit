@@ -4104,7 +4104,7 @@
     "visual_spike_hint": "Chạy trang synvisual:// trong khung sandbox và thử mọi đường thoát. Mỗi dòng phải bị chặn. Chỉ có ở bản debug.",
     "visual_spike_run": "Chạy",
     "visual_spike_running": "Đang chạy…",
-    "visual_spike_summary": "{total} phép thử · {leaked} lọt · {unclear} chưa rõ",
+    "visual_spike_summary": "{total} phép thử · {leaked} lọt · {broken} hỏng · {unclear} chưa rõ",
     "visual_spike_copy": "Chép bảng kết quả",
     "hub_title": "Syn",
     "hub_knows": "Điều Syn biết",

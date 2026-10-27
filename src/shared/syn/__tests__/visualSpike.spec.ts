@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-import { visualOrigin, judge, summarise, asMarkdown, type SpikeRow } from '../visualSpike';
+import { visualOrigin, judge, judgeKit, summarise, asMarkdown, KIT_HOST_CONTEXT, type SpikeRow, type KitSeen } from '../visualSpike';
 
 const blocked: SpikeRow = { group: 'exfil', name: 'fetch https', outcome: 'blocked', detail: 'CSP' };
 
@@ -18,7 +18,7 @@ describe("the host's verdict", () => {
   it('counts a page that never answered as a failure, not as nothing leaked', () => {
     const rows = judge({ results: null, pings: 0, afterForm: false, topNav: null });
     expect(rows).toHaveLength(1);
-    expect(summarise(rows, 'ua', 'o').leaked).toBe(1);
+    expect(summarise(rows, 'ua', 'o').broken).toBe(1);
   });
 
   it('calls any arrival at the ping command a leak', () => {
@@ -44,5 +44,40 @@ describe("the host's verdict", () => {
   it('writes a table that survives a pipe in the detail', () => {
     const report = summarise([{ ...blocked, detail: 'a | b' }], 'ua', 'o');
     expect(asMarkdown(report)).toContain('a \\| b');
+  });
+});
+
+describe('the kit, judged', () => {
+  const working: KitSeen = {
+    initializeAsked: true,
+    initialized: true,
+    heights: [0, 214],
+    asked: ['Con lắc dài gấp đôi thì chu kỳ đổi thế nào?'],
+    errors: [],
+    selftest: {
+      d3: true, katex: true, katexFont: true, tokens: true,
+      themeFromHost: KIT_HOST_CONTEXT.theme, themeOnPage: KIT_HOST_CONTEXT.theme, textColor: '#f4f4f5',
+      number: '1.234,5', askAnswered: true,
+    },
+  };
+
+  it('passes a kit that did everything', () => {
+    const rows = judgeKit(working);
+    expect(rows.filter((r) => r.outcome !== 'ok')).toEqual([]);
+  });
+
+  it('fails a kit that kept the page theme over the host', () => {
+    const rows = judgeKit({ ...working, selftest: { ...working.selftest, themeOnPage: 'light' } });
+    expect(rows.find((r) => r.name === "the host's theme applied")?.outcome).toBe('error');
+  });
+
+  it('fails a kit that reported something broke', () => {
+    const rows = judgeKit({ ...working, errors: [{ kind: 'policy', message: 'font-src https://cdn.example' }] });
+    expect(summarise(rows, 'ua', 'o').broken).toBe(1);
+  });
+
+  it('fails a page that never sent its self-test', () => {
+    const rows = judgeKit({ ...working, selftest: null });
+    expect(rows.filter((r) => r.outcome === 'error').length).toBeGreaterThan(5);
   });
 });

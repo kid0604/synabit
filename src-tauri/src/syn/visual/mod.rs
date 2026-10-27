@@ -24,9 +24,15 @@
 //!   its parent but `postMessage`;
 //! - this module's CSP, under which the frame can open no connection at all.
 //!
-//! Bước 0 is the proof that those hold on macOS, Windows and Linux. Until it is
-//! written down in the plan's appendix A, nothing but the spike page is served.
+//! Bước 0 is the proof that those hold on macOS, Windows and Linux, written
+//! down in the plan's appendix A.
+//!
+//! # What a visual is given
+//!
+//! The kit (`kit.js`, `kit.css`) and the libraries in `assets`, all served
+//! from this origin: a visual has no network to fetch anything else with.
 
+pub mod assets;
 pub mod protocol;
 
 #[cfg(debug_assertions)]

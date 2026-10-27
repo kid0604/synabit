@@ -14,6 +14,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const ATTACK_PAGE: &str = include_str!("spike_attack.html");
 
+/// A visual as Syn would draw one, using every part of the kit: d3, KaTeX and
+/// its fonts, a slider, the host's theme, a question asked back. It reports
+/// what worked as `synabit/selftest`. Served through `protocol::assemble`,
+/// like any visual.
+pub const KIT_PAGE: &str = include_str!("spike_kit.html");
+
 static PINGS: AtomicU32 = AtomicU32::new(0);
 
 /// The command the attack page aims at. Reaching it is the failure.
@@ -55,9 +61,10 @@ pub fn visual_spike_report(report: serde_json::Value) -> Result<String, String> 
     let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     log::warn!(
-        "[visual-spike] report written to {} — leaked: {}, unclear: {}",
+        "[visual-spike] report written to {} — leaked: {}, broken: {}, unclear: {}",
         path.display(),
         report["leaked"],
+        report["broken"],
         report["unclear"]
     );
     Ok(path.display().to_string())

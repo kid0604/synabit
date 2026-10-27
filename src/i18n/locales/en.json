@@ -4104,7 +4104,7 @@
     "visual_spike_hint": "Runs the synvisual:// page in a sandboxed frame and tries every way out. Every row should be blocked. Debug builds only.",
     "visual_spike_run": "Run",
     "visual_spike_running": "Running…",
-    "visual_spike_summary": "{total} checks · {leaked} leaked · {unclear} unclear",
+    "visual_spike_summary": "{total} checks · {leaked} leaked · {broken} broken · {unclear} unclear",
     "visual_spike_copy": "Copy the results table",
     "hub_title": "Syn",
     "hub_knows": "What Syn knows",

@@ -79,6 +79,7 @@ Last generated: May 10, 2026
 | Package | Version | License |
 |---|---|---|
 | d3 | 7.x | ISC |
+| katex | 0.16.x | MIT |
 | @vue-flow/core | latest | MIT |
 | mermaid | latest | MIT |
 

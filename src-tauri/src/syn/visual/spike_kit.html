@@ -1,0 +1,61 @@
+<link rel="stylesheet" href="/lib/katex.min.css">
+<div class="row">
+  <label for="len">Chiều dài</label>
+  <input type="range" id="len" min="0.2" max="2" step="0.1" value="1">
+  <span id="len-out" class="stat"></span>
+</div>
+<p id="formula"></p>
+<svg id="plot" viewBox="0 0 320 120" role="img" aria-label="Chu kỳ con lắc theo chiều dài"></svg>
+<script src="/lib/d3.v7.min.js"></script>
+<script src="/lib/katex.min.js"></script>
+<script>
+  // Bước 0's check of the kit, as a visual would use it: d3 draws, KaTeX
+  // typesets with its fonts, a slider re-draws, the theme the host sends is
+  // applied, and a follow-up question goes to the host. What worked goes back
+  // as `synabit/selftest`; the host judges it. See `visualSpike.ts`.
+  const checks = {};
+  const period = (length) => 2 * Math.PI * Math.sqrt(length / 9.81);
+  const x = d3.scaleLinear().domain([0.2, 2]).range([30, 310]);
+  const y = d3.scaleLinear().domain([0, period(2)]).range([110, 10]);
+  const svg = d3.select('#plot');
+  const draw = () => {
+    const length = Number(document.getElementById('len').value);
+    document.getElementById('len-out').textContent = `${synabit.number(length, 1)} m → ${synabit.number(period(length), 2)} s`;
+    svg.selectAll('*').remove();
+    svg.append('path')
+      .datum(d3.range(0.2, 2.01, 0.05))
+      .attr('fill', 'none')
+      .attr('stroke', 'var(--c1)')
+      .attr('stroke-width', 2)
+      .attr('d', d3.line().x((l) => x(l)).y((l) => y(period(l))));
+    svg.append('circle').attr('cx', x(length)).attr('cy', y(period(length))).attr('r', 5).attr('fill', 'var(--accent)');
+  };
+  document.getElementById('len').addEventListener('input', draw);
+  try {
+    draw();
+    checks.d3 = svg.selectAll('path').size() === 1;
+  } catch (error) {
+    checks.d3 = false;
+  }
+  try {
+    katex.render('T = 2\\pi\\sqrt{\\frac{L}{g}}', document.getElementById('formula'));
+    checks.katex = !!document.querySelector('#formula .katex');
+  } catch (error) {
+    checks.katex = false;
+  }
+  checks.tokens = synabit.color('text') !== '';
+  synabit.ready.then((context) => {
+    checks.themeFromHost = context.theme;
+    checks.themeOnPage = document.documentElement.dataset.theme;
+    checks.textColor = synabit.color('text');
+    checks.number = synabit.number(1234.5, 1);
+    return Promise.all([document.fonts.ready, synabit.ask('Con lắc dài gấp đôi thì chu kỳ đổi thế nào?')]);
+  }).then(([, answer]) => {
+    checks.katexFont = document.fonts.check('16px KaTeX_Main');
+    checks.askAnswered = answer != null;
+  }).catch((error) => {
+    checks.failed = String(error && error.message || error);
+  }).then(() => {
+    parent.postMessage({ jsonrpc: '2.0', method: 'synabit/selftest', params: checks }, '*');
+  });
+</script>

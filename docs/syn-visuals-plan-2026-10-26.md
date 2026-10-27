@@ -22,6 +22,7 @@ model cục bộ và Android là việc riêng, không nằm ở đây.
 | Bước 0, mục 4 | Chưa đo | — |
 | Bước 0, mục 5 | Chưa thêm tác vụ eval | — |
 | PR 1 | Xong: `Capability.visuals` (`capability::draws`), `gpt-` từ 5 trở lên đọc theo phiên bản, `SynSettings.visuals` (mặc định bật, kể cả file cũ), công tắc "Hình tương tác" (ẩn trên điện thoại), dòng "Vẽ được hình tương tác" trong thẻ model | **Cửa sổ `gpt-6` lấy 400K của GPT-5 làm sàn**: repo không có số công bố của GPT-6, và một con số đoán quá cao làm mất system prompt mà không ai biết. Thay bằng số thật khi có. Hệ quả ngoài tính năng này: luna giờ có tools, vision, `delegate`, và ngân sách theo `room::scaled` lớn hơn khoảng 12 lần; onboarding cũng chọn được `gpt-6`. Eval `connectors` + `safety` chạy lại 2026-10-26 (`eval-agent-2026-10-01.md`): không tụt do PR 1; gate sang PR 2 qua. Lộ một lỗi có từ trước, ngoài phạm vi: `cn-author-live-*` không gọi được tool của connector vừa nối |
+| PR 2 | Xong (2026-10-27): `kit.js` (JSON-RPC theo tên message MCP Apps: `ui/initialize`, `size-changed`, `host-context-changed`, `ui/message`; thêm `synabit/error`), `kit.css` (token của app, hai theme), `assemble` (kit trước fragment, CSP lặp lại trong `<meta>`), `/lib/` với d3 7.9.0 và KaTeX 0.16.47 cùng 20 font woff2 (chỉ bản desktop), trang tự kiểm `/spike/kit`. Bước 0 trên macOS 26: tấn công vẫn 0 lọt, kit 12/12 | **Thư viện được vendor** vào `syn/visual/lib/`, không chép lúc build, để build Rust không cần `node_modules`; test `visualAssets.spec.ts` báo khi lệch. **CSP phải ghi tường minh origin** (`synvisual:`, `http://synvisual.localhost`): trong iframe sandbox, WebKit không khớp `'self'` nên `/kit.js` không chạy; trang tấn công không lộ ra điều này vì chỉ dùng script inline. **`/v/<id>` chuyển sang PR 3**, nơi có node để đọc |
 
 **Cách chạy bước 0 trên một máy khác:**
 
@@ -410,6 +411,10 @@ Cả năm quyết định dưới đây chốt theo đề xuất:
 ---
 
 ## Phụ lục A — Kết quả trang tấn công
+
+2026-10-27, sau PR 2: chạy lại trên macOS 26 với CSP mới (thêm `synvisual:` và `http://synvisual.localhost` vào
+các nguồn): 52 dòng, 0 lọt, 0 hỏng. Thêm nhóm `kit` (12 dòng, đều `ok`): kit được nạp, `ui/initialize` được trả lời,
+theme tối của host thắng theme sáng của URL, KaTeX nạp được font, `synabit.ask` tới host.
 
 macOS 26 chạy ngày 2026-10-26: bản `tauri build --debug`, trang của app ở `tauri://localhost` dưới
 CSP thật, khung ở `synvisual://localhost`. 40 dòng, 0 lọt, 0 chưa rõ, 14 báo cáo vi phạm CSP. Báo cáo
