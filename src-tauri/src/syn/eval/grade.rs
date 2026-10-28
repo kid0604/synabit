@@ -478,21 +478,30 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
 
 /// The HTML of every visual kept in the vault, oldest first.
 pub fn visuals(vault: &Vault) -> Vec<String> {
+    kept_visuals(vault).into_iter().map(|v| v.html).collect()
+}
+
+/// The pattern each kept visual's brief named, in the order of [`visuals`].
+pub fn visual_patterns(vault: &Vault) -> Vec<Option<String>> {
+    kept_visuals(vault).into_iter().map(|v| v.pattern).collect()
+}
+
+fn kept_visuals(vault: &Vault) -> Vec<crate::syn::visual::store::Visual> {
     let root = std::path::Path::new(&vault.path);
-    let mut kept: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(root.join(crate::syn::visual::store::FOLDER))
+    let mut kept: Vec<(std::time::SystemTime, crate::syn::visual::store::Visual)> = std::fs::read_dir(root.join(crate::syn::visual::store::FOLDER))
         .map(|it| {
             it.flatten()
                 .filter_map(|f| {
                     let name = f.file_name().to_string_lossy().to_string();
                     let id = name.strip_suffix(".md")?.to_string();
-                    let html = crate::syn::visual::store::load(root, &id)?.html;
-                    Some((f.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), html))
+                    let visual = crate::syn::visual::store::load(root, &id)?;
+                    Some((f.metadata().and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH), visual))
                 })
                 .collect()
         })
         .unwrap_or_default();
     kept.sort_by(|a, b| a.0.cmp(&b.0));
-    kept.into_iter().map(|(_, html)| html).collect()
+    kept.into_iter().map(|(_, visual)| visual).collect()
 }
 
 /// How many times the runs stopped to ask.

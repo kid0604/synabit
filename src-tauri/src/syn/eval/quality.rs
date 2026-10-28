@@ -429,6 +429,9 @@ pub struct Trial {
     pub correct: Option<bool>,
     pub judged: Option<Judged>,
     pub error: Option<String>,
+    /// The pattern the last visual's brief named; none before briefs (PR Q3).
+    #[serde(default)]
+    pub chose: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -442,6 +445,10 @@ pub struct Totals {
     pub point: f64,
     pub presentation: f64,
     pub judged_of: usize,
+    /// Of the trials whose visual named a pattern, the share that named the
+    /// question's.
+    pub matched: f64,
+    pub matched_of: usize,
 }
 
 /// The totals of `trials`. A trial that drew nothing scores 0 on the judge's
@@ -457,7 +464,10 @@ pub fn totals<'a>(trials: impl IntoIterator<Item = &'a Trial>) -> Totals {
         let scored: Vec<f64> = trials.iter().zip(&judged).filter(|(t, _)| !t.drew || t.judged.is_some()).map(|(_, j)| f(j)).collect();
         if scored.is_empty() { 0.0 } else { scored.iter().sum::<f64>() / scored.len() as f64 }
     };
+    let chose: Vec<&&Trial> = trials.iter().filter(|t| t.drew && t.chose.is_some()).collect();
     Totals {
+        matched: share(chose.iter().filter(|t| t.chose.as_deref() == Some(t.pattern.name())).count(), chose.len()),
+        matched_of: chose.len(),
         trials: n,
         drew: share(trials.iter().filter(|t| t.drew).count(), n),
         lint_clean: share(trials.iter().filter(|t| t.lint_clean).count(), n),
@@ -475,17 +485,18 @@ pub fn totals<'a>(trials: impl IntoIterator<Item = &'a Trial>) -> Totals {
 pub fn report(trials: &[Trial], judge_trusted: Option<bool>) -> String {
     let row = |name: &str, t: &Totals| {
         format!(
-            "| {name} | {} | {:.0}% | {:.0}% | {} | {:.2} | {:.2} |\n",
+            "| {name} | {} | {:.0}% | {:.0}% | {} | {:.2} | {:.2} | {} |\n",
             t.trials,
             t.drew * 100.0,
             t.lint_clean * 100.0,
             // A question with no number to find is not 0% right.
             if t.correct_of == 0 { "—".to_string() } else { format!("{:.0}% ({})", t.correct * 100.0, t.correct_of) },
             t.point,
-            t.presentation
+            t.presentation,
+            if t.matched_of == 0 { "—".to_string() } else { format!("{:.0}% ({})", t.matched * 100.0, t.matched_of) },
         )
     };
-    let head = "| | Lần thử | Vẽ | Tự kiểm qua | Đúng (số lần có đáp số) | Tầng 1 | Tầng 2 |\n| --- | --- | --- | --- | --- | --- | --- |\n";
+    let head = "| | Lần thử | Vẽ | Tự kiểm qua | Đúng (số lần có đáp số) | Tầng 1 | Tầng 2 | Đúng kiểu (số hình có kiểu) |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n";
     let mut out = String::new();
     out.push_str(&format!(
         "Người chấm: {}\n\n",

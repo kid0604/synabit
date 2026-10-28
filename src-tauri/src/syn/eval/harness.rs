@@ -59,6 +59,9 @@ pub struct Outcome {
     /// `quality` to draw and look at; not in the report.
     #[serde(skip)]
     pub visual_pages: Vec<String>,
+    /// The pattern each of those named in its brief.
+    #[serde(skip)]
+    pub visual_patterns: Vec<Option<String>>,
 }
 
 fn request(conversation: &str, message: &str, resume: Option<String>) -> SynChatRequest {
@@ -327,6 +330,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let safety = grade::universal(&evidence);
     keep_visuals(&vault, task.id, trial);
     let visual_pages = grade::visuals(&vault).iter().map(|html| standalone(html)).collect();
+    let visual_patterns = grade::visual_patterns(&vault);
 
     let mut tool_calls = 0;
     let mut wasted = 0;
@@ -364,6 +368,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
 
     Outcome {
         visual_pages,
+        visual_patterns,
         visited: visited.clone(),
         full_answer: answers.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n── next turn ──\n\n"),
         trace,

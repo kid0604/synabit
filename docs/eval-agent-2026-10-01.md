@@ -920,3 +920,81 @@ Ba lần đo nền đều cho cùng một bức tranh:
 
 Nền dùng cho các PR sau là **lần ba**, vì nó đo bằng bộ đo đã sửa. Dao động giữa các lần ở tổng là khoảng ±3–4
 điểm.
+
+## 2026-10-28 — PR Q3 (bản thiết kế và kiểu giải thích): dự đoán, ghi trước khi đo
+
+Q3 thêm ba thứ:
+- **`show_visual` đòi một `brief`:** `point`, `pattern`, và `proof` nếu có số chứng minh.
+- **`visual_guide` đòi một `pattern`:** mỗi kiểu có phần bắt buộc và một hình mẫu viết tay. Chỉ được vẽ theo
+  kiểu mà guide của nó đã được đọc trong run.
+- **`core.md` có luật "một mô hình cho mọi cách hiện, thế ngược để kiểm".**
+
+Đo trên `gpt-6-luna`, 32 câu × 3, so với nền lần ba (tự kiểm 54%, đúng 86%, tầng 1 1,27, tầng 2 1,11).
+
+Dự đoán ở §5 của kế hoạch là "sau Q3: 50% / 80% / 1,3 / 0,8". Các con số đó viết so với nền dự đoán
+(45% / 75% / 0,8 / 0,7), tức là Q3 thêm +5 / +5 / +0,5 / +0,1. Dịch theo nền đo được:
+- **Tự kiểm:** khoảng 54–59%. Hình mẫu có dùng `synabit.number`, nhãn trong ô và màu theo token, nhưng
+  chưa có thành phần nào xoá chữ đè hay tràn khung.
+- **Đúng:** khoảng 86–90%. Luật thế ngược có thể sửa được kiểu lỗi của `tax`.
+- **Tầng 1:** không đo được, vì người chấm chưa được tin. Thay vào đó đo **kiểu chọn có khớp với kiểu của
+  câu hỏi không**: dự đoán khoảng 70% ở cả hai phần. Một số câu hợp với hai kiểu (`pendulum`: `explore`
+  hay `compare`; `sir`: `compare` hay `explore`).
+- **Phần giữ lại vẫn không vẽ khoảng 7–9 / 30 lần:** Q3 không đụng tới quyết định có vẽ hay không.
+- **Rủi ro:** thêm một lần gọi guide và một trường bắt buộc, nên có thể có lần hết lượt thử (3 lần) và không
+  giữ được hình. Dự đoán dưới 3 lần trên 96.
+
+Dao động giữa các lần đo nền là khoảng ±3–4 điểm ở tổng. Thay đổi nhỏ hơn mức đó không nói lên gì.
+
+### Kết quả Q3 (2026-10-28, `gpt-6-luna`, 32 câu × 3)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu (hình có kiểu) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Nền lần ba: tất cả | 96 | 91% | 54% | 86% (87) | 1,27 | 1,11 | — |
+| Dự đoán sau Q3 | | | 54–59% | 86–90% | | | ~70% |
+| **Q3: tất cả** | 96 | 94% | **60%** | **93%** (87) | 1,48 | 1,15 | **82%** (90) |
+| Q3: phát triển | 66 | 100% | 65% | 92% (60) | 1,62 | 1,18 | 77% (66) |
+| Q3: giữ lại | 30 | 80% | 50% | 96% (27) | 1,17 | 1,07 | 96% (24) |
+
+⚠ người chấm chưa được tin.
+
+Theo kiểu giải thích (phần phát triển, nền lần ba → Q3):
+
+| Kiểu | Tự kiểm qua | Đúng | Đúng kiểu (Q3) |
+| --- | --- | --- | --- |
+| `step` | 67% → 92% | 100% → 100% | 100% |
+| `compare` | 50% → 61% | 87% → 93% | 83% |
+| `decompose` | 83% → 92% | 83% → 100% | 75% |
+| `zoom` | 44% → 33% | 67% → 89% | 67% |
+| `areas` | 17% → 17% | 67% → 50% | 0% |
+| `explore` | 78% → 67% | 89% → 100% | 100% |
+
+Lỗi tự kiểm, phần phát triển: `overlap` 12, `overflow` 7, **`expect` 5**, `error` 1, `long-decimal` 1. Không
+còn `dead-control`.
+
+So với dự đoán:
+- **Tự kiểm +6 điểm, đúng +7 điểm**, cả hai cao hơn khoảng dự đoán và vượt mức dao động giữa các lần đo
+  nền (±3–4).
+- **Phần giữ lại tăng cùng chiều**: tự kiểm 43% → 50%, đúng 93% → 96%. Không có dấu hiệu khớp theo ví dụ.
+- **Chỉ tính các lần có vẽ, phần giữ lại gần ngang phần phát triển**:
+  - tự kiểm 63% so với 65%;
+  - tầng 1 1,46 so với 1,62;
+  - tầng 2 1,33 so với 1,18.
+- **Kiểu chọn khớp 82%, dự đoán khoảng 70%.** Phần giữ lại khớp 96%.
+- **Phần giữ lại không vẽ 6 / 30 lần** (nền 7–9), trong mức dao động. Q3 không đụng tới chuyện này, đúng
+  như dự đoán.
+- **Không lần nào hết lượt thử:** phần phát triển vẽ 66 / 66.
+- **Mỗi nhóm chạy lâu hơn:** 12–15 phút so với 9–10 phút của nền. Mỗi run thêm một lần gọi guide và guide
+  dài hơn (khoảng 12 nghìn ký tự).
+
+Điều đọc ra:
+- **`expect` lần đầu bắt được số sai, ngay trong hình.** 2 / 3 hình `tax` tự thế ngược và thấy giá không
+  khớp, nhưng hình vẫn được giữ, vì chưa có vòng tự kiểm (Q4). `tax` vẫn đúng 0 / 3. Đây là bằng chứng
+  trực tiếp cho Q4: lỗi đã được thấy, chỉ chưa được trả về cho model sửa.
+- **Kiểu chọn sai gần như chỉ ở các câu có "cho tao chỉnh / kéo".** `gibbs` (zoom), `bayes` (decompose),
+  `tax` (areas) và `drift` (compare) đều chọn `explore` cả 3 / 3. Mô tả của `explore` trong công cụ nói
+  "khi người hỏi muốn chỉnh". Câu nào có thanh trượt cũng khớp mô tả đó, nên nó lấn át điều câu hỏi muốn
+  thấy. `break-even` (areas) chọn `compare`.
+- **Một hướng sửa chung, chưa làm:** nói rõ rằng kiểu nào cũng có thể có thanh trượt, và chỉ chọn `explore`
+  khi bản thân hệ là điều cần thấy. Sửa xong phải đo lại trên cả phần giữ lại.
+- **`zoom` và `areas` vẫn yếu nhất ở tự kiểm**, do chữ đè và tràn khung. Đó là việc của thành phần trong kit
+  (Q5), không phải của bản thiết kế.

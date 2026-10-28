@@ -559,10 +559,15 @@ async fn a_held_history_and_a_connected_pi_reach_the_model() {
 async fn a_visual_task_is_graded_by_the_visual_kept() {
     let script = || {
         vec![
-            calls(crate::syn::visual::tool::GUIDE_TOOL, serde_json::json!({ "kind": "simulation" })),
+            calls(crate::syn::visual::tool::GUIDE_TOOL, serde_json::json!({ "kind": "simulation", "pattern": "explore" })),
             calls(
                 crate::syn::visual::tool::SHOW_TOOL,
-                serde_json::json!({ "title": "Con lắc đơn", "kind": "simulation", "html": "<input type=\"range\" id=\"l\"><canvas></canvas><script>/* swing */</script>" }),
+                serde_json::json!({
+                    "title": "Con lắc đơn",
+                    "kind": "simulation",
+                    "brief": { "point": "The period depends on the length, not the mass", "pattern": "explore" },
+                    "html": "<input type=\"range\" id=\"l\"><canvas></canvas><script>/* swing */</script>",
+                }),
             ),
             text("Chu kỳ T = 2π√(L/g): dây dài gấp bốn thì chu kỳ gấp đôi."),
         ]
@@ -684,6 +689,7 @@ async fn visual_quality() {
         pages: Vec<String>,
         answer: String,
         error: Option<String>,
+        chose: Option<String>,
     }
     let mut pending: Vec<Pending> = Vec::new();
     for (k, question) in chosen.iter().enumerate() {
@@ -697,7 +703,7 @@ async fn visual_quality() {
             // A reply that never ends is scored as a run that drew nothing.
             let Ok(o) = tokio::time::timeout(std::time::Duration::from_secs(15 * 60), super::harness::run(&task, trial, provider, &model)).await else {
                 eprintln!("[quality] {} trial {trial}: timed out", if question.held_out { "(held out)" } else { question.id });
-                pending.push(Pending { question: *question, pages: Vec::new(), answer: String::new(), error: Some("timed out after 15 minutes".into()) });
+                pending.push(Pending { question: *question, pages: Vec::new(), answer: String::new(), error: Some("timed out after 15 minutes".into()), chose: None });
                 continue;
             };
             let mut pages = Vec::new();
@@ -707,7 +713,7 @@ async fn visual_quality() {
                 pages.push(name);
             }
             eprintln!("[quality] {} trial {trial}: {} visual(s){}", if question.held_out { "(held out)" } else { question.id }, pages.len(), o.error.as_deref().map(|e| format!(", error: {e}")).unwrap_or_default());
-            pending.push(Pending { question: *question, pages, answer: o.full_answer.clone(), error: o.error.clone() });
+            pending.push(Pending { question: *question, pages, answer: o.full_answer.clone(), error: o.error.clone(), chose: o.visual_patterns.last().cloned().flatten() });
         }
     }
 
@@ -758,6 +764,7 @@ async fn visual_quality() {
             correct: quality::correct(&p.question, &numbers),
             judged,
             error: if p.question.held_out { None } else { p.error },
+            chose: p.chose,
         });
     }
     let _ = std::fs::remove_dir_all(&hidden);
@@ -913,9 +920,10 @@ fn the_report_names_nothing_held_out() {
         correct: Some(clean),
         judged: Some(Judged { point: 2.0, presentation: 1.0, correct: 2.0 }),
         error: None,
+        chose: Some(if clean { "step" } else { "explore" }.into()),
     };
     let text = report(&[trial("dijkstra", false, true), trial("", true, false), trial("", true, true)], Some(true));
-    assert!(text.contains("| Giữ lại | 2 | 100% | 50% | 50% (2) | 2.00 | 1.00 |"), "{text}");
+    assert!(text.contains("| Giữ lại | 2 | 100% | 50% | 50% (2) | 2.00 | 1.00 | 50% (2) |"), "{text}");
     assert!(text.contains("| dijkstra |"));
     assert!(!text.contains("overflow: 2"), "{text}");
 }
