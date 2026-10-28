@@ -351,6 +351,14 @@
     control.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   };
+  const middle = (control) => {
+    const min = parseFloat(control.min || '0');
+    const max = parseFloat(control.max || '100');
+    const step = parseFloat(control.step) || 1;
+    control.value = String(min + Math.round((max - min) / 2 / step) * step);
+    control.dispatchEvent(new Event('input', { bubbles: true }));
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  };
   const changes = async (control) => {
     const before = signature();
     if (!use(control)) return true;
@@ -374,7 +382,11 @@
     for (const control of dead) {
       let moved = false;
       for (const other of alive) {
-        use(other);
+        // A slider moved to an end would leave a step button at the end it
+        // cannot pass ("next" at the last month), every time; the middle
+        // leaves room both ways.
+        if (other.type === 'range' || other.type === 'number') middle(other);
+        else use(other);
         await settle(60);
         if (await changes(control)) {
           moved = true;
