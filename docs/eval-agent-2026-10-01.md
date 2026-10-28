@@ -1785,3 +1785,29 @@ Thấy thêm khi xem từng hình:
   hàm. Vùng đó được vẽ từ 0 tới 0, tức là không thấy gì, và không có lỗi nào được báo. Đây là cùng loại lỗi với
   biểu đồ trống của `drift`.
 - **`areas` vẫn không được chọn đúng kiểu** (0 / 6). Model chọn `explore` cho `tax`.
+
+## 2026-10-28 — lỗi trong frame sandbox, `parent`, eval nhìn như app: dự đoán, ghi trước khi đo
+
+Người dùng hỏi câu `drift` trong app lúc 23:07. Model gọi `show_visual` ba lần, hai lần đầu bị trả về với lỗi chỉ là
+`Script error.`, lần ba hết lượt, và nó bỏ không vẽ. Nguyên nhân: frame của hình trong app sandbox `allow-scripts`,
+origin rỗng, nên WebKit giấu thông điệp và dòng của mọi lỗi script. Eval nhìn hình qua Playwright không sandbox,
+nên từ Q4 tới giờ model trong eval luôn được biết lỗi gì, còn trong app thì không. Ba chỗ sửa, mỗi chỗ có test đỏ khi
+tắt:
+- **Kit giữ `window.parent` lúc nạp.** Hình khai báo `parent` ở cấp ngoài cùng (cây tìm kiếm của Dijkstra, BFS) che
+  `window.parent`, và kit không gửi được gì về app. Ở bốn lần đo gần nhất có 11 lần bị trả về vì
+  "parent.postMessage is not a function".
+- **Kit tự ghi lỗi đi qua nó**, với thông điệp và dòng: lỗi trong các thành phần, các công cụ số, và trong callback
+  kit gọi (`controls`, `stepper`, `sim`). Lỗi trong code riêng của hình, ngoài kit, vẫn bị giấu; dòng
+  `Script error.` giờ nói rõ điều đó và gợi ý tìm tên dùng trước khi khai báo hoặc viết sai.
+- **Eval nhìn hình trong frame sandbox như app**, dưới một trang trả lời `ui/initialize`.
+
+**Từ lần này, số tự kiểm không so thẳng được với các lần trước.** Eval giờ thấy đúng như app thấy, nên khắt khe hơn.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, so với lần trước: vẽ 90%, tự kiểm 86%, đúng 93%.
+
+Dự đoán:
+- **"the kit did not run" vì `parent`: 0 lần** (lần trước 4).
+- **Lần bị trả về vì `error`:** khoảng một nửa chỉ còn "Script error." (lỗi trong code riêng của hình). Nửa còn lại có
+  thông điệp, nhờ kit tự ghi.
+- **Tự kiểm:** khoảng 84%, cùng mức hoặc thấp hơn chút, vì model được biết ít hơn khi viết lỗi. **Vẽ:** cùng mức hoặc
+  thấp hơn chút (88–90%), vì có thể có thêm hình bị bỏ như `drift` trong app. **Đúng:** trong mức dao động.
