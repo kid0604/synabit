@@ -887,6 +887,262 @@
     return { controls: slot(frame), stats: slot(frame), stage: slot(frame) };
   };
 
+  // ── Numbers worked out from the model, not derived by hand ──
+  //
+  // The tax visual of 2026-10-28 drew the equilibrium from `(t + 120) / 5`, a
+  // formula derived in the head with a 3 dropped; `compute` ran it faithfully.
+  // After Q4 its own `synabit.expect` caught the price, three times, and the
+  // model could not find the right formula to put in its place. These find
+  // the number from the model's own functions, so there is no formula to get
+  // wrong (plan 2026-10-28, §2.2).
+
+  const refuse = (what, why) => {
+    throw new Error(`synabit.${what}: ${why}`);
+  };
+  const finite = (what, v, name) => (Number.isFinite(v) ? v : refuse(what, `${name} is ${v}, not a number`));
+
+  /**
+   * Where `f` crosses zero between `lo` and `hi`: an equilibrium is
+   * `solve((p) => demand(p) - supply(p), 0, 100)`. If `f` has the same sign
+   * at both ends, the range is searched for a crossing; if there is none, it
+   * throws, saying so.
+   */
+  const solve = (f, lo, hi) => {
+    if (typeof f !== 'function') refuse('solve', 'the first argument is the function whose zero is wanted');
+    let a = finite('solve', +lo, 'lo');
+    let b = finite('solve', +hi, 'hi');
+    let fa = f(a);
+    let fb = f(b);
+    if (fa === 0) return a;
+    if (fb === 0) return b;
+    if (!(fa * fb < 0)) {
+      // Look for a crossing inside: a root between the ends with the same sign at both.
+      const n = 400;
+      let found = false;
+      for (let i = 1; i <= n && !found; i++) {
+        const x = a + ((b - a) * i) / n;
+        const fx = f(x);
+        if (fx === 0) return x;
+        if (Number.isFinite(fx) && Number.isFinite(fa) && fa * fx < 0) {
+          b = x;
+          fb = fx;
+          found = true;
+        } else if (Number.isFinite(fx) && !Number.isFinite(fa)) {
+          a = x;
+          fa = fx;
+        }
+      }
+      if (!found) refuse('solve', `the function does not cross zero between ${lo} and ${hi} (it is ${fa} and ${fb} at the ends); give a range where it changes sign`);
+    }
+    for (let i = 0; i < 200 && b - a > 1e-13 * Math.max(1, Math.abs(a)); i++) {
+      const m = (a + b) / 2;
+      const fm = f(m);
+      if (fm === 0) return m;
+      if (fa * fm < 0) {
+        b = m;
+        fb = fm;
+      } else {
+        a = m;
+        fa = fm;
+      }
+    }
+    return (a + b) / 2;
+  };
+
+  /**
+   * The highest point of `f` between `lo` and `hi`, as `{ x, y }`; with
+   * `'min'`, the lowest. The whole range is searched, then the best place is
+   * refined: a peak read off a part of the range is the wrong peak.
+   */
+  const peak = (f, lo, hi, which) => {
+    if (typeof f !== 'function') refuse('peak', 'the first argument is the function to search');
+    const a = finite('peak', +lo, 'lo');
+    const b = finite('peak', +hi, 'hi');
+    const sign = which === 'min' ? -1 : 1;
+    const g = (x) => {
+      const y = f(x);
+      return Number.isFinite(y) ? sign * y : -Infinity;
+    };
+    const n = 2000;
+    let best = a;
+    let bestY = g(a);
+    for (let i = 1; i <= n; i++) {
+      const x = a + ((b - a) * i) / n;
+      const y = g(x);
+      if (y > bestY) {
+        best = x;
+        bestY = y;
+      }
+    }
+    // Golden-section search in the cell around the best sample.
+    const h = (b - a) / n;
+    let l = Math.max(a, best - h);
+    let r = Math.min(b, best + h);
+    const phi = (Math.sqrt(5) - 1) / 2;
+    for (let i = 0; i < 80; i++) {
+      const m1 = r - phi * (r - l);
+      const m2 = l + phi * (r - l);
+      if (g(m1) < g(m2)) l = m1;
+      else r = m2;
+    }
+    const x = g((l + r) / 2) >= bestY ? (l + r) / 2 : best;
+    if (!Number.isFinite(g(x))) refuse('peak', `the function has no value between ${lo} and ${hi}`);
+    return { x, y: f(x) };
+  };
+
+  /** The integral of `f` from `a` to `b`, by Simpson's rule on `n` steps. */
+  const integrate = (f, a, b, n) => {
+    if (typeof f !== 'function') refuse('integrate', 'the first argument is the function to integrate');
+    const lo = finite('integrate', +a, 'a');
+    const hi = finite('integrate', +b, 'b');
+    const steps = Math.max(2, Math.round((n || 2000) / 2) * 2);
+    const h = (hi - lo) / steps;
+    let s = f(lo) + f(hi);
+    for (let i = 1; i < steps; i++) s += f(lo + i * h) * (i % 2 ? 4 : 2);
+    return finite('integrate', (s * h) / 3, 'the integral');
+  };
+
+  // One step of a state of named numbers. `rates(state, t)` gives each
+  // one's rate of change, by the same names.
+  const add = (s, d, k) => {
+    const out = {};
+    for (const key in s) out[key] = s[key] + (d[key] || 0) * k;
+    return out;
+  };
+  const rk4 = (rates, s, t, dt) => {
+    const k1 = rates(s, t);
+    const k2 = rates(add(s, k1, dt / 2), t + dt / 2);
+    const k3 = rates(add(s, k2, dt / 2), t + dt / 2);
+    const k4 = rates(add(s, k3, dt), t + dt);
+    const out = {};
+    for (const key in s) out[key] = s[key] + (dt / 6) * ((k1[key] || 0) + 2 * (k2[key] || 0) + 2 * (k3[key] || 0) + (k4[key] || 0));
+    return out;
+  };
+  // Velocity Verlet, for mechanics: `pairs` names each position's velocity,
+  // and the velocity's rate (the acceleration) depends on positions only.
+  const verlet = (rates, pairs, s, t, dt) => {
+    const a0 = rates(s, t);
+    const out = Object.assign({}, s);
+    for (const [x, v] of Object.entries(pairs)) out[x] = s[x] + s[v] * dt + 0.5 * (a0[v] || 0) * dt * dt;
+    const a1 = rates(out, t + dt);
+    for (const [, v] of Object.entries(pairs)) out[v] = s[v] + 0.5 * ((a0[v] || 0) + (a1[v] || 0)) * dt;
+    return out;
+  };
+  const stepper = (opts) => {
+    if (typeof opts.rates !== 'function') refuse('ode', '`rates(state, t)` gives the rate of change of each part of the state');
+    return opts.method === 'verlet'
+      ? (s, t, dt) => verlet(opts.rates, opts.pairs || {}, s, t, dt)
+      : (s, t, dt) => rk4(opts.rates, s, t, dt);
+  };
+
+  /**
+   * A system of equations followed from `t0` to `t1` with a fixed step: an
+   * epidemic, a population, a step response. Returns the states, each with its
+   * `t`, about `points` of them (default 400) for a chart.
+   *
+   *   const path = synabit.ode((s) => ({ S: -b * s.S * s.I, I: b * s.S * s.I - g * s.I, R: g * s.I }),
+   *     { S: 0.99, I: 0.01, R: 0 }, 0, 160, { dt: 0.05 });
+   *   synabit.chart(el, { series: [{ name: 'I', points: path.map((p) => [p.t, p.I]) }] });
+   */
+  const ode = (rates, state, t0, t1, opts) => {
+    const o = Object.assign({ dt: 0.01, points: 400 }, opts || {}, { rates });
+    const step = stepper(o);
+    const start = finite('ode', +t0, 't0');
+    const end = finite('ode', +t1, 't1');
+    const n = Math.max(1, Math.ceil((end - start) / o.dt));
+    const dt = (end - start) / n;
+    const every = Math.max(1, Math.floor(n / o.points));
+    let s = Object.assign({}, state);
+    const out = [Object.assign({ t: start }, s)];
+    for (let i = 1; i <= n; i++) {
+      s = step(s, start + (i - 1) * dt, dt);
+      if (i % every === 0 || i === n) out.push(Object.assign({ t: start + i * dt }, s));
+    }
+    for (const key in s) finite('ode', s[key], `${key} at the end`);
+    return out;
+  };
+
+  /**
+   * A system that moves, drawn as it moves, with run / pause / reset and its
+   * invariants shown with how far they have drifted.
+   *
+   *   synabit.sim(el, {
+   *     state: { theta: 0.5, omega: 0 },
+   *     rates: (s) => ({ theta: s.omega, omega: -(9.81 / L) * Math.sin(s.theta) }),
+   *     method: 'verlet', pairs: { theta: 'omega' },     // or the default, RK4
+   *     dt: 0.001, speed: 1,                              // seconds of model per second shown
+   *     invariants: { 'cơ năng (J)': (s) => energy(s) },
+   *     draw: (s, t) => { … },                            // called every frame
+   *   });
+   *
+   * Returns `{ reset(state), state(), time() }`. Starts paused when `paused`.
+   */
+  const nextFrame = (f) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(f) : setTimeout(() => f(Date.now()), 16));
+  const sim = (el, opts) => {
+    const root = target(el);
+    if (!root) refuse('sim', 'no element to draw into');
+    const o = Object.assign({ dt: 0.001, speed: 1, invariants: {} }, opts || {});
+    const step = stepper(o);
+    if (typeof o.draw !== 'function') refuse('sim', '`draw(state, t)` draws the state');
+    root.replaceChildren();
+    const vi = String(context.locale).toLowerCase().startsWith('vi');
+    const bar = htmlEl('div', 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px', root);
+    const play = htmlEl('button', '', bar);
+    play.type = 'button';
+    const again = htmlEl('button', '', bar, vi ? 'Đặt lại' : 'Reset');
+    again.type = 'button';
+    const clock = htmlEl('span', 'font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px', bar);
+    const kept = htmlEl('div', '', root);
+    let s;
+    let t;
+    let start;
+    let running = !o.paused;
+    let last = null;
+    const label = () => (play.textContent = running ? (vi ? 'Dừng' : 'Pause') : vi ? 'Chạy' : 'Run');
+    const show = () => {
+      clock.textContent = `t = ${formatNumber(t, 2)} s`;
+      const items = Object.entries(o.invariants).map(([name, f]) => {
+        const now = f(s);
+        const was = start[name];
+        const drift = was ? ((now - was) / Math.abs(was)) * 100 : now - was;
+        return { label: name, value: now, digits: 4, note: `${vi ? 'lệch' : 'drift'} ${formatNumber(drift, 3)}${was ? '%' : ''}` };
+      });
+      if (items.length) stats(kept, items);
+      o.draw(s, t);
+    };
+    const reset = (state) => {
+      s = Object.assign({}, state || o.state);
+      t = 0;
+      start = Object.fromEntries(Object.entries(o.invariants).map(([name, f]) => [name, f(s)]));
+      show();
+    };
+    const frame = (now) => {
+      if (running) {
+        // Real time since the last frame, capped so a hidden tab does not leap.
+        const real = last == null ? 0 : Math.min(0.05, (now - last) / 1000);
+        let left = real * o.speed;
+        while (left > 1e-12) {
+          const dt = Math.min(o.dt, left);
+          s = step(s, t, dt);
+          t += dt;
+          left -= dt;
+        }
+        show();
+      }
+      last = now;
+      if (root.isConnected) nextFrame(frame);
+    };
+    play.addEventListener('click', () => {
+      running = !running;
+      label();
+    });
+    again.addEventListener('click', () => reset());
+    label();
+    reset();
+    nextFrame(frame);
+    return { reset, state: () => Object.assign({}, s), time: () => t };
+  };
+
   window.synabit = Object.freeze({
     /** Resolves once the host has said the theme and the locale. */
     ready,
@@ -954,5 +1210,11 @@
     controls,
     stats,
     layout,
+    /** Numbers from the model's own functions; see each one's comment above. */
+    solve,
+    peak,
+    integrate,
+    ode,
+    sim,
   });
 })();

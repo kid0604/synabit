@@ -17,6 +17,17 @@ interface Kit {
   controls(el: Element, specs: unknown[], onChange?: (v: Record<string, unknown>) => void): { values(): Record<string, unknown> };
   stats(el: Element, items: unknown[]): void;
   layout(el: Element, kind: string): Record<string, HTMLElement>;
+  solve(f: (x: number) => number, lo: number, hi: number): number;
+  peak(f: (x: number) => number, lo: number, hi: number, which?: 'min'): { x: number; y: number };
+  integrate(f: (x: number) => number, a: number, b: number, n?: number): number;
+  ode(
+    rates: (s: Record<string, number>, t: number) => Record<string, number>,
+    state: Record<string, number>,
+    t0: number,
+    t1: number,
+    opts?: { dt?: number; method?: 'verlet'; pairs?: Record<string, string> },
+  ): (Record<string, number> & { t: number })[];
+  sim(el: Element, opts: unknown): { reset(s?: unknown): void; state(): Record<string, number>; time(): number };
 }
 
 let kit: Kit;
@@ -162,5 +173,72 @@ describe("the kit's components", () => {
     expect(Object.keys(kit.layout(fresh(), 'side')).sort()).toEqual(['controls', 'stage', 'stats']);
     expect(Object.keys(kit.layout(fresh(), 'stack')).sort()).toEqual(['controls', 'stage', 'stats']);
     expect(Object.keys(kit.layout(fresh(), 'compare')).sort()).toEqual(['a', 'aStats', 'b', 'bStats', 'controls']);
+  });
+});
+
+/**
+ * Numbers worked out from the model's own functions (plan 2026-10-28, §2.2,
+ * PR Q7): the tax of 2026-10-28 was drawn from a formula derived by hand, and
+ * when its own check failed the model could not find a better one.
+ */
+describe("the kit's numbers from the model", () => {
+  it('solves an equilibrium from demand and supply, with no formula derived', () => {
+    const t = 2;
+    const demand = (p: number) => 100 - 2 * p;
+    const supply = (p: number) => 3 * (p - t) - 20; // the seller keeps p − t
+    const p = kit.solve((x) => demand(x) - supply(x), 0, 100);
+    expect(p).toBeCloseTo(25.2, 10);
+  });
+
+  it('looks inside the range for a crossing, and says when there is none', () => {
+    expect(Math.abs(kit.solve((x) => x * x - 1, -2, 2))).toBeCloseTo(1, 10);
+    expect(() => kit.solve((x) => x * x + 1, -2, 2)).toThrow(/does not cross zero/);
+  });
+
+  it('finds a peak over the whole range: the Gibbs overshoot of five terms', () => {
+    const partial = (x: number) => (4 / Math.PI) * [1, 3, 5, 7, 9].reduce((s, k) => s + Math.sin(k * x) / k, 0);
+    const top = kit.peak(partial, 0.01, Math.PI - 0.01);
+    expect(top.y).toBeCloseTo(1.1824, 3);
+    expect(kit.peak((x) => (x - 2) ** 2, 0, 5, 'min').x).toBeCloseTo(2, 6);
+    // A broad hill and a narrow, higher one: a search from one place finds the hill.
+    const twoPeaks = (x: number) => Math.exp(-((x - 1) ** 2)) + 2 * Math.exp(-(((x - 4) / 0.05) ** 2));
+    expect(kit.peak(twoPeaks, 0, 5).x).toBeCloseTo(4, 4);
+  });
+
+  it('integrates by Simpson’s rule', () => {
+    expect(kit.integrate(Math.sin, 0, Math.PI)).toBeCloseTo(2, 9);
+    expect(kit.integrate((x) => x * x, 0, 3)).toBeCloseTo(9, 9);
+  });
+
+  it('follows a system with RK4, and keeps what it must keep', () => {
+    const decay = kit.ode((s) => ({ y: -s.y }), { y: 1 }, 0, 1, { dt: 0.01 });
+    expect(decay.at(-1)!.t).toBeCloseTo(1, 12);
+    expect(decay.at(-1)!.y).toBeCloseTo(Math.exp(-1), 9);
+    const b = 0.3, g = 0.1;
+    const sir = kit.ode((s) => ({ S: -b * s.S * s.I, I: b * s.S * s.I - g * s.I, R: g * s.I }), { S: 0.99, I: 0.01, R: 0 }, 0, 160, { dt: 0.05 });
+    for (const s of sir) expect(s.S + s.I + s.R).toBeCloseTo(1, 9);
+  });
+
+  it('keeps the energy of an oscillator with velocity Verlet', () => {
+    const energy = (s: Record<string, number>) => 0.5 * s.v * s.v + 0.5 * s.x * s.x;
+    const path = kit.ode((s) => ({ x: s.v, v: -s.x }), { x: 1, v: 0 }, 0, 20 * Math.PI, { dt: 0.01, method: 'verlet', pairs: { x: 'v' } });
+    expect(Math.abs(energy(path.at(-1)!) - 0.5) / 0.5).toBeLessThan(1e-4);
+  });
+
+  it('runs a simulation with its controls and invariants', () => {
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    const drawn: number[] = [];
+    const run = kit.sim(el, {
+      state: { x: 1, v: 0 },
+      rates: (s: Record<string, number>) => ({ x: s.v, v: -s.x }),
+      invariants: { 'cơ năng': (s: Record<string, number>) => 0.5 * s.v * s.v + 0.5 * s.x * s.x },
+      draw: (s: Record<string, number>) => drawn.push(s.x),
+      paused: true,
+    });
+    expect([...el.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Chạy', 'Đặt lại']);
+    expect(drawn[0]).toBe(1);
+    expect(el.textContent).toContain('cơ năng');
+    expect(run.time()).toBe(0);
   });
 });
