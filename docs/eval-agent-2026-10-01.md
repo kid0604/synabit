@@ -1595,3 +1595,24 @@ Vẫn yếu:
 - Không kiểm được: mục 3, vì người chấm chưa qua hiệu chỉnh.
 - Mục 4: qua trên điểm chưa được tin.
 - Mục 7: chờ người dùng so tay.
+
+## 2026-10-28 — sau gate: ba chỗ sửa từ lần so tay: dự đoán, ghi trước khi đo
+
+Người dùng hỏi lại sáu câu §1 trong app (luna) và thấy vài hình không chạy. Ba chỗ sửa chung, mỗi chỗ có test đỏ khi
+tắt:
+- **`synabit.chart` đọc điểm dạng `{ x, y }`** như `[x, y]`. Một đường có điểm mà không điểm nào vẽ được thì
+  chart báo lỗi, nêu tên đường. Trước đó hình `drift` đưa `{ x, y }`, mọi điểm bị bỏ, biểu đồ trống, lint vẫn sạch.
+- **Lint có thêm `frozen`.** Hình chuyển động lúc mở mà đứng hẳn sau khi chỉnh một thanh trượt hoặc ô chọn thì bị
+  báo. Lỗi này cùng loại bố cục: trả về một lần, sau đó giữ. Trước đó hình `pendulum` giữ vòng animation trên hình
+  vẽ cũ.
+- **Vùng tô (`areas`) nhận một mức (số) làm cạnh trên hoặc dưới.** `core.md` và `patterns/areas.md` thêm một câu
+  về chuyện này. Trước đó hình `tax` tô thu ngân sách giữa đường cầu và đường cung.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, so với Q6: vẽ 91%, tự kiểm 84%, đúng 93%.
+
+Dự đoán:
+- **`frozen`:** tìm thấy ở 0–3 lần thử, chỉ ở câu có chuyển động (`pendulum`, `resonance`, `spring`, `projectile`).
+  Vì là lỗi mới được tính, tự kiểm có thể giảm chút ít: khoảng 83%.
+- **`tax` dùng mức làm cạnh vùng:** 1–2 / 3. `tax` vẫn đúng 3 / 3.
+- **`areas` vẫn không được chọn đúng kiểu.** Không có gì trong lần này nhắm vào việc chọn kiểu.
+- **Vẽ và đúng:** trong mức dao động của Q6.
