@@ -1811,3 +1811,46 @@ Dự đoán:
   thông điệp, nhờ kit tự ghi.
 - **Tự kiểm:** khoảng 84%, cùng mức hoặc thấp hơn chút, vì model được biết ít hơn khi viết lỗi. **Vẽ:** cùng mức hoặc
   thấp hơn chút (88–90%), vì có thể có thêm hình bị bỏ như `drift` trong app. **Đúng:** trong mức dao động.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, hình nhìn trong frame sandbox)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Lần trước (không sandbox): tất cả | 96 | 90% | 86% | 93% (87) | 1,41 | 1,09 | 83% (86) |
+| Dự đoán | | 88–90% | ~84% | ≈ | | | |
+| **Lần này: tất cả** | 96 | **92%** | **84%** | **97%** (87) | 1,50 | 1,18 | 83% (88) |
+| Lần này: phát triển | 66 | 97% | 89% | 97% (60) | 1,62 | 1,21 | 77% (64) |
+| Lần này: giữ lại | 30 | 80% | 73% | 96% (27) | 1,23 | 1,10 | 100% (24) |
+
+⚠ người chấm chưa được tin.
+
+Lý do bị trả về. Có 117 lần gọi `show_visual`, 93 lần được giữ.
+
+| Lý do | Số lần |
+| --- | --- |
+| `long-decimal` | 8 |
+| `unreported` | 7 |
+| `proof` | 6 |
+| `expect` | 6 |
+| `overflow` | 3 |
+| `overlap` | 2 |
+| `error` | 2 |
+| `empty` | 1 |
+
+Hai lần `error`:
+- Một lần là "Script error.", lỗi trong code riêng của hình.
+- Một lần có thông điệp nhờ kit tự ghi: `ReferenceError: Can't find variable: katex (1670:8 in the controls callback)`.
+
+Hai lần hết ngân sách, ở `sir` và `sorting`.
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `long-decimal` 3 và `overflow` 1 (`euler-e`), `frozen` 1
+(`pendulum`), `overlap` 1 (`projectile`).
+
+So với dự đoán:
+- **"the kit did not run" vì `parent`: 0** (lần trước 4). Đúng dự đoán.
+- **`error` chỉ còn 2 lần, một nửa là "Script error.".** Đúng tỉ lệ dự đoán, nhưng số quá nhỏ để nói chắc.
+- **Tự kiểm 84%, dự đoán khoảng 84%.** Phần phát triển 89%.
+- **Vẽ 92%, dự đoán 88–90%: tốt hơn.** Không thấy hình nào bị bỏ vì "Script error.". Chỗ không vẽ vẫn là phần giữ
+  lại, kiểu `compare` (6 lần), cùng `gibbs` và `sir` mỗi câu 1 lần.
+- **Đúng 97%,** cao nhất từ trước tới giờ. Phần giữ lại 96%. Lần sai còn lại: `gibbs` (không vẽ), `tax` (1 / 3), và
+  một câu giữ lại kiểu `explore`.
