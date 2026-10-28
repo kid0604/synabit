@@ -1181,6 +1181,7 @@ impl SynEngine {
 
                 // The visual a `show_visual` kept, for what is recorded of the call.
                 let mut shown: Option<crate::syn::visual::tool::Shown> = None;
+                let mut guided = false;
                 let call_started = std::time::Instant::now();
                 let outcome = match how {
                     crate::syn::gate::How::Describe(content)
@@ -1216,6 +1217,7 @@ impl SynEngine {
                         }
                     }
                     crate::syn::gate::How::ShowVisual if tc.function.name == crate::syn::visual::tool::GUIDE_TOOL => {
+                        guided = draws;
                         Ok(crate::syn::registry::ToolOutcome {
                             content: crate::syn::visual::tool::read_guide(draws, &tc.function.arguments),
                             reversal: crate::syn::registry::Reversal::Nothing,
@@ -1699,10 +1701,13 @@ impl SynEngine {
                         tools = select(&loaded);
                     }
                 }
-                // So does a visual kept: the answer still to be written may
-                // name one of its numbers, which only a script works out
-                // again. See `visual::tool::drawn`.
-                if shown.is_some() && loaded.insert(crate::syn::toolset::Group::Compute) {
+                // So does a visual about to be drawn, or kept: the numbers it
+                // will show, and the answer may name, are worked out by a
+                // script, not in the model's head. From the guide, not only
+                // the visual: on 2026-10-28 `gpt-6.1-terra` needed `compute`
+                // before drawing and had to ask `find_tools` for it. See
+                // `visual::tool::drawn`.
+                if (guided || shown.is_some()) && loaded.insert(crate::syn::toolset::Group::Compute) {
                     tools = select(&loaded);
                 }
 
@@ -7048,6 +7053,60 @@ mod driving {
         assert_eq!(guide.ok, Some(false), "{}", guide.preview);
         // Nothing kept brings nothing.
         assert!(!run.tool_groups.iter().any(|g| g == "compute"), "{:?}", run.tool_groups);
+    }
+
+    /// The tax of 2026-10-28: `gpt-6.1-terra` read the guide, needed `compute`
+    /// for the numbers it was about to draw, and had to ask `find_tools` for
+    /// it. The guide brings it, before anything is drawn.
+    #[tokio::test]
+    async fn the_guide_brings_compute_before_the_visual() {
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(dir.path()).expect("canonical").to_string_lossy().to_string();
+        let app = app_with_db(std::sync::Mutex::new(crate::db::DbBridge::new_in_memory_full().expect("db")));
+        crate::syn::settings::save_settings(
+            &vault,
+            &crate::models::syn::SynSettings { provider: crate::models::syn::SynProvider::Anthropic, ..Default::default() },
+        )
+        .expect("settings");
+        let ask = "mô phỏng thị trường khi có thuế, cho tao kéo mức thuế";
+        let mut run = Run::new(ask, Some("conv-guide".into()), budget(12));
+        let provider = std::sync::Arc::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![calls("visual_guide", serde_json::json!({ "kind": "chart" })), text("Kéo thanh thuế.")],
+        ));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let state = app.state::<crate::db::DbState>();
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &history(ask),
+                    model: "claude-opus-5-5",
+                    temperature: None,
+                    registry: &registry,
+                    db: state.inner(),
+                    vault_path: &vault,
+                    num_ctx: 8192,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("finishes");
+        if !cfg!(desktop) {
+            return;
+        }
+        let offered = provider.offered.lock().expect("lock").clone();
+        assert!(offered[0].contains(&"visual_guide".to_string()), "drawing is offered: {:?}", offered[0]);
+        assert!(!offered[0].contains(&"compute".to_string()), "not before: {:?}", offered[0]);
+        assert!(offered[1].contains(&"compute".to_string()), "after the guide: {:?}", offered[1]);
     }
 
     /// Asking `find_tools` for a connector just approved brings its tools.

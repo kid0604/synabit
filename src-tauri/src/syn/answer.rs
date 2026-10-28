@@ -171,6 +171,8 @@ pub fn warning(invented: &[String]) -> String {
 pub struct Figure {
     pub written: String,
     pub value: f64,
+    /// The number before its unit, when a unit scaled it: "1,2 nghìn" is 1.2.
+    pub before_unit: Option<f64>,
 }
 
 /// Below this, a whole number is a count or a day, not a figure worth checking.
@@ -231,6 +233,7 @@ pub fn figures_in(text: &str) -> Vec<Figure> {
             continue;
         }
         let Some(mut value) = read_figure(&raw) else { continue };
+        let as_written = value;
 
         // A unit after it: "993k", "1,5 triệu", "2 tỷ".
         let rest: String = chars[j..chars.len().min(j + 10)].iter().collect::<String>().to_lowercase();
@@ -253,7 +256,7 @@ pub fn figures_in(text: &str) -> Vec<Figure> {
         if whole && value < SMALLEST_FIGURE {
             continue;
         }
-        out.push(Figure { written: raw, value });
+        out.push(Figure { written: raw, value, before_unit: scaled.then_some(as_written) });
     }
     out
 }
@@ -345,12 +348,34 @@ pub fn unbacked(answer: &str, sources: &[String]) -> Vec<Figure> {
             }
             let tolerance = (k.abs() * 0.005).max(0.5);
             (k - f.value).abs() <= tolerance
-        });
+        }) || f.before_unit.is_some_and(|n| in_its_unit(n, &known));
         if !backed && !out.iter().any(|o| o.value == f.value) {
             out.push(f);
         }
     }
     out
+}
+
+/// Whether a figure written with its unit — "1,2 nghìn" — was worked out in
+/// that unit: `compute` returned 1.2, not 1200.
+///
+/// On 2026-10-28 a market's tax was worked out in thousands of đồng, the
+/// answer said "1,2 nghìn đồng", and the check read 1.200 and found it
+/// nowhere: six right numbers under "do not use these". Matched to the
+/// precision written, so 1.1999999999999993 is 1,2 and 1,6 is not; and never
+/// for a whole number under a hundred, which every JSON is full of — an id, a
+/// count — and would back "5 triệu" by anything.
+fn in_its_unit(n: f64, known: &[f64]) -> bool {
+    let places = (0..=6).find(|p| {
+        let shifted = n * 10f64.powi(*p);
+        (shifted - shifted.round()).abs() < 1e-6
+    });
+    let Some(places) = places else { return false };
+    if places == 0 && n < SMALLEST_FIGURE {
+        return false;
+    }
+    let half = 0.5 * 10f64.powi(-(places as i32));
+    known.iter().any(|k| (k - n).abs() <= half + 1e-9)
 }
 
 /// Every number in machine-written text (JSON), unfiltered: a sum `crunch`
@@ -801,5 +826,23 @@ mod tests {
         let said = figures_warning(&wrong, "Cộng lại là 938.000₫");
         assert!(said.contains("không có trong dữ liệu"), "{said}");
         assert!(figures_warning(&wrong, "The total is 938,000").contains("appears in nothing"));
+    }
+
+    /// A tax worked out in thousands of đồng (2026-10-28): every figure right,
+    /// every figure flagged, because "1,2 nghìn" was read as 1.200.
+    #[test]
+    fn a_figure_worked_out_in_its_unit_is_backed() {
+        let worked = vec![
+            r#"{"result":{"buyer_per_unit":1.1999999999999993,"buyer_total":59.51999999999997,"dwl":2.3999999999999986,"pc":25.2,"ps":23.2,"q":49.6,"revenue":99.2,"seller_per_unit":0.8000000000000007,"seller_total":39.680000000000035}}"#.to_string(),
+        ];
+        let answer = "- **Người mua:** 1,2 nghìn đồng/đơn vị, tổng **59,52 nghìn đồng**.\n\
+                      - **Người bán:** 0,8 nghìn đồng/đơn vị, tổng **39,68 nghìn đồng**.\n\
+                      - **Thu ngân sách:** **99,2 nghìn đồng**. **Mất mát xã hội:** **2,4 nghìn đồng**.";
+        assert!(unbacked(answer, &worked).is_empty(), "{:?}", unbacked(answer, &worked));
+        // Still in the unit: luna's wrong share of the same tax is caught.
+        let wrong = unbacked("Người bán chịu 1,6 nghìn đồng/đơn vị.", &worked);
+        assert_eq!(wrong.iter().map(|f| f.written.as_str()).collect::<Vec<_>>(), vec!["1,6"]);
+        // And a whole number under a hundred backs nothing: JSON is full of them.
+        assert_eq!(unbacked("Lãi khoảng 5 triệu.", &[r#"{"id":5}"#.to_string()]).len(), 1);
     }
 }

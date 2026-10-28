@@ -21,7 +21,7 @@ trên luna.
 
 | Phần | Trạng thái | Lệch so với kế hoạch |
 | --- | --- | --- |
-| PR Q0 — hai lỗi nhỏ | Chưa làm | — |
+| PR Q0 — hai lỗi nhỏ | Xong (2026-10-28): số viết kèm đơn vị khớp với nguồn tính theo đơn vị đó, theo đúng độ chính xác viết ra; `compute` mở khi `visual_guide` được đọc. Mỗi bản sửa một test, đỏ khi tắt | Số nguyên dưới 100 kèm đơn vị ("5 triệu") không khớp theo đơn vị: JSON nào cũng đầy số nhỏ, sẽ cho mọi số như vậy có nguồn |
 | PR Q1 — tự kiểm trong kit, chạy bằng Playwright | Chưa làm | — |
 | PR Q2 — bộ đo và nền | Chưa làm | — |
 | PR Q3 — bản thiết kế và kiểu giải thích | Chưa làm | — |
