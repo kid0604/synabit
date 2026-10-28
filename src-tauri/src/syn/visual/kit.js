@@ -22,9 +22,13 @@
   let nextId = 1;
   let context = { theme: html.dataset.theme === 'dark' ? 'dark' : 'light', locale: html.lang || 'vi' };
 
+  // The window the frame answers to, kept as it is when the kit loads: a
+  // visual that names something `parent` hides `window.parent` from every
+  // script after it, and eleven measured visuals cut the kit off that way.
+  const host = window.parent;
   // A sandboxed frame's origin is opaque, so `*` is the only target there
   // is; the message still goes to one window, the parent.
-  const send = (message) => parent.postMessage(Object.assign({ jsonrpc: '2.0' }, message), '*');
+  const send = (message) => host.postMessage(Object.assign({ jsonrpc: '2.0' }, message), '*');
   const notify = (method, params) => send({ method, params: params || {} });
   const request = (method, params) =>
     new Promise((resolve, reject) => {
@@ -49,7 +53,7 @@
   };
 
   window.addEventListener('message', (event) => {
-    if (event.source !== parent) return;
+    if (event.source !== host) return;
     const message = event.data;
     if (!message || message.jsonrpc !== '2.0') return;
     if (message.id != null && pending.has(message.id)) {
@@ -96,7 +100,7 @@
 
   // Opened on its own — a visual saved as a file and opened in a browser —
   // there is no host to answer: the page's own theme and locale stand.
-  const framed = window.parent !== window;
+  const framed = host !== window;
   const ready = !framed ? Promise.resolve(Object.assign({}, context)) : request('ui/initialize', {
     protocolVersion: '2026-01-26',
     appInfo: { name: 'synabit-visual', version: '1' },

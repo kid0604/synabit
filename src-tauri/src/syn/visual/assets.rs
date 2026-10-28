@@ -130,7 +130,7 @@ mod tests {
         assert!(page.contains("data:font/woff2;base64,"));
         assert!(page.contains("d3js.org v7.9.0"));
         assert!(page.contains("data-theme=\"dark\""));
-        assert!(page.contains("window.parent !== window"), "the kit's standalone mode is in");
+        assert!(page.contains("const framed = host !== window"), "the kit's standalone mode is in");
     }
 
     #[test]

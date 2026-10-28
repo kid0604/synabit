@@ -1,0 +1,19 @@
+<!-- Written for the lint, not drawn by a model: a search tree kept in a map
+     named `parent`, as Dijkstra and BFS visuals name it. Declared at the top
+     of the page, that name hid `window.parent` from the kit, which could no
+     longer send anything to the app; eleven measured visuals were sent back
+     for it (2026-10-28). Nothing is wrong with the page itself. -->
+<div id="v"></div>
+<script>
+const edges = { S: ['A', 'B'], A: ['C'], B: ['C'], C: [] };
+const parent = { S: null };
+const order = [];
+const queue = ['S'];
+while (queue.length) {
+  const u = queue.shift();
+  order.push(u);
+  for (const v of edges[u]) if (!(v in parent)) { parent[v] = u; queue.push(v); }
+}
+synabit.report({ 'đỉnh duyệt': order.length });
+synabit.stats('#v', [{ label: 'Thứ tự duyệt', value: order.length, digits: 0, note: order.join(' → ') }]);
+</script>

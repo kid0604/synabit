@@ -174,5 +174,10 @@
     "file": "clean-spring-sim.html",
     "fault": "None: written for the lint, a simulation that keeps moving after its slider is used.",
     "checks": []
+  },
+  {
+    "file": "clean-parent-named.html",
+    "fault": "None: written for the lint, a page that names a map `parent`, which once cut the kit off from the app.",
+    "checks": []
   }
 ]
