@@ -271,7 +271,17 @@ fn with_what_it_did(m: &SynMessage, said: String) -> String {
     if called.is_empty() {
         return said;
     }
-    format!("{said}\n\n(Tools called for this answer: {}.)", called.join(", "))
+    let mut said = format!("{said}\n\n(Tools called for this answer: {}.)", called.join(", "));
+    let drawn = crate::syn::visual::tool::drawn(m);
+    if !drawn.is_empty() {
+        let titles = drawn.iter().map(|t| format!("“{t}”")).collect::<Vec<_>>().join(", ");
+        said.push_str(&format!(
+            "\n(It drew {titles}. Its numbers were worked out by its script, which you cannot run: \
+             asked for one, work it out again with `compute` from the same formula — never read it \
+             off the script or work it in your head.)"
+        ));
+    }
+    said
 }
 
 /// Trim a conversation to the last `max_msgs`, keeping the system prompt.
@@ -845,6 +855,12 @@ impl SynEngine {
         // And what the run it carries on from had loaded, so it is not sent
         // fewer tools than the call it is carrying on with needed.
         loaded.extend(run.tool_groups.iter().filter_map(|g| crate::syn::toolset::Group::from_name(g)));
+        // And `compute`, once the conversation drew a visual: its numbers are
+        // its script's, and only a script works them out again. See
+        // `visual::tool::drawn`.
+        if req.history.iter().any(|m| !crate::syn::visual::tool::drawn(m).is_empty()) {
+            loaded.insert(crate::syn::toolset::Group::Compute);
+        }
         // On the record from the start, not only once a tool is called: a run
         // that called nothing is the one whose offered tools are in question.
         // The Telegram turn that said it had no connection to the Pi left none.
@@ -1682,6 +1698,12 @@ impl SynEngine {
                     if loaded.insert(group) {
                         tools = select(&loaded);
                     }
+                }
+                // So does a visual kept: the answer still to be written may
+                // name one of its numbers, which only a script works out
+                // again. See `visual::tool::drawn`.
+                if shown.is_some() && loaded.insert(crate::syn::toolset::Group::Compute) {
+                    tools = select(&loaded);
                 }
 
                 // A link a feed article offered may be opened as it is, the way
@@ -6990,6 +7012,11 @@ mod driving {
             .collect();
         assert!(holding.is_empty(), "the run's record holds the visual's HTML: {holding:#?}");
         assert!(shows.iter().all(|s| s.args.as_ref().is_some_and(|a| a.get("html").is_none())));
+
+        // And `compute` comes with it, for a number the answer must name: on
+        // 2026-10-28 the answer that drew a loan named its totals, worked in
+        // the model's head.
+        assert!(run.tool_groups.iter().any(|g| g == "compute"), "{:?}", run.tool_groups);
     }
 
     /// A model that does not draw is not offered the tools, and a call to one
@@ -7019,6 +7046,8 @@ mod driving {
         // Nor is it told how to draw one (the eval of 2026-10-27, `vz-gate-small`).
         let guide = run.steps.iter().find(|s| s.tool.as_deref() == Some("visual_guide")).expect("the call is on the record");
         assert_eq!(guide.ok, Some(false), "{}", guide.preview);
+        // Nothing kept brings nothing.
+        assert!(!run.tool_groups.iter().any(|g| g == "compute"), "{:?}", run.tool_groups);
     }
 
     /// Asking `find_tools` for a connector just approved brings its tools.
@@ -9209,6 +9238,15 @@ mod driving {
         ask: &str,
         script: Vec<ChatReply>,
     ) -> Vec<Vec<String>> {
+        offered_after(surface, &history(ask), script).await
+    }
+
+    async fn offered_after(
+        surface: crate::syn::surface::Surface,
+        said: &[SynMessage],
+        script: Vec<ChatReply>,
+    ) -> Vec<Vec<String>> {
+        let ask = said.iter().rev().find(|m| m.role == "user").map(|m| m.content.as_str()).unwrap_or_default();
         let dir = tempfile::tempdir().expect("temp");
         let vault = dir.path().to_str().expect("utf8").to_string();
         let db = a_vault_worth_attacking(dir.path());
@@ -9225,7 +9263,7 @@ mod driving {
                 DriveRequest {
                     app: &app,
                     message_id: "m1",
-                    history: &history(ask),
+                    history: said,
                     model: "scripted",
                     temperature: None,
                     registry: &registry,
@@ -9241,6 +9279,36 @@ mod driving {
             .expect("answers");
         let offered = provider.offered.lock().expect("lock").clone();
         offered
+    }
+
+    /// The loan of 2026-10-28: asked which way cost less, after a visual had
+    /// worked out both totals, the model read the visual's script and wrote
+    /// three totals that were none of them. `compute` was not sent.
+    #[tokio::test]
+    async fn a_conversation_that_drew_is_sent_compute() {
+        let follow = "vậy phương án nào phải trả ít tiền hơn";
+        let msg = |role: &str, content: &str| SynMessage { role: role.into(), ..history(content).remove(0) };
+        let mut drew = msg("assistant", "Kéo thanh trượt để đổi lãi suất và thời hạn.");
+        drew.tool_calls_log = Some(vec![crate::models::syn::SynToolCallEvent {
+            conversation_id: String::new(),
+            tool_name: "show_visual".into(),
+            tool_args: serde_json::json!({ "visual_id": "0123456789abcdef0123456789abcdef", "title": "Hai cách trả khoản vay", "kind": "simulation" }),
+            result_preview: r#"{"shown":true}"#.into(),
+            iteration: 0,
+        }]);
+        let said = vec![msg("user", "so sánh hai cách trả khoản vay"), drew, msg("user", follow)];
+
+        let offered = offered_after(crate::syn::surface::Surface::App, &said, vec![text("xong")]).await;
+        assert!(offered[0].contains(&"compute".to_string()), "{:?}", offered[0]);
+        let seen = build_pruned_history(&said, 50);
+        assert!(seen[1].content.contains("“Hai cách trả khoản vay”") && seen[1].content.contains("`compute`"), "{}", seen[1].content);
+
+        // Not for a conversation that drew nothing, nor for a call refused.
+        let plain = offered_for(follow, vec![text("xong")]).await;
+        assert!(!plain[0].contains(&"compute".to_string()), "{:?}", plain[0]);
+        let mut refused = said[1].clone();
+        refused.tool_calls_log.as_mut().unwrap()[0].tool_args = serde_json::json!({ "title": "x", "kind": "chart", "html_chars": 3, "html_start": "<p>" });
+        assert!(crate::syn::visual::tool::drawn(&refused).is_empty());
     }
 
     /// A surface is not sent what it would refuse: offering `browse` and then

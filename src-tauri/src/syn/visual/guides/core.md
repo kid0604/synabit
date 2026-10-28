@@ -73,4 +73,6 @@ itself.
 name the note), the `kind`, and the `html`. If it comes back with problems,
 fix exactly those and call it again — at most twice. Then say in your answer
 what the visual shows and how to use it, in a sentence or two; do not repeat
-its numbers.
+its numbers. A number your answer must name — one the person asked for — is
+worked out with `compute` from the same formula, never read off your script
+or worked in your head.

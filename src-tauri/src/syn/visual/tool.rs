@@ -169,13 +169,30 @@ pub fn show<R: tauri::Runtime>(
                 "shown": true,
                 "visual_id": id,
                 "warnings": checked.warnings,
-                "note": "Shown to the user under your answer, and kept. Say in a sentence or two what it shows and how to use it; do not repeat its numbers.",
+                "note": "Shown to the user under your answer, and kept. Say in a sentence or two what it shows and how to use it; do not repeat its numbers. A number your answer must name — one the person asked for — work out with `compute` from the same formula, never from your script or in your head.",
             })
             .to_string(),
             Some(Shown { id, title: title.to_string(), kind: kind.to_string() }),
         ),
         Err(e) => refused(format!("The visual could not be kept: {e}")),
     }
+}
+
+/// The titles of the visuals an earlier answer drew, read off its tool log:
+/// a kept one's arguments carry its id ([`compact`]).
+///
+/// A visual's numbers are worked out by its script, which no model can run.
+/// Asked on 2026-10-28 which way of paying a loan cost less, `gpt-6-luna` read
+/// the script of the visual it had drawn and wrote three totals, none of them
+/// the visual's. So a conversation that drew one is sent `compute`, and the
+/// answer that drew it says so in the history.
+pub fn drawn(m: &crate::models::syn::SynMessage) -> Vec<String> {
+    m.tool_calls_log
+        .iter()
+        .flatten()
+        .filter(|c| c.tool_name == SHOW_TOOL && c.tool_args.get("visual_id").is_some())
+        .map(|c| c.tool_args.get("title").and_then(Value::as_str).unwrap_or_default().to_string())
+        .collect()
 }
 
 /// What is kept of a `show_visual` call in place of its arguments: the HTML
