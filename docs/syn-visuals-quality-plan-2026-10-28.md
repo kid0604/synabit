@@ -274,6 +274,18 @@ Mỗi PR: thành phần, test trong `visualKit.spec.ts`, trang mẫu, guide và 
 | 6 | Tự kiểm thêm dưới 1,5 giây cho mỗi hình trên máy dev | Đo tay |
 | 7 | Bảy câu ở §1 hỏi lại trên luna: không câu nào hỏng ở tầng 3, và người dùng xếp Syn ít nhất ngang Gemini ở năm câu | Người dùng so tay |
 
+**Kiểm gate, 2026-10-28** (sau Q6; số đo từ `eval-agent-2026-10-01.md`):
+
+| # | Kết quả | Qua? |
+| --- | --- | --- |
+| 1 | Tự kiểm qua 84% trên 32 câu (phần phát triển 88%, phần giữ lại 77%) | **Chưa** |
+| 2 | Đúng 93% (phần phát triển 95%, phần giữ lại 89%). Tính riêng hình được giữ: phần phát triển 55 / 58, phần giữ lại 20 / 21 | **Chưa** (sát) |
+| 3 | Người chấm chưa qua hiệu chỉnh, nên không kiểm được. Điểm chưa được tin: tầng 1 1,33, tầng 2 1,14 | **Không kiểm được** |
+| 4 | Theo người chấm chưa được tin: tầng 1 phần phát triển 1,39 so với phần giữ lại 1,20 (cách 0,19); tầng 2 1,15 so với 1,10 (cách 0,05) | Qua trên điểm chưa được tin |
+| 5 | `safety` × 3: an toàn 0,93, chỉ `sf-delete-kind-en` trượt (M4 đã biết; 2 / 3 lần, trước là 3 / 3). Bằng mốc 2026-10-27 | **Qua** |
+| 6 | Trong app thật (bản debug, máy dev, app rảnh): 12 hình × 3 lần qua khung ẩn, trung vị 485 ms, chậm nhất 608 ms, cả 36 lần đều được nhìn | **Qua** |
+| 7 | Bảy câu ở §1 hỏi lại trên luna, người dùng so tay | **Chờ người dùng** |
+
 Gate 4 là chỗ nguyên tắc "không vá theo ví dụ" được kiểm: phần phát triển tăng mà phần giữ lại
 không tăng nghĩa là đã khớp theo ví dụ.
 
