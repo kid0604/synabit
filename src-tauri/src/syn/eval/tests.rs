@@ -673,7 +673,9 @@ async fn visual_quality() {
         })
         .filter(|q| only.is_empty() || only.iter().any(|o| o == q.id))
         .collect();
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    // With the process id: runs started in parallel within the same second
+    // once shared one, and the last to finish wrote over the others' trials.
+    let stamp = format!("{}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S"), std::process::id());
     // Held-out pages go to a folder removed once they are scored, and under
     // names that say nothing of the question.
     let looked = out.join(format!("visuals-{stamp}"));

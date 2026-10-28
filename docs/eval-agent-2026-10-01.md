@@ -1240,3 +1240,59 @@ gọi thiếu tiêu đề. Chạy lại 8 câu từng gặp (`pendulum`, `drift`
 
 Hướng sửa chung, chưa làm: lần gọi lại trong cùng một run mà thiếu `title` hoặc `kind` thì lấy từ lần gọi
 trước đó, thay vì từ chối. Từ Q4 tới giờ, lỗi này lấy mất 5 + 10 + 9 lượt thử.
+
+## 2026-10-28 — lần gọi lại kiểu bản vá: dự đoán, ghi trước khi đo
+
+Sửa: lần gọi lại trong cùng một run mà thiếu `title` hoặc `kind` thì lấy từ lần gọi gần nhất có hai trường
+đó, tính từ lần giữ hình gần nhất, thay vì từ chối.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`. So với lần trước (vẽ 85%, tự kiểm 73%, đúng 92%, và 9
+lần trả về vì thiếu tiêu đề).
+
+Dự đoán:
+- **Từ chối vì thiếu tiêu đề: 0 lần.**
+- **Vẽ:** phần phát triển tăng 2–5 điểm, vì những lượt trước đây mất một lượt thử cho lỗi này. Phần giữ lại
+  khoảng 70–75%, vì quyết định không vẽ đến trước.
+- **Tự kiểm và đúng:** trong mức dao động. Số `show_visual` trên mỗi lượt giảm nhẹ.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+Lượt đầu chỉ có 72 lần thử, không phải 96. Nhóm 1 và nhóm 4 khởi động cùng một giây, nên trùng dấu thời
+gian: file kết quả của nhóm 1 bị ghi đè, và thư mục hình giữ lại dùng chung. Đã sửa: dấu thời gian giờ kèm
+pid của tiến trình. Kết quả của hai nhóm đó bị bỏ và hai nhóm được chạy lại. Các lần đo trước đều đủ 96 lần
+thử, nên không bị ảnh hưởng.
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Lần trước: tất cả | 96 | 85% | 73% | 92% (87) | 1,45 | 1,08 | 83% |
+| **Lần này: tất cả** | 96 | **85%** | **71%** | **89%** (87) | 1,39 | 1,03 | 85% (82) |
+| Lần này: phát triển | 66 | 91% | 77% | 88% (60) | 1,50 | 1,06 | 82% (60) |
+| Lần này: giữ lại | 30 | 73% | 57% | 89% (27) | 1,13 | 0,97 | 95% (22) |
+
+⚠ người chấm chưa được tin.
+
+Đúng, tính riêng các lần có vẽ (lần trước → lần này):
+- phần phát triển: 54 / 56 → **52 / 55**;
+- phần giữ lại: 18 / 18 → 18 / 20.
+
+So với dự đoán:
+- **Từ chối vì thiếu tiêu đề: 0 lần** (trước: 9). Đúng. Một lần gọi lại kiểu bản vá đã được lấy tiêu đề từ
+  lần trước.
+- **Vẽ không tăng như dự đoán:** phần phát triển 92% → 91%, phần giữ lại 70% → 73%. Trong mức dao động.
+- **Tự kiểm và đúng:** trong mức dao động.
+- **Số `show_visual`:** 152 → 141.
+
+Lý do bị trả về: `overlap` 19, `overflow` 14, `expect` 9, `unreported` (chỉ ghi chú, đi kèm lỗi khác) 7,
+`long-decimal` 6, `proof` 5, `error` 4, `nan` 2, `flat-plot` 1.
+
+Phần phát triển còn 6 lượt không giữ được hình, gần như đều là lỗi làm hỏng hình lặp lại mà model không
+sửa được:
+- `pendulum` 3: `expect` › `expect`.
+- `tax` 1: `overlap` › `expect` + `overlap`.
+- `tax` 2: `expect` › `expect` › `expect`.
+- `drift` 2: `overlap` + `proof` › `proof`.
+- `loan` 2: hai lần lint › `expect`.
+- `euler-e` 2: `long-decimal` + `overflow`.
+
+Model thấy phép thế ngược của chính nó sai, nhưng sửa không ra. Đó là việc của `synabit.solve` (Q7),
+không phải của vòng tự kiểm.
