@@ -400,6 +400,25 @@
     return still.map((control) => `${nameOf(control)} changes nothing on screen`);
   };
 
+  // A drawing that moves when it is opened and stands still once a control
+  // is used: the pendulum of 2026-10-28 kept moving the drawing its slider
+  // had replaced. Only a page that moves pays for the look.
+  const moving = async () => {
+    const before = signature();
+    await settle(200);
+    return signature() !== before;
+  };
+  const frozen = async () => {
+    if (!(await moving())) return [];
+    const control = controlsOf().find((c) => c.type === 'range' || c.type === 'number' || c.tagName === 'SELECT');
+    if (!control) return [];
+    if (control.tagName === 'SELECT') use(control);
+    else middle(control);
+    await settle(60);
+    if (await moving()) return [];
+    return [`it moves until ${nameOf(control)} is changed, then stands still: draw each frame from the current values (synabit.sim keeps them)`];
+  };
+
   // A number the answer rests on (the brief's proof) that the visual does
   // not report, or reports as something else.
   // A number the brief names that the visual reports under no such name is
@@ -435,6 +454,7 @@
     add('proof', unproved(opts.proof));
     add('unreported', unreported(opts.proof));
     if (opts.controls) {
+      add('frozen', await frozen());
       add('dead-control', await deadControls());
       // Where the controls left it — a slider at its end, a step past the
       // last — is looked at too: NaN from a term of zero years shows there.

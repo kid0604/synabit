@@ -162,5 +162,17 @@
     "file": "clean-kit-constant.html",
     "fault": "Nothing the lint can see is wrong with it. A flat line in a chart the kit drew is a value that does not change.",
     "checks": []
+  },
+  {
+    "file": "frozen.html",
+    "fault": "The pendulum's animation loop keeps moving the drawing it began with; the slider draws a new one, which never moves.",
+    "checks": [
+      "frozen"
+    ]
+  },
+  {
+    "file": "clean-spring-sim.html",
+    "fault": "None: written for the lint, a simulation that keeps moving after its slider is used.",
+    "checks": []
   }
 ]

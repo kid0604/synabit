@@ -1,0 +1,36 @@
+<!-- Written for the lint, not drawn by a model: a mass on a spring run by
+     synabit.sim, with a slider that changes the spring as it runs. It moves
+     before and after the slider is used, so `frozen` must find nothing. -->
+<div id="v"></div>
+<script>
+const slots = synabit.layout('#v', 'side');
+let k = 4;
+const m = 1;
+const ns = 'http://www.w3.org/2000/svg';
+const svg = document.createElementNS(ns, 'svg');
+svg.setAttribute('viewBox', '0 0 300 120');
+svg.setAttribute('role', 'img');
+svg.setAttribute('aria-label', 'Vật nặng trên lò xo dao động ngang');
+svg.style.width = '100%';
+const bob = document.createElementNS(ns, 'rect');
+bob.setAttribute('y', 40);
+bob.setAttribute('width', 30);
+bob.setAttribute('height', 30);
+bob.setAttribute('fill', 'var(--c1)');
+svg.appendChild(bob);
+const run = document.createElement('div');
+slots.stage.append(run, svg);
+synabit.controls(slots.controls, [
+  { id: 'k', label: 'Độ cứng lò xo', min: 1, max: 20, step: 1, value: 4, unit: 'N/m' },
+], (v) => {
+  k = v.k;
+  synabit.stats(slots.stats, [{ label: 'Chu kỳ', value: 2 * Math.PI * Math.sqrt(m / k), unit: 's', digits: 2, note: 'T = 2π√(m/k)' }]);
+});
+synabit.sim(run, {
+  state: { x: 1, v: 0 },
+  rates: (s) => ({ x: s.v, v: (-k / m) * s.x }),
+  method: 'verlet',
+  pairs: { x: 'v' },
+  draw: (s) => bob.setAttribute('x', 135 + 100 * s.x),
+});
+</script>

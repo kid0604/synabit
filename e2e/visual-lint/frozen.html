@@ -1,0 +1,63 @@
+<!-- SynVisuals/f9f40755a8a54bad9483f30f486e17c1.md, "Mô phỏng con lắc đơn", gpt-6-luna, 2026-10-28.
+     Its animation loop holds the first drawing; a slider draws a new one, and
+     the loop goes on moving the old one, out of the page. -->
+<div id="v"></div>
+<script>
+const g = 9.80665;
+const slots = synabit.layout('#v', 'side');
+const solve = (L, deg) => {
+  const theta0 = deg * Math.PI / 180;
+  const Tsmall = 2 * Math.PI * Math.sqrt(L / g);
+  // Finite-amplitude correction through theta^4 (theta in radians).
+  const T = Tsmall * (1 + theta0 ** 2 / 16 + 11 * theta0 ** 4 / 3072);
+  return { theta0, Tsmall, T };
+};
+synabit.controls(slots.controls, [
+  { id: 'L', label: 'Chiều dài dây', min: 0.2, max: 3, step: 0.1, value: 1, unit: 'm' },
+  { id: 'deg', label: 'Góc thả', min: 5, max: 90, step: 1, value: 30, unit: '°' },
+], ({ L, deg }) => {
+  const s = solve(L, deg);
+  synabit.expect('chu kỳ khớp công thức hiệu chỉnh góc hữu hạn', s.T, s.Tsmall * (1 + s.theta0 ** 2 / 16 + 11 * s.theta0 ** 4 / 3072), 1e-12);
+  synabit.report({ 'Chu kỳ (s)': s.T, 'Chu kỳ góc nhỏ (s)': s.Tsmall });
+  synabit.stats(slots.stats, [
+    { label: 'Chu kỳ', value: s.T, unit: 's', digits: 3, note: 'Hiệu chỉnh góc hữu hạn, khai triển đến θ⁴' },
+    { label: 'Góc nhỏ (tham chiếu)', value: s.Tsmall, unit: 's', digits: 3, note: 'T₀ = 2π√(L/g)' },
+  ]);
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 360 270');
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'Con lắc đơn dao động quanh vị trí cân bằng');
+  svg.style.width = '100%';
+  const add = (tag, attrs) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  const text = (x, y, value) => { const e = add('text', { x, y, fill: 'var(--text)', 'font-size': 13, 'text-anchor': 'middle' }); e.textContent = value; };
+  const pivot = { x: 180, y: 28 }, scale = 165 / 3;
+  const angle = s.theta0 * Math.sin(2 * Math.PI * (performance.now() / 1000) / s.T);
+  const bx = pivot.x + L * scale * Math.sin(angle), by = pivot.y + L * scale * Math.cos(angle);
+  add('line', { x1: 42, y1: pivot.y, x2: 318, y2: pivot.y, stroke: 'var(--border)', 'stroke-width': 1, 'stroke-dasharray': '4 4' });
+  add('line', { x1: pivot.x, y1: pivot.y, x2: pivot.x, y2: pivot.y + L * scale, stroke: 'var(--grid)', 'stroke-width': 1, 'stroke-dasharray': '3 4' });
+  add('line', { x1: pivot.x, y1: pivot.y, x2: bx, y2: by, stroke: 'var(--c1)', 'stroke-width': 3, 'stroke-linecap': 'round' });
+  add('circle', { cx: pivot.x, cy: pivot.y, r: 5, fill: 'var(--text-2)' });
+  add('circle', { cx: bx, cy: by, r: 13, fill: 'var(--c2)', stroke: 'var(--text)', 'stroke-width': 1.5 });
+  text(180, 252, `L = ${synabit.number(L, 1)} m · góc thả ${synabit.number(deg, 0)}°`);
+  slots.stage.replaceChildren(svg);
+  if (!window.__pendulumFrame) {
+    const animate = () => {
+      if (document.getElementById('v')) {
+        const inputs = document.querySelectorAll('#v input[type=range]');
+        const vals = Array.from(inputs).map(x => Number(x.value));
+        if (vals.length === 2) {
+          const current = solve(vals[0], vals[1]);
+          const a = current.theta0 * Math.sin(2 * Math.PI * (performance.now() / 1000) / current.T);
+          const x = 180 + vals[0] * scale * Math.sin(a), y = 28 + vals[0] * scale * Math.cos(a);
+          const line = svg.querySelector('line[stroke="var(--c1)"]'), bob = svg.querySelector('circle[fill="var(--c2)"]');
+          if (line && bob) { line.setAttribute('x2', x); line.setAttribute('y2', y); bob.setAttribute('cx', x); bob.setAttribute('cy', y); }
+        }
+        window.__pendulumFrame = requestAnimationFrame(animate);
+      } else window.__pendulumFrame = null;
+    };
+    window.__pendulumFrame = requestAnimationFrame(animate);
+  }
+});
+</script>
+<div class="muted" style="margin-top:8px">Mô hình: T ≈ 2π√(L/g)·(1 + θ²/16 + 11θ⁴/3072), θ tính bằng radian; bỏ qua lực cản không khí, dây không giãn và khối lượng dây.</div>
