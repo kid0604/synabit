@@ -41,6 +41,17 @@ for (const c of cases) {
   });
 }
 
+/**
+ * In the app a visual's frame is sandboxed to an opaque origin, and WebKit
+ * gives it "Script error." for every error, with no message. The trial shows
+ * a visual the same way, so what it finds is what the app finds; the kit says
+ * what an error was wherever it passed through the kit.
+ */
+test('a visual is looked at in a frame sandboxed as the app’s is', () => {
+  const errors = found.get('error.html')!.problems.filter((p) => p.check === 'error');
+  expect(errors.map((p) => p.detail).join('\n')).toContain('Script error');
+});
+
 test('an error thrown in the kit, from a callback the kit calls, is told with its message', () => {
   const errors = found.get('error-in-callback.html')!.problems.filter((p) => p.check === 'error');
   expect(errors.length).toBeGreaterThan(0);

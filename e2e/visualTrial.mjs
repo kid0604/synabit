@@ -39,6 +39,20 @@ export const assemble = (fragment, theme) =>
   `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
   `<link rel="stylesheet" href="/kit.css">\n<script src="/kit.js"></script>\n</head>\n<body>\n${fragment}\n</body>\n</html>\n`;
 
+// The page a visual is shown in, as the app shows it: a frame sandboxed to
+// `allow-scripts`, so its origin is opaque, under a page that answers the
+// kit's `ui/initialize`. Looked at outside such a frame, a visual's errors
+// carried their messages; in the app every one was "Script error.", and the
+// eval never saw what a model in the app was told (2026-10-28).
+export const HOST = 'http://app.localhost';
+const hostPage = (theme) =>
+  `<!doctype html>\n<html><body style="margin:0">\n<script>\naddEventListener('message', (event) => {\n` +
+  `  const m = event.data;\n  if (!m || m.jsonrpc !== '2.0' || m.id == null) return;\n` +
+  `  const result = m.method === 'ui/initialize'\n` +
+  `    ? { protocolVersion: '2026-01-26', hostInfo: { name: 'synabit-trial', version: '1' }, hostCapabilities: {}, hostContext: { theme: '${theme}', locale: 'vi' } }\n` +
+  `    : {};\n  event.source.postMessage({ jsonrpc: '2.0', id: m.id, result }, '*');\n});\n</script>\n` +
+  `<iframe id="frame" sandbox="allow-scripts" src="${ORIGIN}/visual" style="border:0;display:block;width:100%;height:900px"></iframe>\n</body></html>\n`;
+
 const TYPES = { '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.html': 'text/html; charset=utf-8' };
 
 export const pagesIn = (paths) =>
@@ -103,6 +117,7 @@ export async function trial(files, { theme = 'light', shots = null, controls = t
     const source = readFileSync(file, 'utf8');
     const whole = /^\s*<!doctype/i.test(source);
     const page = await browser.newPage({ viewport: { width, height: 900 } });
+    await page.route(`${HOST}/**`, (route) => route.fulfill({ contentType: TYPES['.html'], body: hostPage(theme) }));
     await page.route(`${ORIGIN}/**`, (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/visual') {
@@ -114,26 +129,30 @@ export async function trial(files, { theme = 'light', shots = null, controls = t
     });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.goto(`${ORIGIN}/visual`, { timeout: LOAD });
-    await page.evaluate(() => window.synabit && window.synabit.ready);
-    const text = await page.evaluate(() => document.body.innerText);
+    const open = async () => {
+      await page.goto(`${HOST}/`, { timeout: LOAD });
+      const frame = page.frames().find((f) => f.url().startsWith(ORIGIN));
+      await frame.evaluate(() => window.synabit && window.synabit.ready);
+      return frame;
+    };
+    const frame = await open();
+    const text = await frame.evaluate(() => document.body.innerText);
     if (shots) {
-      // As drawn, before the controls are used.
+      // As drawn, before the controls are used: the frame as tall as what it shows.
       mkdirSync(shots, { recursive: true });
+      const tall = await frame.evaluate(() => document.documentElement.scrollHeight);
+      await page.evaluate((h) => (document.getElementById('frame').style.height = `${Math.max(900, h)}px`), tall);
       await page.screenshot({ path: join(shots, `${basename(file, '.html')}.png`), fullPage: true });
+      await page.evaluate(() => (document.getElementById('frame').style.height = '900px'));
     }
     let found;
     try {
-      found = await page.evaluate((o) => window.synabit.lint(o), { ...options(file), controls });
+      found = await frame.evaluate((o) => window.synabit.lint(o), { ...options(file), controls });
     } catch (error) {
       found = { problems: [{ check: 'error', detail: `the kit did not run: ${error.message}` }], expects: [], reported: {} };
     }
     let seen = [];
-    if (explore) {
-      await page.goto(`${ORIGIN}/visual`, { timeout: LOAD });
-      await page.evaluate(() => window.synabit && window.synabit.ready);
-      seen = await page.evaluate(EXPLORE).catch(() => []);
-    }
+    if (explore) seen = await (await open()).evaluate(EXPLORE).catch(() => []);
     await page.close();
     return { file, text, ...found, seen, pageErrors: errors };
   };
