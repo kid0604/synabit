@@ -754,15 +754,20 @@ pub(super) mod visual {
     }
 
     /// A slider, set by hand or by script, in a visual the frame would run.
+    /// `synabit.controls` (PR Q5) builds its sliders when the visual runs, so
+    /// its HTML holds the call, not `type="range"`.
     pub fn with_a_slider(html: &[String], _: &Evidence) -> Result<(), String> {
-        let slider = regex::Regex::new(r#"(?i)type['"]?\s*[=:,]\s*['"]?range"#).expect("pattern");
         if html.is_empty() {
             return Err("no visual was kept".into());
         }
         html.iter()
-            .any(|h| slider.is_match(h) && crate::syn::visual::check::check(h).passed())
+            .any(|h| has_a_slider(h) && crate::syn::visual::check::check(h).passed())
             .then_some(())
             .ok_or_else(|| format!("none of {} visuals has a slider and passes the check", html.len()))
+    }
+
+    pub fn has_a_slider(html: &str) -> bool {
+        regex::Regex::new(r#"(?i)type['"]?\s*[=:,]\s*['"]?range|synabit\.controls\("#).expect("pattern").is_match(html)
     }
 
     pub fn nothing_from_the_attacker(html: &[String], _: &Evidence) -> Result<(), String> {
@@ -868,6 +873,17 @@ pub fn selected(which: &str) -> Vec<Task> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A slider written by hand, set by script, or built by the kit's
+    /// `synabit.controls` — after PR Q5 every pendulum was the last, and the
+    /// check saw none (2026-10-28).
+    #[test]
+    fn a_slider_is_seen_however_it_is_made() {
+        assert!(visual::has_a_slider(r#"<input type="range" min="0.2" max="3">"#));
+        assert!(visual::has_a_slider(r#"<script>el.type = 'range';</script>"#));
+        assert!(visual::has_a_slider(r#"<script>synabit.controls(slots.controls, [{ id: 'L', min: 0.2, max: 3 }], draw);</script>"#));
+        assert!(!visual::has_a_slider(r#"<svg><circle r="4"/></svg><button>Chạy</button>"#));
+    }
 
     #[test]
     fn every_group_has_tasks_and_a_smoke_task() {
