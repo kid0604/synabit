@@ -1673,3 +1673,50 @@ Dự đoán:
 - **Lý do `overlap` còn lại:** đường kẻ qua nhãn vùng, và nhãn mà model tự vẽ trong SVG riêng. Hai loại này không
   đổi.
 - **Tự kiểm tổng:** khoảng 83%. Vẽ và đúng trong mức dao động.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Lần trước: tất cả | 96 | 92% | 80% | 93% (87) | 1,49 | 1,17 | 83% (88) |
+| Dự đoán | | ≈ | ~83% | ≈ | | | |
+| **Lần này: tất cả** | 96 | **89%** | **81%** | **92%** (87) | 1,40 | 1,08 | 85% (85) |
+| Lần này: phát triển | 66 | 94% | 86% | 93% (60) | 1,50 | 1,11 | 81% (62) |
+| Lần này: giữ lại | 30 | 77% | 70% | 89% (27) | 1,17 | 1,03 | 96% (23) |
+
+⚠ người chấm chưa được tin.
+
+Mỗi nhóm chạy 64–70 phút, lần trước 10–15 phút, cùng lệnh và cùng máy. Chỉ một lần chạy hết ngân sách (`tax`
+lần 3), nên phần chậm nằm ở phía API chứ không phải ở vòng gọi lại.
+
+Lý do bị trả về. Có 123 lần gọi `show_visual`, 94 lần được giữ.
+
+| Lý do | Số lần |
+| --- | --- |
+| `overlap` | 13 |
+| `proof` | 10 |
+| `unreported` | 8 |
+| `long-decimal` | 6 |
+| `error` | 4 |
+| `overflow` | 1 |
+| `expect` | 1 |
+
+Trong 13 lần `overlap`:
+- 9 lần là đường kẻ đi qua chữ.
+- 4 lần là hai nhãn chồng nhau. Một lần là "Mua: 1,2/đv" với "Bán: 0,8/đv" ở `tax`. Hình đó bị trả về nên không
+  giữ lại, và không biết hai nhãn đó là điểm đánh dấu của kit hay do model tự vẽ.
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `overlap` 3 (`pendulum`, `tax`, `resonance`),
+`long-decimal` 2 (`euler-e`).
+
+So với dự đoán:
+- **Nhãn điểm đánh dấu của kit không còn đè nhau trong hình nào được giữ.** Đúng dự đoán.
+- **`tax` tự kiểm 1 / 3, dự đoán ít nhất 2 / 3: sai.**
+  - Lần 3 không vẽ được vì hết ngân sách.
+  - Lần 1 được giữ kèm `overlap`, nhưng không phải do nhãn điểm. Hình đặt trục y tối đa 40, trong khi đường cầu
+    lên tới 50 ở lượng 0. Kit vẽ đường ra ngoài vùng biểu đồ, đi qua tiêu đề trục "Giá (nghìn đồng/đv)".
+  - Lỗi này cũng có ở lần `tax` 3 và nằm trong 9 lần "đường kẻ đi qua chữ". **Kit chưa cắt đường theo vùng vẽ.**
+- **Tự kiểm tổng 81%, dự đoán khoảng 83%.** Phần phát triển 86% (lần trước 85%).
+- **Vẽ 89% (lần trước 92%).** Không vẽ ở `gibbs`, `tax`, `compound`, `punnett`, mỗi câu 1 / 3, cùng 7 / 30 ở phần giữ
+  lại. Trong mức dao động đã thấy (Q4 nới lỏng → Q5: 86–91%).
+- **`euler-e` đúng 1 / 3** (lần trước 2 / 3). Câu này đã dao động từ Q4.
