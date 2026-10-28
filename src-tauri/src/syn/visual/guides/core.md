@@ -58,7 +58,8 @@ an element, replacing what was there; call it again to redraw.
   label, unit, min, max }, series: [{ name, fn | points }], areas: [{ name,
   below, above, from, to, label }], marks: [{ x, y, label }] }] })` — lines
   from a function or points, one panel per measure on a shared x axis;
-  shaded areas between lines with their amount; marked points. With
+  shaded areas between lines (or a line and a level: `below: 25.2`) with
+  their amount; marked points. With
   `x: { categories }` and `series: [{ name, values }]`, bars. One panel can
   be written without `panels`: `{ x, y, series, areas, marks }`. Returns
   `{ x, y, svgs }` to draw anything else on it.

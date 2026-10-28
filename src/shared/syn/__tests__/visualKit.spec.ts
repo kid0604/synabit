@@ -125,6 +125,27 @@ describe("the kit's components", () => {
     expect(el.textContent).toContain('tăng tốc');
   });
 
+  it('shades an area between two levels, and between a line and a level', () => {
+    const el = fresh();
+    const scales = kit.chart(el, {
+      x: { label: 'lượng', min: 0, max: 60 },
+      y: { label: 'giá', min: 0, max: 50 },
+      series: [{ name: 'cầu', fn: (q: number) => 50 - q / 2 }],
+      areas: [
+        { name: 'thu', below: 30, above: 20, from: 0, to: 40 },
+        { name: 'dưới cầu', below: 'cầu', above: 30, from: 0, to: 40 },
+      ],
+    });
+    const [band, wedge] = [...el.querySelectorAll('polygon')].map((p) =>
+      p.getAttribute('points')!.split(' ').map((xy) => xy.split(',').map(Number)),
+    );
+    const y = scales.y[0];
+    // A rectangle: every corner at one of the two levels.
+    expect(new Set(band.map(([, py]) => Math.round(py)))).toEqual(new Set([Math.round(y(30)), Math.round(y(20))]));
+    // Down to the level, not to zero.
+    expect(Math.max(...wedge.map(([, py]) => py))).toBeCloseTo(y(30), 6);
+  });
+
   it('draws points given as { x, y } as it draws [x, y]', () => {
     const el = fresh();
     const walk = [0.5, 0.52, 0.47, 0.6];

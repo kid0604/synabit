@@ -577,7 +577,8 @@
    *   });
    *
    * A series of bars is `{ name, values: [...] }` with `x.categories`. An
-   * area is `below` one series, down to `above` another or to zero. Colours
+   * area is `below` one series, down to `above` another or to zero; either
+   * may be a number instead, a level such as a price. Colours
    * are `c1`…`c6`, given in order unless named. Returns `{ x, y, svgs }`: the
    * scales, `y[i]` for panel `i`, and each panel's `<svg>`, to draw anything
    * else into.
@@ -717,10 +718,13 @@
         svgEl('text', { x: W - R, y: H - 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--text-2)' }, svg, `${xAxis.label || ''}${unitOf(xAxis)}`);
       }
 
-      // Areas first, under the lines that bound them.
-      const lineOf = (name) => lines.find((l) => l.s.name === name);
+      // Areas first, under the lines that bound them. A bound is a series by
+      // its name, or a level: the tax of 2026-10-28 had no line at the
+      // buyer's price, and shaded its revenue between demand and supply.
+      const lineOf = (bound) => (typeof bound === 'number' && Number.isFinite(bound) ? { level: bound } : lines.find((l) => l.s.name === bound));
       const valueAt = (l, v) => {
         if (!l) return 0;
+        if (l.level != null) return l.level;
         if (typeof l.s.fn === 'function') return l.s.fn(v);
         const pts = l.pts;
         for (let i = 1; i < pts.length; i++) {

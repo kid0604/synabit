@@ -18,7 +18,8 @@ Must have:
   sum of the regions.
 - Built with `synabit.chart`: each region an `areas` item, `below` the line
   that bounds it from above (and `above` the one below, if not zero), with
-  its amount as `label`.
+  its amount as `label`. A bound that is a level, not a line, is a number:
+  `below: price`.
 
 Copy how this is built, not what it shows:
 
