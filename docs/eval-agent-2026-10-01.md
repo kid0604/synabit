@@ -1657,3 +1657,19 @@ So với dự đoán:
 - **`areas` vẫn không được chọn đúng kiểu** (0 / 6), đúng dự đoán.
 - **Câu sai:** `pendulum` 1 / 3 (người chấm cho điểm đúng 2, nhưng đáp số lệch), `punnett` 1 / 3, `euler-e` 1 / 3
   (không vẽ).
+
+## 2026-10-28 — nhãn điểm đánh dấu tự tránh nhau: dự đoán, ghi trước khi đo
+
+`synabit.chart` giờ đặt nhãn mỗi điểm đánh dấu vào chỗ chưa có nhãn hay điểm nào khác. Thứ tự thử: phía còn
+chỗ, phía bên kia, rồi xa hơn lên trên hoặc xuống dưới. Có test, đỏ khi tắt. Khi chạy lại ba hình `tax` được giữ ở
+lần đo trước, hai hình đọc được đều hết `overlap`. Hình thứ ba không tách ra được để chạy riêng. Hình `tax` trong lần
+so tay còn một lỗi khác: đường kẻ đè lên nhãn vùng "Mất mát". Lần này không sửa lỗi đó.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, so với lần trước: vẽ 92%, tự kiểm 80%, đúng 93%.
+
+Dự đoán:
+- **`overlap` giữa các nhãn điểm đánh dấu:** gần như hết.
+- **`tax`:** tự kiểm ít nhất 2 / 3 (lần trước 0 / 3).
+- **Lý do `overlap` còn lại:** đường kẻ qua nhãn vùng, và nhãn mà model tự vẽ trong SVG riêng. Hai loại này không
+  đổi.
+- **Tự kiểm tổng:** khoảng 83%. Vẽ và đúng trong mức dao động.
