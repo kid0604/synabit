@@ -1380,3 +1380,96 @@ Còn lại:
   model không sửa được phép thế ngược sai.
 - **`overlap` vẫn là lý do bị trả về nhiều nhất**, chủ yếu ở các hình vẽ tay ngoài biểu đồ. Trình bước và đồ thị
   nút là việc của Q6.
+
+## 2026-10-28 — PR Q7 (số tính từ mô hình): dự đoán, ghi trước khi đo
+
+Q7 thêm năm công cụ vào kit:
+- `synabit.solve(f, lo, hi)`: tìm nghiệm bằng chia đôi. Nếu hai đầu cùng dấu thì tìm chỗ đổi dấu bên trong
+  đoạn; không có thì báo lỗi rõ ràng.
+- `synabit.peak(f, lo, hi)`: tìm đỉnh, quét cả đoạn rồi tinh chỉnh.
+- `synabit.integrate`: tích phân bằng quy tắc Simpson.
+- `synabit.ode`: giải phương trình vi phân bằng RK4, hoặc velocity Verlet khi có `pairs`.
+- `synabit.sim`: mô phỏng có chạy, dừng, đặt lại, và hiện bất biến cùng độ lệch.
+
+`core.md` thay "tự viết vài dòng chia đôi" bằng các công cụ này. `simulation.md` dùng `synabit.sim`. Hình mẫu
+`areas` dùng `integrate`, `zoom` dùng `solve`. Q6 (trình bước, đồ thị nút) chưa làm.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`. So với Q5: vẽ 89%, tự kiểm 79%, đúng 86%. Ở Q5, 5 lượt
+phần phát triển không vẽ, và đều vì `expect` hoặc `proof` sai lặp lại (`gibbs`, `tax`, `logistic`).
+
+Dự đoán:
+- **Lần bị trả về vì `expect` hoặc `proof`:** 18 → khoảng 10.
+- **`tax`:** đúng từ 1 / 3 lên 2–3 / 3. Giá cân bằng giải từ cầu và cung, không còn công thức suy tay.
+- **Đúng:** khoảng 90%. **Vẽ:** khoảng 91%. **Tự kiểm:** quanh 80%, trong mức dao động.
+- **Hình phần phát triển dùng `solve`, `peak`, `integrate`, `ode` hoặc `sim`: khoảng 40%.** Nhiều câu không cần.
+- §5 của kế hoạch dự đoán "sau Q5–Q7: tự kiểm 95%, đúng 95%". Chưa có Q6 thì chưa tới mức đó.
+
+### Kết quả Q7 (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q5: tất cả | 96 | 89% | 79% | 86% (87) | 1,31 | 1,06 | 84% |
+| Dự đoán | | ~91% | ~80% | ~90% | | | |
+| **Q7: tất cả** | 96 | **89%** | **81%** | **92%** (87) | 1,33 | 1,09 | 85% (85) |
+| Q7: phát triển | 66 | 92% | 83% | 92% (60) | 1,39 | 1,09 | 79% (61) |
+| Q7: giữ lại | 30 | 80% | 77% | 93% (27) | 1,20 | 1,10 | 100% (24) |
+
+⚠ người chấm chưa được tin.
+
+Đúng, tính riêng các lần có vẽ:
+- phần phát triển: **55 / 55** (Q5: 52 / 55);
+- phần giữ lại: 21 / 21.
+
+Theo kiểu (phần phát triển):
+
+| Kiểu | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| `step` | 100% | 100% | 100% |
+| `compare` | 100% | 100% | 100% |
+| `decompose` | 100% | 100% | 100% |
+| `zoom` | 78% | 22% | 78% |
+| `areas` | 67% | 50% | 67% |
+| `explore` | 89% | 89% | 89% |
+
+Lý do bị trả về. Có 126 lần gọi `show_visual`, 101 lần được giữ (Q5: 132 lần, 91 lần được giữ).
+
+| Lý do | Q7 | Q5 |
+| --- | --- | --- |
+| `overlap` | 11 | 13 |
+| `proof` | 5 | 8 |
+| `expect` | 2 | 10 |
+| `unreported` (chỉ ghi chú) | 4 | 10 |
+| `dead-control` | 3 | 0 |
+| `error` | 2 | 5 |
+| `long-decimal` | 2 | 4 |
+| `overflow` | 1 | 1 |
+
+**Công cụ mới được dùng ít: 9 / 77 hình phần phát triển (12%), dự đoán khoảng 40%.**
+
+| Câu | Công cụ dùng |
+| --- | --- |
+| `gibbs` | `peak`, 3 / 3 |
+| `resonance` | `peak`, 3 / 3 |
+| `break-even` | `solve`, 3 / 3 |
+| `tax` | không lần nào dùng `solve` |
+| `sir`, `logistic`, `pendulum`, `projectile` | không dùng `ode` hay `sim` |
+
+Không hình nào dùng `integrate`, `ode` hay `sim`.
+
+So với dự đoán:
+- **`expect` + `proof` bị trả về: 18 → 7**, dự đoán khoảng 10. Đúng hướng, nhưng phần lớn không nhờ công cụ mới:
+  chỉ 9 hình dùng chúng. Có thể là dao động.
+- **Đúng: 92%, dự đoán khoảng 90%.** Phần giữ lại 85% → 93%.
+- **`tax`: dự đoán đúng 2–3 / 3, thực tế 1 / 3, và chỉ vẽ được 1 / 3. Sai.** Nó chọn kiểu `explore` (không phải
+  `areas`), và hình mẫu `explore` không dùng `solve`, nên model không thấy nó.
+- **Vẽ và tự kiểm:** ngang Q5.
+- **Thời gian mỗi nhóm:** 8–17 phút (Q5: 19–26).
+
+Đọc ra:
+- **Khi model dùng công cụ thì nó trúng.** `gibbs` dùng `peak` 3 / 3, `break-even` dùng `solve` 3 / 3.
+- **Nhưng nó dùng theo hình mẫu đang chép, không theo luật trong `core.md`.**
+  - Hình mẫu `zoom` có `solve`, `areas` có `integrate`.
+  - Hình mẫu `explore` và `compare` không có công cụ nào, và các câu chọn hai kiểu đó (`tax`, `sir`,
+    `logistic`, `pendulum`) cũng không dùng.
+- **Một hướng sửa chung, chưa làm:** đưa `solve`, `ode` hoặc `sim` vào hình mẫu `explore` và `compare`,
+  rồi đo lại cả phần giữ lại.
