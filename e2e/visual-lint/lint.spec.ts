@@ -41,6 +41,12 @@ for (const c of cases) {
   });
 }
 
+test('an error thrown in the kit, from a callback the kit calls, is told with its message', () => {
+  const errors = found.get('error-in-callback.html')!.problems.filter((p) => p.check === 'error');
+  expect(errors.length).toBeGreaterThan(0);
+  for (const p of errors) expect(p.detail).toContain('synabit.chart: none of the');
+});
+
 test('every check has a page that has its fault', () => {
   const checks = ['empty', 'hang', 'error', 'nan', 'long-decimal', 'raw-math', 'flat-plot', 'overflow', 'overlap', 'dead-control', 'fixed-colour', 'expect', 'proof', 'unreported', 'frozen'];
   for (const check of checks) expect(cases.some((c) => c.file === `${check}.html` && c.checks.includes(check)), check).toBe(true);

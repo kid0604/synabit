@@ -74,9 +74,52 @@
     if (errors.length < 20) errors.push(error);
     notify('synabit/error', error);
   };
-  window.addEventListener('error', (event) =>
-    fail('error', event.message, event.lineno ? `${event.lineno}:${event.colno}` : ''),
-  );
+  // In the app the frame is sandboxed to an opaque origin, and WebKit gives
+  // its page "Script error." for every error, with no message and no line:
+  // the genetic drift of 2026-10-28 was sent back twice with only that, and
+  // given up. An error on its way through the kit — thrown in a part, or in
+  // a callback the kit calls — is written down as it is, and the muted
+  // report of it that follows is not.
+  const caught = new WeakSet();
+  let muted = 0;
+  const lineOf = (error) => {
+    const frame = String((error && error.stack) || '')
+      .split('\n')
+      .find((l) => !/kit\.js/.test(l) && /:\d+:\d+\)?$/.test(l));
+    const m = frame && /:(\d+):(\d+)\)?$/.exec(frame);
+    return m ? `${m[1]}:${m[2]}` : '';
+  };
+  const guard = (what, fn) =>
+    function guarded(...args) {
+      try {
+        return fn.apply(this, args);
+      } catch (error) {
+        const object = error !== null && typeof error === 'object';
+        if (!object || !caught.has(error)) {
+          if (object) caught.add(error);
+          const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+          fail('error', message, [lineOf(error), `in ${what}`].filter(Boolean).join(' '));
+          muted++;
+          setTimeout(() => (muted = Math.max(0, muted - 1)), 0);
+        }
+        throw error;
+      }
+    };
+  window.addEventListener('error', (event) => {
+    if (event.error && typeof event.error === 'object' && caught.has(event.error)) return;
+    if (!event.error && muted > 0) {
+      muted--;
+      return;
+    }
+    const hidden = !event.error && /^Script error\.?$/.test(event.message || '');
+    fail(
+      'error',
+      hidden
+        ? 'Script error. The frame hides the message and the line of an error thrown in the visual\'s own code, outside any synabit call: look for a name used before it is defined, or misspelt.'
+        : event.message,
+      event.lineno ? `${event.lineno}:${event.colno}` : '',
+    );
+  });
   window.addEventListener('unhandledrejection', (event) =>
     fail('rejection', (event.reason && event.reason.message) || event.reason),
   );
@@ -847,6 +890,7 @@
    *   ], (v) => draw(v));
    */
   const controls = (el, specs, onChange) => {
+    if (typeof onChange === 'function') onChange = guard('the controls callback', onChange);
     const root = target(el);
     if (!root) throw new Error('synabit.controls: no element to draw into');
     root.replaceChildren();
@@ -1164,6 +1208,8 @@
     const root = target(el);
     if (!root) refuse('sim', 'no element to draw into');
     const o = Object.assign({ dt: 0.001, speed: 1, invariants: {} }, opts || {});
+    for (const k of ['rates', 'draw']) if (typeof o[k] === 'function') o[k] = guard(`sim's ${k}`, o[k]);
+    o.invariants = Object.fromEntries(Object.entries(o.invariants).map(([name, f]) => [name, guard(`the invariant ${name}`, f)]));
     const step = stepper(o);
     if (typeof o.draw !== 'function') refuse('sim', '`draw(state, t)` draws the state');
     root.replaceChildren();
@@ -1256,6 +1302,8 @@
     const steps = Array.isArray(o.steps) ? o.steps : [];
     if (!steps.length) refuse('stepper', '`steps` is the list of states, worked out before; step 0 is the start');
     if (typeof o.render !== 'function') refuse('stepper', '`render(step, index, el)` draws one step');
+    const render = guard("the stepper's render", o.render);
+    const lineFor = typeof o.line === 'function' ? guard("the stepper's line", o.line) : null;
     root.replaceChildren();
     const w = words();
     const bar = htmlEl('div', 'display:flex;align-items:center;gap:8px;flex-wrap:wrap', root);
@@ -1278,10 +1326,10 @@
       where.textContent = `${w.step} ${at} / ${last}`;
       fill.style.width = `${last ? (at / last) * 100 : 100}%`;
       const step = steps[at];
-      const said = typeof o.line === 'function' ? o.line(step, at) : step && step.line;
+      const said = lineFor ? lineFor(step, at) : step && step.line;
       line.textContent = said != null ? String(said) : '';
       stage.replaceChildren();
-      o.render(step, at, stage);
+      render(step, at, stage);
       if (at === last) stop();
     };
     const stop = () => {
@@ -1491,18 +1539,18 @@
      */
     lint,
     /** The parts a visual is built from; see each one's comment above. */
-    chart,
-    controls,
-    stats,
-    layout,
+    chart: guard('synabit.chart', chart),
+    controls: guard('synabit.controls', controls),
+    stats: guard('synabit.stats', stats),
+    layout: guard('synabit.layout', layout),
     /** Numbers from the model's own functions; see each one's comment above. */
-    solve,
-    peak,
-    integrate,
-    ode,
-    sim,
+    solve: guard('synabit.solve', solve),
+    peak: guard('synabit.peak', peak),
+    integrate: guard('synabit.integrate', integrate),
+    ode: guard('synabit.ode', ode),
+    sim: guard('synabit.sim', sim),
     /** Steps worked out first, and a graph drawn from its state. */
-    stepper: stepperOf,
-    graph,
+    stepper: guard('synabit.stepper', stepperOf),
+    graph: guard('synabit.graph', graph),
   });
 })();

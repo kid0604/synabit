@@ -1,0 +1,12 @@
+<!-- Written for the lint, not drawn by a model: a chart given points as
+     { t, p }, drawn from a slider's callback, so the error is thrown inside
+     the kit, from a callback the kit calls. In the app's sandboxed frame
+     such an error reached the page as "Script error." and nothing more; the
+     kit must say what it was (2026-10-28). -->
+<div id="v"><div id="c"></div><div id="s"></div></div>
+<script>
+synabit.controls('#c', [{ id: 'n', label: 'Số thế hệ', min: 1, max: 9, step: 1, value: 3 }], ({ n }) => {
+  const walk = Array.from({ length: n + 1 }, (_, t) => ({ t, p: 0.5 }));
+  synabit.chart('#s', { x: { min: 0, max: n }, y: { min: 0, max: 1 }, series: [{ name: 'p', points: walk }] });
+});
+</script>

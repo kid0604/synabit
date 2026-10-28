@@ -179,5 +179,13 @@
     "file": "clean-parent-named.html",
     "fault": "None: written for the lint, a page that names a map `parent`, which once cut the kit off from the app.",
     "checks": []
+  },
+  {
+    "file": "error-in-callback.html",
+    "fault": "Written for the lint: a chart given points as { t, p }, drawn from a slider's callback; the kit throws, and must say what it threw. Its half-drawn chart is wider than the frame.",
+    "checks": [
+      "error",
+      "overflow"
+    ]
   }
 ]
