@@ -554,6 +554,14 @@
     return g;
   };
 
+  // Where a boxed label is drawn, from its box.
+  const boxOf = (g) => {
+    const r = g.querySelector('rect');
+    const left = +r.getAttribute('x');
+    const top = +r.getAttribute('y');
+    return { left, right: left + +r.getAttribute('width'), top, bottom: top + +r.getAttribute('height') };
+  };
+
   // A point is `[x, y]` or `{ x, y }`. The genetic drift of 2026-10-28 gave
   // `{ x, y }`, every point was dropped as not a number, and its chart stood
   // empty with nothing said.
@@ -736,6 +744,14 @@
         }
         return pts.length ? pts[pts.length - 1][1] : 0;
       };
+      // Where a label or a marked point already is: a mark's label goes
+      // where none is. Two marks at one quantity — the price paid and the
+      // price received, the tax of 2026-10-28 — had their labels drawn one
+      // over the other.
+      const taken = p.marks
+        .filter((m) => Number.isFinite(m.x) && Number.isFinite(m.y))
+        .map((m) => ({ left: x(m.x) - 5, right: x(m.x) + 5, top: y(m.y) - 5, bottom: y(m.y) + 5 }));
+      const clash = (b) => taken.some((t) => b.left < t.right && b.right > t.left && b.top < t.bottom && b.bottom > t.top);
       for (const a of p.areas) {
         const top = lineOf(a.below);
         const bottom = a.above != null ? lineOf(a.above) : null;
@@ -752,7 +768,7 @@
         if (a.label != null) {
           const mid = (from + to) / 2;
           const yMid = (valueAt(top, mid) + (bottom ? valueAt(bottom, mid) : 0)) / 2;
-          boxedLabel(svg, x(mid), y(yMid) + 4, String(a.label), { weight: 600 });
+          taken.push(boxOf(boxedLabel(svg, x(mid), y(yMid) + 4, String(a.label), { weight: 600 })));
         }
       }
       // Bars, grouped in each category.
@@ -781,10 +797,25 @@
         const colour = colourOf(m.colour || 'accent', 0);
         svgEl('circle', { cx: x(m.x), cy: y(m.y), r: 4, fill: colour }, svg);
         if (m.label) {
-          // Beside the point, on the side with room.
-          const right = x(m.x) < L + plotW * 0.7;
-          const above = y(m.y) > T + 20;
-          boxedLabel(svg, x(m.x) + (right ? 8 : -8), y(m.y) + (above ? -10 : 18), String(m.label), { anchor: right ? 'start' : 'end' });
+          // Beside the point, on the side with room, unless another label is
+          // there: then the other side, then further up or down.
+          const text = String(m.label);
+          const w = widthOf(svg, text, 12) + 8;
+          const px = x(m.x);
+          const py = y(m.y);
+          const sides = px < L + plotW * 0.7 ? [1, -1] : [-1, 1];
+          const rises = py > T + 20 ? [-10, 18] : [18, -10];
+          const tries = [];
+          for (const side of sides) for (const dy of rises) tries.push({ side, dy });
+          for (const dy of [-28, 36, -46, 54]) for (const side of sides) tries.push({ side, dy });
+          const boxAt = (t) => {
+            const left = t.side > 0 ? px + 8 : px - 8 - w;
+            return { left, right: left + w, top: py + t.dy - 11, bottom: py + t.dy + 7 };
+          };
+          const fits = (b) => b.left >= 0 && b.right <= W && b.top >= 0 && b.bottom <= H;
+          const chosen = tries.find((t) => fits(boxAt(t)) && !clash(boxAt(t))) || tries[0];
+          boxedLabel(svg, px + chosen.side * 8, py + chosen.dy, text, { anchor: chosen.side > 0 ? 'start' : 'end' });
+          taken.push(boxAt(chosen));
         }
       }
     });

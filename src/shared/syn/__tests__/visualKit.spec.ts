@@ -146,6 +146,32 @@ describe("the kit's components", () => {
     expect(Math.max(...wedge.map(([, py]) => py))).toBeCloseTo(y(30), 6);
   });
 
+  it('puts the labels of two marks close together where neither covers the other', () => {
+    const el = fresh();
+    kit.chart(el, {
+      x: { label: 'lượng', min: 0, max: 60 },
+      y: { label: 'giá', min: 0, max: 50 },
+      series: [{ name: 'cầu', fn: (q: number) => 50 - q / 2 }],
+      marks: [
+        { x: 49.6, y: 25.2, label: 'Giá người mua trả' },
+        { x: 49.6, y: 23.2, label: 'Giá người bán nhận' },
+        { x: 52, y: 24, label: 'Cân bằng cũ' },
+      ],
+    });
+    const boxes = [...el.querySelectorAll('g > rect')].map((r) => {
+      const [x, y, w, h] = ['x', 'y', 'width', 'height'].map((k) => Number(r.getAttribute(k)));
+      return { x, y, w, h };
+    });
+    expect(boxes.length).toBe(3);
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const [a, b] = [boxes[i], boxes[j]];
+        const apart = a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y;
+        expect(apart, `labels ${i} and ${j}`).toBe(true);
+      }
+    }
+  });
+
   it('draws points given as { x, y } as it draws [x, y]', () => {
     const el = fresh();
     const walk = [0.5, 0.52, 0.47, 0.6];
