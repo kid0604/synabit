@@ -157,5 +157,10 @@
         "value": 7800000
       }
     ]
+  },
+  {
+    "file": "clean-kit-constant.html",
+    "fault": "Nothing the lint can see is wrong with it. A flat line in a chart the kit drew is a value that does not change.",
+    "checks": []
   }
 ]

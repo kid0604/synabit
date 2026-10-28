@@ -217,7 +217,9 @@
     // does not fit — millions against an axis in đồng.
     'flat-plot': () => {
       const found = [];
-      for (const svg of document.querySelectorAll('svg')) {
+      // A chart the kit drew took its scale from its data: a flat line there
+      // is a value that does not change — a fixed monthly payment.
+      for (const svg of document.querySelectorAll('svg:not([data-synabit="chart"])')) {
         const lines = [...svg.querySelectorAll('path, polyline')].filter((element) => vertices(element) >= 8);
         if (!lines.length) continue;
         const flat = lines.every((element) => {
@@ -445,6 +447,446 @@
     return result;
   };
 
+  // ── Components: the parts a visual is built from ──
+  //
+  // Syn's visuals broke their presentation every time, each time a new way:
+  // two measures on one axis, a scale with no axis, a label cut at the edge, a
+  // slider with no value, a large number that repeats the slider
+  // (`docs/syn-visuals-quality-plan-2026-10-28.md` §2.4). Rules in a guide did
+  // not hold; parts that cannot be put together wrong do. Each is called with
+  // the element to draw into and draws it whole; called again, it draws it
+  // again from what it is given, so a visual redraws by calling it on `input`.
+
+  const formatNumber = (value, digits) => {
+    const places = digits == null ? 2 : digits;
+    // A drift of -0.00001 rounds to "-0", which reads as a sign that means something.
+    const n = Number(value);
+    const shown = Math.abs(n) < 0.5 * 10 ** -places ? 0 : n;
+    return new Intl.NumberFormat(context.locale, { maximumFractionDigits: places }).format(shown);
+  };
+
+  const SVG = 'http://www.w3.org/2000/svg';
+  const svgEl = (tag, attrs, parent, text) => {
+    const e = document.createElementNS(SVG, tag);
+    for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const htmlEl = (tag, style, parent, text) => {
+    const e = document.createElement(tag);
+    if (style) e.setAttribute('style', style);
+    if (text != null) e.textContent = text;
+    if (parent) parent.appendChild(e);
+    return e;
+  };
+  const target = (el) => (typeof el === 'string' ? document.querySelector(el) : el);
+  const colourOf = (name, i) => {
+    const c = name || `c${(i % 6) + 1}`;
+    return /^(c[1-6]|accent|muted|danger|success|warning|text|text-2)$/.test(c) ? `var(--${c})` : 'var(--c1)';
+  };
+  // How wide a label is drawn, in the drawing's units: measured where the
+  // page can, estimated where it cannot.
+  const widthOf = (svg, text, size) => {
+    const probe = svgEl('text', { x: -9999, y: -9999, 'font-size': size }, svg, text);
+    let w = 0;
+    try {
+      w = probe.getComputedTextLength();
+    } catch (_) {
+      w = 0;
+    }
+    probe.remove();
+    return w > 0 ? w : String(text).length * size * 0.6;
+  };
+  const unitOf = (axis) => (axis && axis.unit ? ` (${axis.unit})` : '');
+
+  // Round ticks: steps of 1, 2 or 5 times a power of ten, about `count` of them.
+  const niceTicks = (min, max, count) => {
+    if (!(max > min)) {
+      const pad = Math.abs(min) * 0.1 || 1;
+      min -= pad;
+      max += pad;
+    }
+    const raw = (max - min) / Math.max(1, count);
+    const power = 10 ** Math.floor(Math.log10(raw));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= raw) || 10 * power;
+    const start = Math.floor(min / step + 1e-9) * step;
+    const end = Math.ceil(max / step - 1e-9) * step;
+    const ticks = [];
+    for (let v = start; v <= end + step / 2; v += step) ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+    const digits = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (String(step / power).includes('.') ? 1 : 0));
+    return { ticks, min: start, max: end, digits };
+  };
+
+  // A label on a box of the surface's colour: a line passing under it does
+  // not run through its letters.
+  const boxedLabel = (svg, x, y, text, opts) => {
+    const size = (opts && opts.size) || 12;
+    const g = svgEl('g', {}, svg);
+    const w = widthOf(svg, text, size) + 8;
+    const anchor = (opts && opts.anchor) || 'middle';
+    const left = anchor === 'middle' ? x - w / 2 : anchor === 'end' ? x - w : x;
+    svgEl('rect', { x: left, y: y - size + 1, width: w, height: size + 6, rx: 3, fill: 'var(--surface)', 'fill-opacity': 0.9 }, g);
+    svgEl('text', { x: left + 4, y: y + 2, 'font-size': size, fill: (opts && opts.colour) || 'var(--text)', 'font-weight': (opts && opts.weight) || null }, g, text);
+    return g;
+  };
+
+  /**
+   * A chart: one or more panels stacked on one x axis, each with its own y
+   * axis — one measure per panel. Lines from points or from a function, areas
+   * between two lines (or a line and zero) with their amount written inside,
+   * marked points, or bars over categories.
+   *
+   *   synabit.chart(el, {
+   *     title: 'What it shows',
+   *     x: { label: 'thời gian', unit: 's', min: 0, max: 10 },        // or { categories: ['A', 'B'] }
+   *     panels: [{
+   *       y: { label: 'vận tốc', unit: 'm/s', min: 0 },
+   *       series: [{ name: 'v', fn: (t) => v(t) }, { name: 'đo', points: [[0, 0], [1, 2.4]] }],
+   *       areas: [{ name: 'quãng đường', below: 'v', from: 0, to: 4, label: '20 m' }],
+   *       marks: [{ x: 4, y: 10, label: 'đạt 10 m/s' }],
+   *     }],
+   *   });
+   *
+   * A series of bars is `{ name, values: [...] }` with `x.categories`. An
+   * area is `below` one series, down to `above` another or to zero. Colours
+   * are `c1`…`c6`, given in order unless named. Returns `{ x, y, svgs }`: the
+   * scales, `y[i]` for panel `i`, and each panel's `<svg>`, to draw anything
+   * else into.
+   */
+  const chart = (el, opts) => {
+    const root = target(el);
+    if (!root) throw new Error('synabit.chart: no element to draw into');
+    root.replaceChildren();
+    const o = opts || {};
+    const xAxis = o.x || {};
+    const panels = (o.panels || [{ y: o.y, series: o.series, areas: o.areas, marks: o.marks }]).map((p) => ({
+      ...p,
+      y: p.y || {},
+      series: p.series || [],
+      areas: p.areas || [],
+      marks: p.marks || [],
+    }));
+    const categories = Array.isArray(xAxis.categories) ? xAxis.categories : null;
+    // As wide as where it is drawn, so its text is drawn at the size it is
+    // set: a 640-wide drawing squeezed into two thirds of the frame made
+    // 11px ticks into 7px ones.
+    const W = Math.round(Math.min(640, Math.max(280, root.clientWidth || 640)));
+
+    // The x domain: given, or from every point drawn.
+    let xs = [];
+    for (const p of panels) {
+      for (const s of p.series) if (Array.isArray(s.points)) xs.push(...s.points.map((pt) => pt[0]));
+      for (const m of p.marks) xs.push(m.x);
+    }
+    xs = xs.filter(Number.isFinite);
+    const xMin = xAxis.min != null ? xAxis.min : Math.min(...xs);
+    const xMax = xAxis.max != null ? xAxis.max : Math.max(...xs);
+    const sampled = (s) => {
+      if (Array.isArray(s.points)) return s.points.filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+      if (typeof s.fn !== 'function') return [];
+      const out = [];
+      const n = s.samples || 200;
+      for (let i = 0; i <= n; i++) {
+        const x = xMin + ((xMax - xMin) * i) / n;
+        const y = s.fn(x);
+        if (Number.isFinite(y)) out.push([x, y]);
+      }
+      return out;
+    };
+
+    // The legend: every named series and area, with its colour.
+    const entries = [];
+    let colourAt = 0;
+    for (const p of panels) {
+      for (const s of p.series) {
+        s.colourVar = colourOf(s.colour, colourAt++);
+        if (s.name) entries.push({ name: s.name, colour: s.colourVar, area: false });
+      }
+      for (const a of p.areas) {
+        a.colourVar = colourOf(a.colour, colourAt++);
+        if (a.name) entries.push({ name: a.name, colour: a.colourVar, area: true });
+      }
+    }
+    if (o.title) htmlEl('div', 'font-weight:600;margin-bottom:4px', root, o.title);
+    if (entries.length > 1 || entries.some((e) => e.area)) {
+      const legend = htmlEl('div', 'display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--text-2);margin-bottom:4px', root);
+      for (const e of entries) {
+        const item = htmlEl('span', 'display:inline-flex;align-items:center;gap:6px', legend);
+        htmlEl('span', `display:inline-block;width:12px;height:${e.area ? 10 : 3}px;border-radius:2px;background:${e.colour};${e.area ? 'opacity:0.35' : ''}`, item);
+        htmlEl('span', '', item, e.name);
+      }
+    }
+
+    const scales = { x: null, y: [], svgs: [] };
+    panels.forEach((p, index) => {
+      const last = index === panels.length - 1;
+      const lines = p.series.filter((s) => !Array.isArray(s.values)).map((s) => ({ s, pts: sampled(s) }));
+      const bars = p.series.filter((s) => Array.isArray(s.values));
+      // The y domain: given, or every value drawn, and zero unless told not to.
+      let ys = [];
+      for (const l of lines) ys.push(...l.pts.map((pt) => pt[1]));
+      for (const b of bars) ys.push(...b.values.filter(Number.isFinite));
+      for (const m of p.marks) ys.push(m.y);
+      ys = ys.filter(Number.isFinite);
+      if (p.y.zero !== false || bars.length || p.areas.length) ys.push(0);
+      const yTicks = niceTicks(p.y.min != null ? p.y.min : Math.min(...ys), p.y.max != null ? p.y.max : Math.max(...ys), p.y.ticks || 5);
+      const yLo = p.y.min != null ? p.y.min : yTicks.min;
+      const yHi = p.y.max != null ? p.y.max : yTicks.max;
+      const yFormat = p.y.format || ((v) => formatNumber(v, yTicks.digits));
+
+      const H = p.height || (panels.length > 1 ? 180 : 240);
+      const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': p.y.label ? `${p.y.label}${unitOf(p.y)}` : o.title || 'chart', 'data-synabit': 'chart' }, root);
+      svg.style.width = '100%';
+      svg.style.display = 'block';
+      const shownY = yTicks.ticks.filter((v) => v >= yLo - 1e-9 && v <= yHi + 1e-9);
+      const L = Math.max(28, ...shownY.map((v) => widthOf(svg, yFormat(v), 11))) + 10;
+      const R = 14;
+      const T = 22;
+      const B = last ? 40 : 22;
+      const plotW = W - L - R;
+      const plotH = H - T - B;
+      const y = (v) => T + (1 - (v - yLo) / (yHi - yLo || 1)) * plotH;
+
+      // The x scale: categories in bands, or numbers.
+      let x;
+      let xTickList;
+      let band = 0;
+      if (categories) {
+        band = plotW / categories.length;
+        x = (i) => L + band * (i + 0.5);
+        xTickList = categories.map((c, i) => ({ at: x(i), text: String(c) }));
+      } else {
+        x = (v) => L + ((v - xMin) / (xMax - xMin || 1)) * plotW;
+        const widest = Math.max(widthOf(svg, formatNumber(xMax, 2), 11), widthOf(svg, formatNumber(xMin, 2), 11));
+        const count = Math.max(2, Math.min(xAxis.ticks || 6, Math.floor(plotW / (widest + 24))));
+        const xt = niceTicks(xMin, xMax, count);
+        const xFormat = xAxis.format || ((v) => formatNumber(v, xt.digits));
+        xTickList = xt.ticks.filter((v) => v >= xMin - 1e-9 && v <= xMax + 1e-9).map((v) => ({ at: x(v), text: xFormat(v) }));
+      }
+      scales.x = x;
+      scales.y.push(y);
+      scales.svgs.push(svg);
+
+      // The y title above the axis, level, so it never crosses a tick.
+      svgEl('text', { x: L, y: 12, 'font-size': 12, fill: 'var(--text-2)' }, svg, `${p.y.label || ''}${unitOf(p.y)}`);
+      for (const v of shownY) {
+        svgEl('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: 'var(--grid)', 'stroke-width': 1 }, svg);
+        svgEl('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)' }, svg, yFormat(v));
+      }
+      xTickList.forEach((t, i) => {
+        // The first and last are kept inside the drawing.
+        const anchor = !categories && i === 0 && t.at - L < 12 ? 'start' : !categories && i === xTickList.length - 1 && W - R - t.at < 12 ? 'end' : 'middle';
+        svgEl('text', { x: t.at, y: T + plotH + 16, 'text-anchor': anchor, 'font-size': 11, fill: 'var(--muted)' }, svg, t.text);
+      });
+      if (last && (xAxis.label || xAxis.unit)) {
+        svgEl('text', { x: W - R, y: H - 4, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--text-2)' }, svg, `${xAxis.label || ''}${unitOf(xAxis)}`);
+      }
+
+      // Areas first, under the lines that bound them.
+      const lineOf = (name) => lines.find((l) => l.s.name === name);
+      const valueAt = (l, v) => {
+        if (!l) return 0;
+        if (typeof l.s.fn === 'function') return l.s.fn(v);
+        const pts = l.pts;
+        for (let i = 1; i < pts.length; i++) {
+          if (pts[i][0] >= v) {
+            const [x0, y0] = pts[i - 1];
+            const [x1, y1] = pts[i];
+            return x1 === x0 ? y1 : y0 + ((y1 - y0) * (v - x0)) / (x1 - x0);
+          }
+        }
+        return pts.length ? pts[pts.length - 1][1] : 0;
+      };
+      for (const a of p.areas) {
+        const top = lineOf(a.below);
+        const bottom = a.above != null ? lineOf(a.above) : null;
+        const from = a.from != null ? a.from : xMin;
+        const to = a.to != null ? a.to : xMax;
+        const upper = [];
+        const lower = [];
+        for (let i = 0; i <= 80; i++) {
+          const v = from + ((to - from) * i) / 80;
+          upper.push(`${x(v)},${y(valueAt(top, v))}`);
+          lower.unshift(`${x(v)},${y(bottom ? valueAt(bottom, v) : 0)}`);
+        }
+        svgEl('polygon', { points: [...upper, ...lower].join(' '), fill: a.colourVar, 'fill-opacity': 0.22 }, svg);
+        if (a.label != null) {
+          const mid = (from + to) / 2;
+          const yMid = (valueAt(top, mid) + (bottom ? valueAt(bottom, mid) : 0)) / 2;
+          boxedLabel(svg, x(mid), y(yMid) + 4, String(a.label), { weight: 600 });
+        }
+      }
+      // Bars, grouped in each category.
+      bars.forEach((b, k) => {
+        const w = (band * 0.7) / bars.length;
+        b.values.forEach((v, i) => {
+          if (!Number.isFinite(v)) return;
+          const left = L + band * i + band * 0.15 + w * k;
+          const top = Math.min(y(v), y(0));
+          const r = svgEl('rect', { x: left, y: top, width: Math.max(1, w - 2), height: Math.abs(y(v) - y(0)), rx: 2, fill: b.colourVar }, svg);
+          svgEl('title', {}, r, `${b.name ? `${b.name}, ` : ''}${categories[i]}: ${yFormat(v)}${p.y.unit ? ` ${p.y.unit}` : ''}`);
+        });
+      });
+      for (const l of lines) {
+        if (l.pts.length < 2) continue;
+        svgEl('polyline', {
+          points: l.pts.map((pt) => `${x(pt[0])},${y(pt[1])}`).join(' '),
+          fill: 'none',
+          stroke: l.s.colourVar,
+          'stroke-width': l.s.width || 2,
+          'stroke-dasharray': l.s.dashed ? '5 4' : null,
+        }, svg);
+      }
+      for (const m of p.marks) {
+        if (!Number.isFinite(m.x) || !Number.isFinite(m.y)) continue;
+        const colour = colourOf(m.colour || 'accent', 0);
+        svgEl('circle', { cx: x(m.x), cy: y(m.y), r: 4, fill: colour }, svg);
+        if (m.label) {
+          // Beside the point, on the side with room.
+          const right = x(m.x) < L + plotW * 0.7;
+          const above = y(m.y) > T + 20;
+          boxedLabel(svg, x(m.x) + (right ? 8 : -8), y(m.y) + (above ? -10 : 18), String(m.label), { anchor: right ? 'start' : 'end' });
+        }
+      }
+    });
+    return scales;
+  };
+
+  /**
+   * Controls: each a label, its value with its unit, the input, its range, and
+   * a line of help. `onChange(values)` is called once at the start and on
+   * every change, with every control's value by `id`.
+   *
+   *   synabit.controls(el, [
+   *     { id: 'h', label: 'Độ cao', min: 5, max: 50, step: 5, value: 20, unit: 'm', help: 'Thả từ độ cao này', presets: [{ label: 'Tháp Eiffel', value: 300 }] },
+   *     { id: 'planet', label: 'Nơi thả', options: [{ value: 'earth', label: 'Trái Đất' }], value: 'earth' },
+   *     { id: 'air', label: 'Có lực cản', type: 'checkbox', value: false },
+   *   ], (v) => draw(v));
+   */
+  const controls = (el, specs, onChange) => {
+    const root = target(el);
+    if (!root) throw new Error('synabit.controls: no element to draw into');
+    root.replaceChildren();
+    const box = htmlEl('div', 'display:grid;gap:12px', root);
+    const read = {};
+    const values = () => Object.fromEntries(Object.entries(read).map(([id, f]) => [id, f()]));
+    const changed = () => typeof onChange === 'function' && onChange(values());
+    for (const spec of specs || []) {
+      const id = String(spec.id);
+      const wrap = htmlEl('div', '', box);
+      const head = htmlEl('div', 'display:flex;justify-content:space-between;align-items:baseline;gap:8px', wrap);
+      const label = htmlEl('label', 'font-size:13px', head, spec.label || id);
+      const shown = htmlEl('span', 'font-variant-numeric:tabular-nums;font-weight:600', head);
+      let input;
+      if (Array.isArray(spec.options)) {
+        input = htmlEl('select', 'width:100%;margin-top:4px', wrap);
+        for (const opt of spec.options) {
+          const option = htmlEl('option', '', input, opt.label != null ? opt.label : String(opt.value));
+          option.value = String(opt.value);
+        }
+        if (spec.value != null) input.value = String(spec.value);
+        read[id] = () => {
+          const opt = spec.options.find((x) => String(x.value) === input.value);
+          return opt ? opt.value : input.value;
+        };
+        shown.textContent = '';
+      } else if (spec.type === 'checkbox') {
+        input = htmlEl('input', '', head);
+        input.type = 'checkbox';
+        input.checked = !!spec.value;
+        head.insertBefore(input, label);
+        read[id] = () => input.checked;
+      } else {
+        input = htmlEl('input', 'width:100%;margin-top:4px', wrap);
+        input.type = 'range';
+        input.min = String(spec.min != null ? spec.min : 0);
+        input.max = String(spec.max != null ? spec.max : 100);
+        input.step = String(spec.step != null ? spec.step : 'any');
+        input.value = String(spec.value != null ? spec.value : spec.min || 0);
+        const digits = spec.digits != null ? spec.digits : spec.step != null ? Math.max(0, -Math.floor(Math.log10(spec.step) + 1e-9)) : 2;
+        const unit = spec.unit ? ` ${spec.unit}` : '';
+        const show = () => (shown.textContent = `${formatNumber(+input.value, digits)}${unit}`);
+        show();
+        input.addEventListener('input', show);
+        read[id] = () => +input.value;
+        htmlEl('div', 'display:flex;justify-content:space-between;font-size:12px;color:var(--muted)', wrap)
+          .append(htmlEl('span', '', null, `${formatNumber(+input.min, digits)}${unit}`), htmlEl('span', '', null, `${formatNumber(+input.max, digits)}${unit}`));
+        if (Array.isArray(spec.presets) && spec.presets.length) {
+          const row = htmlEl('div', 'display:flex;flex-wrap:wrap;gap:6px;margin-top:4px', wrap);
+          for (const preset of spec.presets) {
+            const b = htmlEl('button', 'font-size:12px;padding:2px 8px', row, preset.label);
+            b.type = 'button';
+            b.addEventListener('click', () => {
+              input.value = String(preset.value);
+              show();
+              changed();
+            });
+          }
+        }
+      }
+      input.id = `control-${id}`;
+      label.htmlFor = input.id;
+      input.addEventListener(input.tagName === 'SELECT' || input.type === 'checkbox' ? 'change' : 'input', changed);
+      if (spec.help) htmlEl('div', 'font-size:12px;color:var(--muted);margin-top:2px', wrap, spec.help);
+    }
+    changed();
+    return { values };
+  };
+
+  /**
+   * Numbers to read at a glance: each a label, the value with its unit, and a
+   * note — the formula or the check it came from. Not the value of a control:
+   * the control already shows that.
+   *
+   *   synabit.stats(el, [{ label: 'Chạm đất sau', value: 2.02, unit: 's', digits: 2, note: '√(2h/g)' }]);
+   */
+  const stats = (el, items) => {
+    const root = target(el);
+    if (!root) throw new Error('synabit.stats: no element to draw into');
+    root.replaceChildren();
+    const grid = htmlEl('div', 'display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px 16px', root);
+    for (const item of items || []) {
+      const cell = htmlEl('div', '', grid);
+      htmlEl('div', 'font-size:12px;color:var(--muted)', cell, item.label || '');
+      const line = htmlEl('div', '', cell);
+      const value = typeof item.value === 'number' ? formatNumber(item.value, item.digits) : String(item.value != null ? item.value : '—');
+      htmlEl('span', `font-size:22px;font-weight:600;font-variant-numeric:tabular-nums;color:${item.colour ? colourOf(item.colour, 0) : 'var(--text)'}`, line, value);
+      if (item.unit) htmlEl('span', 'font-size:14px;color:var(--text-2);margin-left:4px', line, item.unit);
+      if (item.note) htmlEl('div', 'font-size:12px;color:var(--muted)', cell, item.note);
+    }
+  };
+
+  /**
+   * The frame of a visual, as named slots to draw into:
+   * - `side`: `controls` beside `stats` over `stage`; one column when narrow.
+   * - `stack`: `controls`, then `stats`, then `stage`.
+   * - `compare`: `controls`, then two cases side by side, `a` and `b`, each
+   *   with its own `aStats` / `bStats`; one column when narrow.
+   */
+  const layout = (el, kind) => {
+    const root = target(el);
+    if (!root) throw new Error('synabit.layout: no element to draw into');
+    root.replaceChildren();
+    const frame = htmlEl('div', 'max-width:640px;display:flex;flex-direction:column;gap:14px', root);
+    const slot = (parent, style) => htmlEl('div', style || '', parent);
+    if (kind === 'side') {
+      const row = slot(frame, 'display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start');
+      const controlsSlot = slot(row, 'flex:1 1 180px;min-width:0');
+      const main = slot(row, 'flex:2 1 340px;min-width:0;display:flex;flex-direction:column;gap:10px');
+      return { controls: controlsSlot, stats: slot(main), stage: slot(main) };
+    }
+    if (kind === 'compare') {
+      const controlsSlot = slot(frame);
+      const row = slot(frame, 'display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start');
+      const half = () => slot(row, 'flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:8px');
+      const a = half();
+      const b = half();
+      return { controls: controlsSlot, aStats: slot(a), a: slot(a), bStats: slot(b), b: slot(b) };
+    }
+    return { controls: slot(frame), stats: slot(frame), stage: slot(frame) };
+  };
+
   window.synabit = Object.freeze({
     /** Resolves once the host has said the theme and the locale. */
     ready,
@@ -464,11 +906,7 @@
     },
     /** A number as the person's locale writes it, rounded: float noise never reaches the screen. */
     number(value, digits) {
-      const places = digits == null ? 2 : digits;
-      // A drift of -0.00001 rounds to "-0", which reads as a sign that means something.
-      const n = Number(value);
-      const shown = Math.abs(n) < 0.5 * 10 ** -places ? 0 : n;
-      return new Intl.NumberFormat(context.locale, { maximumFractionDigits: places }).format(shown);
+      return formatNumber(value, digits);
     },
     /** A theme token's current value, for a canvas that cannot read CSS variables. */
     color(name) {
@@ -511,5 +949,10 @@
      * the numbers the visual must report, `[{ name, value, tolerance }]`.
      */
     lint,
+    /** The parts a visual is built from; see each one's comment above. */
+    chart,
+    controls,
+    stats,
+    layout,
   });
 })();

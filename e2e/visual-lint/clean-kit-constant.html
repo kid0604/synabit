@@ -1,0 +1,22 @@
+<!-- Written for PR Q5, after the loan visuals of 2026-10-28: a loan's balance and its fixed monthly
+     payment, each in its own panel of synabit.chart. The payment does not change, so its line is flat;
+     the chart took its scale from that data, which is not the fault flat-plot looks for. -->
+<div id="v"></div>
+<script>
+const P = 500e6, r = 0.09 / 12, n = 240;
+const pay = P * r / (1 - (1 + r) ** -n);
+const bal = (k) => P * (1 + r) ** k - pay * ((1 + r) ** k - 1) / r;
+synabit.chart('#v', {
+  title: 'Khoản vay 500 triệu, 20 năm',
+  x: { label: 'năm', min: 0, max: 20 },
+  panels: [
+    { y: { label: 'dư nợ', unit: 'triệu ₫' }, series: [{ name: 'dư nợ', fn: (t) => bal(t * 12) / 1e6 }] },
+    { y: { label: 'trả mỗi tháng', unit: 'triệu ₫' }, series: [{ name: 'trả mỗi tháng', fn: () => pay / 1e6, colour: 'c2' }] },
+  ],
+});
+synabit.chart(document.body.appendChild(document.createElement('div')), {
+  x: { categories: ['Gốc', 'Lãi'] },
+  y: { label: 'tổng trả', unit: 'triệu ₫' },
+  series: [{ name: 'niên kim', values: [500, pay * n / 1e6 - 500] }, { name: 'gốc đều', values: [500, 451.9], colour: 'c2' }],
+});
+</script>
