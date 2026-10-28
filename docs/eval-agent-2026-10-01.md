@@ -862,3 +862,61 @@ Thêm hai lỗi của bộ đo, thấy khi soi `schedule`. **Chưa sửa**, vì 
   10 triệu, lãi 1,2 triệu, dư nợ 110 triệu, nhưng không cộng ra "tiền trả tháng đầu" 11,2 triệu, là thứ
   đáp số đang đòi. Đáp số đúng với câu hỏi là lãi tháng đầu (1,2 triệu) và dư nợ sau tháng đầu
   (110 triệu).
+
+### Đo nền lần ba, sau hai bản sửa bộ đo nữa (2026-10-28, `gpt-6-luna`, 32 câu × 3)
+
+Đã sửa trước lần đo này, theo yêu cầu của người dùng:
+- **`dead-control`:** khi thử lại một nút "chết", thanh trượt được đặt vào giữa thay vì ra một đầu. Trang mẫu
+  `clean-loan-schedule.html` là hình `schedule` bị bắt oan ở lần hai. Bản sửa mà tắt thì trang này đỏ.
+- **Đáp số của `schedule`:** lãi tháng đầu (1,2 triệu) và dư nợ sau tháng đầu (110 triệu).
+
+Sửa trong lúc đo:
+- **Hình treo không còn làm sập cả lượt chấm.** Lượt đầu của lần ba có một hình Dijkstra viết
+  `while (unvisited.length)` mà không bao giờ bớt phần tử nào khỏi `unvisited`, nên trang không bao giờ tải
+  xong. Lỗi tải giết tiến trình Playwright, và 18 hình phát triển khác của nhóm đó bị tính trượt hết.
+- **`visualTrial.mjs` giờ ghi hình đó là lỗi `hang`:** trang có 10 giây để tải và 2 phút để chấm trọn, quá hạn
+  thì khởi động lại WebKit cho hình sau. Trang mẫu `hang.html` là chính hình đó. Với script cũ, cả lượt test
+  sập.
+- **Nhóm đó được chạy lại** (8 câu × 3, mẫu mới). Kết quả hỏng để riêng, không tính vào bảng.
+- Hình treo không có ảnh chụp, nên người chấm không chấm nó. Tầng 1 và 2 bỏ qua nó thay vì tính 0. Lần này
+  không hình nào treo.
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Dự đoán, nền | | | 45% | 75% | 0,8 | 0,7 |
+| Lần một: tất cả | 96 | 91% | 50% | 82% (87) | 1,29 | 1,02 |
+| Lần hai: tất cả | 96 | 93% | 52% | 79% (87) | 1,32 | 1,05 |
+| **Lần ba: tất cả** | 96 | 91% | **54%** | **86%** (87) | 1,27 | 1,11 |
+| Lần ba: phát triển | 66 | 98% | 59% | 83% (60) | 1,35 | 1,12 |
+| Lần ba: giữ lại | 30 | 73% | 43% | 93% (27) | 1,10 | 1,10 |
+
+Theo kiểu giải thích (phần phát triển, lần ba):
+
+| Kiểu | Tự kiểm qua | Đúng |
+| --- | --- | --- |
+| `step` | 67% | 100% |
+| `compare` | 50% | 87% |
+| `decompose` | 83% | 83% |
+| `zoom` | 44% | 67% |
+| `areas` | 17% | 67% |
+| `explore` | 78% | 89% |
+
+Lỗi tự kiểm, phần phát triển: `overlap` 15, `overflow` 10, `dead-control` 4, `error` 3, `fixed-colour` 2,
+`long-decimal` 2.
+
+**`schedule` lần này đúng 3/3**, và không còn bị bắt `dead-control`.
+
+Bốn lần `dead-control` còn lại:
+- **Bayes và `euler-e` là thật.** Script lỗi cú pháp, nên các thanh trượt không làm gì.
+- **Hai lần còn lại có thể là báo nhầm, chưa sửa.**
+  - "Chạy lại" của `drift` cho ra đúng hình cũ, có thể do dùng một hạt giống cố định.
+  - "Tốc độ" của `sir` chỉ đổi tốc độ hoạt hình, không đổi thứ gì trên màn hình lúc đứng yên.
+
+Ba lần đo nền đều cho cùng một bức tranh:
+- **Tự kiểm qua khoảng 50–54%, đúng 79–86%.** Cả hai đều cao hơn dự đoán (45% và 75%).
+- **Chữ đè và tràn khung chiếm phần lớn lỗi.**
+- **`areas` và `zoom` yếu nhất ở tự kiểm.**
+- **Phần giữ lại không vẽ 7–9 lần trên 30.**
+
+Nền dùng cho các PR sau là **lần ba**, vì nó đo bằng bộ đo đã sửa. Dao động giữa các lần ở tổng là khoảng ±3–4
+điểm.

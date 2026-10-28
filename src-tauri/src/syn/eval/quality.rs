@@ -124,7 +124,7 @@ const QUESTIONS: &[Question] = &[
         q("euclid", Step, "số học", "Minh hoạ từng bước thuật toán Euclid tìm ước chung lớn nhất của 1071 và 462, có nút bước tiếp và lùi lại.",
           &[e("số dư đầu tiên", &[(147.0, 0.0)]), e("ước chung lớn nhất", &[(21.0, 0.0)])]),
         q("schedule", Step, "tài chính", "Minh hoạ từng tháng lịch trả nợ của khoản vay 120 triệu trong 12 tháng, lãi 12%/năm, trả gốc đều: mỗi bước một tháng, hiện gốc, lãi và dư nợ.",
-          &[e("tiền trả tháng đầu", &[(11.2, 0.05), (11_200_000.0, 50_000.0)])]),
+          &[e("lãi tháng đầu", &[(1.2, 0.05), (1_200_000.0, 50_000.0)]), e("dư nợ sau tháng đầu", &[(110.0, 0.5), (110_000_000.0, 500_000.0)])]),
         q("binary-search", Step, "thuật toán", "Minh hoạ từng bước tìm kiếm nhị phân số 37 trong mảng [3, 8, 12, 17, 21, 26, 30, 37, 41, 45, 50], có nút bước tiếp.",
           &[]),
         q("compound", Compare, "tài chính", "So sánh lãi kép với lãi đơn khi gửi 100 triệu, lãi 8%/năm trong 30 năm: đặt hai cách cạnh nhau và cho tao kéo lãi suất.",
