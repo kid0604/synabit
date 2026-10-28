@@ -30,10 +30,33 @@ pub const TYPE: &str = "syn_visual";
 /// What a visual is, which decides the design guide it was drawn with.
 pub const KINDS: &[&str] = &["diagram", "chart", "explainer", "simulation"];
 
+/// How a visual explains, which decides the part of the guide it was drawn
+/// with and what it must have (plan 2026-10-28, §2.1). Kept short: one is added
+/// only when the measured questions have a group none of these fits.
+pub const PATTERNS: &[&str] = &["step", "compare", "decompose", "zoom", "areas", "explore"];
+
+/// What the model said a visual is for, before drawing it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Brief {
+    /// What the visual makes the person see, in a sentence.
+    pub point: String,
+    /// One of [`PATTERNS`].
+    pub pattern: String,
+    /// The numbers that show the point, each by name.
+    pub proof: Vec<Proof>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Proof {
+    pub name: String,
+    pub value: f64,
+}
+
 /// A visual about to be kept.
 pub struct Draft<'a> {
     pub title: &'a str,
     pub kind: &'a str,
+    pub brief: Option<&'a Brief>,
     /// The fragment the model wrote, after `check` passed it.
     pub html: &'a str,
     /// What the person asked, for the note it is kept in and for Nexus.
@@ -50,6 +73,9 @@ pub struct Visual {
     pub kind: String,
     pub question: String,
     pub conversation: Option<String>,
+    /// What the visual was drawn to show; none on one kept before briefs.
+    pub point: Option<String>,
+    pub pattern: Option<String>,
     #[serde(skip)]
     pub html: String,
 }
@@ -100,6 +126,13 @@ pub fn save<R: tauri::Runtime>(app: &tauri::AppHandle<R>, db: &crate::db::DbStat
     if let Some(model) = draft.model {
         properties.insert("model".into(), model.into());
     }
+    if let Some(brief) = draft.brief {
+        properties.insert("point".into(), brief.point.clone().into());
+        properties.insert("pattern".into(), brief.pattern.clone().into());
+        if !brief.proof.is_empty() {
+            properties.insert("proof".into(), serde_json::to_value(&brief.proof).unwrap_or_default());
+        }
+    }
     crate::commands::nodes::write_node_inner(
         app,
         db,
@@ -131,6 +164,8 @@ pub fn load(vault: &Path, id: &str) -> Option<Visual> {
         kind: text("kind").unwrap_or_else(|| "explainer".into()),
         question: text("question").unwrap_or_default(),
         conversation: text("conversation"),
+        point: text("point"),
+        pattern: text("pattern"),
         html: unfenced(&node.content)?,
     })
 }
@@ -189,6 +224,11 @@ mod tests {
             &Draft {
                 title: "Con lắc đơn — chu kỳ theo chiều dài",
                 kind: "simulation",
+                brief: Some(&Brief {
+                    point: "Chu kỳ chỉ đổi theo chiều dài dây, không theo khối lượng".into(),
+                    pattern: "explore".into(),
+                    proof: vec![Proof { name: "chu kỳ 1 m".into(), value: 2.006 }],
+                }),
                 html,
                 question: "giải thích dao động con lắc đơn",
                 conversation: Some("conv-1"),
@@ -206,9 +246,11 @@ mod tests {
         assert_eq!(back.question, "giải thích dao động con lắc đơn");
         assert_eq!(back.conversation.as_deref(), Some("conv-1"));
         assert_eq!(back.html, html);
+        assert_eq!(back.pattern.as_deref(), Some("explore"));
+        assert_eq!(back.point.as_deref(), Some("Chu kỳ chỉ đổi theo chiều dài dây, không theo khối lượng"));
 
         assert!(load(&vault, "0123456789abcdef0123456789abcdef").is_none(), "no such visual");
-        let err = save(app.handle(), db.inner(), &vault.to_string_lossy(), &Draft { kind: "poster", ..Draft { title: "x", kind: "chart", html: "<p>", question: "", conversation: None, model: None } });
+        let err = save(app.handle(), db.inner(), &vault.to_string_lossy(), &Draft { kind: "poster", ..Draft { title: "x", kind: "chart", brief: None, html: "<p>", question: "", conversation: None, model: None } });
         assert!(err.is_err(), "an unknown kind");
     }
 

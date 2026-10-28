@@ -30,6 +30,10 @@ question gets at most one visual unless asked for more.
   visual can do itself.
 - `synabit.ready` resolves once the theme and locale are known;
   `synabit.onContext(fn)` is told when they change. Redraw a canvas then.
+- `synabit.expect(name, actual, expected, tolerance)` checks a claim the
+  visual makes: a derived number put back into what it came from.
+  `synabit.report({ name: value })` names the numbers it shows. Both are read
+  when the visual is looked at.
 - Plain `button`, `select`, `input[type=range]` already look like the app's.
   Classes `.row` (a row of controls), `.stat` (a large number) and `.muted`.
 
@@ -40,6 +44,34 @@ visual needs is written into it — data included, as a literal array. No
 storage, no cookies, no forms, no popups, no `position: fixed`, no fullscreen.
 These are refused, and `show_visual` refuses a visual that points outside
 itself.
+
+## Decide what it is for, then draw it
+
+Before writing any HTML, say in one sentence what the person should see in
+it without touching a control — "the overshoot stays near 9% however many
+terms", not "Fourier series". That sentence is the `brief.point`. Then pick the
+pattern that shows it — `step`, `compare`, `decompose`, `zoom`, `areas`,
+`explore` — and read its part of this guide: it lists what that pattern must
+have and gives an example. Build yours the way the example is built.
+
+## One model, many views
+
+- Write the model once, as functions — `demand(p)`, `supply(p)`,
+  `height(t)`, `step(state)` — and compute everything shown from them: lines,
+  points, shaded areas, numbers. Never type a coordinate, a crossing or a
+  total by hand next to a model that could compute it.
+- A reference drawn beside a result — the exact curve an approximation tends
+  to, the theory a simulation should follow — comes from the same
+  definitions and variables as the result.
+- A crossing, a peak, a root: solve the model's own functions for it, by a
+  few lines of bisection or a search over the range drawn, rather than a
+  formula derived by hand. If a formula is used, substitute its answer back
+  into the equations it came from.
+- Every derived number is checked that way with `synabit.expect`: the price
+  put back into demand and supply, the parts summed to the whole, the
+  result read back. A check that fails is a visual that is wrong.
+- The numbers in `brief.proof` are worked out with `compute` from the same
+  formulas, and the visual reports them with `synabit.report`.
 
 ## Rules that make a good one
 
@@ -70,7 +102,8 @@ itself.
 ## How to call it
 
 `show_visual` with a short `title` (what the visual shows, as a person would
-name the note), the `kind`, and the `html`. If it comes back with problems,
+name the note), the `kind`, the `brief` (`point`, `pattern`, and `proof` when
+numbers show the point), and the `html`. If it comes back with problems,
 fix exactly those and call it again — at most twice. Then say in your answer
 what the visual shows and how to use it, in a sentence or two; do not repeat
 its numbers. A number your answer must name — one the person asked for — is

@@ -11,8 +11,5 @@ visual is where they try it.
   gives, updated as the sliders move.
 - Start at values that show the interesting case, not at zero.
 - If there is a "what if" worth asking, one button with `synabit.ask(...)`.
-- A reference beside the result — the exact curve an approximation tends to,
-  the target shape — comes from the same definition and variables as the
-  result, never from coordinates written by hand. Check one point by hand.
 - Keep the arithmetic in one function the controls call; redraw everything
   from it on `input`.

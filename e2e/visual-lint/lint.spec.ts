@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 // @ts-expect-error — a plain ES module, shared with the eval.
@@ -43,4 +44,36 @@ for (const c of cases) {
 test('every check has a page that has its fault', () => {
   const checks = ['empty', 'hang', 'error', 'nan', 'long-decimal', 'raw-math', 'flat-plot', 'overflow', 'overlap', 'dead-control', 'fixed-colour', 'expect', 'proof'];
   for (const check of checks) expect(cases.some((c) => c.file === `${check}.html` && c.checks.includes(check)), check).toBe(true);
+});
+
+/**
+ * The example in each pattern's guide (`guides/patterns/*.md`) is what a model
+ * copies (plan 2026-10-28, §2.1): it must have nothing the lint finds, and
+ * every claim it makes with `synabit.expect` must hold.
+ */
+const PATTERNS = join(HERE, '../../src-tauri/src/syn/visual/guides/patterns');
+const examples = readdirSync(PATTERNS)
+  .filter((f) => f.endsWith('.md'))
+  .map((f) => {
+    const block = /```html\n([\s\S]*?)\n```/.exec(readFileSync(join(PATTERNS, f), 'utf8'));
+    return { pattern: f.replace(/\.md$/, ''), html: block ? block[1] : '' };
+  });
+
+test('every pattern guide has an example, and the lint finds nothing in it', async () => {
+  expect(examples.map((e) => e.pattern).sort()).toEqual(['areas', 'compare', 'decompose', 'explore', 'step', 'zoom']);
+  const dir = mkdtempSync(join(tmpdir(), 'synabit-patterns-'));
+  const files = examples.map((e) => {
+    expect(e.html, `${e.pattern} has an html block`).not.toBe('');
+    const file = join(dir, `${e.pattern}.html`);
+    writeFileSync(file, e.html);
+    return file;
+  });
+  const results: (Found & { expects: { name: string; ok: boolean }[]; reported: Record<string, unknown> })[] = await trial(files);
+  for (const r of results) {
+    const name = r.file.split('/').pop();
+    expect(r.problems.map((p) => `${p.check}: ${p.detail}`), name).toEqual([]);
+    expect(r.expects.length, `${name} checks a claim with synabit.expect`).toBeGreaterThan(0);
+    expect(r.expects.filter((e) => !e.ok).map((e) => e.name), name).toEqual([]);
+    expect(Object.keys(r.reported).length, `${name} reports its numbers`).toBeGreaterThan(0);
+  }
 });

@@ -48,14 +48,35 @@ const CHART: &str = include_str!("guides/chart.md");
 const EXPLAINER: &str = include_str!("guides/explainer.md");
 const SIMULATION: &str = include_str!("guides/simulation.md");
 
+/// One part per pattern, in the order of [`store::PATTERNS`]: what a visual of
+/// that pattern must have, and one written by hand to copy from. A model
+/// copies an example more closely than it follows a rule (plan §2.1).
+const PATTERN_GUIDES: [&str; 6] = [
+    include_str!("guides/patterns/step.md"),
+    include_str!("guides/patterns/compare.md"),
+    include_str!("guides/patterns/decompose.md"),
+    include_str!("guides/patterns/zoom.md"),
+    include_str!("guides/patterns/areas.md"),
+    include_str!("guides/patterns/explore.md"),
+];
+
+/// How long a brief's point may be.
+const MAX_POINT: usize = 240;
+
 /// Whether a run is offered the two tools at all.
 pub fn offered(capability: &Capability, settings: &SynSettings, surface: Surface, sub_run: bool) -> bool {
     capability.visuals && settings.visuals && cfg!(desktop) && surface == Surface::App && !sub_run
 }
 
-/// The guide for one kind: what every visual needs, then what that kind does.
+fn pattern_index(pattern: &str) -> Option<usize> {
+    store::PATTERNS.iter().position(|p| *p == pattern)
+}
+
+/// The guide for one kind and one pattern: what every visual needs, what that
+/// kind does, then what that pattern must have, with its example.
 pub fn guide(args: &Value) -> String {
-    let kind = args.get("kind").and_then(Value::as_str).unwrap_or("").trim();
+    let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("").trim();
+    let (kind, pattern) = (text("kind"), text("pattern"));
     let specific = match kind {
         "diagram" => DIAGRAM,
         "chart" => CHART,
@@ -65,7 +86,42 @@ pub fn guide(args: &Value) -> String {
             return json!({ "error": format!("`kind` is one of {}.", store::KINDS.join(", ")) }).to_string();
         }
     };
-    json!({ "kind": kind, "guide": format!("{CORE}\n{specific}") }).to_string()
+    let Some(at) = pattern_index(pattern) else {
+        return json!({ "error": format!("`pattern` is one of {}: how the visual explains.", store::PATTERNS.join(", ")) }).to_string();
+    };
+    json!({ "kind": kind, "pattern": pattern, "guide": format!("{CORE}\n{specific}\n{}", PATTERN_GUIDES[at]) }).to_string()
+}
+
+/// The `brief` of a `show_visual` call, or what is wrong with it.
+fn brief(args: &Value, title: &str) -> Result<store::Brief, String> {
+    let Some(brief) = args.get("brief").filter(|b| b.is_object()) else {
+        return Err("`brief` is missing: say what the visual is for before drawing it — `point`, `pattern` and, if numbers prove the point, `proof`.".into());
+    };
+    let point = brief.get("point").and_then(Value::as_str).map(str::trim).unwrap_or("");
+    if point.split_whitespace().count() < 4 || point.chars().count() > MAX_POINT {
+        return Err(format!(
+            "`brief.point` is one sentence, at most {MAX_POINT} characters, saying what the person will see — \"the overshoot stays near 9% however many terms\" — not the topic."
+        ));
+    }
+    if point.eq_ignore_ascii_case(title) {
+        return Err("`brief.point` is what the visual makes the person see, not its title.".into());
+    }
+    let pattern = brief.get("pattern").and_then(Value::as_str).map(str::trim).unwrap_or("");
+    if pattern_index(pattern).is_none() {
+        return Err(format!("`brief.pattern` is one of {}.", store::PATTERNS.join(", ")));
+    }
+    let mut proof = Vec::new();
+    for item in brief.get("proof").and_then(Value::as_array).into_iter().flatten() {
+        let name = item.get("name").and_then(Value::as_str).map(str::trim).unwrap_or("");
+        let Some(value) = item.get("value").and_then(Value::as_f64).filter(|v| v.is_finite()) else {
+            return Err("Each `brief.proof` item is `{ \"name\": …, \"value\": <a number> }`.".into());
+        };
+        if name.is_empty() {
+            return Err("Each `brief.proof` item has a `name`.".into());
+        }
+        proof.push(store::Proof { name: name.to_string(), value });
+    }
+    Ok(store::Brief { point: point.to_string(), pattern: pattern.to_string(), proof })
 }
 
 /// What the run has done that `show_visual` depends on.
@@ -75,19 +131,32 @@ pub struct Tried {
     pub guide_read: bool,
     /// `show_visual` calls refused since the last one that kept a visual.
     pub refused_since_shown: usize,
+    /// The patterns whose part of the guide was read, one bit each in the
+    /// order of [`store::PATTERNS`].
+    pub patterns_read: u8,
+}
+
+impl Tried {
+    fn read(&self, pattern: &str) -> bool {
+        pattern_index(pattern).is_some_and(|at| self.patterns_read & (1 << at) != 0)
+    }
 }
 
 impl Tried {
     /// Read off the run's steps, oldest first.
     pub fn from_steps(steps: &[crate::syn::run::Step]) -> Tried {
         let calls = steps.iter().filter(|s| s.kind == crate::syn::run::StepKind::ToolCall);
-        let guide_read = calls.clone().any(|s| s.tool.as_deref() == Some(GUIDE_TOOL) && s.ok == Some(true));
+        let guides = calls.clone().filter(|s| s.tool.as_deref() == Some(GUIDE_TOOL) && s.ok == Some(true));
+        let guide_read = guides.clone().next().is_some();
+        let patterns_read = guides
+            .filter_map(|s| s.args.as_ref()?.get("pattern")?.as_str().and_then(|p| pattern_index(p.trim())))
+            .fold(0u8, |bits, at| bits | (1 << at));
         let refused_since_shown = calls
             .filter(|s| s.tool.as_deref() == Some(SHOW_TOOL))
             .rev()
             .take_while(|s| s.ok == Some(false))
             .count();
-        Tried { guide_read, refused_since_shown }
+        Tried { guide_read, refused_since_shown, patterns_read }
     }
 }
 
@@ -152,6 +221,16 @@ pub fn show<R: tauri::Runtime>(
     if !store::KINDS.contains(&kind) {
         return refused(format!("`kind` is one of {}.", store::KINDS.join(", ")));
     }
+    let brief = match brief(args, title) {
+        Ok(brief) => brief,
+        Err(said) => return refused(said),
+    };
+    if !tried.read(&brief.pattern) {
+        return refused(format!(
+            "Call {GUIDE_TOOL} with pattern \"{0}\" first: it says what a {0} visual must have, with one to copy from.",
+            brief.pattern
+        ));
+    }
     let checked = check::check(html);
     if !checked.passed() {
         let content = json!({
@@ -162,7 +241,7 @@ pub fn show<R: tauri::Runtime>(
         });
         return (content.to_string(), None);
     }
-    let draft = store::Draft { title, kind, html, question: asked.question, conversation: asked.conversation, model: Some(asked.model) };
+    let draft = store::Draft { title, kind, brief: Some(&brief), html, question: asked.question, conversation: asked.conversation, model: Some(asked.model) };
     match store::save(app, db, vault, &draft) {
         Ok(id) => (
             json!({
@@ -223,8 +302,16 @@ mod tests {
         let mut run = crate::syn::run::Run::new("q", None, crate::syn::run::Budget::from_settings(&Default::default()));
         for (tool, ok) in calls {
             let content = if *ok { "{\"ok\":true}" } else { "{\"error\":\"no\"}" };
-            run.record_tool(1, tool, json!({}), *ok, crate::syn::registry::Reversal::Nothing, content, 1);
+            let args = if *tool == GUIDE_TOOL { json!({ "kind": "simulation", "pattern": "explore" }) } else { json!({}) };
+            run.record_tool(1, tool, args, *ok, crate::syn::registry::Reversal::Nothing, content, 1);
         }
+        run.steps
+    }
+
+    /// A guide read for `pattern`, as a run records it.
+    fn guide_for(pattern: &str) -> Vec<Step> {
+        let mut run = crate::syn::run::Run::new("q", None, crate::syn::run::Budget::from_settings(&Default::default()));
+        run.record_tool(1, GUIDE_TOOL, json!({ "kind": "chart", "pattern": pattern }), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
         run.steps
     }
 
@@ -247,26 +334,74 @@ mod tests {
     }
 
     #[test]
-    fn the_guide_is_the_core_and_the_kind() {
+    fn the_guide_is_the_core_the_kind_and_the_pattern() {
         for kind in store::KINDS {
-            let v: Value = serde_json::from_str(&guide(&json!({ "kind": kind }))).expect("json");
-            let text = v["guide"].as_str().expect("guide");
-            assert!(text.contains("# Drawing a visual in Synabit"), "{kind}");
-            assert!(text.len() > CORE.len() + 200, "{kind}");
+            for pattern in store::PATTERNS {
+                let v: Value = serde_json::from_str(&guide(&json!({ "kind": kind, "pattern": pattern }))).expect("json");
+                let text = v["guide"].as_str().expect("guide");
+                assert!(text.contains("# Drawing a visual in Synabit"), "{kind}");
+                assert!(text.contains(&format!("# Pattern: {pattern}")), "{kind} {pattern}");
+                assert!(text.contains("```html\n"), "{pattern} comes with an example");
+            }
         }
-        let v: Value = serde_json::from_str(&guide(&json!({ "kind": "poster" }))).expect("json");
+        let v: Value = serde_json::from_str(&guide(&json!({ "kind": "poster", "pattern": "step" }))).expect("json");
         assert!(v.get("error").is_some());
+        let v: Value = serde_json::from_str(&guide(&json!({ "kind": "chart" }))).expect("json");
+        assert!(v["error"].as_str().is_some_and(|e| e.contains("pattern")), "no pattern: {v}");
+    }
+
+    #[test]
+    fn the_patterns_read_are_counted() {
+        let mut both = guide_for("zoom");
+        both.extend(guide_for("step"));
+        let tried = Tried::from_steps(&both);
+        assert!(tried.read("zoom") && tried.read("step"));
+        assert!(!tried.read("areas") && !tried.read("poster"));
+    }
+
+    /// The brief is the visual's design, said before drawing (plan
+    /// 2026-10-28, §2.1): a point that is not the topic, and a pattern whose
+    /// guide was read.
+    #[test]
+    fn a_visual_is_kept_only_with_a_brief_and_its_pattern_read() {
+        use tauri::Manager;
+        let (_dir, vault, app) = app();
+        let db = app.state::<crate::db::DbState>();
+        let read = Tried { guide_read: true, refused_since_shown: 0, patterns_read: 0 };
+        let zoom = Tried::from_steps(&guide_for("zoom"));
+        let with = |brief: Value| json!({ "title": "Gibbs", "kind": "explainer", "html": "<svg role=\"img\"></svg>", "brief": brief });
+        let point = "The overshoot stays near 9% however many terms are added";
+
+        for (args, why) in [
+            (json!({ "title": "Gibbs", "kind": "explainer", "html": "<svg></svg>" }), "`brief` is missing"),
+            (with(json!({ "point": "Gibbs", "pattern": "zoom" })), "`brief.point`"),
+            (with(json!({ "point": "Fourier and Gibbs", "pattern": "zoom" })), "`brief.point`"),
+            (with(json!({ "point": point, "pattern": "poster" })), "`brief.pattern`"),
+            (with(json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot" }] })), "`brief.proof`"),
+        ] {
+            let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &args);
+            assert!(shown.is_none() && said.contains(why), "{why}: {said}");
+        }
+        let brief = json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot", "value": 1.0895 }] });
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &with(brief.clone()));
+        assert!(shown.is_none() && said.contains("with pattern") && said.contains("zoom"), "its guide first: {said}");
+
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &with(brief));
+        let shown = shown.unwrap_or_else(|| panic!("kept: {said}"));
+        let back = store::load(std::path::Path::new(&vault), &shown.id).expect("read back");
+        assert_eq!(back.pattern.as_deref(), Some("zoom"));
+        assert_eq!(back.point.as_deref(), Some(point));
     }
 
     /// The guide names only what the kit and `/lib/` really have.
     #[test]
     fn the_guide_promises_nothing_the_frame_lacks() {
-        let all = [CORE, DIAGRAM, CHART, EXPLAINER, SIMULATION].concat();
+        let all = [&[CORE, DIAGRAM, CHART, EXPLAINER, SIMULATION][..], &PATTERN_GUIDES[..]].concat().concat();
         for path in ["/lib/d3.v7.min.js", "/lib/katex.min.js", "/lib/katex.min.css"] {
             assert!(all.contains(path));
         }
         let kit = super::super::assets::KIT_JS;
-        for api in ["synabit.number", "synabit.ask", "synabit.ready", "synabit.onContext", "synabit.color"] {
+        for api in ["synabit.number", "synabit.ask", "synabit.ready", "synabit.onContext", "synabit.color", "synabit.expect", "synabit.report"] {
             assert!(all.contains(api), "{api} in the guide");
             assert!(kit.contains(api.trim_start_matches("synabit.")), "{api} in the kit");
         }
@@ -281,7 +416,7 @@ mod tests {
     fn tries_are_counted_since_the_last_visual_kept() {
         assert_eq!(Tried::from_steps(&[]), Tried::default());
         let done = steps(&[(GUIDE_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, false)]);
-        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2 });
+        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2, patterns_read: 1 << 5 });
         assert!(!Tried::from_steps(&steps(&[(GUIDE_TOOL, false)])).guide_read, "a guide call that failed");
     }
 
@@ -313,18 +448,19 @@ mod tests {
         use tauri::Manager;
         let (_dir, vault, app) = app();
         let db = app.state::<crate::db::DbState>();
-        let good = json!({ "title": "Con lắc", "kind": "simulation", "html": "<input type=\"range\"><script src=\"/lib/d3.v7.min.js\"></script>" });
-        let read = Tried { guide_read: true, refused_since_shown: 0 };
+        let brief = json!({ "point": "The period depends on the length, not the mass", "pattern": "explore" });
+        let good = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><script src=\"/lib/d3.v7.min.js\"></script>" });
+        let read = Tried::from_steps(&guide_for("explore"));
 
         let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::default(), &ASKED, &good);
         assert!(shown.is_none() && said.contains(GUIDE_TOOL), "the guide first: {said}");
 
-        let cdn = json!({ "title": "Con lắc", "kind": "simulation", "html": "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>" });
+        let cdn = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>" });
         let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &cdn);
         assert!(shown.is_none() && said.contains("points outside"), "{said}");
         assert!(!std::path::Path::new(&vault).join(store::FOLDER).exists() || std::fs::read_dir(std::path::Path::new(&vault).join(store::FOLDER)).unwrap().next().is_none(), "nothing kept");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { guide_read: true, refused_since_shown: MAX_TRIES }, &ASKED, &good);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { refused_since_shown: MAX_TRIES, ..read }, &ASKED, &good);
         assert!(shown.is_none() && said.contains("tries"), "{said}");
 
         let (said, shown) = show(app.handle(), db.inner(), &vault, false, read, &ASKED, &good);

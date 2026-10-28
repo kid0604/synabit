@@ -84,6 +84,7 @@ pub fn visual_spike_keep(app: tauri::AppHandle, db: tauri::State<'_, crate::db::
         &super::store::Draft {
             title: "Bước 0: kit trong khung của chat",
             kind: "explainer",
+            brief: None,
             html: KIT_PAGE,
             question: "spike",
             conversation: None,

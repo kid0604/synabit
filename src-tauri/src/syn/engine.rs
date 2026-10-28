@@ -6979,7 +6979,12 @@ mod driving {
         let marker = "PENDULUM_MARKER_7f3a";
         // Past the 400 characters a refused call keeps of what it tried.
         let html = format!("<input type=\"range\" id=\"l\">{}<p id=\"{marker}\"></p><script src=\"/lib/d3.v7.min.js\"></script>", "<p></p>".repeat(80));
-        let visual = serde_json::json!({ "title": "Con lắc đơn", "kind": "simulation", "html": html });
+        let visual = serde_json::json!({
+            "title": "Con lắc đơn",
+            "kind": "simulation",
+            "brief": { "point": "The period depends on the length, not the mass", "pattern": "explore" },
+            "html": html,
+        });
         let ask = "mô phỏng con lắc đơn cho tao";
         let mut run = Run::new(ask, Some("conv-visual".into()), budget(12));
         drive_script_as(
@@ -6990,7 +6995,7 @@ mod driving {
             "claude-opus-5-5",
             vec![
                 calls("show_visual", visual.clone()),
-                calls("visual_guide", serde_json::json!({ "kind": "simulation" })),
+                calls("visual_guide", serde_json::json!({ "kind": "simulation", "pattern": "explore" })),
                 calls("show_visual", visual),
                 text("Kéo thanh trượt để đổi chiều dài."),
             ],
@@ -7040,8 +7045,8 @@ mod driving {
             ask,
             "gemma4:e2b",
             vec![
-                calls("visual_guide", serde_json::json!({ "kind": "simulation" })),
-                calls("show_visual", serde_json::json!({ "title": "x", "kind": "chart", "html": "<p>x</p>" })),
+                calls("visual_guide", serde_json::json!({ "kind": "simulation", "pattern": "explore" })),
+                calls("show_visual", serde_json::json!({ "title": "x", "kind": "chart", "brief": { "point": "The bars show each month side by side", "pattern": "explore" }, "html": "<p>x</p>" })),
                 text("Chu kỳ T = 2π√(L/g)."),
             ],
         )
@@ -7074,7 +7079,7 @@ mod driving {
         let provider = std::sync::Arc::new(Scripted::new(
             &vault,
             &run.id,
-            vec![calls("visual_guide", serde_json::json!({ "kind": "chart" })), text("Kéo thanh thuế.")],
+            vec![calls("visual_guide", serde_json::json!({ "kind": "chart", "pattern": "areas" })), text("Kéo thanh thuế.")],
         ));
         let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
         let state = app.state::<crate::db::DbState>();

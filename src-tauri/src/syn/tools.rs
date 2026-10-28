@@ -1531,12 +1531,17 @@ fn visual_definitions() -> Vec<ToolDefinition> {
             function: FunctionDefinition {
                 // Written out, not `visual::tool::GUIDE_TOOL`, for `toolLabel.spec.ts`.
                 name: "visual_guide".to_string(),
-                description: "Before drawing a visual, read how one is drawn here: the kit, the colours, the libraries, what the frame refuses, and how this kind is done well. Call it once per run, before show_visual.".to_string(),
+                description: "Before drawing a visual, read how one is drawn here: the kit, the colours, the libraries, what the frame refuses, how this kind is done well, and what the pattern you chose must have, with an example to copy. Call it before show_visual, with the pattern the visual will use.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "required": ["kind"],
+                    "required": ["kind", "pattern"],
                     "properties": {
-                        "kind": { "type": "string", "enum": ["diagram", "chart", "explainer", "simulation"], "description": "What you are about to draw." }
+                        "kind": { "type": "string", "enum": ["diagram", "chart", "explainer", "simulation"], "description": "What you are about to draw." },
+                        "pattern": {
+                            "type": "string",
+                            "enum": ["step", "compare", "decompose", "zoom", "areas", "explore"],
+                            "description": "How the visual explains, chosen by what the question wants the person to see. step: an algorithm or procedure, step by step. compare: why A differs from B, or what one parameter changes — the cases side by side on one scale. decompose: what a whole is made of, where a number comes from, a conditional probability. zoom: a named phenomenon or a special point, magnified and measured. areas: who bears how much, what is lost — shaded regions with their amounts. explore: a system to play with, when the person asks to adjust it."
+                        }
                     }
                 }),
             },
@@ -1548,10 +1553,24 @@ fn visual_definitions() -> Vec<ToolDefinition> {
                 description: "Show an interactive visual under your answer: a diagram, a chart of the user's data, an explainer with sliders, or a simulation — HTML or SVG you write, run in a sandboxed frame with no network, kept in the vault. Only when seeing or moving something helps more than reading; answer in words otherwise. Read visual_guide first. The explanation goes in your answer, not in the visual.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "required": ["title", "kind", "html"],
+                    "required": ["title", "kind", "brief", "html"],
                     "properties": {
                         "title": { "type": "string", "description": "What it shows, as the user would name the note. At most 120 characters." },
                         "kind": { "type": "string", "enum": ["diagram", "chart", "explainer", "simulation"] },
+                        "brief": {
+                            "type": "object",
+                            "description": "What the visual is for, decided before drawing it.",
+                            "required": ["point", "pattern"],
+                            "properties": {
+                                "point": { "type": "string", "description": "One sentence: what the person will see in it, without touching a control. Not the topic." },
+                                "pattern": { "type": "string", "enum": ["step", "compare", "decompose", "zoom", "areas", "explore"], "description": "The pattern whose guide you read." },
+                                "proof": {
+                                    "type": "array",
+                                    "description": "The numbers that show the point, worked out with compute before drawing; the visual shows each of them.",
+                                    "items": { "type": "object", "required": ["name", "value"], "properties": { "name": { "type": "string" }, "value": { "type": "number" } } }
+                                }
+                            }
+                        },
                         "html": { "type": "string", "description": "A fragment of HTML or SVG, with its <script>s. No <html>, <head> or <body>; nothing loaded from outside but /lib/d3.v7.min.js, /lib/katex.min.js and /lib/katex.min.css." }
                     }
                 }),

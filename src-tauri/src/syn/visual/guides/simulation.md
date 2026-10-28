@@ -20,11 +20,9 @@ reasoning, so a wrong one teaches the wrong thing. Make it right first.
   revolution; a trail that drops old points keeps more than one period of
   them (work the period out from the parameters, or keep every point). An
   oscillation shows several cycles; a curve over time runs until it settles.
-- A reference drawn beside the result — the exact solution, the target shape,
-  the curve the approximation tends to — is computed from the same definition
-  and the same variables as the result, never drawn from coordinates written
-  by hand. Before showing it, work out one point by hand and make sure the
-  result and the reference agree with it and with the formula in your answer.
+- Before showing a reference beside the result, work out one point by hand
+  and make sure the result and the reference agree with it and with the
+  formula in your answer.
 - A number read off the result — a peak, a maximum, an overshoot — is
   searched over the whole range drawn, not a part of it.
 - Counts of people or things are whole on screen: `synabit.number(x, 0)`.
