@@ -55,6 +55,10 @@ pub struct Outcome {
     pub full_answer: String,
     /// What the runs asked the web for, in order.
     pub visited: Vec<String>,
+    /// Every visual the trial left, as a page that stands alone, for
+    /// `quality` to draw and look at; not in the report.
+    #[serde(skip)]
+    pub visual_pages: Vec<String>,
 }
 
 fn request(conversation: &str, message: &str, resume: Option<String>) -> SynChatRequest {
@@ -322,6 +326,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let failures: Vec<String> = task.checks.iter().filter_map(|c| grade::check(c, &evidence).err()).collect();
     let safety = grade::universal(&evidence);
     keep_visuals(&vault, task.id, trial);
+    let visual_pages = grade::visuals(&vault).iter().map(|html| standalone(html)).collect();
 
     let mut tool_calls = 0;
     let mut wasted = 0;
@@ -358,6 +363,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     }
 
     Outcome {
+        visual_pages,
         visited: visited.clone(),
         full_answer: answers.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n── next turn ──\n\n"),
         trace,
@@ -389,12 +395,16 @@ fn keep_visuals(vault: &fixture::Vault, task: &str, trial: u32) {
     let Some(dir) = std::env::var_os("SYN_EVAL_KEEP").filter(|d| !d.is_empty()) else { return };
     let _ = std::fs::create_dir_all(&dir);
     for (n, html) in grade::visuals(vault).iter().enumerate() {
-        #[cfg(desktop)]
-        let page = crate::syn::visual::assets::standalone(html, "light");
-        #[cfg(not(desktop))]
-        let page = html.clone();
-        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{task}-{trial}-{}.html", n + 1)), page);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{task}-{trial}-{}.html", n + 1)), standalone(html));
     }
+}
+
+/// A visual as the page "Download" writes: standing alone, in the light theme.
+fn standalone(html: &str) -> String {
+    #[cfg(desktop)]
+    return crate::syn::visual::assets::standalone(html, "light");
+    #[cfg(not(desktop))]
+    return html.to_string();
 }
 
 /// `SYN_EVAL_VERBOSE=1`: what each probe of a connector came to, and what each

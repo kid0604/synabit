@@ -744,3 +744,79 @@ trình duyệt để bấm thử. Không phải tác vụ: không chấm điểm
 
 Một lần hỏi mỗi câu không đo được độ ổn định: vòng 2 tốt hơn có thể một phần do may. Các lỗi còn lại đều là trình bày,
 không còn lỗi đúng/sai.
+
+## 2026-10-28 — `visual-quality`: nền trước mọi thay đổi (PR Q2, `gpt-6-luna`, 32 câu × 3)
+
+Bộ đo của kế hoạch `syn-visuals-quality-plan-2026-10-28.md` §2.5. Dự đoán ở §5 của kế hoạch, ghi trước
+khi đo và không sửa. Chạy bằng
+`SYN_EVAL_TRIALS=3 cargo test --lib syn::eval::tests::visual_quality -- --ignored --exact`, chia bốn tiến
+trình song song theo `SYN_EVAL_ONLY` (mỗi tiến trình 8 câu, khoảng 10 phút). Báo cáo gộp:
+`visual_quality_report`.
+
+**Người chấm chưa qua hiệu chỉnh**, nên tầng 1 và tầng 2 dưới đây **chưa dùng được** để kết luận. Hai lần
+hiệu chỉnh trên 18 ảnh (6 câu), mỗi lần đều chỉ khớp 1/6 (cần 5). Bảng tiêu chí sửa một lần giữa hai lần
+chạy, sửa theo nguyên tắc chứ không theo ảnh: bỏ qua khung chat và lớp phủ trong ảnh chụp, tầng 1 chấm theo
+việc điều câu hỏi muốn có thấy được mà không phải chạm vào điều khiển hay không, tầng 2 đếm lỗi. Sau đó không
+sửa nữa.
+- **Điểm `correct` của người chấm khớp với người dùng:** cho 0 ở Fourier của Gemini (ảnh sai đã biết), thuế
+  của Syn, và Dijkstra của Syn (chú thích ghi ∞ trong khi bảng ghi B = 4).
+- **Chỗ lệch là xếp hạng:** người dùng xếp ChatGPT nhất ở cả sáu câu. Người chấm cho ChatGPT ngang hoặc thấp
+  hơn Syn ở Dijkstra (4 = 4), con lắc (5 = 5) và Bayes (4 < 5). Đếm lỗi không bắt được cái làm ChatGPT hơn
+  trong mắt người dùng.
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 | Tầng 2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Dự đoán, nền** | | | 45% | 75% | 0,8 | 0,7 |
+| Phát triển | 66 | 100% | 55% | 80% (60) | 1,44 | 1,14 |
+| Giữ lại | 30 | 70% | 40% | 85% (27) | 0,97 | 0,77 |
+| Tất cả | 96 | 91% | **50%** | **82%** (87) | 1,29 ⚠ | 1,02 ⚠ |
+
+⚠ chưa hiệu chỉnh.
+
+Theo kiểu giải thích (phần phát triển):
+
+| | Lần thử | Tự kiểm qua | Đúng | Tầng 1 | Tầng 2 |
+| --- | --- | --- | --- | --- | --- |
+| step | 12 | 67% | 67% (9) | 1,17 | 1,17 |
+| compare | 18 | 33% | 93% (15) | 1,50 | 1,11 |
+| decompose | 12 | 75% | 100% (12) | 1,50 | 1,08 |
+| zoom | 9 | 44% | 56% (9) | 1,56 | 1,33 |
+| areas | 6 | 17% | 50% (6) | 1,50 | 1,17 |
+| explore | 9 | 89% | 89% (9) | 1,44 | 1,00 |
+
+Lỗi tự kiểm, phần phát triển (số lần thử có lỗi): `overlap` 15, `overflow` 10, `dead-control` 4,
+`fixed-colour` 3, `error` 2, `long-decimal` 2, `nan` 2.
+
+So với dự đoán:
+- **Tự kiểm qua 50%, dự đoán 45%.** Gần đúng. Chữ đè (`overlap`) và tràn khung (`overflow`) chiếm phần lớn
+  lỗi, đúng là việc Q4 và Q5 nhắm tới.
+- **Đúng 82%, dự đoán 75%.** Cao hơn. Sai tập trung ở vài câu: `tax` 0/3 (vẫn là phép suy ra làm trong đầu ở
+  §1), `schedule` 0/3, `gibbs` 1/3, `euler-e` 1/3.
+- **Tầng 1 và 2 cao hơn dự đoán nhiều** (1,29 và 1,02 so với 0,8 và 0,7), nhưng người chấm chưa được tin, và
+  hiệu chỉnh cho thấy nó chấm Syn rộng tay hơn người dùng. Không coi đây là một kết quả.
+- **Phần giữ lại thấp hơn phần phát triển 0,47 / 0,37 điểm, dự đoán khoảng 0,1.** Cả khoảng cách đến từ
+  **9 / 30 lần thử phần giữ lại không vẽ hình nào** (phần phát triển: 0 / 66). Lần không vẽ bị tính 0. Chỉ
+  tính 21 lần có vẽ thì phần giữ lại ngang phần phát triển: tự kiểm 57%, tầng 1 1,38, tầng 2 1,10. Tức là
+  chưa có dấu hiệu khớp theo ví dụ; cái thiếu ở phần giữ lại là quyết định có vẽ hay không, thuộc tầng 1, và
+  Q3 phải đo nó.
+- **Nhóm yếu nhất: dự đoán `step` và `zoom`.** `zoom` đúng (đúng 56%, tự kiểm 44%). `step` ở giữa. Yếu nhất
+  lại là **`areas`** (đúng 50%, tự kiểm 17%), nhưng nhóm này chỉ có hai câu phát triển (`tax`,
+  `break-even`), nên con số này mỏng.
+
+Lỗi của chính bộ đo, thấy khi soi kết quả. **Không sửa** trước khi người dùng quyết, vì quy tắc là không đổi
+cách chấm sau khi thấy kết quả:
+- **`schedule` 0/3 một phần do đáp số.** Câu hỏi chỉ đòi gốc, lãi và dư nợ từng tháng. Bộ đo còn đòi tổng
+  tiền lãi (7,8 triệu), thứ câu hỏi không hỏi. Hai hình hiện đúng tiền trả tháng đầu (11,2 triệu).
+- **Một hình được giữ có nội dung chỉ là `[]`** (`schedule`, lần 1), và tự kiểm cho qua vì không có gì để
+  kiểm. Đây là hai lỗi: `show_visual` giữ một trang rỗng, và `synabit.lint` không bắt trang trống.
+
+Những điểm làm khác kế hoạch:
+- **Hiệu chỉnh trên 18 ảnh của 6 câu**, không phải 21 ảnh của 7 câu (người dùng gửi chừng đó), nên ngưỡng
+  là 5/6. Ảnh terra của câu thuế không dùng.
+- **32 câu nằm ở module riêng `eval::quality`**, không phải tác vụ trong `eval::tasks`, vì cách chấm khác
+  hẳn: chấm trên trang chạy trong WebKit, không chấm trên vault.
+- **"Đúng" là đáp số xuất hiện** ở bất kỳ chỗ nào: trong chữ của hình lúc mới vẽ, trong các trạng thái khi
+  bấm thử, trong `report`, hoặc trong câu trả lời. Chưa có phần kiểm "câu trả lời không có số nào ngược với
+  hình".
+- **Mỗi lời gọi người chấm có hạn 3 phút, mỗi lần thử có hạn 15 phút.** Lần hiệu chỉnh đầu với bảng tiêu chí
+  mới treo 1 giờ 30 phút trên một lời gọi không bao giờ trả về. Lượt đo nền không lần thử nào chạm hạn.

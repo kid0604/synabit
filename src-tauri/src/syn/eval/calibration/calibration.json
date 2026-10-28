@@ -1,0 +1,148 @@
+{
+  "note": "Screenshots the person took of Syn, ChatGPT and Gemini answering the same question (2026-10-27/28), ranked in the conversation that wrote docs/syn-visuals-quality-plan-2026-10-28.md (§1). The judge is trusted when it agrees on agree_at_least of them and scores every file in `wrong` at most 1 on correct.",
+  "agree_at_least": 5,
+  "wrong": [
+    "gibbs-gemini.jpg"
+  ],
+  "questions": [
+    {
+      "id": "dijkstra",
+      "ask": "Minh hoạ thuật toán Dijkstra từ A trên đồ thị này, có nút bước tiếp và lùi lại, và hiện bảng khoảng cách sau mỗi bước: A–B 4, A–C 2, C–B 1, B–D 5, C–D 8, C–E 10, D–E 2, D–F 6, E–F 3, E–G 1, F–G 4.",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "dijkstra-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "dijkstra-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "dijkstra-syn.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "syn"
+      ],
+      "note": "ChatGPT colours each state and puts the arithmetic in the step; Syn's table at step 0 disagrees with its own text."
+    },
+    {
+      "id": "pendulum",
+      "ask": "Mô phỏng con lắc đơn, cho tao chỉnh chiều dài dây và góc thả, hiện chu kỳ.",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "pendulum-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "pendulum-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "pendulum-syn.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "gemini"
+      ],
+      "note": "ChatGPT shows the true period, 2,25 s at 35°; Gemini's energy bars are on different scales."
+    },
+    {
+      "id": "gibbs",
+      "ask": "Mô phỏng Chuỗi Fourier và hiện tượng Gibbs",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "gibbs-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "gibbs-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "gibbs-syn.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "gemini"
+      ],
+      "note": "ChatGPT zooms on the jump and marks the overshoot; Gemini says 0,26% and \"uniform convergence\", both wrong."
+    },
+    {
+      "id": "bayes",
+      "ask": "Một xét nghiệm có độ nhạy 99% và độ đặc hiệu 95%. Bệnh có tỷ lệ mắc 1%. Một người xét nghiệm dương tính thì xác suất họ thật sự mắc bệnh là bao nhiêu? Minh hoạ trực quan cho tao hiểu vì sao, và cho tao chỉnh tỷ lệ mắc, độ nhạy, độ đặc hiệu.",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "bayes-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "bayes-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "bayes-syn.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "syn",
+        "gemini"
+      ],
+      "note": "ChatGPT splits the 10.000 into four groups; Syn and Gemini are right and could not be told apart."
+    },
+    {
+      "id": "tax",
+      "ask": "Thị trường có cầu Qd = 100 − 2P và cung Qs = 3P − 20 (P tính bằng nghìn đồng). Nhà nước đánh thuế 2 nghìn đồng mỗi đơn vị vào người bán. Minh hoạ cho tao thấy người mua và người bán mỗi bên chịu bao nhiêu thuế, thu ngân sách bao nhiêu, mất mát xã hội bao nhiêu, và cho tao kéo mức thuế.",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "tax-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "tax-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "tax-syn-luna.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "syn"
+      ],
+      "note": "Syn on gpt-6-luna dropped a 3 in the algebra: every number is wrong."
+    },
+    {
+      "id": "drift",
+      "ask": "Mô phỏng trôi dạt di truyền theo mô hình Wright–Fisher: chạy 20 quần thể song song qua 200 thế hệ, cho tao chỉnh kích thước quần thể N và tần số alen ban đầu p₀. Cho tao thấy vì sao quần thể nhỏ mất đa dạng nhanh hơn.",
+      "shots": [
+        {
+          "who": "chatgpt",
+          "file": "drift-chatgpt.jpg"
+        },
+        {
+          "who": "gemini",
+          "file": "drift-gemini.jpg"
+        },
+        {
+          "who": "syn",
+          "file": "drift-syn.jpg"
+        }
+      ],
+      "best": "chatgpt",
+      "worst": [
+        "syn"
+      ],
+      "note": "ChatGPT runs N = 20 and N = 200 side by side; Syn labels loss of the allele as fixation."
+    }
+  ]
+}

@@ -267,6 +267,13 @@ fn measured() -> (super::ProviderGuard, SynProvider, String) {
         other => panic!("SYN_EVAL_PROVIDER must be anthropic, openai, gemini or ollama, not {other:?}"),
     };
     let model = std::env::var("SYN_EVAL_MODEL").expect("SYN_EVAL_MODEL");
+    let guard = super::use_provider(Box::new(move |settings| reaching(provider, settings)));
+    (guard, provider, model)
+}
+
+/// The measured provider, built for `settings`: its key from the environment
+/// and its address from `SYN_EVAL_BASE_URL`.
+fn reaching(provider: SynProvider, settings: &crate::models::syn::SynSettings) -> Box<dyn ChatProvider> {
     // `keychain` reads this machine's Syn key for the provider, so a run by
     // hand needs no key on the command line — and none in a shell history.
     let key = match std::env::var("SYN_EVAL_KEY").ok().as_deref() {
@@ -274,19 +281,15 @@ fn measured() -> (super::ProviderGuard, SynProvider, String) {
         other => other.map(str::to_string),
     };
     assert!(key.is_some() || provider == SynProvider::Ollama, "no key: set SYN_EVAL_KEY, or SYN_EVAL_KEY=keychain");
-    let base = std::env::var("SYN_EVAL_BASE_URL").ok();
-    let guard = super::use_provider(Box::new(move |settings| {
-        let mut s = settings.clone();
-        s.provider = provider;
-        if let Some(base) = &base {
-            match provider {
-                SynProvider::Ollama => s.ollama_url = base.clone(),
-                _ => s.openai_base_url = base.clone(),
-            }
+    let mut s = settings.clone();
+    s.provider = provider;
+    if let Ok(base) = std::env::var("SYN_EVAL_BASE_URL") {
+        match provider {
+            SynProvider::Ollama => s.ollama_url = base,
+            _ => s.openai_base_url = base,
         }
-        crate::syn::provider::for_settings(&s, key.clone())
-    }));
-    (guard, provider, model)
+    }
+    crate::syn::provider::for_settings(&s, key)
 }
 
 #[tokio::test]
@@ -602,4 +605,334 @@ fn spending_is_checked_against_the_ledger() {
 
     // Coordinates, colours, decimals and words are not amounts.
     assert_eq!(amounts("<path d=\"M100,200\"/> #150000 0.150000 id150000 1,500,000"), [1_500_000].into());
+}
+
+// ── The quality of visuals (`quality`, plan 2026-10-28 PR Q2) ──
+
+fn quality_out() -> std::path::PathBuf {
+    let out = std::path::PathBuf::from(std::env::var("SYN_EVAL_OUT").expect("SYN_EVAL_OUT: a folder for the trials and the report"));
+    std::fs::create_dir_all(&out).expect("SYN_EVAL_OUT");
+    out
+}
+
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repo").to_path_buf()
+}
+
+/// Draws every page in `dir` in WebKit (`e2e/visualTrial.mjs`): the lint, the
+/// text of every state its controls reach, a screenshot as drawn.
+fn draw_all(dir: &std::path::Path, shots: &std::path::Path) -> std::collections::HashMap<String, serde_json::Value> {
+    let json = dir.join("trial.json");
+    let status = std::process::Command::new("node")
+        .arg(repo_root().join("e2e/visualTrial.mjs"))
+        .arg("--explore")
+        .arg("--json")
+        .arg(&json)
+        .arg("--shots")
+        .arg(shots)
+        .arg(dir)
+        .current_dir(repo_root())
+        .stdout(std::process::Stdio::null())
+        .status()
+        .expect("node runs e2e/visualTrial.mjs");
+    assert!(status.code().is_some(), "the trial script did not finish");
+    let results: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(&json).unwrap_or_else(|_| "[]".into())).unwrap_or_default();
+    results
+        .into_iter()
+        .filter_map(|r| {
+            let name = std::path::Path::new(r["file"].as_str()?).file_name()?.to_str()?.to_string();
+            Some((name, r))
+        })
+        .collect()
+}
+
+/// The 32 questions put to the measured model, each `SYN_EVAL_TRIALS` times
+/// (3), and what was drawn scored. Writes `trials-<time>.json` to
+/// `SYN_EVAL_OUT` and prints the report of everything there.
+#[tokio::test]
+#[ignore = "spends real API credit, needs a network and node with Playwright's WebKit; run by hand"]
+async fn visual_quality() {
+    use super::quality::{self, Trial};
+    let (_model, provider, model) = measured();
+    let judge_with = reaching(provider, &crate::models::syn::SynSettings::default());
+    let out = quality_out();
+    let trials: u32 = std::env::var("SYN_EVAL_TRIALS").ok().and_then(|n| n.parse().ok()).unwrap_or(3);
+    let split = std::env::var("SYN_EVAL_QUALITY").unwrap_or_else(|_| "all".into());
+    let only: Vec<String> = std::env::var("SYN_EVAL_ONLY").map(|s| s.split(',').map(|x| x.trim().to_string()).collect()).unwrap_or_default();
+    let chosen: Vec<quality::Question> = quality::questions()
+        .into_iter()
+        .filter(|q| match split.as_str() {
+            "dev" => !q.held_out,
+            "held" => q.held_out,
+            _ => true,
+        })
+        .filter(|q| only.is_empty() || only.iter().any(|o| o == q.id))
+        .collect();
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S").to_string();
+    // Held-out pages go to a folder removed once they are scored, and under
+    // names that say nothing of the question.
+    let looked = out.join(format!("visuals-{stamp}"));
+    let hidden = out.join(format!(".held-{stamp}"));
+    let shots = out.join(format!("shots-{stamp}"));
+    let hidden_shots = hidden.join("shots");
+    for dir in [&looked, &hidden, &shots, &hidden_shots] {
+        std::fs::create_dir_all(dir).expect("folder");
+    }
+
+    struct Pending {
+        question: quality::Question,
+        pages: Vec<String>,
+        answer: String,
+        error: Option<String>,
+    }
+    let mut pending: Vec<Pending> = Vec::new();
+    for (k, question) in chosen.iter().enumerate() {
+        for trial in 1..=trials {
+            let mut task = super::tasks::all().into_iter().next().expect("a task");
+            task.id = question.id;
+            task.preset = Preset::Empty;
+            task.turns = vec![Turn { ask: question.ask, new_conversation: false }];
+            task.web = Vec::new();
+            task.checks = Vec::new();
+            // A reply that never ends is scored as a run that drew nothing.
+            let Ok(o) = tokio::time::timeout(std::time::Duration::from_secs(15 * 60), super::harness::run(&task, trial, provider, &model)).await else {
+                eprintln!("[quality] {} trial {trial}: timed out", if question.held_out { "(held out)" } else { question.id });
+                pending.push(Pending { question: *question, pages: Vec::new(), answer: String::new(), error: Some("timed out after 15 minutes".into()) });
+                continue;
+            };
+            let mut pages = Vec::new();
+            for (n, page) in o.visual_pages.iter().enumerate() {
+                let name = if question.held_out { format!("h{k}-{trial}-{}.html", n + 1) } else { format!("{}-{trial}-{}.html", question.id, n + 1) };
+                std::fs::write((if question.held_out { &hidden } else { &looked }).join(&name), page).expect("page");
+                pages.push(name);
+            }
+            eprintln!("[quality] {} trial {trial}: {} visual(s){}", if question.held_out { "(held out)" } else { question.id }, pages.len(), o.error.as_deref().map(|e| format!(", error: {e}")).unwrap_or_default());
+            pending.push(Pending { question: *question, pages, answer: o.full_answer.clone(), error: o.error.clone() });
+        }
+    }
+
+    let mut drawn = draw_all(&looked, &shots);
+    drawn.extend(draw_all(&hidden, &hidden_shots));
+    let mut done: Vec<Trial> = Vec::new();
+    for p in pending {
+        let results: Vec<&serde_json::Value> = p.pages.iter().filter_map(|name| drawn.get(name)).collect();
+        let problems: Vec<String> = results
+            .iter()
+            .flat_map(|r| r["problems"].as_array().cloned().unwrap_or_default())
+            .filter_map(|x| x["check"].as_str().map(str::to_string))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut numbers = quality::numbers_in(&p.answer);
+        for r in &results {
+            numbers.extend(quality::numbers_in(r["text"].as_str().unwrap_or_default()));
+            for seen in r["seen"].as_array().into_iter().flatten() {
+                numbers.extend(quality::numbers_in(seen.as_str().unwrap_or_default()));
+            }
+            for value in r["reported"].as_object().into_iter().flat_map(|o| o.values()) {
+                if let Some(v) = value.as_f64() {
+                    numbers.push(v);
+                } else if let Some(text) = value.as_str() {
+                    numbers.extend(quality::numbers_in(text));
+                }
+            }
+        }
+        let judged = match p.pages.last() {
+            Some(last) => {
+                let dir = if p.question.held_out { &hidden_shots } else { &shots };
+                let shot = dir.join(last.replace(".html", ".png"));
+                match quality::data_url(&shot) {
+                    Some(image) => quality::judge(judge_with.as_ref(), &model, p.question.ask, &image).await.map(|(j, _)| j),
+                    None => None,
+                }
+            }
+            None => None,
+        };
+        done.push(Trial {
+            id: if p.question.held_out { String::new() } else { p.question.id.to_string() },
+            pattern: p.question.pattern,
+            held_out: p.question.held_out,
+            drew: !p.pages.is_empty(),
+            lint_clean: !results.is_empty() && results.len() == p.pages.len() && problems.is_empty(),
+            problems: if p.question.held_out { Vec::new() } else { problems },
+            correct: quality::correct(&p.question, &numbers),
+            judged,
+            error: if p.question.held_out { None } else { p.error },
+        });
+    }
+    let _ = std::fs::remove_dir_all(&hidden);
+    std::fs::write(out.join(format!("trials-{stamp}.json")), serde_json::to_string_pretty(&done).expect("json")).expect("trials");
+    eprintln!("\n{}", quality::report(&all_trials(&out), trusted(&out)));
+}
+
+fn all_trials(out: &std::path::Path) -> Vec<super::quality::Trial> {
+    let mut all = Vec::new();
+    for entry in std::fs::read_dir(out).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with("trials-") && name.ends_with(".json") {
+            let found: Vec<super::quality::Trial> = serde_json::from_str(&std::fs::read_to_string(entry.path()).unwrap_or_default()).unwrap_or_default();
+            all.extend(found);
+        }
+    }
+    all
+}
+
+fn trusted(out: &std::path::Path) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(out.join("calibration.json")).ok()?).ok()?;
+    v["trusted"].as_bool()
+}
+
+/// The report of every trial in `SYN_EVAL_OUT`, without running anything.
+#[test]
+#[ignore = "reads a measurement made by hand"]
+fn visual_quality_report() {
+    let out = quality_out();
+    eprintln!("{}", super::quality::report(&all_trials(&out), trusted(&out)));
+}
+
+/// The judge, on screenshots a person compared and ranked
+/// (`calibration/calibration.json`). Its scores of the visuals count only
+/// once this passes; writes `calibration.json` to `SYN_EVAL_OUT`.
+#[tokio::test]
+#[ignore = "spends real API credit and needs a network; run by hand"]
+async fn judge_calibration() {
+    use super::quality::{self, Calibration, Judged};
+    let (_model, provider, model) = measured();
+    let judge_with = reaching(provider, &crate::models::syn::SynSettings::default());
+    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/syn/eval/calibration");
+    let calibration: Calibration = serde_json::from_str(&std::fs::read_to_string(here.join("calibration.json")).expect("calibration.json")).expect("calibration");
+    let mut scored: std::collections::HashMap<String, Judged> = std::collections::HashMap::new();
+    let mut lines = Vec::new();
+    for q in &calibration.questions {
+        for shot in &q.shots {
+            let image = quality::data_url(&here.join(&shot.file)).expect("the screenshot");
+            match quality::judge(judge_with.as_ref(), &model, &q.ask, &image).await {
+                Some((j, why)) => {
+                    lines.push(format!("{:<10} {:<8} point {} presentation {} correct {} = {} — {}", q.id, shot.who, j.point, j.presentation, j.correct, j.total(), why.first().cloned().unwrap_or_default()));
+                    scored.insert(shot.file.clone(), j);
+                }
+                None => lines.push(format!("{:<10} {:<8} no score", q.id, shot.who)),
+            }
+        }
+    }
+    let (trusted, agreeing) = quality::calibrated(&calibration, &scored);
+    let wrong: Vec<String> = calibration.wrong.iter().map(|f| format!("{f}: correct {}", scored.get(f).map(|j| j.correct.to_string()).unwrap_or("—".into()))).collect();
+    eprintln!("{}\n\nagrees on {agreeing} of {} (needs {}); known wrong: {}\ntrusted: {trusted}", lines.join("\n"), calibration.questions.len(), calibration.agree_at_least, wrong.join(", "));
+    let out = quality_out();
+    std::fs::write(
+        out.join("calibration.json"),
+        serde_json::to_string_pretty(&serde_json::json!({ "trusted": trusted, "agreeing": agreeing, "lines": lines, "wrong": wrong })).expect("json"),
+    )
+    .expect("calibration.json");
+}
+
+/// The question set is what the plan says it is: 32, ten held out, every
+/// way of explaining in both halves, at least eight fields, no two alike.
+#[test]
+fn the_quality_questions_are_the_plans() {
+    use super::quality::{questions, Pattern};
+    let all = questions();
+    assert_eq!(all.len(), 32);
+    assert_eq!(all.iter().filter(|q| q.held_out).count(), 10);
+    for p in Pattern::ALL {
+        assert!(all.iter().any(|q| !q.held_out && q.pattern == p), "{p:?} among those looked at");
+        assert!(all.iter().any(|q| q.held_out && q.pattern == p), "{p:?} among those held out");
+    }
+    let fields: std::collections::BTreeSet<&str> = all.iter().map(|q| q.field).collect();
+    assert!(fields.len() >= 8, "{fields:?}");
+    let ids: std::collections::BTreeSet<&str> = all.iter().map(|q| q.id).collect();
+    assert_eq!(ids.len(), all.len());
+    // An expected number never one the question already says: it would be
+    // found in any answer that repeats the question.
+    for q in &all {
+        let said = super::quality::numbers_in(q.ask);
+        for e in q.expected {
+            assert!(!e.any_of.iter().any(|(v, t)| said.iter().any(|n| (n - v).abs() <= *t)), "{}: {} is in the question", q.id, e.what);
+        }
+    }
+}
+
+/// Numbers read as either locale writes them, and an answer checked by them:
+/// the tax of 2026-10-28, right on terra and wrong on luna.
+#[test]
+fn a_trial_is_checked_by_the_numbers_it_shows() {
+    use super::quality::{correct, numbers_in, questions};
+    assert!(numbers_in("579.671.147 ₫").contains(&579_671_147.0));
+    assert!(numbers_in("16,67%").contains(&16.67));
+    let both = numbers_in("1,500");
+    assert!(both.contains(&1.5) && both.contains(&1500.0), "{both:?}");
+    assert!(numbers_in("1.234,5 và 1,234.5").iter().filter(|n| (**n - 1234.5).abs() < 1e-9).count() == 2);
+    let tax = questions().into_iter().find(|q| q.id == "tax").expect("tax");
+    let terra = "Giá người mua trả 25,2, người bán nhận 23,2. Thu ngân sách 2 × 49,6 = 99,2 nghìn đồng. Mất mát xã hội 2,4 nghìn đồng.";
+    assert_eq!(correct(&tax, &numbers_in(terra)), Some(true));
+    let luna = "Người mua chịu 0,4 nghìn/đv, người bán chịu 1,6 nghìn/đv. Thu ngân sách 102,4 nghìn, mất mát xã hội 0,8 nghìn.";
+    assert_eq!(correct(&tax, &numbers_in(luna)), Some(false));
+    let drift = questions().into_iter().find(|q| q.id == "drift").expect("drift");
+    assert_eq!(correct(&drift, &[]), None);
+}
+
+/// The judge's agreement with a person: their first above the rest, their
+/// last not above the middle; and a visual known wrong scored low.
+#[test]
+fn the_judge_is_trusted_only_when_it_agrees() {
+    use super::quality::{calibrated, Calibration, Judged, Ranked, Shot};
+    let shot = |who: &str| Shot { who: who.into(), file: format!("{who}.jpg") };
+    let ranked = |best: &str, worst: &[&str]| Ranked {
+        id: "x".into(),
+        ask: String::new(),
+        shots: vec![shot("chatgpt"), shot("gemini"), shot("syn")],
+        best: best.into(),
+        worst: worst.iter().map(|w| w.to_string()).collect(),
+        note: String::new(),
+    };
+    let calibration = Calibration { questions: vec![ranked("chatgpt", &["syn"])], wrong: vec!["gemini.jpg".into()], agree_at_least: 1 };
+    let j = |total: f64, correct: f64| Judged { point: total - correct, presentation: 0.0, correct };
+    let scores = |c: f64, g: f64, s: f64, g_correct: f64| {
+        [("chatgpt.jpg", j(c, 2.0)), ("gemini.jpg", j(g, g_correct)), ("syn.jpg", j(s, 1.0))].into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    };
+    assert_eq!(calibrated(&calibration, &scores(6.0, 4.0, 3.0, 1.0)), (true, 1));
+    assert!(!calibrated(&calibration, &scores(6.0, 3.0, 4.0, 1.0)).0, "the last above the middle");
+    assert!(!calibrated(&calibration, &scores(5.0, 5.0, 3.0, 1.0)).0, "the first tied");
+    assert!(!calibrated(&calibration, &scores(6.0, 4.0, 3.0, 2.0)).0, "a wrong visual scored right");
+    let tie = Calibration { questions: vec![ranked("chatgpt", &["gemini", "syn"])], wrong: vec![], agree_at_least: 1 };
+    assert!(calibrated(&tie, &scores(6.0, 3.0, 4.0, 2.0)).0, "no last named: only the first counts");
+}
+
+/// What a held-out question shows in the report: its share of the totals, and
+/// not its name or its faults.
+#[test]
+fn the_report_names_nothing_held_out() {
+    use super::quality::{report, Judged, Pattern, Trial};
+    let trial = |id: &str, held: bool, clean: bool| Trial {
+        id: id.into(),
+        pattern: Pattern::Step,
+        held_out: held,
+        drew: true,
+        lint_clean: clean,
+        problems: if clean { vec![] } else { vec!["overflow".into()] },
+        correct: Some(clean),
+        judged: Some(Judged { point: 2.0, presentation: 1.0, correct: 2.0 }),
+        error: None,
+    };
+    let text = report(&[trial("dijkstra", false, true), trial("", true, false), trial("", true, true)], Some(true));
+    assert!(text.contains("| Giữ lại | 2 | 100% | 50% | 50% (2) | 2.00 | 1.00 |"), "{text}");
+    assert!(text.contains("| dijkstra |"));
+    assert!(!text.contains("overflow: 2"), "{text}");
+}
+
+/// The ranked screenshots the judge is calibrated on are all there.
+#[test]
+fn the_calibration_screenshots_are_there() {
+    let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/syn/eval/calibration");
+    let calibration: super::quality::Calibration = serde_json::from_str(&std::fs::read_to_string(here.join("calibration.json")).expect("calibration.json")).expect("calibration");
+    assert!(calibration.agree_at_least <= calibration.questions.len());
+    for q in &calibration.questions {
+        assert!(q.shots.iter().any(|s| s.who == q.best), "{}", q.id);
+        for shot in &q.shots {
+            assert!(here.join(&shot.file).exists(), "{}", shot.file);
+        }
+    }
+    for file in &calibration.wrong {
+        assert!(here.join(file).exists(), "{file}");
+    }
 }
