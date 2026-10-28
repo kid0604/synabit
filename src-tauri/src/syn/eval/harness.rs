@@ -50,7 +50,7 @@ pub struct Outcome {
     pub trace: Vec<String>,
     /// The final answer, cut to a few hundred characters.
     pub answer: String,
-    /// The final answer whole, for `tests::ask`; not in the report.
+    /// Every turn's answer whole, in order, for `tests::ask`; not in the report.
     #[serde(skip)]
     pub full_answer: String,
     /// What the runs asked the web for, in order.
@@ -359,7 +359,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
 
     Outcome {
         visited: visited.clone(),
-        full_answer: answers.last().map(|m| m.content.clone()).unwrap_or_default(),
+        full_answer: answers.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n── next turn ──\n\n"),
         trace,
         answer,
         task: task.id,

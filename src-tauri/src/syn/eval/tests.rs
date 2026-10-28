@@ -334,12 +334,13 @@ async fn suite() {
 /// Questions that are not tasks, asked the way the suite asks its own: one
 /// conversation each, on the money vault, nothing graded. For trying what a
 /// model does with a question before it becomes a task, or for keeping what
-/// it drew (`SYN_EVAL_KEEP`).
+/// it drew (`SYN_EVAL_KEEP`). `>>` splits one conversation into turns, for a
+/// question that follows on from an answer.
 ///
 /// ```bash
 /// SYN_EVAL_PROVIDER=openai SYN_EVAL_MODEL=gpt-6-luna SYN_EVAL_KEY=keychain \
-///   SYN_EVAL_ASK='Mô phỏng con lắc đơn||Biểu đồ chi tiêu tháng 9/2026' SYN_EVAL_KEEP=/tmp/visuals \
-///   cargo test --lib syn::eval::tests::ask -- --ignored --nocapture
+///   SYN_EVAL_ASK='Mô phỏng con lắc đơn||Biểu đồ chi tiêu tháng 9/2026 >> Nhóm nào nhiều nhất?' \
+///   SYN_EVAL_KEEP=/tmp/visuals cargo test --lib syn::eval::tests::ask -- --ignored --nocapture
 /// ```
 #[tokio::test]
 #[ignore = "spends real API credit and needs a network; run by hand"]
@@ -350,7 +351,11 @@ async fn ask() {
         let mut task = super::tasks::all().into_iter().next().expect("a task");
         task.id = Box::leak(format!("ask-{}", n + 1).into_boxed_str());
         task.preset = Preset::MoneyVault;
-        task.turns = vec![Turn { ask: Box::leak(question.to_string().into_boxed_str()), new_conversation: false }];
+        task.turns = question
+            .split(">>")
+            .map(str::trim)
+            .map(|ask| Turn { ask: Box::leak(ask.to_string().into_boxed_str()), new_conversation: false })
+            .collect();
         task.web = Vec::new();
         task.checks = Vec::new();
         let o = super::harness::run(&task, 1, provider, &model).await;
