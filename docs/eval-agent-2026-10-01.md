@@ -1616,3 +1616,44 @@ Dự đoán:
 - **`tax` dùng mức làm cạnh vùng:** 1–2 / 3. `tax` vẫn đúng 3 / 3.
 - **`areas` vẫn không được chọn đúng kiểu.** Không có gì trong lần này nhắm vào việc chọn kiểu.
 - **Vẽ và đúng:** trong mức dao động của Q6.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q6: tất cả | 96 | 91% | 84% | 93% (87) | 1,33 | 1,14 | 86% (87) |
+| Dự đoán | | ≈ | ~83% | ≈ | | | |
+| **Lần này: tất cả** | 96 | **92%** | **80%** | **93%** (87) | 1,49 | 1,17 | 83% (88) |
+| Lần này: phát triển | 66 | 98% | 85% | 95% (60) | 1,61 | 1,23 | 80% (65) |
+| Lần này: giữ lại | 30 | 77% | 70% | 89% (27) | 1,23 | 1,03 | 91% (23) |
+
+⚠ người chấm chưa được tin.
+
+Lý do bị trả về. Có 112 lần gọi `show_visual`, 94 lần được giữ.
+
+| Lý do | Số lần |
+| --- | --- |
+| `overlap` | 14 |
+| `long-decimal` | 4 |
+| `error` | 3 |
+| `unreported` | 2 |
+| `expect` | 2 |
+| `proof` | 1 |
+| `frozen` | 1 |
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `overlap` 6, `long-decimal` 3.
+
+So với dự đoán:
+- **`frozen`: 1 lần, ở `pendulum`.** Dự đoán 0–3. Lần gọi lại được giữ.
+- **`tax` dùng mức làm cạnh vùng: 0 / 3.** Dự đoán 1–2 / 3, sai. Cả ba hình `tax` không tô vùng nào: chỉ có ba
+  đường và các điểm đánh dấu. Số vẫn đúng 3 / 3, nhưng thu ngân sách và mất mát xã hội không được chỉ ra trên hình.
+  Một hình tự suy công thức giá (`pb = 24 + 0.6·t`) thay vì dùng `synabit.solve`. Công thức đó đúng.
+- **Tự kiểm: 80%, dự đoán khoảng 83%.** Phần phát triển 85% (Q6: 88%).
+  - Phần lớn chỗ tụt là `overlap` ở `tax`, 3 / 3 hình được giữ: nhãn "giá mua" và "giá bán" của hai điểm đánh dấu
+    cùng hoành độ đè lên nhau. Lỗi này có từ trước, cũng là lỗi của hình `tax` trong lần so tay. Lần này nó rơi vào
+    cả ba lần thử.
+  - Phần giữ lại 70% (Q6: 77%): 23 / 30 lần có vẽ (Q6: 24), 21 hình sạch. Chỗ tụt chủ yếu là do không vẽ.
+- **Vẽ và đúng:** trong mức dao động. Phần phát triển vẽ 98%, đúng 95%.
+- **`areas` vẫn không được chọn đúng kiểu** (0 / 6), đúng dự đoán.
+- **Câu sai:** `pendulum` 1 / 3 (người chấm cho điểm đúng 2, nhưng đáp số lệch), `punnett` 1 / 3, `euler-e` 1 / 3
+  (không vẽ).
