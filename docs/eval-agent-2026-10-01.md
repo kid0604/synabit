@@ -1720,3 +1720,21 @@ So với dự đoán:
 - **Vẽ 89% (lần trước 92%).** Không vẽ ở `gibbs`, `tax`, `compound`, `punnett`, mỗi câu 1 / 3, cùng 7 / 30 ở phần giữ
   lại. Trong mức dao động đã thấy (Q4 nới lỏng → Q5: 86–91%).
 - **`euler-e` đúng 1 / 3** (lần trước 2 / 3). Câu này đã dao động từ Q4.
+
+## 2026-10-28 — chart cắt đường và vùng tô theo vùng vẽ: dự đoán, ghi trước khi đo
+
+Trong `synabit.chart`, đường và vùng tô giờ bị cắt ở mép vùng biểu đồ. Có test, đỏ khi tắt. Đã chạy lại 70 hình
+được giữ ở lần đo trước:
+- `tax` lần 1 hết lỗi "đường đi qua «Giá (nghìn đồng/đv)»".
+- Còn lại ở `tax` lần 1: hai nhãn vùng "Gánh mua" và "Gánh bán" chồng nhau. Hai vùng này mỏng, tô giữa các mức
+  giá, và đây là lần đầu model dùng mức làm cạnh vùng. Nhãn vùng chưa tự tránh nhau.
+- `pendulum` lần 1 (SVG tự vẽ, không dùng chart) cho kết quả khác nhau giữa các lần lint, vì hình đang chuyển động.
+- Không hình nào có lỗi mới.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, so với lần trước: vẽ 89%, tự kiểm 81%, đúng 92%.
+
+Dự đoán:
+- **"Đường đi qua chữ" ở hình dùng chart, khi chữ nằm ngoài vùng vẽ (tiêu đề trục, nhãn trục):** gần như hết.
+  Đường đi qua chữ nằm trong vùng vẽ không đổi.
+- **`overlap` khi bị trả về:** từ 13 xuống khoảng 8–10.
+- **Tự kiểm tổng:** khoảng 83%. Vẽ và đúng trong mức dao động.
