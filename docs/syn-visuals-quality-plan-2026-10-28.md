@@ -22,7 +22,7 @@ trên luna.
 | Phần | Trạng thái | Lệch so với kế hoạch |
 | --- | --- | --- |
 | PR Q0 — hai lỗi nhỏ | Xong (2026-10-28): số viết kèm đơn vị khớp với nguồn tính theo đơn vị đó, theo đúng độ chính xác viết ra; `compute` mở khi `visual_guide` được đọc. Mỗi bản sửa một test, đỏ khi tắt | Số nguyên dưới 100 kèm đơn vị ("5 triệu") không khớp theo đơn vị: JSON nào cũng đầy số nhỏ, sẽ cho mọi số như vậy có nguồn |
-| PR Q1 — tự kiểm trong kit, chạy bằng Playwright | Chưa làm | — |
+| PR Q1 — tự kiểm trong kit, chạy bằng Playwright | Xong (2026-10-28): `synabit.lint` / `expect` / `report` trong `kit.js`; `e2e/visualTrial.mjs` chạy hình trong WebKit như khung `synvisual` (cùng CSP, đọc từ `protocol.rs`); `npm run visual-lint`: 11 trang lỗi, mỗi check một trang, cộng 6 trang không lỗi nào thấy được. Tắt một check thì trang của nó đỏ, cả 11 | **Bảy trang là hình giữ nguyên**; bốn (`error`, `nan`, `raw-math`, `dead-control`) sửa từ hình thật vì chưa hình nào của Syn có lỗi đó, `expect` và `proof` thêm đúng lời gọi kit mà luật §2.2 đòi — mỗi trang ghi rõ ở đầu. **`overlap` chỉ bắt chữ bị đường đi xuyên qua nét chữ**, không bắt đường sượt mép: trọng số của Dijkstra không bị bắt. **`flat-plot` chỉ bắt khi mọi đường trong một hình đều phẳng**: khoản vay vẽ hai thước đo một trục (một đường cong, một đường phẳng) và bản có thang ẩn không bị bắt — cần `report`/`expect`. Tự kiểm nhìn lại sau khi dùng các điều khiển, vì NaN chỉ hiện ở thời hạn 0 năm. `kit.js` từ 5,8 KB lên khoảng 21 KB |
 | PR Q2 — bộ đo và nền | Chưa làm | — |
 | PR Q3 — bản thiết kế và kiểu giải thích | Chưa làm | — |
 | PR Q4 — vòng tự kiểm trước khi giữ | Chưa làm | — |

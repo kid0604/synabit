@@ -1,0 +1,31 @@
+<!-- SynVisuals/4151b0ea597049abb8702076b699e215.md, "Mô phỏng Chuỗi Fourier và hiện tượng Gibbs", gpt-6-luna, 2026-10-28.
+     A label written in LaTeX inside the drawing, where nothing renders it: the reader sees the dollars.
+     Changed from the original: the legend says `$S_N(x)$` where it said "Fourier". Gemini's answer to the same question left `$f_N(t)$` and `$\Delta A$` on screen; none of Syn's has yet. -->
+<div style="max-width:640px;color:var(--text)">
+<div class="row" style="gap:16px;flex-wrap:wrap;align-items:center">
+<label>Số hài N: <span id="nv"></span><br><input id="n" type="range" min="1" max="40" step="1" value="5"></label>
+<label>Hàm:<br><select id="wave"><option value="square">Sóng vuông</option><option value="saw">Răng cưa</option></select></label>
+</div>
+<div class="row" style="gap:12px;align-items:center;margin:10px 0"><button id="play">Chạy</button><button id="reset">Đặt lại</button><span class="stat">N = <span id="nstat"></span></span></div>
+<canvas id="plot" style="width:100%;height:340px;display:block;border:1px solid var(--border);border-radius:8px"></canvas>
+<div class="row" style="gap:16px;flex-wrap:wrap;margin-top:8px"><span class="muted">Đường liền: xấp xỉ $S_N(x)$</span><span class="muted">Nét đứt: hàm gốc</span></div>
+</div>
+<script>(()=>{
+const c=document.getElementById('plot'),ctx=c.getContext('2d'),slider=document.getElementById('n'),nv=document.getElementById('nv'),ns=document.getElementById('nstat'),wave=document.getElementById('wave'),play=document.getElementById('play'),dpr=()=>window.devicePixelRatio||1;
+let N=5,running=false,phase=0,raf=0;
+function fmt(x,k=0){return synabit.number(x,k)}
+function original(x){if(wave.value==='square')return Math.sin(x)>=0?1:-1;let q=((x+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;return -q/Math.PI}
+function approx(x){let s=0;if(wave.value==='square'){for(let k=1;k<=N;k+=2)s+=4/Math.PI*Math.sin(k*x)/k}else{for(let k=1;k<=N;k++)s+=2/Math.PI*((k%2?1:-1)*Math.sin(k*x)/k)}return s}
+function draw(){const r=c.getBoundingClientRect(),d=dpr();c.width=Math.round(r.width*d);c.height=Math.round(r.height*d);ctx.setTransform(d,0,0,d,0,0);const w=r.width,h=r.height,L=42,R=12,T=14,B=28,pw=w-L-R,ph=h-T-B;
+ctx.clearRect(0,0,w,h);ctx.strokeStyle=synabit.color('grid');ctx.lineWidth=1;for(let y=-1.5;y<=1.5;y+=.5){let py=T+(1.5-y)/3*ph;ctx.beginPath();ctx.moveTo(L,py);ctx.lineTo(w-R,py);ctx.stroke();ctx.fillStyle=synabit.color('muted');ctx.font='11px sans-serif';ctx.textAlign='right';ctx.fillText(fmt(y,1),L-6,py+4)}
+for(let j=0;j<=4;j++){let x=-Math.PI+j*Math.PI/2,px=L+j*pw/4;ctx.beginPath();ctx.moveTo(px,T);ctx.lineTo(px,h-B);ctx.stroke();ctx.fillStyle=synabit.color('muted');ctx.textAlign='center';ctx.fillText(['−π','−π/2','0','π/2','π'][j],px,h-8)}
+function path(fn,color,dash){ctx.beginPath();for(let i=0;i<=1000;i++){let x=-Math.PI+2*Math.PI*i/1000,y=fn(x),px=L+i*pw/1000,py=T+(1.5-y)/3*ph;if(i===0)ctx.moveTo(px,py);else ctx.lineTo(px,py)}ctx.strokeStyle=color;ctx.lineWidth=2;ctx.setLineDash(dash||[]);ctx.stroke();ctx.setLineDash([])}
+path(original,synabit.color('muted'),[5,4]);path(x=>approx(x+phase),synabit.color('c1'));
+}
+function sync(){N=+slider.value;nv.textContent=fmt(N);ns.textContent=fmt(N);draw()}
+slider.addEventListener('input',sync);wave.addEventListener('change',draw);
+function frame(){if(!running)return;phase+=.012;draw();raf=requestAnimationFrame(frame)}
+play.onclick=()=>{running=!running;play.textContent=running?'Tạm dừng':'Chạy';if(running)raf=requestAnimationFrame(frame);else cancelAnimationFrame(raf)};
+document.getElementById('reset').onclick=()=>{running=false;cancelAnimationFrame(raf);phase=0;play.textContent='Chạy';slider.value=5;wave.value='square';sync()};
+new ResizeObserver(draw).observe(c);synabit.ready.then(draw);synabit.onContext(draw);sync();
+})();</script>

@@ -1,0 +1,129 @@
+[
+  {
+    "file": "error.html",
+    "fault": "Its script looks up an element by an id the fragment does not have, and stops.",
+    "checks": [
+      "error",
+      "dead-control"
+    ]
+  },
+  {
+    "file": "nan.html",
+    "fault": "A term of zero years: the payment is P·r / (1 − 1), and the lines are drawn through NaN.",
+    "checks": [
+      "nan",
+      "overflow",
+      "overlap"
+    ]
+  },
+  {
+    "file": "long-decimal.html",
+    "fault": "Year ticks written as 4.166666666666667y: numbers put on screen without synabit.number.",
+    "checks": [
+      "long-decimal",
+      "overlap"
+    ]
+  },
+  {
+    "file": "raw-math.html",
+    "fault": "A label written in LaTeX inside the drawing, where nothing renders it.",
+    "checks": [
+      "raw-math"
+    ]
+  },
+  {
+    "file": "flat-plot.html",
+    "fault": "Balances and payments worked out in millions, drawn against axes in đồng: every line lies along zero.",
+    "checks": [
+      "flat-plot",
+      "overflow"
+    ]
+  },
+  {
+    "file": "overflow.html",
+    "fault": "The value axis written in full (46.609.571) with a margin too narrow for it: the first digits are cut off.",
+    "checks": [
+      "overflow",
+      "fixed-colour"
+    ]
+  },
+  {
+    "file": "overlap.html",
+    "fault": "The labels \"Cung\" and \"Cầu\" sit on the lines they name, which run through them.",
+    "checks": [
+      "overlap"
+    ]
+  },
+  {
+    "file": "fixed-colour.html",
+    "fault": "Bars filled with synabit.color() written into the SVG: they keep their colour when the theme changes.",
+    "checks": [
+      "fixed-colour"
+    ]
+  },
+  {
+    "file": "dead-control.html",
+    "fault": "One of three sliders is never listened to: moving it changes nothing.",
+    "checks": [
+      "fixed-colour",
+      "dead-control"
+    ]
+  },
+  {
+    "file": "expect.html",
+    "fault": "The buyer's price after tax derived as (t + 120)/5, dropping the 3 in 5P = 120 + 3t. Substituted back, demand and supply do not meet.",
+    "checks": [
+      "overflow",
+      "expect"
+    ]
+  },
+  {
+    "file": "proof.html",
+    "fault": "The answer under this visual said the interest came to 568,1 and 376,9 million; the visual works out 579,7 and 451,9.",
+    "checks": [
+      "proof"
+    ],
+    "proof": [
+      {
+        "name": "annuityInterest",
+        "value": 568100000.0,
+        "tolerance": 50000.0
+      },
+      {
+        "name": "decliningInterest",
+        "value": 376900000.0,
+        "tolerance": 50000.0
+      }
+    ]
+  },
+  {
+    "file": "clean-solar-system.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  },
+  {
+    "file": "clean-tcp-handshake.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  },
+  {
+    "file": "clean-binary-search.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  },
+  {
+    "file": "clean-collision.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  },
+  {
+    "file": "clean-genetic-drift.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  },
+  {
+    "file": "clean-loan-two-plots.html",
+    "fault": "Nothing the lint can see is wrong with it. Not a claim that it is a good visual.",
+    "checks": []
+  }
+]

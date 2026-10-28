@@ -19,6 +19,7 @@
     "audit": "vitest run src/audit/audit.spec.ts --reporter=dot",
     "e2e": "playwright test",
     "monkey": "playwright test e2e/monkey.spec.ts",
+    "visual-lint": "playwright test -c playwright.visuals.config.ts",
     "lint": "eslint 'src/**/*.{ts,vue}'",
     "type-check": "vue-tsc --noEmit"
   },

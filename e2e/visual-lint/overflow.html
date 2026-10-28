@@ -1,0 +1,35 @@
+<!-- SynVisuals/df4e8e5a7ff14078a653f28216c4c346.md, "Lãi kép theo lãi suất và thời gian", gpt-6-luna, 2026-10-27.
+     The value axis written in full (46.609.571) with a margin too narrow for it: the first digits are cut off. -->
+<div style="max-width:640px;color:var(--text)">
+<div class="row" style="gap:18px;flex-wrap:wrap;align-items:center">
+<label>Lãi suất: <span id="rateVal"></span>%/năm<br><input id="rate" type="range" min="0" max="30" step="0.5" value="8"></label>
+<label>Số năm: <span id="yearsVal"></span><br><input id="years" type="range" min="1" max="50" step="1" value="20"></label>
+<label>Vốn ban đầu: <span id="principalVal"></span><br><input id="principal" type="range" min="1000000" max="100000000" step="1000000" value="10000000"></label>
+</div>
+<div class="stat" style="margin:12px 0">Giá trị cuối kỳ: <span id="finalVal"></span></div>
+<svg id="chart" viewBox="0 0 640 300" role="img" aria-label="Biểu đồ tăng trưởng lãi kép theo năm" style="width:100%;height:auto;display:block;border:1px solid var(--border);border-radius:8px"></svg>
+<div class="muted" style="margin-top:8px">Giá trị vốn theo năm</div>
+</div>
+<script>
+(()=>{
+const rate=document.getElementById('rate'), years=document.getElementById('years'), principal=document.getElementById('principal');
+const rateVal=document.getElementById('rateVal'), yearsVal=document.getElementById('yearsVal'), principalVal=document.getElementById('principalVal'), finalVal=document.getElementById('finalVal'), svg=document.getElementById('chart');
+const fmt=x=>synabit.number(x,0);
+function render(){
+ const r=Number(rate.value)/100,n=Number(years.value),p=Number(principal.value);
+ rateVal.textContent=synabit.number(Number(rate.value),1); yearsVal.textContent=synabit.number(n,0); principalVal.textContent=fmt(p);
+ const vals=Array.from({length:n+1},(_,t)=>p*Math.pow(1+r,t)); finalVal.textContent=fmt(vals[n]);
+ const W=640,H=300,L=54,R=16,T=16,B=38,iw=W-L-R,ih=H-T-B,max=vals[n]||p;
+ const x=t=>L+iw*t/n, y=v=>T+ih*(1-v/max);
+ let s='';
+ for(let i=0;i<=4;i++){const v=max*i/4, yy=y(v);s+=`<line x1="${L}" y1="${yy}" x2="${W-R}" y2="${yy}" stroke="var(--grid)"/><text x="${L-7}" y="${yy+4}" text-anchor="end" fill="var(--muted)" font-size="11">${fmt(v)}</text>`;}
+ for(let i=0;i<=4;i++){const t=Math.round(n*i/4),xx=x(t);s+=`<text x="${xx}" y="${H-12}" text-anchor="middle" fill="var(--muted)" font-size="11">${t} năm</text>`;}
+ const pts=vals.map((v,t)=>`${x(t)},${y(v)}`).join(' ');
+ s+=`<polyline points="${pts}" fill="none" stroke="${synabit.color('c1')}" stroke-width="3" stroke-linejoin="round"/>`;
+ s+=`<circle cx="${x(n)}" cy="${y(vals[n])}" r="4" fill="${synabit.color('c1')}"/>`;
+ svg.innerHTML=s;
+}
+[rate,years,principal].forEach(el=>el.addEventListener('input',render));
+synabit.ready.then(render); synabit.onContext(render);
+})();
+</script>

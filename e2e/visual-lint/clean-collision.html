@@ -1,0 +1,25 @@
+<!-- SynVisuals/cb2ed74b773d4f1a867cd155c5fee315.md, "Mô phỏng va chạm đàn hồi 1D", gpt-6-luna, 2026-10-27.
+     Nothing the lint can see is wrong with it. Not a claim that it is a good visual. -->
+<div style="max-width:640px;color:var(--text)">
+<div class="row" style="gap:18px;flex-wrap:wrap;align-items:center">
+<label>Khối lượng 1: <span id="m1v"></span> kg<br><input id="m1" type="range" min="1" max="10" step="0.5" value="2"></label>
+<label>Khối lượng 2: <span id="m2v"></span> kg<br><input id="m2" type="range" min="1" max="10" step="0.5" value="3"></label>
+</div>
+<div class="row" style="gap:12px;align-items:center;margin:12px 0"><button id="play">Chạy</button><button id="reset">Đặt lại</button><span class="stat">Động năng: <span id="energy"></span> J</span></div>
+<canvas id="track" style="width:100%;height:180px;display:block;border:1px solid var(--border);border-radius:8px"></canvas>
+<div class="row" style="gap:18px;margin-top:8px"><span class="muted">v₁: <span id="v1"></span> m/s</span><span class="muted">v₂: <span id="v2"></span> m/s</span></div>
+</div>
+<script>
+(()=>{
+const canvas=document.getElementById('track'),ctx=canvas.getContext('2d');
+const m1el=document.getElementById('m1'),m2el=document.getElementById('m2'),m1v=document.getElementById('m1v'),m2v=document.getElementById('m2v'),eout=document.getElementById('energy'),v1out=document.getElementById('v1'),v2out=document.getElementById('v2'),play=document.getElementById('play');
+let m1=2,m2=3,x1=100,x2=420,v1=55,v2=-20,r1=24,r2=30,running=false,last=0,acc=0;
+const dt=1/240;
+function fmt(x,d=2){return synabit.number(x,d)}
+function reset(){m1=+m1el.value;m2=+m2el.value;x1=100;x2=420;v1=55;v2=-20;running=false;play.textContent='Chạy';last=0;acc=0;draw()}
+function step(h){x1+=v1*h;x2+=v2*h;const gap=x2-r2-(x1+r1);if(gap<=0&&v1>v2){const u1=v1,u2=v2;v1=((m1-m2)*u1+2*m2*u2)/(m1+m2);v2=(2*m1*u1+(m2-m1)*u2)/(m1+m2);const overlap=-gap;x1-=overlap*m2/(m1+m2);x2+=overlap*m1/(m1+m2)}}
+function draw(){const dpr=window.devicePixelRatio||1,w=canvas.clientWidth,h=canvas.clientHeight;if(!w||!h)return;canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);ctx.strokeStyle=synabit.color('grid');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(20,h-35);ctx.lineTo(w-20,h-35);ctx.stroke();const scale=(w-80)/520,base=40;function block(x,r,m,col){ctx.fillStyle=col;ctx.fillRect(base+x*scale-r, h-35-2*r,2*r,2*r);ctx.fillStyle=synabit.color('text');ctx.textAlign='center';ctx.font='13px sans-serif';ctx.fillText(fmt(m,1)+' kg',base+x*scale,h-35-2*r-7)}block(x1,r1,m1,synabit.color('c1'));block(x2,r2,m2,synabit.color('c2'));eout.textContent=fmt(.5*m1*v1*v1+.5*m2*v2*v2,1);v1out.textContent=fmt(v1,1);v2out.textContent=fmt(v2,1);m1v.textContent=fmt(m1,1);m2v.textContent=fmt(m2,1)}
+function frame(t){if(!running)return;if(!last)last=t;let elapsed=Math.min((t-last)/1000,.05);last=t;acc+=elapsed;while(acc>=dt){step(dt);acc-=dt}draw();requestAnimationFrame(frame)}
+play.addEventListener('click',()=>{running=!running;play.textContent=running?'Tạm dừng':'Chạy';last=0;if(running)requestAnimationFrame(frame)});document.getElementById('reset').addEventListener('click',reset);m1el.addEventListener('input',reset);m2el.addEventListener('input',reset);window.addEventListener('resize',draw);synabit.ready.then(draw);synabit.onContext(draw);reset();
+})();
+</script>

@@ -9,6 +9,8 @@ const PORT = 1431;
 
 export default defineConfig({
   testDir: 'e2e',
+  // Visuals have their own config, with no dev server: `npm run visual-lint`.
+  testIgnore: 'visual-lint/**',
   timeout: 10 * 60_000,
   workers: 1,
   reporter: [['list']],

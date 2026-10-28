@@ -1,0 +1,44 @@
+<!-- SynVisuals/b2f609fa8100458d8d2b0e2e95791222.md, "Minh họa binary search từng bước", gpt-6-luna, 2026-10-27.
+     Its script looks up an element by an id the fragment does not have, and stops.
+     Changed from the original: `getElementById('next')` reads `'nextStep'`. No visual kept so far threw; this is the commonest way one does. -->
+<div style="max-width:640px;color:var(--text)">
+  <div class="row" style="align-items:center;gap:12px;flex-wrap:wrap">
+    <label>Tìm số <input id="target" type="number" value="23" min="1" max="31" style="width:76px"></label>
+    <button id="next">Bước tiếp</button>
+    <button id="reset">Đặt lại</button>
+    <span id="status" class="muted" aria-live="polite"></span>
+  </div>
+  <svg id="viz" viewBox="0 0 640 150" role="img" aria-label="Binary search trên mảng số đã sắp xếp" style="width:100%;margin-top:12px"></svg>
+  <div id="explain" style="margin-top:8px"></div>
+</div>
+<script>
+(()=>{
+ const a=Array.from({length:16},(_,i)=>2*i+1), svg=document.getElementById('viz');
+ let lo=0,hi=a.length-1,done=false,found=false;
+ const target=document.getElementById('target'),status=document.getElementById('status'),explain=document.getElementById('explain');
+ function draw(){
+   const t=Number(target.value); svg.replaceChildren();
+   const step=640/a.length, y=45, h=42;
+   a.forEach((v,i)=>{
+     const x=i*step+2, active=i>=lo&&i<=hi, mid=!done&&i===Math.floor((lo+hi)/2);
+     const r=document.createElementNS('http://www.w3.org/2000/svg','rect');
+     r.setAttribute('x',x);r.setAttribute('y',y);r.setAttribute('width',step-4);r.setAttribute('height',h);r.setAttribute('rx',5);
+     r.setAttribute('fill',mid?'var(--accent)':active?'var(--surface-alt)':'var(--surface)');
+     r.setAttribute('stroke',mid?'var(--accent)':'var(--border)');svg.appendChild(r);
+     const tx=document.createElementNS('http://www.w3.org/2000/svg','text');tx.setAttribute('x',x+(step-4)/2);tx.setAttribute('y',y+26);tx.setAttribute('text-anchor','middle');tx.setAttribute('font-size','15');tx.setAttribute('fill',mid?'var(--surface)':'var(--text)');tx.textContent=v;svg.appendChild(tx);
+   });
+   if(done){status.textContent=found?'Đã tìm thấy '+t:'Không tìm thấy '+t;}
+   else if(lo<=hi){const m=Math.floor((lo+hi)/2);status.textContent='Khoảng đang xét: '+a[lo]+'–'+a[hi]+' · giữa: '+a[m];}
+   else status.textContent='Đã xét hết mảng';
+   explain.textContent=done?(found?'Kết thúc: giá trị có trong mảng.':'Kết thúc: giá trị không có trong mảng.'):'Ô màu nhấn là phần tử giữa. Mỗi bước loại bỏ nửa không thể chứa giá trị cần tìm.';
+ }
+ document.getElementById('nextStep').onclick=()=>{
+   if(done||lo>hi){done=true;draw();return;}
+   const t=Number(target.value),m=Math.floor((lo+hi)/2);
+   if(a[m]===t){done=true;found=true;} else if(a[m]<t)lo=m+1;else hi=m-1;
+   if(lo>hi)done=true;draw();
+ };
+ document.getElementById('reset').onclick=()=>{lo=0;hi=a.length-1;done=false;found=false;draw();};
+ target.oninput=()=>{lo=0;hi=a.length-1;done=false;found=false;draw();};draw();
+})();
+</script>
