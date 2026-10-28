@@ -591,6 +591,7 @@
    * scales, `y[i]` for panel `i`, and each panel's `<svg>`, to draw anything
    * else into.
    */
+  let plots = 0;
   const chart = (el, opts) => {
     const root = target(el);
     if (!root) throw new Error('synabit.chart: no element to draw into');
@@ -690,6 +691,13 @@
       const plotW = W - L - R;
       const plotH = H - T - B;
       const y = (v) => T + (1 - (v - yLo) / (yHi - yLo || 1)) * plotH;
+      // Lines and areas are cut at the edges of the plot. A demand line that
+      // rose past an axis set to 40, the tax of 2026-10-28, ran on above the
+      // plot and through the axis's title.
+      const clipId = `synabit-plot-${++plots}`;
+      const clip = svgEl('clipPath', { id: clipId }, svgEl('defs', {}, svg));
+      svgEl('rect', { x: L, y: T, width: plotW, height: plotH }, clip);
+      const inPlot = `url(#${clipId})`;
 
       // The x scale: categories in bands, or numbers.
       let x;
@@ -764,7 +772,7 @@
           upper.push(`${x(v)},${y(valueAt(top, v))}`);
           lower.unshift(`${x(v)},${y(bottom ? valueAt(bottom, v) : 0)}`);
         }
-        svgEl('polygon', { points: [...upper, ...lower].join(' '), fill: a.colourVar, 'fill-opacity': 0.22 }, svg);
+        svgEl('polygon', { points: [...upper, ...lower].join(' '), fill: a.colourVar, 'fill-opacity': 0.22, 'clip-path': inPlot }, svg);
         if (a.label != null) {
           const mid = (from + to) / 2;
           const yMid = (valueAt(top, mid) + (bottom ? valueAt(bottom, mid) : 0)) / 2;
@@ -790,6 +798,7 @@
           stroke: l.s.colourVar,
           'stroke-width': l.s.width || 2,
           'stroke-dasharray': l.s.dashed ? '5 4' : null,
+          'clip-path': inPlot,
         }, svg);
       }
       for (const m of p.marks) {

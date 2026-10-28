@@ -146,6 +146,24 @@ describe("the kit's components", () => {
     expect(Math.max(...wedge.map(([, py]) => py))).toBeCloseTo(y(30), 6);
   });
 
+  it('cuts lines and areas at the edges of the plot', () => {
+    const el = fresh();
+    kit.chart(el, {
+      x: { label: 'lượng', min: 0, max: 60 },
+      y: { label: 'giá', min: 0, max: 40 },
+      series: [{ name: 'cầu', fn: (q: number) => 50 - q / 2 }],
+      areas: [{ name: 'dưới cầu', below: 'cầu', from: 0, to: 30 }],
+    });
+    const svg = el.querySelector('svg')!;
+    const plot = svg.querySelector('clipPath rect');
+    expect(plot, 'the plot is a clip').not.toBeNull();
+    // The plot's top is under the axis title, at the highest tick.
+    const title = [...svg.querySelectorAll('text')].find((t) => t.textContent === 'giá')!;
+    expect(Number(plot!.getAttribute('y'))).toBeGreaterThan(Number(title.getAttribute('y')));
+    const id = svg.querySelector('clipPath')!.id;
+    for (const shape of svg.querySelectorAll('polyline, polygon')) expect(shape.getAttribute('clip-path')).toBe(`url(#${id})`);
+  });
+
   it('puts the labels of two marks close together where neither covers the other', () => {
     const el = fresh();
     kit.chart(el, {
@@ -201,7 +219,7 @@ describe("the kit's components", () => {
     kit.chart(el, opts);
     kit.chart(el, opts);
     expect(el.querySelectorAll('svg').length).toBe(1);
-    expect(el.querySelectorAll('rect').length).toBe(4);
+    expect(el.querySelectorAll('svg > rect').length).toBe(4);
     expect(texts(el)).toEqual(expect.arrayContaining(['Gốc', 'Lãi']));
   });
 
