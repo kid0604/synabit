@@ -1738,3 +1738,50 @@ Dự đoán:
   Đường đi qua chữ nằm trong vùng vẽ không đổi.
 - **`overlap` khi bị trả về:** từ 13 xuống khoảng 8–10.
 - **Tự kiểm tổng:** khoảng 83%. Vẽ và đúng trong mức dao động.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Lần trước: tất cả | 96 | 89% | 81% | 92% (87) | 1,40 | 1,08 | 85% (85) |
+| Dự đoán | | ≈ | ~83% | ≈ | | | |
+| **Lần này: tất cả** | 96 | **90%** | **86%** | **93%** (87) | 1,41 | 1,09 | 83% (86) |
+| Lần này: phát triển | 66 | 97% | **94%** | 95% (60) | 1,52 | 1,12 | 77% (64) |
+| Lần này: giữ lại | 30 | 73% | 70% | 89% (27) | 1,17 | 1,03 | 100% (22) |
+
+⚠ người chấm chưa được tin.
+
+Mỗi nhóm chạy 12–18 phút, lại nhanh như trước lần chậm. Có hai lần hết ngân sách, cả hai ở `euler-e`.
+
+Lý do bị trả về. Có 141 lần gọi `show_visual`, 114 lần được giữ.
+
+| Lý do | Số lần |
+| --- | --- |
+| `error` | 7 |
+| `overlap` | 5 |
+| `overflow` | 5 |
+| `expect` | 5 |
+| `long-decimal` | 4 |
+| `unreported` | 3 |
+| `proof` | 3 |
+| `empty` | 1 |
+
+Năm lần `overlap`: đường đi qua chữ "Lỗ" / "Lãi" bốn lần (`break-even`, nhãn nằm trong vùng vẽ), và hai chữ chồng nhau
+"x (m)" / "40,8" một lần. Không lần nào là đường đi qua tiêu đề trục.
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): chỉ `long-decimal` 2, ở `euler-e`.
+
+So với dự đoán:
+- **Không còn đường đi qua chữ nằm ngoài vùng vẽ.** Đúng dự đoán.
+- **`overlap` khi bị trả về: 5, dự đoán 8–10.** Tốt hơn dự đoán.
+- **Tự kiểm 86%, dự đoán khoảng 83%.** Phần phát triển **94%**, lần đầu qua mốc 90% của gate. Phần giữ lại 70%: 22 /
+  30 lần có vẽ, 21 hình sạch. Chỗ hụt ở đây gần như chỉ là không vẽ.
+- **Vẽ và đúng:** trong mức dao động. Vẽ 90%, đúng 93%.
+
+Thấy thêm khi xem từng hình:
+- **`tax` đúng 2 / 3.** Lần sai tự suy công thức (`q0 = 12`, `pb = 24 + 0.3·t`) thay vì dùng `synabit.solve`, và
+  `synabit.expect` của nó chỉ kiểm những điều luôn đúng. Không liên quan đến lần sửa này.
+- **Một hình `tax` truyền hàm làm cạnh vùng** (`below: q => (q + 20) / 3`). Kit nhận tên đường hoặc một số, không nhận
+  hàm. Vùng đó được vẽ từ 0 tới 0, tức là không thấy gì, và không có lỗi nào được báo. Đây là cùng loại lỗi với
+  biểu đồ trống của `drift`.
+- **`areas` vẫn không được chọn đúng kiểu** (0 / 6). Model chọn `explore` cho `tax`.
