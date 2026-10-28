@@ -37,6 +37,32 @@ question gets at most one visual unless asked for more.
 - Plain `button`, `select`, `input[type=range]` already look like the app's.
   Classes `.row` (a row of controls), `.stat` (a large number) and `.muted`.
 
+## The parts to build it from
+
+The kit has four parts that lay themselves out: axes with units and round
+ticks, margins wide enough for their labels, legends with colours, sliders
+with their values and ranges. Build with them, and draw by hand only what
+they do not cover — a circuit, a graph of nodes, a pendulum. Each draws into
+an element, replacing what was there; call it again to redraw.
+
+- `synabit.layout(el, 'side' | 'stack' | 'compare')` returns slots to draw
+  into: `{ controls, stats, stage }`, or for `compare`
+  `{ controls, a, aStats, b, bStats }`.
+- `synabit.controls(el, [{ id, label, min, max, step, value, unit, help,
+  presets }], (values) => draw(values))` — sliders (or `options` for a
+  select, `type: 'checkbox'`). Calls back at once and on every change.
+- `synabit.stats(el, [{ label, value, unit, digits, note }])` — the numbers to
+  read at a glance, with the formula or check they came from as `note`.
+  Never the value of a control: the control already shows it.
+- `synabit.chart(el, { title, x: { label, unit, min, max }, panels: [{ y: {
+  label, unit, min, max }, series: [{ name, fn | points }], areas: [{ name,
+  below, above, from, to, label }], marks: [{ x, y, label }] }] })` — lines
+  from a function or points, one panel per measure on a shared x axis;
+  shaded areas between lines with their amount; marked points. With
+  `x: { categories }` and `series: [{ name, values }]`, bars. One panel can
+  be written without `panels`: `{ x, y, series, areas, marks }`. Returns
+  `{ x, y, svgs }` to draw anything else on it.
+
 ## What the frame does not have
 
 No network: no fetch, no CDN, no images or fonts from the web. Everything a

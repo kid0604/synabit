@@ -13,73 +13,40 @@ Must have:
   that says how they differ.
 - Both cases computed by the same function with different inputs. A shared
   control, if any, changes every case at once.
+- Built with `synabit.layout(el, 'compare')`, a `synabit.chart` in each half
+  given the same `x` and `y` ranges, and the measure in each half's
+  `synabit.stats`.
 
 Copy how this is built, not what it shows:
 
 ```html
-<div style="max-width:640px">
-  <div class="row" style="margin-bottom:8px">
-    <label for="h">Độ cao thả</label>
-    <input id="h" type="range" min="5" max="50" step="5" value="20" style="flex:1">
-    <span id="hv" style="min-width:56px;text-align:right"></span>
-    <span class="muted" style="font-size:12px">5–50 m</span>
-  </div>
-  <div id="cases" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>
-</div>
+<div id="v"></div>
 <script>
-const cases = [
-  { name: 'Trái Đất', g: 9.81, colour: 'c1' },
-  { name: 'Mặt Trăng', g: 1.62, colour: 'c2' },
-];
-const ns = 'http://www.w3.org/2000/svg';
-const el = (tag, attrs, parent, text) => {
-  const e = document.createElementNS(ns, tag);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  if (text != null) e.textContent = text;
-  parent.appendChild(e);
-  return e;
-};
+const cases = [{ name: 'Trái Đất', g: 9.81 }, { name: 'Mặt Trăng', g: 1.62 }];
 // The model, once: height after t seconds, and when it reaches the ground.
 const height = (h, g, t) => h - 0.5 * g * t * t;
 const landing = (h, g) => Math.sqrt((2 * h) / g);
+const slots = synabit.layout('#v', 'compare');
+const halves = [[slots.a, slots.aStats], [slots.b, slots.bStats]];
 
-function draw() {
-  const h = +document.getElementById('h').value;
-  document.getElementById('hv').textContent = `${synabit.number(h, 0)} m`;
+synabit.controls(slots.controls, [
+  { id: 'h', label: 'Độ cao thả', min: 5, max: 50, step: 5, value: 20, unit: 'm', help: 'Cùng một độ cao cho cả hai nơi' },
+], ({ h }) => {
   // One scale for both: the slowest case sets the time axis.
   const tMax = Math.max(...cases.map((c) => landing(h, c.g)));
-  const W = 300, H = 210, L = 40, R = 10, T = 10, B = 34;
-  const x = (t) => L + (t / tMax) * (W - L - R);
-  const y = (v) => T + (1 - v / h) * (H - T - B);
-  const root = document.getElementById('cases');
-  root.replaceChildren();
-  for (const c of cases) {
+  cases.forEach((c, i) => {
     const t1 = landing(h, c.g);
     synabit.expect(`${c.name}: on the ground at landing`, height(h, c.g, t1), 0, 1e-9);
-    const box = document.createElement('div');
-    box.innerHTML = `<div style="font-weight:600">${c.name}</div><div class="stat">${synabit.number(t1, 2)} s</div><div class="muted" style="font-size:12px">tới mặt đất</div>`;
-    const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': `Độ cao theo thời gian trên ${c.name}` }, box);
-    svg.style.width = '100%';
-    for (const v of [0, h / 2, h]) {
-      el('line', { x1: L, x2: W - R, y1: y(v), y2: y(v), stroke: 'var(--grid)' }, svg);
-      el('text', { x: L - 6, y: y(v) + 4, 'text-anchor': 'end', fill: 'var(--muted)', 'font-size': 11 }, svg, synabit.number(v, 0));
-    }
-    for (const t of [0, tMax / 2, tMax]) {
-      el('text', { x: x(t), y: H - B + 16, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 11 }, svg, synabit.number(t, 1));
-    }
-    el('text', { x: L, y: H - 2, fill: 'var(--muted)', 'font-size': 11 }, svg, 'thời gian (s) · độ cao (m)');
-    const points = [];
-    for (let i = 0; i <= 60; i++) {
-      const t = (t1 * i) / 60;
-      points.push(`${x(t)},${y(Math.max(0, height(h, c.g, t)))}`);
-    }
-    el('polyline', { points: points.join(' '), fill: 'none', stroke: `var(--${c.colour})`, 'stroke-width': 2 }, svg);
-    el('circle', { cx: x(t1), cy: y(0), r: 4, fill: `var(--${c.colour})` }, svg);
-    root.appendChild(box);
-  }
+    const [stage, stats] = halves[i];
+    synabit.stats(stats, [{ label: `${c.name}: chạm đất sau`, value: t1, unit: 's', digits: 2, note: `√(2h/g), g = ${synabit.number(c.g, 2)} m/s²` }]);
+    synabit.chart(stage, {
+      x: { label: 'thời gian', unit: 's', min: 0, max: tMax },
+      y: { label: 'độ cao', unit: 'm', min: 0, max: h },
+      series: [{ name: c.name, fn: (t) => (t <= t1 ? height(h, c.g, t) : NaN), colour: `c${i + 1}` }],
+      marks: [{ x: t1, y: 0, label: `${synabit.number(t1, 2)} s`, colour: `c${i + 1}` }],
+    });
+  });
   synabit.report(Object.fromEntries(cases.map((c) => [`${c.name}: thời gian chạm đất (s)`, landing(h, c.g)])));
-}
-document.getElementById('h').addEventListener('input', draw);
-draw();
+});
 </script>
 ```

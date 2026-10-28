@@ -27,7 +27,8 @@ reasoning, so a wrong one teaches the wrong thing. Make it right first.
   searched over the whole range drawn, not a part of it.
 - Counts of people or things are whole on screen: `synabit.number(x, 0)`.
 - Controls for the two or three parameters that matter, through
-  `synabit.number` beside them. Changing one resets the run.
+  `synabit.controls`; the quantity asked about and the check beside it
+  through `synabit.stats`. Changing a control resets the run.
 - Keep the state in plain variables and one `step(dt)` function; draw from the
   state, never the other way round.
 - Canvas or SVG both work. On a canvas, read colours with `synabit.color()`

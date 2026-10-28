@@ -515,7 +515,7 @@ mod tests {
             assert!(all.contains(path));
         }
         let kit = super::super::assets::KIT_JS;
-        for api in ["synabit.number", "synabit.ask", "synabit.ready", "synabit.onContext", "synabit.color", "synabit.expect", "synabit.report"] {
+        for api in ["synabit.number", "synabit.ask", "synabit.ready", "synabit.onContext", "synabit.color", "synabit.expect", "synabit.report", "synabit.chart", "synabit.controls", "synabit.stats", "synabit.layout"] {
             assert!(all.contains(api), "{api} in the guide");
             assert!(kit.contains(api.trim_start_matches("synabit.")), "{api} in the kit");
         }
