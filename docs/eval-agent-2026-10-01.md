@@ -1086,3 +1086,102 @@ Ba chỗ sửa chung, chưa làm, cần người dùng quyết:
 - **Tiêu đề quá dài thì cắt bớt, không từ chối.**
 
 Dự đoán nếu sửa: tỷ lệ vẽ về lại khoảng Q3; tự kiểm thấp hơn 78%, khoảng 70%; đúng khoảng 90% hoặc hơn.
+
+## 2026-10-28 — Q4 nới lỏng (ba chỗ sửa chung): dự đoán, ghi trước khi đo
+
+Ba chỗ sửa:
+- **Lỗi chỉ làm xấu hình chỉ trả về một lần.** Bản sửa sau được giữ dù còn lỗi đó, kèm ghi chú.
+- **`unreported` chỉ ghi chú, không bao giờ là lý do từ chối.**
+- **Tiêu đề quá 120 ký tự thì cắt bớt**, không từ chối.
+
+Lỗi làm hỏng hình vẫn chặn như trước. Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`.
+
+| | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| Q3 | 94% | 60% | 93% |
+| Q4 | 83% | 78% | 85% |
+| **Dự đoán** | **~93%** | **~70%** | **~90%** |
+
+- **Vẽ** về gần Q3: phần lớn lượt mất hình ở Q4 là lỗi bố cục bị trả về hai lần.
+- **Tự kiểm** thấp hơn Q4: một số hình được giữ khi vẫn còn chữ đè sau lần sửa đầu.
+- **Đúng** quay lên, vì ít lượt không vẽ hơn.
+- **Số lần gọi `show_visual` trên mỗi lượt** giảm, từ 157 / 96 ở Q4 xuống khoảng 130 / 96.
+
+### Kết quả Q4 nới lỏng (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q3: tất cả | 96 | 94% | 60% | 93% (87) | 1,48 | 1,15 | 82% |
+| Q4: tất cả | 96 | 83% | 78% | 85% (87) | 1,35 | 0,99 | 86% |
+| Dự đoán | | ~93% | ~70% | ~90% | | | |
+| **Q4 nới lỏng: tất cả** | 96 | **86%** | **68%** | **93%** (87) | 1,41 | 1,07 | 86% (83) |
+| Q4 nới lỏng: phát triển | 66 | 92% | 71% | 95% (60) | 1,53 | 1,12 | 82% (61) |
+| Q4 nới lỏng: giữ lại | 30 | 73% | 60% | 89% (27) | 1,13 | 0,97 | 95% (22) |
+
+⚠ người chấm chưa được tin.
+
+Theo kiểu giải thích (phần phát triển):
+
+| Kiểu | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| `step` | 100% | 100% | 100% |
+| `compare` | 89% | 67% | 93% |
+| `decompose` | 100% | 100% | 100% |
+| `zoom` | 100% | 44% | 100% |
+| `areas` | 67% | 0% | 67% |
+| `explore` | 89% | 78% | 100% |
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `overlap` 9, `overflow` 7, `long-decimal` 2.
+Không còn lỗi làm hỏng hình nào.
+
+**Đúng, tính riêng các lần có vẽ:**
+
+| | Phát triển | Giữ lại |
+| --- | --- | --- |
+| Q3 | 55 / 60 (92%) | — |
+| Q4 | 46 / 52 (88%) | — |
+| **Q4 nới lỏng** | **54 / 55 (98%)** | 18 / 19 |
+
+Đây là kết quả rõ nhất: hình được giữ gần như luôn đúng.
+
+So với dự đoán:
+- **Vẽ: 86%, dự đoán khoảng 93%.**
+  - Phần phát triển về 92% (Q4: 88%, Q3: 100%).
+  - Phần giữ lại vẫn 73%, không nhích. Hình như ở phần này, quyết định không vẽ đến trước cả vòng tự kiểm,
+    như ở mọi lần đo trước.
+- **Tự kiểm: 68%, dự đoán khoảng 70%.** Đúng.
+- **Đúng: 93%, dự đoán khoảng 90%.** Ngang Q3, cao hơn Q4 8 điểm.
+- **Số lần gọi `show_visual`: 148, dự đoán khoảng 130.** 87 lần được giữ.
+- **Thời gian mỗi nhóm:** 14–20 phút (Q4: 11–18).
+
+Lý do bị trả về:
+
+| Lý do | Số lần |
+| --- | --- |
+| `overlap` | 16 |
+| `overflow` | 15 |
+| `unreported`, chỉ ghi chú, đi kèm lỗi khác | 13 |
+| **tham số không đọc được** | **10** |
+| `proof` | 7 |
+| `error` | 7 |
+| `expect` | 6 |
+| `long-decimal` | 5 |
+| hết lượt | 2 |
+
+5 lượt phần phát triển không giữ được hình. Cả 5 đều có lỗi làm hỏng hình lặp lại hoặc tham số không đọc được,
+không lượt nào vì lỗi bố cục:
+- `pendulum` 2: `expect` › `expect` › tham số không đọc được › hết lượt.
+- `tax` 2: `overlap`.
+- `tax` 3: `error` › `proof` › `error`.
+- `loan` 1: `proof` › tham số không đọc được › `error`.
+- `loan` 2: `error` + `overlap` › `proof` › tham số không đọc được › hết lượt.
+
+**Sửa một chẩn đoán sai ở Q4.**
+- **Chẩn đoán sai:** 5 lần ở Q4 được ghi là "tiêu đề quá 120 ký tự".
+- **Thật ra:** cả 5, và 10 lần ở lần đo này, là lần gọi lại ngay sau một lần bị trả về mà tham số không đọc
+  được thành JSON. Provider OpenAI giữ tham số hỏng dạng chuỗi (`arguments_to_value`), `show_visual` không
+  thấy `title`, và trả về thông báo về tiêu đề.
+- **Hệ quả:** bản sửa "cắt tiêu đề dài" đúng nhưng không chạm đúng nguyên nhân này.
+- **Chưa biết:** chuỗi bị cắt vì quá dài, hay HTML không được escape. Eval không giữ tham số thô.
+- **Hướng sửa, chưa làm:** nói đúng lỗi ("tham số không phải JSON, có thể bị cắt"), và ghi tham số thô của lần
+  đó để biết nguyên nhân.
