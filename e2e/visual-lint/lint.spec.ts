@@ -42,7 +42,7 @@ for (const c of cases) {
 }
 
 test('every check has a page that has its fault', () => {
-  const checks = ['empty', 'hang', 'error', 'nan', 'long-decimal', 'raw-math', 'flat-plot', 'overflow', 'overlap', 'dead-control', 'fixed-colour', 'expect', 'proof'];
+  const checks = ['empty', 'hang', 'error', 'nan', 'long-decimal', 'raw-math', 'flat-plot', 'overflow', 'overlap', 'dead-control', 'fixed-colour', 'expect', 'proof', 'unreported'];
   for (const check of checks) expect(cases.some((c) => c.file === `${check}.html` && c.checks.includes(check)), check).toBe(true);
 });
 

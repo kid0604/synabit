@@ -103,9 +103,16 @@ have and gives an example. Build yours the way the example is built.
 
 `show_visual` with a short `title` (what the visual shows, as a person would
 name the note), the `kind`, the `brief` (`point`, `pattern`, and `proof` when
-numbers show the point), and the `html`. If it comes back with problems,
-fix exactly those and call it again — at most twice. Then say in your answer
-what the visual shows and how to use it, in a sentence or two; do not repeat
-its numbers. A number your answer must name — one the person asked for — is
-worked out with `compute` from the same formula, never read off your script
-or worked in your head.
+numbers show the point), and the `html`.
+
+Before it is kept, the visual is drawn where the person cannot see it and
+looked at: a script that threw, NaN, text over text, a control that does
+nothing, a `synabit.expect` that failed, a number of `brief.proof` it does not
+report. If it comes back with problems, fix exactly those and call it again —
+at most twice.
+
+Then say in your answer what the visual shows and how to use it, in a
+sentence or two; do not repeat its numbers. A number your answer must name —
+one the person asked for — is one the kept visual reports (the result lists
+them), quoted as it is, or one worked out with `compute` from the same
+formula; never one read off your script or worked in your head.

@@ -400,9 +400,15 @@
 
   // A number the answer rests on (the brief's proof) that the visual does
   // not report, or reports as something else.
+  // A number the brief names that the visual reports under no such name is
+  // a slip of bookkeeping, told apart from one it reports as something else.
+  const unreported = (proof) =>
+    (Array.isArray(proof) ? proof : [])
+      .filter((p) => !(p.name in reported))
+      .map((p) => `${p.name}: the visual does not report it (synabit.report, under this name)`);
   const unproved = (proof) =>
     (Array.isArray(proof) ? proof : []).flatMap((p) => {
-      if (!(p.name in reported)) return [`${p.name}: the visual does not report it (synabit.report)`];
+      if (!(p.name in reported)) return [];
       const shown = Number(reported[p.name]);
       const tolerance = p.tolerance != null ? p.tolerance : Math.max(Math.abs(p.value) * 0.005, 1e-9);
       return Math.abs(shown - Number(p.value)) <= tolerance ? [] : [`${p.name}: the visual reports ${shown}, worked out as ${p.value}`];
@@ -425,6 +431,7 @@
     };
     look();
     add('proof', unproved(opts.proof));
+    add('unreported', unreported(opts.proof));
     if (opts.controls) {
       add('dead-control', await deadControls());
       // Where the controls left it — a slider at its end, a step past the

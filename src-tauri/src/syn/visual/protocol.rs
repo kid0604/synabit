@@ -14,6 +14,8 @@
 //!   See `assets`.
 //! - `/lib/…` — the libraries shipped with the app, desktop builds only.
 //! - `/v/<id>` — a visual Syn drew, once they are kept (PR 3 of the plan).
+//! - `/draft/<token>` — a visual about to be kept, drawn in a hidden frame so
+//!   its lint can be read first (`look`).
 //! - `/spike/…` — Bước 0's pages, debug builds only.
 
 use std::borrow::Cow;
@@ -130,6 +132,12 @@ pub fn answer(method: &Method, path: &str, query: Option<&str>, load: &dyn Fn(&s
     if method != Method::GET {
         return Reply::refused(StatusCode::METHOD_NOT_ALLOWED);
     }
+    if let Some(token) = path.strip_prefix("/draft/") {
+        return match super::look::is_token(token).then(|| super::look::draft_page(token)).flatten() {
+            Some(page) => Reply::page(assemble(&page, Theme::from_query(query))),
+            None => Reply::refused(StatusCode::NOT_FOUND),
+        };
+    }
     if let Some(id) = path.strip_prefix("/v/") {
         return match super::store::is_id(id).then(|| load(id)).flatten() {
             Some(fragment) => Reply::page(assemble(&fragment, Theme::from_query(query))),
@@ -189,7 +197,7 @@ mod tests {
 
     #[test]
     fn an_unknown_path_is_a_404_and_still_carries_the_policy() {
-        for path in ["/", "/v/../../etc/passwd", "/lib/anything.js", "/lib/../kit.js", "/lib/fonts/../../Cargo.toml", "/spike/other"] {
+        for path in ["/", "/v/../../etc/passwd", "/lib/anything.js", "/lib/../kit.js", "/lib/fonts/../../Cargo.toml", "/spike/other", "/draft/../v/x", "/draft/0123456789abcdef0123456789abcdef"] {
             let response = get(path);
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
             assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], CSP, "{path}");

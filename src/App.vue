@@ -133,6 +133,7 @@ const SshApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/SshAp
 const CliApproveCard = defineAsyncComponent(() => import('./mini-apps/safe/CliApproveCard.vue'));
 const RecoveryModal = defineAsyncComponent(() => import('./shared/components/RecoveryModal.vue'));
 const VaultBackupNotice = defineAsyncComponent(() => import('./shared/components/VaultBackupNotice.vue'));
+const SynVisualLooker = defineAsyncComponent(() => import('./shared/components/SynVisualLooker.vue'));
 
 // Composables
 import { useSettings } from './composables/useSettings';
@@ -1701,6 +1702,8 @@ onUnmounted(() => {
 
         <template #banner>
           <VaultBackupNotice v-if="vaultPath" :vaultPath="vaultPath" />
+          <!-- Syn's visuals are drawn here first, unseen, and looked at before they are kept. Desktop only, as visuals are. -->
+          <SynVisualLooker v-if="vaultPath && !isMobileOS" />
         </template>
         
         <!--

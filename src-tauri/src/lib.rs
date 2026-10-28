@@ -619,6 +619,9 @@ pub fn run() {
         .manage(capture::QuickQuestion::default())
         // The page's heartbeat, watched from here. See `invariants`.
         .manage(invariants::Heartbeat::default())
+        // A visual is drawn in a hidden frame of the page and looked at before
+        // it is kept. See `syn::visual::look`.
+        .manage(syn::visual::look::Looker::Frame)
         .on_window_event(|window, event| {
             // The browsing pane's top edge is a fixed number of pixels, not a
             // fraction of the window, because the app draws its address bar in
@@ -1283,6 +1286,7 @@ pub fn run() {
             open_app_log_folder,
             // Syn's visuals. See `syn::visual`.
             syn::visual::store::syn_visual_meta,
+            syn::visual::look::syn_visual_looked,
             #[cfg(desktop)]
             syn::visual::store::syn_visual_export,
             // Bước 0 of Syn's visuals: debug builds only.

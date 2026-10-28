@@ -144,5 +144,18 @@
     "file": "clean-loan-schedule.html",
     "fault": "Nothing the lint can see is wrong with it. Its step buttons each do nothing at one end of the slider, which is not dead.",
     "checks": []
+  },
+  {
+    "file": "unreported.html",
+    "fault": "Its brief names a number the visual reports under no such name.",
+    "checks": [
+      "unreported"
+    ],
+    "proof": [
+      {
+        "name": "tổng tiền lãi",
+        "value": 7800000
+      }
+    ]
   }
 ]

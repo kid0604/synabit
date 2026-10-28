@@ -34,6 +34,7 @@
 
 pub mod assets;
 pub mod check;
+pub mod look;
 pub mod protocol;
 pub mod store;
 pub mod tool;

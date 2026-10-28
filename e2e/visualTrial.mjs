@@ -5,7 +5,7 @@
 // never sees what it drew; this is where a visual is drawn and looked at
 // outside the app (`docs/syn-visuals-quality-plan-2026-10-28.md` §2.3, PR Q1).
 //
-//   node e2e/visualTrial.mjs [--theme dark] [--shots <dir>] [--json <file>] [--explore] <file or dir>...
+//   node e2e/visualTrial.mjs [--theme dark] [--shots <dir>] [--json <file>] [--proof <json>] [--explore] <file or dir>...
 //
 // A file is a visual's fragment, as its node keeps it, or a whole page, as
 // `SYN_EVAL_KEEP` writes it. Fragments are served as `protocol::assemble`
@@ -16,8 +16,8 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const VISUAL = resolve(HERE, '../src-tauri/src/syn/visual');
-const ORIGIN = 'http://synvisual.localhost';
+export const VISUAL = resolve(HERE, '../src-tauri/src/syn/visual');
+export const ORIGIN = 'http://synvisual.localhost';
 
 // The policy, read from where the app keeps it rather than copied: a frame
 // that runs here and not there would prove nothing.
@@ -33,7 +33,7 @@ const policy = () => {
     .join('; ');
 };
 
-const assemble = (fragment, theme) =>
+export const assemble = (fragment, theme) =>
   `<!doctype html>\n<html lang="vi" data-theme="${theme}">\n<head>\n<meta charset="utf-8">\n` +
   `<meta http-equiv="Content-Security-Policy" content="${policy()}">\n` +
   `<meta name="viewport" content="width=device-width, initial-scale=1">\n` +
@@ -178,8 +178,15 @@ if (isMain) {
   const theme = option('--theme') || 'light';
   const shots = option('--shots');
   const json = option('--json');
+  // The numbers a brief says the visual shows: `[{ name, value }]`.
+  const proof = option('--proof');
   const explore = args.includes('--explore');
-  const results = await trial(pagesIn(args.filter((a) => a !== '--explore')), { theme, shots, explore });
+  const results = await trial(pagesIn(args.filter((a) => a !== '--explore')), {
+    theme,
+    shots,
+    explore,
+    options: () => (proof ? { proof: JSON.parse(proof) } : {}),
+  });
   for (const r of results) {
     console.log(`\n${basename(r.file)}: ${r.problems.length ? `${r.problems.length} problem(s)` : 'clean'}`);
     for (const p of r.problems) console.log(`  ${p.check.padEnd(13)} ${p.detail}`);

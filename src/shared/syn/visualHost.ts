@@ -32,6 +32,27 @@ export function visualSrc(origin: string, id: string, theme: VisualTheme): strin
   return `${origin}/v/${encodeURIComponent(id)}?theme=${theme}`;
 }
 
+/** The frame's address for a draft about to be kept, drawn to be looked at (`syn::visual::look`). */
+export function draftSrc(origin: string, token: string): string {
+  return `${origin}/draft/${encodeURIComponent(token)}?theme=light`;
+}
+
+/**
+ * Where a draft is drawn: in the window, so WebKit gives it animation frames
+ * as it would a frame the person sees (one moved off screen is throttled, and
+ * the lint waits on two of them), but transparent, under everything, and out
+ * of reach of the pointer and the keyboard. As wide as a visual under an answer.
+ */
+export const LOOK_FRAME_STYLE =
+  'position:fixed;left:0;top:0;width:720px;height:900px;border:0;opacity:0;pointer-events:none;z-index:-1;';
+
+/** What a draft's frame said its lint found, or `null` if that was not it. */
+export function lintFrom(data: unknown): Record<string, unknown> | null {
+  const message = data as Message | null;
+  if (!message || typeof message !== 'object' || message.jsonrpc !== '2.0' || message.method !== 'synabit/lint') return null;
+  return message.params && typeof message.params === 'object' ? message.params : {};
+}
+
 /** The locale a visual writes numbers in, from the app's language. */
 export function visualLocale(appLocale: string): string {
   return appLocale.toLowerCase().startsWith('en') ? 'en-US' : 'vi-VN';

@@ -1238,7 +1238,7 @@ impl SynEngine {
                             tried,
                             &asked,
                             &tc.function.arguments,
-                        );
+                        ).await;
                         shown = kept;
                         Ok(crate::syn::registry::ToolOutcome { content, reversal: crate::syn::registry::Reversal::Nothing })
                     }

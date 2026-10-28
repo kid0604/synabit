@@ -26,7 +26,7 @@
 
 use serde_json::{json, Value};
 
-use super::{check, store};
+use super::{check, look, store};
 use crate::models::syn::SynSettings;
 use crate::syn::provider::capability::Capability;
 use crate::syn::surface::Surface;
@@ -59,6 +59,13 @@ const PATTERN_GUIDES: [&str; 6] = [
     include_str!("guides/patterns/areas.md"),
     include_str!("guides/patterns/explore.md"),
 ];
+
+/// What the lint finds that breaks a visual rather than mars it: a script that
+/// stopped, nothing drawn, NaN on screen, a claim of its own that does not
+/// hold, a number of its brief it does not show. Never kept. The rest — text
+/// over text, a label cut off, a control that does nothing — is sent back to
+/// be fixed while tries are left, and kept with a note on the last.
+const BREAKS: &[&str] = &["error", "empty", "nan", "expect", "proof", "hang", "lint"];
 
 /// How long a brief's point may be.
 const MAX_POINT: usize = 240;
@@ -193,7 +200,7 @@ pub fn read_guide(offered_here: bool, args: &Value) -> String {
 
 /// `show_visual`: look at the fragment, keep it, say what happened. What
 /// comes back is the tool's answer and, when a visual was kept, what it was.
-pub fn show<R: tauri::Runtime>(
+pub async fn show<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     db: &crate::db::DbState,
     vault: &str,
@@ -241,18 +248,46 @@ pub fn show<R: tauri::Runtime>(
         });
         return (content.to_string(), None);
     }
+    let tries_left = MAX_TRIES.saturating_sub(tried.refused_since_shown + 1);
+    let looked = look::look(app, html, &brief.proof).await;
+    let mut remaining: Vec<look::Problem> = Vec::new();
+    if let look::Looked::Seen(lint) = &looked {
+        if !lint.problems.is_empty() {
+            // What breaks the visual is never kept; what only mars it is, on
+            // the last try, rather than leave the answer with none.
+            let breaks = lint.problems.iter().any(|p| BREAKS.contains(&p.check.as_str()));
+            if breaks || tries_left > 0 {
+                let content = json!({
+                    "error": "Drawn where the person cannot see it and looked at: not shown. Fix these and call show_visual again.",
+                    "problems": lint.problems,
+                    "claims_that_failed": lint.expects.iter().filter(|c| !c.ok).collect::<Vec<_>>(),
+                    "tries_left": tries_left,
+                });
+                return (content.to_string(), None);
+            }
+            remaining = lint.problems.clone();
+        }
+    }
     let draft = store::Draft { title, kind, brief: Some(&brief), html, question: asked.question, conversation: asked.conversation, model: Some(asked.model) };
     match store::save(app, db, vault, &draft) {
-        Ok(id) => (
-            json!({
+        Ok(id) => {
+            let mut content = json!({
                 "shown": true,
                 "visual_id": id,
                 "warnings": checked.warnings,
-                "note": "Shown to the user under your answer, and kept. Say in a sentence or two what it shows and how to use it; do not repeat its numbers. A number your answer must name — one the person asked for — work out with `compute` from the same formula, never from your script or in your head.",
-            })
-            .to_string(),
-            Some(Shown { id, title: title.to_string(), kind: kind.to_string() }),
-        ),
+                "note": "Shown to the user under your answer, and kept. Say in a sentence or two what it shows and how to use it; do not repeat its numbers. A number your answer must name — one the person asked for — is one the visual reports below, quoted as it is, or one worked out with `compute` from the same formula; never one from your script or worked in your head.",
+            });
+            match &looked {
+                look::Looked::Seen(lint) => {
+                    content["reported"] = Value::Object(lint.reported.clone());
+                    if !remaining.is_empty() {
+                        content["kept_with"] = json!(remaining);
+                    }
+                }
+                look::Looked::Not(why) => content["not_looked_at"] = json!(why),
+            }
+            (content.to_string(), Some(Shown { id, title: title.to_string(), kind: kind.to_string() }))
+        }
         Err(e) => refused(format!("The visual could not be kept: {e}")),
     }
 }
@@ -362,8 +397,8 @@ mod tests {
     /// The brief is the visual's design, said before drawing (plan
     /// 2026-10-28, §2.1): a point that is not the topic, and a pattern whose
     /// guide was read.
-    #[test]
-    fn a_visual_is_kept_only_with_a_brief_and_its_pattern_read() {
+    #[tokio::test]
+    async fn a_visual_is_kept_only_with_a_brief_and_its_pattern_read() {
         use tauri::Manager;
         let (_dir, vault, app) = app();
         let db = app.state::<crate::db::DbState>();
@@ -379,14 +414,14 @@ mod tests {
             (with(json!({ "point": point, "pattern": "poster" })), "`brief.pattern`"),
             (with(json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot" }] })), "`brief.proof`"),
         ] {
-            let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &args);
+            let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &args).await;
             assert!(shown.is_none() && said.contains(why), "{why}: {said}");
         }
         let brief = json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot", "value": 1.0895 }] });
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &with(brief.clone()));
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &with(brief.clone())).await;
         assert!(shown.is_none() && said.contains("with pattern") && said.contains("zoom"), "its guide first: {said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &with(brief));
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &with(brief)).await;
         let shown = shown.unwrap_or_else(|| panic!("kept: {said}"));
         let back = store::load(std::path::Path::new(&vault), &shown.id).expect("read back");
         assert_eq!(back.pattern.as_deref(), Some("zoom"));
@@ -441,10 +476,63 @@ mod tests {
         (dir, vault, app)
     }
 
+    /// The app, managed to look at a draft as the page would and to find `lint`.
+    fn looking(app: &tauri::App<tauri::test::MockRuntime>, lint: look::Lint) {
+        use tauri::{Listener, Manager};
+        app.manage(look::Looker::Frame);
+        app.listen_any(look::EVENT, move |event| {
+            let token: Value = serde_json::from_str(event.payload()).expect("payload");
+            look::syn_visual_looked(token["token"].as_str().expect("token").to_string(), lint.clone());
+        });
+    }
+
+    fn problem(check: &str) -> look::Problem {
+        look::Problem { check: check.into(), detail: format!("{check} found") }
+    }
+
+    /// PR Q4: what the lint finds goes back to the model while it has tries
+    /// left; what breaks a visual is never kept; what only mars it is kept on
+    /// the last try, with what remains said. What it reports is in the answer.
+    #[tokio::test]
+    async fn a_visual_is_looked_at_before_it_is_kept() {
+        use tauri::Manager;
+        let brief = json!({ "point": "The period depends on the length, not the mass", "pattern": "explore" });
+        let args = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><svg></svg>" });
+        let read = Tried::from_steps(&guide_for("explore"));
+        let last = Tried { refused_since_shown: MAX_TRIES - 1, ..read };
+        let kept = |vault: &str| std::fs::read_dir(std::path::Path::new(vault).join(store::FOLDER)).map(|d| d.count()).unwrap_or(0);
+
+        for (lint, tried, keeps, says) in [
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, read, false, "overlap found"),
+            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, last, false, "nan found"),
+            (look::Lint { problems: vec![problem("expect")], ..Default::default() }, last, false, "expect found"),
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, last, true, "kept_with"),
+        ] {
+            let (_dir, vault, app) = app();
+            looking(&app, lint);
+            let db = app.state::<crate::db::DbState>();
+            let (said, shown) = show(app.handle(), db.inner(), &vault, true, tried, &ASKED, &args).await;
+            assert_eq!(shown.is_some(), keeps, "{said}");
+            assert_eq!(kept(&vault), usize::from(keeps), "{said}");
+            assert!(said.contains(says), "{says}: {said}");
+        }
+
+        let (_dir, vault, app) = app();
+        let mut reported = serde_json::Map::new();
+        reported.insert("chu kỳ (s)".into(), json!(2.006));
+        looking(&app, look::Lint { reported, ..Default::default() });
+        let db = app.state::<crate::db::DbState>();
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &args).await;
+        assert!(shown.is_some(), "{said}");
+        let said: Value = serde_json::from_str(&said).expect("json");
+        assert_eq!(said["reported"]["chu kỳ (s)"], json!(2.006), "{said}");
+        assert!(said.get("not_looked_at").is_none());
+    }
+
     const ASKED: Asked<'static> = Asked { question: "con lắc", conversation: Some("c1"), model: "gpt-6-luna" };
 
-    #[test]
-    fn a_visual_is_kept_only_after_the_guide_and_the_check() {
+    #[tokio::test]
+    async fn a_visual_is_kept_only_after_the_guide_and_the_check() {
         use tauri::Manager;
         let (_dir, vault, app) = app();
         let db = app.state::<crate::db::DbState>();
@@ -452,21 +540,21 @@ mod tests {
         let good = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><script src=\"/lib/d3.v7.min.js\"></script>" });
         let read = Tried::from_steps(&guide_for("explore"));
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::default(), &ASKED, &good);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::default(), &ASKED, &good).await;
         assert!(shown.is_none() && said.contains(GUIDE_TOOL), "the guide first: {said}");
 
         let cdn = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>" });
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &cdn);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &cdn).await;
         assert!(shown.is_none() && said.contains("points outside"), "{said}");
         assert!(!std::path::Path::new(&vault).join(store::FOLDER).exists() || std::fs::read_dir(std::path::Path::new(&vault).join(store::FOLDER)).unwrap().next().is_none(), "nothing kept");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { refused_since_shown: MAX_TRIES, ..read }, &ASKED, &good);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { refused_since_shown: MAX_TRIES, ..read }, &ASKED, &good).await;
         assert!(shown.is_none() && said.contains("tries"), "{said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, false, read, &ASKED, &good);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, false, read, &ASKED, &good).await;
         assert!(shown.is_none() && said.contains("not available"), "{said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &good);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &good).await;
         let shown = shown.expect("kept");
         assert!(said.contains(&shown.id));
         let back = store::load(std::path::Path::new(&vault), &shown.id).expect("read back");
