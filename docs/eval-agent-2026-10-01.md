@@ -820,3 +820,45 @@ Những điểm làm khác kế hoạch:
   hình".
 - **Mỗi lời gọi người chấm có hạn 3 phút, mỗi lần thử có hạn 15 phút.** Lần hiệu chỉnh đầu với bảng tiêu chí
   mới treo 1 giờ 30 phút trên một lời gọi không bao giờ trả về. Lượt đo nền không lần thử nào chạm hạn.
+
+### Đo nền lần hai, sau ba bản sửa bộ đo (2026-10-28, `gpt-6-luna`, 32 câu × 3)
+
+Đã sửa trước lần đo này, theo yêu cầu của người dùng:
+- **Bỏ "tổng tiền lãi" khỏi đáp số của `schedule`.**
+- **`synabit.lint` có thêm kiểm tra `empty`:** trang không có phần tử nào có kích thước thì bị bắt. Trang mẫu
+  là hình `[]` của lần đo một.
+- **`show_visual` từ chối hình không có phần tử HTML hay SVG nào** (`check.rs`).
+
+Hai bản sửa sau mỗi cái một test, đỏ khi tắt.
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ |
+| --- | --- | --- | --- | --- | --- | --- |
+| Dự đoán, nền | | | 45% | 75% | 0,8 | 0,7 |
+| Lần một: tất cả | 96 | 91% | 50% | 82% (87) | 1,29 | 1,02 |
+| **Lần hai: tất cả** | 96 | 93% | **52%** | **79%** (87) | 1,32 | 1,05 |
+| Lần hai: phát triển | 66 | 100% | 53% | 77% (60) | 1,44 | 1,14 |
+| Lần hai: giữ lại | 30 | 77% | 50% | 85% (27) | 1,07 | 0,87 |
+
+Theo kiểu giải thích (phần phát triển, lần hai): `step` tự kiểm 50%, đúng 78%; `compare` 56%, 100%;
+`decompose` 58%, 92%; `zoom` 56%, 44%; `areas` 0%, 50%; `explore` 78%, 67%.
+
+Lỗi tự kiểm, phần phát triển: `overlap` 14, `overflow` 9, `dead-control` 7, `error` 7, `fixed-colour` 3,
+`long-decimal` 1. Không trang nào trống.
+
+Đọc kết quả:
+- **Tổng gần như không đổi giữa hai lần** (tự kiểm +2 điểm, đúng −3 điểm), nhưng **từng câu dao động mạnh**:
+  tự kiểm của `dijkstra` từ 33% xuống 0%, đúng của `gibbs` từ 33% xuống 0%, của `pendulum` từ 67% xuống 33%.
+  Với ba lần mỗi câu, một thay đổi ở tổng nhỏ hơn khoảng 5 điểm là chưa phân biệt được với dao động. Q3 cần
+  đẩy hơn mức đó mới thấy được.
+- **Phần giữ lại lần này 7 / 30 lần không vẽ** (lần một 9). Vẫn là toàn bộ khoảng cách với phần phát triển.
+
+Thêm hai lỗi của bộ đo, thấy khi soi `schedule`. **Chưa sửa**, vì đó là đổi cách chấm:
+- **`dead-control` báo nhầm.** Hình có nút "Tháng trước", thanh trượt tháng và nút "Tháng sau". Lượt thử đầu
+  kéo thanh trượt ra cuối, nên "Tháng sau" bấm ở tháng 12 mà không làm gì. Lượt thử lại dùng thanh trượt để
+  đổi trạng thái, nhưng lại kéo nó ra một đầu (tháng 1 rồi tháng 12), nên mỗi nút luôn được thử đúng ở biên
+  của nó. Cả ba hình `schedule` bị bắt oan, 6 trong 7 lỗi `dead-control`. Cách sửa: khi thử lại, đặt thanh
+  trượt vào giữa.
+- **`schedule` vẫn đòi một số câu hỏi không gọi tên.** Đúng từ 0/3 lên 1/3. Hai hình còn lại hiện đúng gốc
+  10 triệu, lãi 1,2 triệu, dư nợ 110 triệu, nhưng không cộng ra "tiền trả tháng đầu" 11,2 triệu, là thứ
+  đáp số đang đòi. Đáp số đúng với câu hỏi là lãi tháng đầu (1,2 triệu) và dư nợ sau tháng đầu
+  (110 triệu).
