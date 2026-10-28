@@ -469,6 +469,9 @@
   const svgEl = (tag, attrs, parent, text) => {
     const e = document.createElementNS(SVG, tag);
     for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+    // kit.css sets every `svg text` to the text colour, and a stylesheet wins
+    // over an attribute: a text's own colour goes in its style.
+    if (tag === 'text' && attrs && attrs.fill) e.style.fill = attrs.fill;
     if (text != null) e.textContent = text;
     if (parent) parent.appendChild(e);
     return e;
@@ -1143,6 +1146,209 @@
     return { reset, state: () => Object.assign({}, s), time: () => t };
   };
 
+  // ── Steps and graphs ──
+  //
+  // The Dijkstra of 2026-10-27 showed "∞" in its caption while its table at
+  // step 0 already held B = 4, drew arrows on an undirected graph, and gave
+  // its nodes no colour for their state; another looped for ever stepping
+  // (plan 2026-10-28, §1). A stepper that only shows steps worked out before,
+  // and a graph drawn from its state, leave none of that to write.
+
+  const words = () =>
+    String(context.locale).toLowerCase().startsWith('vi')
+      ? { back: 'Lùi', next: 'Tiếp', play: 'Tự chạy', pause: 'Dừng', step: 'Bước' }
+      : { back: 'Back', next: 'Next', play: 'Play', pause: 'Pause', step: 'Step' };
+
+  /**
+   * Steps worked out before anything is drawn, shown one at a time. Step 0 is
+   * the state before the first step; each step's `line` says what it did,
+   * with its arithmetic. `render(step, index, el)` draws one into `el`.
+   *
+   *   const steps = [{ line: 'Bắt đầu: d(A) = 0, mọi đỉnh khác ∞', … }, …];   // worked out first
+   *   synabit.stepper(el, { steps, render: (s, i, stage) => synabit.graph(stage, { … }) });
+   *
+   * Back is disabled at step 0, next at the last; play steps on by itself
+   * every `every` ms (default 900). Returns `{ go(i), at() }`.
+   */
+  const stepperOf = (el, opts) => {
+    const root = target(el);
+    if (!root) refuse('stepper', 'no element to draw into');
+    const o = opts || {};
+    const steps = Array.isArray(o.steps) ? o.steps : [];
+    if (!steps.length) refuse('stepper', '`steps` is the list of states, worked out before; step 0 is the start');
+    if (typeof o.render !== 'function') refuse('stepper', '`render(step, index, el)` draws one step');
+    root.replaceChildren();
+    const w = words();
+    const bar = htmlEl('div', 'display:flex;align-items:center;gap:8px;flex-wrap:wrap', root);
+    const back = htmlEl('button', '', bar, w.back);
+    const next = htmlEl('button', '', bar, w.next);
+    const play = htmlEl('button', '', bar, w.play);
+    for (const b of [back, next, play]) b.type = 'button';
+    const where = htmlEl('span', 'font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px', bar);
+    const track = htmlEl('div', 'height:4px;border-radius:2px;background:var(--border);margin:8px 0', root);
+    const fill = htmlEl('div', 'height:100%;border-radius:2px;background:var(--accent);width:0', track);
+    const line = htmlEl('div', 'font-size:14px;margin-bottom:8px;min-height:1.4em', root);
+    const stage = htmlEl('div', '', root);
+    let at = 0;
+    let timer = null;
+    const last = steps.length - 1;
+    const go = (i) => {
+      at = Math.max(0, Math.min(last, i));
+      back.disabled = at === 0;
+      next.disabled = at === last;
+      where.textContent = `${w.step} ${at} / ${last}`;
+      fill.style.width = `${last ? (at / last) * 100 : 100}%`;
+      const step = steps[at];
+      const said = typeof o.line === 'function' ? o.line(step, at) : step && step.line;
+      line.textContent = said != null ? String(said) : '';
+      stage.replaceChildren();
+      o.render(step, at, stage);
+      if (at === last) stop();
+    };
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      play.textContent = w.play;
+    };
+    back.addEventListener('click', () => go(at - 1));
+    next.addEventListener('click', () => go(at + 1));
+    play.addEventListener('click', () => {
+      if (timer) return stop();
+      if (at === last) go(0);
+      play.textContent = w.pause;
+      timer = setInterval(() => go(at + 1), o.every || 900);
+    });
+    go(o.start || 0);
+    return { go, at: () => at };
+  };
+
+  // What each state looks like, and what the legend calls it.
+  const NODE_STATES = {
+    done: { fill: 'var(--success)', text: 'var(--surface)' },
+    current: { fill: 'var(--accent)', text: 'var(--surface)' },
+    seen: { fill: 'var(--warning)', text: 'var(--text)' },
+    todo: { fill: 'var(--surface-alt)', text: 'var(--text)' },
+  };
+  const EDGE_STATES = {
+    chosen: { stroke: 'var(--accent)', width: 3.5 },
+    active: { stroke: 'var(--warning)', width: 3 },
+    rejected: { stroke: 'var(--danger)', width: 1.5, dash: '5 4' },
+    idle: { stroke: 'var(--muted)', width: 1.5 },
+  };
+
+  /**
+   * A graph drawn from its state: nodes coloured by what they are now, edges
+   * by whether they are chosen, weights on a box beside each edge, and a note
+   * under each node — a distance, a label.
+   *
+   *   synabit.graph(el, {
+   *     nodes: [{ id: 'A', x: 0, y: 1 }, …],               // positions in any units; a circle if none
+   *     edges: [{ from: 'A', to: 'B', weight: 4 }, …],
+   *     directed: false,
+   *     state: { nodes: { A: 'done', B: 'current' }, edges: { 'A-B': 'chosen' }, notes: { A: 'd = 0' } },
+   *     legend: { done: 'đã chốt', current: 'đang xét', todo: 'chưa xét', chosen: 'trên đường đi' },
+   *   });
+   *
+   * Node states: done, current, seen, todo. Edge states: chosen, active,
+   * rejected, idle. An edge's key is `from-to`; undirected, either order.
+   */
+  const graph = (el, opts) => {
+    const root = target(el);
+    if (!root) refuse('graph', 'no element to draw into');
+    const o = opts || {};
+    const nodes = Array.isArray(o.nodes) ? o.nodes : [];
+    const edges = Array.isArray(o.edges) ? o.edges : [];
+    const state = o.state || {};
+    const nodeState = state.nodes || {};
+    const edgeState = state.edges || {};
+    const notes = state.notes || {};
+    root.replaceChildren();
+    const W = Math.round(Math.min(640, Math.max(280, root.clientWidth || 640)));
+    const H = o.height || Math.round(W * 0.55);
+    const R = o.radius || 17;
+    // Positions: given, scaled to fit; or round a circle.
+    const placed = nodes.every((n) => Number.isFinite(n.x) && Number.isFinite(n.y));
+    const xs = placed ? nodes.map((n) => n.x) : nodes.map((_, i) => Math.cos((2 * Math.PI * i) / nodes.length - Math.PI / 2));
+    const ys = placed ? nodes.map((n) => n.y) : nodes.map((_, i) => Math.sin((2 * Math.PI * i) / nodes.length - Math.PI / 2));
+    const pad = R + 26;
+    const span = (v) => Math.max(...v) - Math.min(...v) || 1;
+    const sx = (v) => pad + ((v - Math.min(...xs)) / span(xs)) * (W - 2 * pad);
+    const sy = (v) => pad + ((v - Math.min(...ys)) / span(ys)) * (H - 2 * pad);
+    const at = Object.fromEntries(nodes.map((n, i) => [String(n.id), { x: sx(xs[i]), y: sy(ys[i]) }]));
+    // In the page from the start, so the boxes are measured to their labels.
+    const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': o.title || 'graph', 'data-synabit': 'graph' }, root);
+    svg.style.width = '100%';
+    svg.style.display = 'block';
+    const legendUsed = new Set();
+    const keyOf = (e) => `${e.from}-${e.to}`;
+    const edgeIs = (e) => edgeState[keyOf(e)] || (!o.directed && edgeState[`${e.to}-${e.from}`]) || 'idle';
+    if (o.directed) {
+      const defs = svgEl('defs', {}, svg);
+      for (const [name, look] of Object.entries(EDGE_STATES)) {
+        // Sized in the drawing's units, not the stroke's: a chosen edge is
+        // drawn thick, and its arrow would be too.
+        const marker = svgEl('marker', { id: `arrow-${name}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 10, markerHeight: 10, markerUnits: 'userSpaceOnUse', orient: 'auto-start-reverse' }, defs);
+        svgEl('path', { d: 'M0,0 L10,5 L0,10 z', fill: look.stroke }, marker);
+      }
+    }
+    // Edges from rim to rim, then their weights on a box to one side.
+    const weights = [];
+    for (const e of edges) {
+      const a = at[String(e.from)];
+      const b = at[String(e.to)];
+      if (!a || !b) continue;
+      const is = edgeIs(e);
+      if (is !== 'idle') legendUsed.add(is);
+      const look = EDGE_STATES[is] || EDGE_STATES.idle;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len;
+      const uy = dy / len;
+      svgEl('line', {
+        x1: a.x + ux * R, y1: a.y + uy * R, x2: b.x - ux * (R + (o.directed ? 3 : 0)), y2: b.y - uy * (R + (o.directed ? 3 : 0)),
+        stroke: look.stroke, 'stroke-width': look.width, 'stroke-dasharray': look.dash || null,
+        'marker-end': o.directed ? `url(#arrow-${is})` : null,
+      }, svg);
+      const label = e.label != null ? e.label : e.weight;
+      if (label != null) {
+        // Beside the middle of the edge, on its left: never on the line.
+        weights.push({ x: (a.x + b.x) / 2 - uy * 13, y: (a.y + b.y) / 2 + ux * 13 + 4, text: typeof label === 'number' ? formatNumber(label) : String(label) });
+      }
+    }
+    for (const wt of weights) boxedLabel(svg, wt.x, wt.y, wt.text, { size: 12 });
+    for (const n of nodes) {
+      const p = at[String(n.id)];
+      const is = nodeState[String(n.id)] || 'todo';
+      if (is !== 'todo') legendUsed.add(is);
+      const look = NODE_STATES[is] || NODE_STATES.todo;
+      svgEl('circle', { cx: p.x, cy: p.y, r: R, fill: look.fill, stroke: 'var(--border)', 'stroke-width': 1 }, svg);
+      svgEl('text', { x: p.x, y: p.y + 4.5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 600, fill: look.text }, svg, n.label != null ? String(n.label) : String(n.id));
+      const note = notes[String(n.id)];
+      if (note != null) boxedLabel(svg, p.x, p.y + R + 15, String(note), { size: 12 });
+    }
+    // The legend: every state shown, with what the visual calls it.
+    const names = Object.assign({}, o.legend || {});
+    // In the order the visual named them, so the legend stays put from step
+    // to step; a state shown that it did not name, after them.
+    const used = Object.keys(names).concat([...legendUsed].filter((k) => !(k in names)));
+    if (used.length) {
+      const legend = htmlEl('div', 'display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--text-2);margin-bottom:4px', null);
+      root.insertBefore(legend, svg);
+      for (const k of used) {
+        const node = NODE_STATES[k];
+        const edge = EDGE_STATES[k];
+        if (!node && !edge) continue;
+        const item = htmlEl('span', 'display:inline-flex;align-items:center;gap:6px', legend);
+        htmlEl('span', node
+          ? `display:inline-block;width:11px;height:11px;border-radius:50%;background:${node.fill};border:1px solid var(--border)`
+          : `display:inline-block;width:16px;height:0;border-top:3px ${edge.dash ? 'dashed' : 'solid'} ${edge.stroke}`, item);
+        htmlEl('span', '', item, names[k] || k);
+      }
+    }
+    return { svg, at };
+  };
+
   window.synabit = Object.freeze({
     /** Resolves once the host has said the theme and the locale. */
     ready,
@@ -1216,5 +1422,8 @@
     integrate,
     ode,
     sim,
+    /** Steps worked out first, and a graph drawn from its state. */
+    stepper: stepperOf,
+    graph,
   });
 })();

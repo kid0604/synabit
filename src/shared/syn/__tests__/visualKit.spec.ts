@@ -28,6 +28,8 @@ interface Kit {
     opts?: { dt?: number; method?: 'verlet'; pairs?: Record<string, string> },
   ): (Record<string, number> & { t: number })[];
   sim(el: Element, opts: unknown): { reset(s?: unknown): void; state(): Record<string, number>; time(): number };
+  stepper(el: Element, opts: unknown): { go(i: number): void; at(): number };
+  graph(el: Element, opts: unknown): { svg: SVGSVGElement };
 }
 
 let kit: Kit;
@@ -240,5 +242,73 @@ describe("the kit's numbers from the model", () => {
     expect(drawn[0]).toBe(1);
     expect(el.textContent).toContain('cơ năng');
     expect(run.time()).toBe(0);
+  });
+});
+
+/**
+ * Steps and graphs (plan 2026-10-28, §2.4, PR Q6). The Dijkstra of 2026-10-27
+ * showed "∞" in its caption while step 0's table held B = 4, and drew arrows
+ * on an undirected graph.
+ */
+describe("the kit's steps and graphs", () => {
+  const fresh = () => {
+    const el = document.createElement('div');
+    document.body.appendChild(el);
+    return el;
+  };
+
+  it('shows steps worked out before, from step 0, with back and next only where they go', () => {
+    const el = fresh();
+    const seen: number[] = [];
+    const steps = [{ line: 'Bắt đầu: d(A) = 0' }, { line: 'Chọn A: d(B) = min(∞, 0 + 4) = 4' }, { line: 'Xong' }];
+    kit.stepper(el, { steps, render: (_s: unknown, i: number, stage: Element) => { seen.push(i); stage.textContent = `step ${i}`; } });
+    const [back, next] = [...el.querySelectorAll('button')] as HTMLButtonElement[];
+    expect(seen).toEqual([0]);
+    expect(el.textContent).toContain('Bước 0 / 2');
+    expect(el.textContent).toContain('Bắt đầu: d(A) = 0');
+    expect(back.disabled).toBe(true);
+    next.click();
+    next.click();
+    expect(seen).toEqual([0, 1, 2]);
+    expect(el.textContent).toContain('Xong');
+    expect(next.disabled).toBe(true);
+    expect(back.disabled).toBe(false);
+  });
+
+  it('refuses to show no steps', () => {
+    expect(() => kit.stepper(fresh(), { steps: [], render: () => {} })).toThrow(/steps/);
+  });
+
+  it('draws an undirected graph with no arrows, its weights on boxes, and its states named', () => {
+    const el = fresh();
+    kit.graph(el, {
+      nodes: [{ id: 'A' }, { id: 'B' }, { id: 'C' }],
+      edges: [{ from: 'A', to: 'B', weight: 4 }, { from: 'B', to: 'C', weight: 1.5 }],
+      state: { nodes: { A: 'done', B: 'current' }, edges: { 'B-A': 'chosen' }, notes: { A: 'd = 0' } },
+      legend: { done: 'đã chốt', current: 'đang xét', chosen: 'trên đường đi' },
+    });
+    expect(el.querySelectorAll('[marker-end]').length).toBe(0);
+    expect(el.querySelectorAll('marker').length).toBe(0);
+    const lines = [...el.querySelectorAll('line')];
+    // Undirected: the edge A–B is chosen whichever way its state names it.
+    expect(lines[0].getAttribute('stroke')).toBe('var(--accent)');
+    expect(lines[1].getAttribute('stroke')).toBe('var(--muted)');
+    const label = [...el.querySelectorAll('text')].find((t) => t.textContent === '4')!;
+    expect(label.previousElementSibling?.tagName).toBe('rect');
+    expect([...el.querySelectorAll('text')].map((t) => t.textContent)).toEqual(expect.arrayContaining(['1,5', 'd = 0']));
+    // A node's colour is its state; its letter is in its style, which kit.css cannot override.
+    const circles = [...el.querySelectorAll('circle')];
+    expect(circles[1].getAttribute('fill')).toBe('var(--accent)');
+    const letter = [...el.querySelectorAll('text')].find((t) => t.textContent === 'B')!;
+    expect(letter.style.fill).toBe('var(--surface)');
+    expect(el.textContent!.indexOf('đã chốt')).toBeLessThan(el.textContent!.indexOf('đang xét'));
+  });
+
+  it('draws arrows on a directed graph, and places nodes with no positions round a circle', () => {
+    const el = fresh();
+    kit.graph(el, { nodes: [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }], edges: [{ from: 'A', to: 'B' }], directed: true });
+    expect(el.querySelector('line')!.getAttribute('marker-end')).toBe('url(#arrow-idle)');
+    const spots = [...el.querySelectorAll('circle')].map((c) => `${c.getAttribute('cx')},${c.getAttribute('cy')}`);
+    expect(new Set(spots).size).toBe(4);
   });
 });
