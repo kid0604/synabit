@@ -88,6 +88,10 @@ const EXPLORE = async () => {
   return [...seen];
 };
 
+/** How long a page may take to load, and to be looked at whole. */
+const LOAD = 10_000;
+const WHOLE = 120_000;
+
 /**
  * Each visual, drawn and looked at: `{ file, text, problems, expects,
  * reported, seen }`. `text` is what it shows as drawn; `controls` uses every
@@ -95,46 +99,68 @@ const EXPLORE = async () => {
  * again and walks every control, keeping the text of each state in `seen`.
  */
 export async function trial(files, { theme = 'light', shots = null, controls = true, explore = false, width = 720, options = () => ({}) } = {}) {
-  const browser = await webkit.launch();
+  const one = async (browser, file) => {
+    const source = readFileSync(file, 'utf8');
+    const whole = /^\s*<!doctype/i.test(source);
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    await page.route(`${ORIGIN}/**`, (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/visual') {
+        return route.fulfill({ contentType: TYPES['.html'], body: whole ? source : assemble(source, theme) });
+      }
+      const served = path === '/kit.js' || path === '/kit.css' ? join(VISUAL, path) : path.startsWith('/lib/') ? join(VISUAL, path) : null;
+      if (!served || !served.startsWith(VISUAL)) return route.fulfill({ status: 404, body: '' });
+      return route.fulfill({ contentType: TYPES[extname(served)] || 'application/octet-stream', body: readFileSync(served) });
+    });
+    const errors = [];
+    page.on('pageerror', (error) => errors.push(error.message));
+    await page.goto(`${ORIGIN}/visual`, { timeout: LOAD });
+    await page.evaluate(() => window.synabit && window.synabit.ready);
+    const text = await page.evaluate(() => document.body.innerText);
+    if (shots) {
+      // As drawn, before the controls are used.
+      mkdirSync(shots, { recursive: true });
+      await page.screenshot({ path: join(shots, `${basename(file, '.html')}.png`), fullPage: true });
+    }
+    let found;
+    try {
+      found = await page.evaluate((o) => window.synabit.lint(o), { ...options(file), controls });
+    } catch (error) {
+      found = { problems: [{ check: 'error', detail: `the kit did not run: ${error.message}` }], expects: [], reported: {} };
+    }
+    let seen = [];
+    if (explore) {
+      await page.goto(`${ORIGIN}/visual`, { timeout: LOAD });
+      await page.evaluate(() => window.synabit && window.synabit.ready);
+      seen = await page.evaluate(EXPLORE).catch(() => []);
+    }
+    await page.close();
+    return { file, text, ...found, seen, pageErrors: errors };
+  };
+
+  // A script that never ends — a Dijkstra whose `while (unvisited.length)`
+  // never emptied it, 2026-10-28 — holds the page, and the frame in the app
+  // with it. It is the visual's fault, and the browser is started again for
+  // the next one.
+  let browser = await webkit.launch();
   const results = [];
   try {
     for (const file of files) {
-      const source = readFileSync(file, 'utf8');
-      const whole = /^\s*<!doctype/i.test(source);
-      const page = await browser.newPage({ viewport: { width, height: 900 } });
-      await page.route(`${ORIGIN}/**`, (route) => {
-        const path = new URL(route.request().url()).pathname;
-        if (path === '/visual') {
-          return route.fulfill({ contentType: TYPES['.html'], body: whole ? source : assemble(source, theme) });
-        }
-        const served = path === '/kit.js' || path === '/kit.css' ? join(VISUAL, path) : path.startsWith('/lib/') ? join(VISUAL, path) : null;
-        if (!served || !served.startsWith(VISUAL)) return route.fulfill({ status: 404, body: '' });
-        return route.fulfill({ contentType: TYPES[extname(served)] || 'application/octet-stream', body: readFileSync(served) });
+      let timer;
+      const stuck = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`did not finish in ${WHOLE / 1000} s`)), WHOLE);
       });
-      const errors = [];
-      page.on('pageerror', (error) => errors.push(error.message));
-      await page.goto(`${ORIGIN}/visual`);
-      await page.evaluate(() => window.synabit && window.synabit.ready);
-      const text = await page.evaluate(() => document.body.innerText);
-      if (shots) {
-        // As drawn, before the controls are used.
-        mkdirSync(shots, { recursive: true });
-        await page.screenshot({ path: join(shots, `${basename(file, '.html')}.png`), fullPage: true });
-      }
-      let found;
       try {
-        found = await page.evaluate((o) => window.synabit.lint(o), { ...options(file), controls });
+        results.push(await Promise.race([one(browser, file), stuck]));
       } catch (error) {
-        found = { problems: [{ check: 'error', detail: `the kit did not run: ${error.message}` }], expects: [], reported: {} };
+        const loading = /Timeout .* exceeded/.test(error.message) && /goto/.test(error.message);
+        const detail = loading ? `the page did not finish loading in ${LOAD / 1000} s: a script that never ends` : `the page stopped answering: ${error.message.split('\n')[0]}`;
+        results.push({ file, text: '', problems: [{ check: 'hang', detail }], expects: [], reported: {}, seen: [], pageErrors: [] });
+        await browser.close().catch(() => {});
+        browser = await webkit.launch();
+      } finally {
+        clearTimeout(timer);
       }
-      let seen = [];
-      if (explore) {
-        await page.goto(`${ORIGIN}/visual`);
-        await page.evaluate(() => window.synabit && window.synabit.ready);
-        seen = await page.evaluate(EXPLORE).catch(() => []);
-      }
-      results.push({ file, text, ...found, seen, pageErrors: errors });
-      await page.close();
     }
   } finally {
     await browser.close();
