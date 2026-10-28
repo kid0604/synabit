@@ -62,6 +62,11 @@ pub struct Outcome {
     /// The pattern each of those named in its brief.
     #[serde(skip)]
     pub visual_patterns: Vec<Option<String>>,
+    /// What is kept of each `show_visual` call whose arguments were not JSON
+    /// (both ends and where the parse stopped), or came without a title (the
+    /// fields it did send).
+    #[serde(skip)]
+    pub unreadable: Vec<serde_json::Value>,
 }
 
 fn request(conversation: &str, message: &str, resume: Option<String>) -> SynChatRequest {
@@ -331,6 +336,13 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     keep_visuals(&vault, task.id, trial);
     let visual_pages = grade::visuals(&vault).iter().map(|html| standalone(html)).collect();
     let visual_patterns = grade::visual_patterns(&vault);
+    let unreadable: Vec<serde_json::Value> = runs
+        .iter()
+        .flat_map(|r| r.steps.iter())
+        .filter(|s| s.tool.as_deref() == Some(crate::syn::visual::tool::SHOW_TOOL))
+        .filter_map(|s| s.args.clone())
+        .filter(|a| a.get("unreadable").is_some() || (a.get("visual_id").is_none() && a.get("title").is_none_or(|t| t.as_str().is_none_or(|t| t.trim().is_empty()))))
+        .collect();
 
     let mut tool_calls = 0;
     let mut wasted = 0;
@@ -369,6 +381,7 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     Outcome {
         visual_pages,
         visual_patterns,
+        unreadable,
         visited: visited.clone(),
         full_answer: answers.iter().map(|m| m.content.as_str()).collect::<Vec<_>>().join("\n\n── next turn ──\n\n"),
         trace,

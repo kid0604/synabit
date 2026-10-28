@@ -1185,3 +1185,58 @@ không lượt nào vì lỗi bố cục:
 - **Chưa biết:** chuỗi bị cắt vì quá dài, hay HTML không được escape. Eval không giữ tham số thô.
 - **Hướng sửa, chưa làm:** nói đúng lỗi ("tham số không phải JSON, có thể bị cắt"), và ghi tham số thô của lần
   đó để biết nguyên nhân.
+
+## 2026-10-28 — tham số không phải JSON: dự đoán, ghi trước khi đo
+
+Hai chỗ sửa:
+- **`show_visual` báo đúng lỗi khi tham số không phải JSON:** lỗi parse, số ký tự nhận được, và hai khả năng
+  (bị cắt vì hình quá dài, hoặc dấu ngoặc kép / gạch chéo không escape). Nó cũng bảo gọi lại đủ mọi trường,
+  với một hình ngắn hơn.
+- **Bản ghi của lần gọi giữ hai đầu của chuỗi thô** (mỗi đầu 400 ký tự), độ dài và lỗi parse. Bộ đo ghi
+  các lần như vậy của phần phát triển vào `unreadable-<stamp>.json`; phần giữ lại chỉ được đếm.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`. So với Q4 nới lỏng: vẽ 86%, tự kiểm 68%, đúng 93%,
+và 10 lần trả về vì tham số không đọc được.
+
+Dự đoán:
+- **Nguyên nhân:** chủ yếu là bị cắt, tức lỗi parse kiểu "EOF while parsing". Các lần đó đều là lần gọi lại,
+  khi model gửi lại cả hình đã sửa, dài hơn lần đầu.
+- **Số lần tham số không đọc được:** vẫn khoảng 10. Lời báo mới không làm model viết ngắn đi ngay.
+- **Vẽ:** nhích lên 1–3 điểm. Lần gọi sau có đủ trường thay vì gửi lại cùng kiểu.
+- **Tự kiểm và đúng:** trong mức dao động.
+
+### Kết quả (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q4 nới lỏng: tất cả | 96 | 86% | 68% | 93% (87) | 1,41 | 1,07 | 86% |
+| **Lần này: tất cả** | 96 | **85%** | **73%** | **92%** (87) | 1,45 | 1,08 | 83% (82) |
+| Lần này: phát triển | 66 | 92% | 77% | 92% (60) | 1,56 | 1,11 | 79% (61) |
+| Lần này: giữ lại | 30 | 70% | 63% | 93% (27) | 1,20 | 1,03 | 95% (21) |
+
+⚠ người chấm chưa được tin.
+
+Đúng, tính riêng các lần có vẽ:
+- phần phát triển: **54 / 56**;
+- phần giữ lại: 18 / 18.
+
+**Giả thuyết sai: tham số không phải JSON 0 lần trên 152 lần gọi**, nhưng vẫn có 9 lần bị trả về vì thiếu tiêu
+đề. Lời báo mới đúng, nhưng không phải nguyên nhân.
+
+Để biết nguyên nhân, bản ghi của lần gọi bị từ chối giữ thêm danh sách khóa (`keys`), và bộ đo thu các lần
+gọi thiếu tiêu đề. Chạy lại 8 câu từng gặp (`pendulum`, `drift`, `gibbs`, `bayes`, `tax`, `break-even`,
+`euler-e`, `loan`) × 3, có 5 lần như vậy.
+
+**Cả 5 đều chỉ gửi `brief` và `html`.** Đó là lần gọi lại sau khi bị trả về: model gửi phần đã sửa, bỏ
+`title` và `kind`, như một bản vá.
+
+| Câu | Lần | Khóa đã gửi | Độ dài HTML |
+| --- | --- | --- | --- |
+| `pendulum` | 1 | `brief`, `html` | 4 018 |
+| `pendulum` | 2 | `brief`, `html` | 3 954 |
+| `bayes` | 1 | `brief`, `html` | 3 399 |
+| `tax` | 2 | `brief`, `html` | 4 803 |
+| `euler-e` | 1 | `brief`, `html` | 3 058 |
+
+Hướng sửa chung, chưa làm: lần gọi lại trong cùng một run mà thiếu `title` hoặc `kind` thì lấy từ lần gọi
+trước đó, thay vì từ chối. Từ Q4 tới giờ, lỗi này lấy mất 5 + 10 + 9 lượt thử.

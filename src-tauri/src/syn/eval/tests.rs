@@ -692,6 +692,10 @@ async fn visual_quality() {
         chose: Option<String>,
     }
     let mut pending: Vec<Pending> = Vec::new();
+    // Calls whose arguments were not JSON, raw, for a question looked at;
+    // only counted for one held out.
+    let mut unreadable: Vec<serde_json::Value> = Vec::new();
+    let mut unreadable_held = 0;
     for (k, question) in chosen.iter().enumerate() {
         for trial in 1..=trials {
             let mut task = super::tasks::all().into_iter().next().expect("a task");
@@ -706,6 +710,11 @@ async fn visual_quality() {
                 pending.push(Pending { question: *question, pages: Vec::new(), answer: String::new(), error: Some("timed out after 15 minutes".into()), chose: None });
                 continue;
             };
+            if question.held_out {
+                unreadable_held += o.unreadable.len();
+            } else {
+                unreadable.extend(o.unreadable.iter().map(|call| serde_json::json!({ "question": question.id, "trial": trial, "call": call })));
+            }
             let mut pages = Vec::new();
             for (n, page) in o.visual_pages.iter().enumerate() {
                 let name = if question.held_out { format!("h{k}-{trial}-{}.html", n + 1) } else { format!("{}-{trial}-{}.html", question.id, n + 1) };
@@ -768,6 +777,8 @@ async fn visual_quality() {
         });
     }
     let _ = std::fs::remove_dir_all(&hidden);
+    std::fs::write(out.join(format!("unreadable-{stamp}.json")), serde_json::to_string_pretty(&unreadable).expect("json")).expect("unreadable");
+    eprintln!("[quality] calls not JSON or with no title: {} looked at, {unreadable_held} held out", unreadable.len());
     std::fs::write(out.join(format!("trials-{stamp}.json")), serde_json::to_string_pretty(&done).expect("json")).expect("trials");
     eprintln!("\n{}", quality::report(&all_trials(&out), trusted(&out)));
 }
