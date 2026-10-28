@@ -107,6 +107,12 @@ pub fn check(html: &str) -> Checked {
     }
 
     let fragment = Html::parse_fragment(html);
+    // Kept on 2026-10-28 with nothing in it but "[]": text the frame shows as
+    // text, and no visual. A visual is at least one element.
+    if !fragment.root_element().descendants().skip(1).any(|n| n.value().is_element()) {
+        checked.problems.push("The visual has no HTML or SVG element, so it draws nothing. Write the visual itself — markup, and script that draws into it.".into());
+        return checked;
+    }
     for (selector, why) in NOT_IN_A_VISUAL {
         let Ok(found) = Selector::parse(selector) else { continue };
         if fragment.select(&found).next().is_some() {
@@ -215,6 +221,11 @@ mod tests {
     #[test]
     fn size_and_shape() {
         assert!(!check("   ").passed());
+        for nothing in ["[]", "{}", "<!-- the chart -->", "Here is the chart."] {
+            let checked = check(nothing);
+            assert!(checked.problems.iter().any(|p| p.contains("no HTML or SVG element")), "{nothing}: {checked:?}");
+        }
+        assert!(check("<p>16,7%</p>").passed(), "one element is a visual");
         assert!(!check(&"<p>x</p>".repeat(MAX_CHARS / 8 + 1)).passed());
         let page = check("<!doctype html><html><body><p>x</p></body></html>");
         assert!(page.passed(), "a page still works inside the body");
