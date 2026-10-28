@@ -49,6 +49,17 @@ itself.
   you state. Never invent data to fill a chart.
 - Keep it compact: about 640 px wide, as tall as it needs. Fill the width with
   `width: 100%` or an SVG `viewBox`; never a fixed pixel width over 640.
+- One measure per set of axes, whatever the kind — a chart, a simulation, an
+  explainer. Two measures on different scales — a loan's balance and its
+  monthly payment, spending by group and by day — are two plots, each its
+  own `<svg>` with its own axes and title, one above the other. Never draw a
+  series against a scale it has no axis for: on another plot's axes it reads
+  as part of that plot, and a 4.5 million payment reads as 375 million.
+- Leave room for the axis labels. Ticks at round values (`scale.nice()`,
+  `scale.ticks(5)`); a large amount written in its unit — "triệu ₫" in the
+  axis title, ticks 0, 100, 200 — rather than in full. Make the left margin
+  as wide as the longest label it holds; a label cut at the edge is a wrong
+  number.
 - Two colours at most for categories, plus grey; one accent for what matters.
 - At most four boxes in a row; a label at most five words.
 - Give an SVG `role="img"` and an `aria-label` that says what it shows.

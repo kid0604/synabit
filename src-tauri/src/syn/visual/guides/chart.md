@@ -7,10 +7,6 @@ written into the visual as a literal array.
 - Pick the form by what the reader decides: compare amounts → bars from zero;
   change over time → a line; parts of a whole → a stacked bar, rarely a pie;
   one value → a large number (`.stat`), not a chart.
-- One measure per chart. Two measures on different scales — spending by group
-  and spending by day — are two charts, each its own `<svg>` with its own
-  axes and title, one above the other. Never draw a series against a scale it
-  has no axis for: on another chart's axes it reads as part of that chart.
 - One series in `var(--c1)`; several in `--c1`, `--c2`, … in order. If one
   series is the point, it gets `--c1` and the rest `var(--muted)`.
 - Gridlines `var(--grid)`, axes `var(--muted)`, labels `var(--text-2)`, 12px.
