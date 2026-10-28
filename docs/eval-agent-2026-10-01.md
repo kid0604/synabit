@@ -1473,3 +1473,87 @@ So với dự đoán:
     `logistic`, `pendulum`) cũng không dùng.
 - **Một hướng sửa chung, chưa làm:** đưa `solve`, `ode` hoặc `sim` vào hình mẫu `explore` và `compare`,
   rồi đo lại cả phần giữ lại.
+
+## 2026-10-28 — PR Q6 (`stepper`, `graph`): dự đoán, ghi trước khi đo
+
+Q6 thêm hai thành phần vào kit:
+- **`synabit.stepper`**: các bước tính trước, bước 0 là trạng thái đầu, có lùi, tiếp và tự chạy,
+  "bước i / n", thanh tiến trình và dòng ghi phép tính.
+- **`synabit.graph`**: nút và cạnh tô theo trạng thái, trọng số trên ô nền, chú giải theo thứ tự người viết khai
+  báo, chỉ có mũi tên khi đồ thị có hướng.
+
+Hình mẫu `step` giờ là BFS dùng cả hai thành phần (chủ đề không trùng Dijkstra hay Kruskal). Kèm một sửa lỗi
+chung: màu chữ trong SVG của kit giờ đặt bằng style, vì `kit.css` đặt mọi `svg text` về màu chữ, và stylesheet
+thắng thuộc tính. Trước đó nhãn trục xám và chữ trắng trên nút đều hiện thành màu chữ thường.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`, so với Q7: vẽ 89%, tự kiểm 81%, đúng 92%.
+
+Dự đoán:
+- **Kiểu `step`** (`dijkstra`, `euclid`, `schedule`, `binary-search`; phần giữ lại có `kruskal`, `horner`) đã
+  100% ở cả tự kiểm và đúng. Q6 chủ yếu đổi cách trình bày.
+- **Hình kiểu `step` dùng `stepper`:** khoảng 70%. **`dijkstra` dùng `graph`:** 3 / 3.
+- **Tổng:** tự kiểm khoảng 83%. Vẽ và đúng trong mức dao động.
+- **Tầng 2** (chưa được tin) có thể nhích ở `dijkstra`.
+
+### Kết quả Q6 (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q7: tất cả | 96 | 89% | 81% | 92% (87) | 1,33 | 1,09 | 85% |
+| Dự đoán | | ≈ | ~83% | ≈ | | | |
+| **Q6: tất cả** | 96 | **91%** | **84%** | **93%** (87) | 1,33 | 1,14 | 86% (87) |
+| Q6: phát triển | 66 | 95% | 88% | 95% (60) | 1,39 | 1,15 | 81% (63) |
+| Q6: giữ lại | 30 | 80% | 77% | 89% (27) | 1,20 | 1,10 | 100% (24) |
+
+⚠ người chấm chưa được tin.
+
+Theo kiểu (phần phát triển):
+
+| Kiểu | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| `step` | 100% | 100% | 100% |
+| `compare` | 94% | 89% | 100% |
+| `decompose` | 100% | 100% | 100% |
+| `zoom` | 89% | 44% | 67% |
+| `areas` | 83% | 83% | 100% |
+| `explore` | 100% | 100% | 100% |
+
+Thành phần ở các câu kiểu `step` (phần phát triển):
+
+| Câu | Thành phần dùng |
+| --- | --- |
+| `dijkstra` | `stepper` + `graph`, 3 / 3 |
+| `euclid` | `stepper`, 3 / 3 |
+| `schedule` | `stepper`, 3 / 3 |
+| `binary-search` | `stepper`, 3 / 3 |
+
+Lý do bị trả về. Có 124 lần gọi `show_visual`, 100 lần được giữ.
+
+| Lý do | Số lần |
+| --- | --- |
+| `overlap` | 8 |
+| `proof` | 5 |
+| `error` | 4 |
+| `long-decimal` | 4 |
+| `overflow` | 3 |
+| `unreported` | 3 |
+| `expect` | 1 |
+| thiếu tiêu đề | 1 |
+| `empty` | 1 |
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `long-decimal` 3, `overflow` 1, `overlap` 1.
+
+So với dự đoán:
+- **`stepper` ở hình kiểu `step`: 12 / 12, dự đoán khoảng 70%.** `dijkstra` dùng `graph` 3 / 3, đúng dự đoán.
+- **Tự kiểm: 84%, dự đoán khoảng 83%.** Phần phát triển 88%.
+- **Vẽ và đúng nhích lên**: phần phát triển vẽ 95%, đúng 95%. Trong mức dao động.
+  - `tax` đúng 3 / 3, lần đầu từ trước tới giờ.
+  - `gibbs` 1 / 3.
+- **Tầng 2 của `dijkstra`: 1,67** (Q7: 1,00), nhưng người chấm chưa được tin.
+- **Một lần bị từ chối vì thiếu tiêu đề quay lại.** Đó là lần gọi đầu tiên chứ không phải lần gọi lại, nên không có gì
+  để lấy.
+
+Vẫn yếu:
+- **`zoom` ở tự kiểm (44%).** Lỗi là `long-decimal` ở `euler-e`.
+- **`areas` không bao giờ được chọn đúng kiểu** (0 / 5).
+- **Phần giữ lại vẫn chỉ vẽ 80%.**
