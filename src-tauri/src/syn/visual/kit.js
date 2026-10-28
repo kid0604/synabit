@@ -534,6 +534,11 @@
     return g;
   };
 
+  // A point is `[x, y]` or `{ x, y }`. The genetic drift of 2026-10-28 gave
+  // `{ x, y }`, every point was dropped as not a number, and its chart stood
+  // empty with nothing said.
+  const pointOf = (pt) => (Array.isArray(pt) ? pt : pt && typeof pt === 'object' ? [pt.x, pt.y] : [NaN, NaN]);
+
   /**
    * A chart: one or more panels stacked on one x axis, each with its own y
    * axis — one measure per panel. Lines from points or from a function, areas
@@ -545,7 +550,7 @@
    *     x: { label: 'thời gian', unit: 's', min: 0, max: 10 },        // or { categories: ['A', 'B'] }
    *     panels: [{
    *       y: { label: 'vận tốc', unit: 'm/s', min: 0 },
-   *       series: [{ name: 'v', fn: (t) => v(t) }, { name: 'đo', points: [[0, 0], [1, 2.4]] }],
+   *       series: [{ name: 'v', fn: (t) => v(t) }, { name: 'đo', points: [[0, 0], [1, 2.4]] }],   // or [{ x: 0, y: 0 }, …]
    *       areas: [{ name: 'quãng đường', below: 'v', from: 0, to: 4, label: '20 m' }],
    *       marks: [{ x: 4, y: 10, label: 'đạt 10 m/s' }],
    *     }],
@@ -566,7 +571,7 @@
     const panels = (o.panels || [{ y: o.y, series: o.series, areas: o.areas, marks: o.marks }]).map((p) => ({
       ...p,
       y: p.y || {},
-      series: p.series || [],
+      series: (p.series || []).map((s) => (Array.isArray(s.points) ? { ...s, points: s.points.map(pointOf) } : s)),
       areas: p.areas || [],
       marks: p.marks || [],
     }));
@@ -586,7 +591,13 @@
     const xMin = xAxis.min != null ? xAxis.min : Math.min(...xs);
     const xMax = xAxis.max != null ? xAxis.max : Math.max(...xs);
     const sampled = (s) => {
-      if (Array.isArray(s.points)) return s.points.filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+      if (Array.isArray(s.points)) {
+        const pts = s.points.filter((pt) => Number.isFinite(pt[0]) && Number.isFinite(pt[1]));
+        if (s.points.length && !pts.length) {
+          throw new Error(`synabit.chart: none of the ${s.points.length} points of ${quote(s.name || 'a series')} is [x, y] with two numbers, so it draws nothing`);
+        }
+        return pts;
+      }
       if (typeof s.fn !== 'function') return [];
       const out = [];
       const n = s.samples || 200;

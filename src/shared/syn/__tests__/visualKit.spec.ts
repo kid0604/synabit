@@ -125,6 +125,29 @@ describe("the kit's components", () => {
     expect(el.textContent).toContain('tăng tốc');
   });
 
+  it('draws points given as { x, y } as it draws [x, y]', () => {
+    const el = fresh();
+    const walk = [0.5, 0.52, 0.47, 0.6];
+    kit.chart(el, {
+      x: { label: 'thế hệ', min: 0, max: 3 },
+      y: { label: 'tần số', min: 0, max: 1 },
+      series: [{ name: 'p', points: walk.map((p, t) => ({ x: t, y: p })) }],
+    });
+    const line = el.querySelector('polyline');
+    expect(line, 'the line is drawn').not.toBeNull();
+    expect(line!.getAttribute('points')!.split(' ').length).toBe(4);
+  });
+
+  it('says so when a series has points and none of them can be drawn', () => {
+    const el = fresh();
+    expect(() =>
+      kit.chart(el, {
+        x: { min: 0, max: 3 },
+        series: [{ name: 'p', points: [{ t: 0, p: 0.5 }, { t: 1, p: 0.52 }] }],
+      }),
+    ).toThrow(/none of the 2 points of “p”/);
+  });
+
   it('draws bars over categories, and drawn again draws only the new one', () => {
     const el = fresh();
     const opts = { x: { categories: ['Gốc', 'Lãi'] }, y: { label: 'tổng', unit: 'triệu ₫' }, series: [{ name: 'a', values: [500, 580] }, { name: 'b', values: [500, 452] }] };
