@@ -142,7 +142,7 @@ fn brief(args: &Value, title: &str) -> Result<store::Brief, String> {
 }
 
 /// What the run has done that `show_visual` depends on.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Tried {
     /// `visual_guide` answered in this run.
     pub guide_read: bool,
@@ -154,6 +154,11 @@ pub struct Tried {
     /// Since the last visual kept, one was refused for what the lint found:
     /// what only mars a visual has been sent back once already.
     pub looked_since_shown: bool,
+    /// The `title` and `kind` of the last call since the last visual kept
+    /// that sent them. A retry is often sent as a patch — on 2026-10-28 every
+    /// call that came back without its title sent only `brief` and `html` — and
+    /// those are what it meant to leave as they were.
+    pub before: Option<(String, String)>,
 }
 
 impl Tried {
@@ -177,7 +182,11 @@ impl Tried {
             .take_while(|s| s.ok == Some(false))
             .collect();
         let looked_since_shown = refused.iter().any(|s| s.preview.contains(LOOKED_AT) || s.full.as_deref().is_some_and(|f| f.contains(LOOKED_AT)));
-        Tried { guide_read, refused_since_shown: refused.len(), patterns_read, looked_since_shown }
+        let field = |s: &crate::syn::run::Step, key: &str| {
+            s.args.as_ref()?.get(key)?.as_str().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+        };
+        let before = refused.iter().find_map(|s| Some((field(s, "title")?, field(s, "kind")?)));
+        Tried { guide_read, refused_since_shown: refused.len(), patterns_read, looked_since_shown, before }
     }
 }
 
@@ -256,7 +265,16 @@ pub async fn show<R: tauri::Runtime>(
         ));
     }
     let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim).unwrap_or("");
-    let (title, kind, html) = (text("title"), text("kind"), args.get("html").and_then(Value::as_str).unwrap_or(""));
+    let (mut title, mut kind, html) = (text("title"), text("kind"), args.get("html").and_then(Value::as_str).unwrap_or(""));
+    // A retry that left out what it did not change keeps what it sent before.
+    if let Some((title_before, kind_before)) = &tried.before {
+        if title.is_empty() {
+            title = title_before;
+        }
+        if kind.is_empty() {
+            kind = kind_before;
+        }
+    }
     if title.is_empty() {
         return refused(format!("`title` is what the visual shows, in at most {MAX_TITLE} characters."));
     }
@@ -463,7 +481,7 @@ mod tests {
         use tauri::Manager;
         let (_dir, vault, app) = app();
         let db = app.state::<crate::db::DbState>();
-        let read = Tried { guide_read: true, refused_since_shown: 0, patterns_read: 0, looked_since_shown: false };
+        let read = Tried { guide_read: true, refused_since_shown: 0, patterns_read: 0, looked_since_shown: false, before: None };
         let zoom = Tried::from_steps(&guide_for("zoom"));
         let with = |brief: Value| json!({ "title": "Gibbs", "kind": "explainer", "html": "<svg role=\"img\"></svg>", "brief": brief });
         let point = "The overshoot stays near 9% however many terms are added";
@@ -475,14 +493,14 @@ mod tests {
             (with(json!({ "point": point, "pattern": "poster" })), "`brief.pattern`"),
             (with(json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot" }] })), "`brief.proof`"),
         ] {
-            let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &args).await;
+            let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom.clone(), &ASKED, &args).await;
             assert!(shown.is_none() && said.contains(why), "{why}: {said}");
         }
         let brief = json!({ "point": point, "pattern": "zoom", "proof": [{ "name": "overshoot", "value": 1.0895 }] });
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &with(brief.clone())).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read.clone(), &ASKED, &with(brief.clone())).await;
         assert!(shown.is_none() && said.contains("with pattern") && said.contains("zoom"), "its guide first: {said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom, &ASKED, &with(brief)).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, zoom.clone(), &ASKED, &with(brief)).await;
         let shown = shown.unwrap_or_else(|| panic!("kept: {said}"));
         let back = store::load(std::path::Path::new(&vault), &shown.id).expect("read back");
         assert_eq!(back.pattern.as_deref(), Some("zoom"));
@@ -512,7 +530,7 @@ mod tests {
     fn tries_are_counted_since_the_last_visual_kept() {
         assert_eq!(Tried::from_steps(&[]), Tried::default());
         let done = steps(&[(GUIDE_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, false)]);
-        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2, patterns_read: 1 << 5, looked_since_shown: false });
+        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2, patterns_read: 1 << 5, looked_since_shown: false, before: None });
         assert!(!Tried::from_steps(&steps(&[(GUIDE_TOOL, false)])).guide_read, "a guide call that failed");
     }
 
@@ -568,6 +586,33 @@ mod tests {
         assert!(unreadable(&json!({ "title": "x" })).is_none());
     }
 
+    /// A retry sent as a patch — only `brief` and `html`, as every call that
+    /// came back without its title was on 2026-10-28 — keeps the title and
+    /// kind it sent before, but only since the last visual kept.
+    #[tokio::test]
+    async fn a_retry_keeps_the_title_and_kind_it_sent_before() {
+        use tauri::Manager;
+        let (_dir, vault, app) = app();
+        let db = app.state::<crate::db::DbState>();
+        let brief = json!({ "point": "The period depends on the length, not the mass", "pattern": "explore" });
+        let first = json!({ "title": "Con lắc đơn", "kind": "simulation", "brief": brief, "html": "<svg></svg>" });
+        let mut steps = guide_for("explore");
+        let mut run = crate::syn::run::Run::new("q", None, crate::syn::run::Budget::from_settings(&Default::default()));
+        run.steps = steps.clone();
+        run.record_tool(1, SHOW_TOOL, compact(&first, None), false, crate::syn::registry::Reversal::Nothing, "{\"error\":\"Drawn where…\"}", 1);
+        steps = run.steps.clone();
+
+        let patch = json!({ "brief": brief, "html": "<input type=\"range\"><svg></svg>" });
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&steps), &ASKED, &patch).await;
+        let shown = shown.unwrap_or_else(|| panic!("kept: {said}"));
+        assert_eq!((shown.title.as_str(), shown.kind.as_str()), ("Con lắc đơn", "simulation"));
+
+        // Once a visual is kept, the next one is a new visual and says its own.
+        run.record_tool(1, SHOW_TOOL, compact(&patch, Some(&shown)), true, crate::syn::registry::Reversal::Nothing, "{\"shown\":true}", 1);
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&run.steps), &ASKED, &patch).await;
+        assert!(shown.is_none() && said.contains("`title`"), "{said}");
+    }
+
     #[test]
     fn what_is_kept_of_a_call_holds_no_html() {
         let html = "<p>".repeat(5000);
@@ -612,20 +657,20 @@ mod tests {
         let brief = json!({ "point": "The period depends on the length, not the mass", "pattern": "explore" });
         let args = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><svg></svg>" });
         let read = Tried::from_steps(&guide_for("explore"));
-        let last = Tried { refused_since_shown: MAX_TRIES - 1, ..read };
-        let once = Tried { refused_since_shown: 1, looked_since_shown: true, ..read };
+        let last = Tried { refused_since_shown: MAX_TRIES - 1, ..read.clone() };
+        let once = Tried { refused_since_shown: 1, looked_since_shown: true, ..read.clone() };
         let kept = |vault: &str| std::fs::read_dir(std::path::Path::new(vault).join(store::FOLDER)).map(|d| d.count()).unwrap_or(0);
 
         for (lint, tried, keeps, says) in [
-            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, read, false, "overlap found"),
-            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, last, false, "nan found"),
-            (look::Lint { problems: vec![problem("expect")], ..Default::default() }, last, false, "expect found"),
-            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, last, true, "kept_with"),
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, read.clone(), false, "overlap found"),
+            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, last.clone(), false, "nan found"),
+            (look::Lint { problems: vec![problem("expect")], ..Default::default() }, last.clone(), false, "expect found"),
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, last.clone(), true, "kept_with"),
             // Sent back once already: what only mars it is kept now, with a note.
-            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, once, true, "kept_with"),
-            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, once, false, "nan found"),
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, once.clone(), true, "kept_with"),
+            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, once.clone(), false, "nan found"),
             // A name the visual reports otherwise is told, never drawn again for.
-            (look::Lint { problems: vec![problem("unreported")], ..Default::default() }, read, true, "unreported found"),
+            (look::Lint { problems: vec![problem("unreported")], ..Default::default() }, read.clone(), true, "unreported found"),
         ] {
             let (_dir, vault, app) = app();
             looking(&app, lint);
@@ -641,7 +686,7 @@ mod tests {
         reported.insert("chu kỳ (s)".into(), json!(2.006));
         looking(&app, look::Lint { reported, ..Default::default() });
         let db = app.state::<crate::db::DbState>();
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &args).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read.clone(), &ASKED, &args).await;
         assert!(shown.is_some(), "{said}");
         let said: Value = serde_json::from_str(&said).expect("json");
         assert_eq!(said["reported"]["chu kỳ (s)"], json!(2.006), "{said}");
@@ -663,17 +708,17 @@ mod tests {
         assert!(shown.is_none() && said.contains(GUIDE_TOOL), "the guide first: {said}");
 
         let cdn = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<script src=\"https://cdn.jsdelivr.net/npm/chart.js\"></script>" });
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &cdn).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read.clone(), &ASKED, &cdn).await;
         assert!(shown.is_none() && said.contains("points outside"), "{said}");
         assert!(!std::path::Path::new(&vault).join(store::FOLDER).exists() || std::fs::read_dir(std::path::Path::new(&vault).join(store::FOLDER)).unwrap().next().is_none(), "nothing kept");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { refused_since_shown: MAX_TRIES, ..read }, &ASKED, &good).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried { refused_since_shown: MAX_TRIES, ..read.clone() }, &ASKED, &good).await;
         assert!(shown.is_none() && said.contains("tries"), "{said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, false, read, &ASKED, &good).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, false, read.clone(), &ASKED, &good).await;
         assert!(shown.is_none() && said.contains("not available"), "{said}");
 
-        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read, &ASKED, &good).await;
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, read.clone(), &ASKED, &good).await;
         let shown = shown.expect("kept");
         assert!(said.contains(&shown.id));
         let back = store::load(std::path::Path::new(&vault), &shown.id).expect("read back");
