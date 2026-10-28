@@ -67,6 +67,16 @@ const PATTERN_GUIDES: [&str; 6] = [
 /// be fixed while tries are left, and kept with a note on the last.
 const BREAKS: &[&str] = &["error", "empty", "nan", "expect", "proof", "hang", "lint"];
 
+/// What the lint finds that is only told, never a reason to draw again: a
+/// number of the brief the visual reports under another name is bookkeeping.
+/// Sent back, it cost 14 of 157 tries on 2026-10-28 (Q4) and the visual
+/// nothing.
+const NOTED_ONLY: &[&str] = &["unreported"];
+
+/// How a refusal for what the lint found begins, to be told from the others
+/// in a run's steps.
+const LOOKED_AT: &str = "Drawn where the person cannot see it and looked at";
+
 /// How long a brief's point may be.
 const MAX_POINT: usize = 240;
 
@@ -141,6 +151,9 @@ pub struct Tried {
     /// The patterns whose part of the guide was read, one bit each in the
     /// order of [`store::PATTERNS`].
     pub patterns_read: u8,
+    /// Since the last visual kept, one was refused for what the lint found:
+    /// what only mars a visual has been sent back once already.
+    pub looked_since_shown: bool,
 }
 
 impl Tried {
@@ -158,12 +171,13 @@ impl Tried {
         let patterns_read = guides
             .filter_map(|s| s.args.as_ref()?.get("pattern")?.as_str().and_then(|p| pattern_index(p.trim())))
             .fold(0u8, |bits, at| bits | (1 << at));
-        let refused_since_shown = calls
+        let refused: Vec<&crate::syn::run::Step> = calls
             .filter(|s| s.tool.as_deref() == Some(SHOW_TOOL))
             .rev()
             .take_while(|s| s.ok == Some(false))
-            .count();
-        Tried { guide_read, refused_since_shown, patterns_read }
+            .collect();
+        let looked_since_shown = refused.iter().any(|s| s.preview.contains(LOOKED_AT) || s.full.as_deref().is_some_and(|f| f.contains(LOOKED_AT)));
+        Tried { guide_read, refused_since_shown: refused.len(), patterns_read, looked_since_shown }
     }
 }
 
@@ -222,9 +236,18 @@ pub async fn show<R: tauri::Runtime>(
     }
     let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::trim).unwrap_or("");
     let (title, kind, html) = (text("title"), text("kind"), args.get("html").and_then(Value::as_str).unwrap_or(""));
-    if title.is_empty() || title.chars().count() > MAX_TITLE {
+    if title.is_empty() {
         return refused(format!("`title` is what the visual shows, in at most {MAX_TITLE} characters."));
     }
+    // Too long, it is cut rather than refused: a refusal cost a try for a
+    // title five times on 2026-10-28 (Q4), and the try was the visual's last.
+    let cut: String;
+    let title = if title.chars().count() > MAX_TITLE {
+        cut = format!("{}…", title.chars().take(MAX_TITLE - 1).collect::<String>().trim_end());
+        cut.as_str()
+    } else {
+        title
+    };
     if !store::KINDS.contains(&kind) {
         return refused(format!("`kind` is one of {}.", store::KINDS.join(", ")));
     }
@@ -252,21 +275,23 @@ pub async fn show<R: tauri::Runtime>(
     let looked = look::look(app, html, &brief.proof).await;
     let mut remaining: Vec<look::Problem> = Vec::new();
     if let look::Looked::Seen(lint) = &looked {
-        if !lint.problems.is_empty() {
-            // What breaks the visual is never kept; what only mars it is, on
-            // the last try, rather than leave the answer with none.
-            let breaks = lint.problems.iter().any(|p| BREAKS.contains(&p.check.as_str()));
-            if breaks || tries_left > 0 {
-                let content = json!({
-                    "error": "Drawn where the person cannot see it and looked at: not shown. Fix these and call show_visual again.",
-                    "problems": lint.problems,
-                    "claims_that_failed": lint.expects.iter().filter(|c| !c.ok).collect::<Vec<_>>(),
-                    "tries_left": tries_left,
-                });
-                return (content.to_string(), None);
-            }
-            remaining = lint.problems.clone();
+        let refusing: Vec<&look::Problem> = lint.problems.iter().filter(|p| !NOTED_ONLY.contains(&p.check.as_str())).collect();
+        // What breaks the visual is never kept. What only mars it is sent back
+        // once: sent back twice, the model gave up drawing in 6 of 8 visuals
+        // lost on 2026-10-28 (Q4), and a visual with a label over a line is
+        // better than none. On the last try it is kept too.
+        let breaks = refusing.iter().any(|p| BREAKS.contains(&p.check.as_str()));
+        if breaks || (!refusing.is_empty() && tries_left > 0 && !tried.looked_since_shown) {
+            let content = json!({
+                "error": format!("{LOOKED_AT}: not shown. Fix these and call show_visual again."),
+                "problems": lint.problems,
+                // After `error`, which a run's step keeps the start of.
+                "failed_claims": lint.expects.iter().filter(|c| !c.ok).collect::<Vec<_>>(),
+                "tries_left": tries_left,
+            });
+            return (content.to_string(), None);
         }
+        remaining = lint.problems.clone();
     }
     let draft = store::Draft { title, kind, brief: Some(&brief), html, question: asked.question, conversation: asked.conversation, model: Some(asked.model) };
     match store::save(app, db, vault, &draft) {
@@ -402,7 +427,7 @@ mod tests {
         use tauri::Manager;
         let (_dir, vault, app) = app();
         let db = app.state::<crate::db::DbState>();
-        let read = Tried { guide_read: true, refused_since_shown: 0, patterns_read: 0 };
+        let read = Tried { guide_read: true, refused_since_shown: 0, patterns_read: 0, looked_since_shown: false };
         let zoom = Tried::from_steps(&guide_for("zoom"));
         let with = |brief: Value| json!({ "title": "Gibbs", "kind": "explainer", "html": "<svg role=\"img\"></svg>", "brief": brief });
         let point = "The overshoot stays near 9% however many terms are added";
@@ -451,8 +476,39 @@ mod tests {
     fn tries_are_counted_since_the_last_visual_kept() {
         assert_eq!(Tried::from_steps(&[]), Tried::default());
         let done = steps(&[(GUIDE_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, true), (SHOW_TOOL, false), (SHOW_TOOL, false)]);
-        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2, patterns_read: 1 << 5 });
+        assert_eq!(Tried::from_steps(&done), Tried { guide_read: true, refused_since_shown: 2, patterns_read: 1 << 5, looked_since_shown: false });
         assert!(!Tried::from_steps(&steps(&[(GUIDE_TOOL, false)])).guide_read, "a guide call that failed");
+    }
+
+    /// A refusal for what the lint found is told from one for anything else,
+    /// and only since the last visual kept.
+    #[test]
+    fn a_refusal_for_what_was_looked_at_is_remembered() {
+        let mut run = crate::syn::run::Run::new("q", None, crate::syn::run::Budget::from_settings(&Default::default()));
+        let looked = json!({ "error": format!("{LOOKED_AT}: not shown."), "problems": [] }).to_string();
+        run.record_tool(1, SHOW_TOOL, json!({}), false, crate::syn::registry::Reversal::Nothing, "{\"error\":\"`kind` is one of …\"}", 1);
+        assert!(!Tried::from_steps(&run.steps).looked_since_shown, "refused for its kind");
+        run.record_tool(1, SHOW_TOOL, json!({}), false, crate::syn::registry::Reversal::Nothing, &looked, 1);
+        assert!(Tried::from_steps(&run.steps).looked_since_shown);
+        run.record_tool(1, SHOW_TOOL, json!({}), true, crate::syn::registry::Reversal::Nothing, "{\"shown\":true}", 1);
+        assert!(!Tried::from_steps(&run.steps).looked_since_shown, "a visual was kept since");
+    }
+
+    /// A title too long is cut, not refused: the try is the visual's.
+    #[tokio::test]
+    async fn a_long_title_is_cut() {
+        use tauri::Manager;
+        let (_dir, vault, app) = app();
+        let db = app.state::<crate::db::DbState>();
+        let long = "Con lắc đơn ".repeat(30);
+        let brief = json!({ "point": "The period depends on the length, not the mass", "pattern": "explore" });
+        let args = json!({ "title": long, "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><svg></svg>" });
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&guide_for("explore")), &ASKED, &args).await;
+        let shown = shown.unwrap_or_else(|| panic!("kept: {said}"));
+        assert_eq!(shown.title.chars().count(), MAX_TITLE, "{}", shown.title);
+        assert!(shown.title.ends_with('…'));
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&guide_for("explore")), &ASKED, &json!({ "title": " ", "kind": "simulation", "brief": brief, "html": "<svg></svg>" })).await;
+        assert!(shown.is_none() && said.contains("`title`"), "an empty one is still refused: {said}");
     }
 
     #[test]
@@ -500,6 +556,7 @@ mod tests {
         let args = json!({ "title": "Con lắc", "kind": "simulation", "brief": brief, "html": "<input type=\"range\"><svg></svg>" });
         let read = Tried::from_steps(&guide_for("explore"));
         let last = Tried { refused_since_shown: MAX_TRIES - 1, ..read };
+        let once = Tried { refused_since_shown: 1, looked_since_shown: true, ..read };
         let kept = |vault: &str| std::fs::read_dir(std::path::Path::new(vault).join(store::FOLDER)).map(|d| d.count()).unwrap_or(0);
 
         for (lint, tried, keeps, says) in [
@@ -507,6 +564,11 @@ mod tests {
             (look::Lint { problems: vec![problem("nan")], ..Default::default() }, last, false, "nan found"),
             (look::Lint { problems: vec![problem("expect")], ..Default::default() }, last, false, "expect found"),
             (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, last, true, "kept_with"),
+            // Sent back once already: what only mars it is kept now, with a note.
+            (look::Lint { problems: vec![problem("overlap")], ..Default::default() }, once, true, "kept_with"),
+            (look::Lint { problems: vec![problem("nan")], ..Default::default() }, once, false, "nan found"),
+            // A name the visual reports otherwise is told, never drawn again for.
+            (look::Lint { problems: vec![problem("unreported")], ..Default::default() }, read, true, "unreported found"),
         ] {
             let (_dir, vault, app) = app();
             looking(&app, lint);
