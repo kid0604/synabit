@@ -156,10 +156,10 @@ describe("the kit's components", () => {
     expect(el.querySelector(`label[for="${slider.id}"]`)?.textContent).toBe('Độ cao');
     slider.value = '35';
     slider.dispatchEvent(new Event('input'));
-    expect(seen.at(-1)).toMatchObject({ h: 35 });
+    expect(seen[seen.length - 1]).toMatchObject({ h: 35 });
     expect(el.textContent).toContain('35 m');
     (el.querySelector('button') as HTMLButtonElement).click();
-    expect(seen.at(-1)).toMatchObject({ h: 50 });
+    expect(seen[seen.length - 1]).toMatchObject({ h: 50 });
   });
 
   it('writes stats in the locale, with their unit and note', () => {
@@ -214,8 +214,8 @@ describe("the kit's numbers from the model", () => {
 
   it('follows a system with RK4, and keeps what it must keep', () => {
     const decay = kit.ode((s) => ({ y: -s.y }), { y: 1 }, 0, 1, { dt: 0.01 });
-    expect(decay.at(-1)!.t).toBeCloseTo(1, 12);
-    expect(decay.at(-1)!.y).toBeCloseTo(Math.exp(-1), 9);
+    expect(decay[decay.length - 1]!.t).toBeCloseTo(1, 12);
+    expect(decay[decay.length - 1]!.y).toBeCloseTo(Math.exp(-1), 9);
     const b = 0.3, g = 0.1;
     const sir = kit.ode((s) => ({ S: -b * s.S * s.I, I: b * s.S * s.I - g * s.I, R: g * s.I }), { S: 0.99, I: 0.01, R: 0 }, 0, 160, { dt: 0.05 });
     for (const s of sir) expect(s.S + s.I + s.R).toBeCloseTo(1, 9);
@@ -224,7 +224,7 @@ describe("the kit's numbers from the model", () => {
   it('keeps the energy of an oscillator with velocity Verlet', () => {
     const energy = (s: Record<string, number>) => 0.5 * s.v * s.v + 0.5 * s.x * s.x;
     const path = kit.ode((s) => ({ x: s.v, v: -s.x }), { x: 1, v: 0 }, 0, 20 * Math.PI, { dt: 0.01, method: 'verlet', pairs: { x: 'v' } });
-    expect(Math.abs(energy(path.at(-1)!) - 0.5) / 0.5).toBeLessThan(1e-4);
+    expect(Math.abs(energy(path[path.length - 1]!) - 0.5) / 0.5).toBeLessThan(1e-4);
   });
 
   it('runs a simulation with its controls and invariants', () => {
