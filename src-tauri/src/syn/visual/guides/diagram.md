@@ -5,6 +5,9 @@ drawn by hand. For a plain flowchart or a tree the person may want to edit,
 `draw_board` is better — a visual is for what a board cannot show: something
 that highlights as you hover, steps that play in order, a part that moves.
 
+- Nodes and edges — a network, a state machine, a tree of choices — are
+  `synabit.graph`: it places them, keeps weights off the lines and names the
+  states in a legend. Draw by hand only what is not a graph.
 - Lay it out on a grid of 8: boxes `rx="8"`, at least 16 apart, labels centred.
 - A box is as wide as its longest label plus 24. SVG does not wrap: break a
   long label into two `<tspan>` lines yourself.

@@ -14,69 +14,60 @@ Must have:
 - All steps worked out once, from the algorithm, before anything is drawn;
   the buttons only choose which one to show. The result is checked with
   `synabit.expect` against what it must equal.
+- Built with `synabit.stepper` (the buttons, "step k / n", the step line)
+  and, for a graph, `synabit.graph` drawn from each step's state: node and
+  edge states, notes such as distances, a legend that names each state.
 
 Copy how this is built, not what it shows:
 
 ```html
-<div style="max-width:640px">
-  <div class="row" style="margin-bottom:10px">
-    <button id="back">Lùi</button>
-    <button id="next">Tiếp</button>
-    <span id="where" class="muted"></span>
-  </div>
-  <div id="line" style="font:15px var(--mono);margin-bottom:10px"></div>
-  <table style="border-collapse:collapse;font-variant-numeric:tabular-nums">
-    <thead><tr class="muted"><th style="text-align:left;padding:4px 12px 4px 0">Số bị chia</th><th style="padding:4px 12px">Thương</th><th style="padding:4px 12px">Dư</th></tr></thead>
-    <tbody id="rows"></tbody>
-  </table>
-  <div class="row muted" style="margin-top:10px;font-size:12px;gap:14px">
-    <span><b style="color:var(--success)">■</b> đã xong</span>
-    <span><b style="color:var(--accent)">■</b> đang làm</span>
-    <span><b style="color:var(--border)">■</b> chưa tới</span>
-  </div>
-  <div style="margin-top:10px">Nhị phân: <span id="bits" class="stat"></span></div>
-</div>
+<div id="v"></div>
 <script>
-const n = 13;
-// Every step, worked out once from the algorithm.
-const steps = [];
-for (let q = n; q > 0; q = Math.floor(q / 2)) steps.push({ q, next: Math.floor(q / 2), r: q % 2 });
-let at = 0; // 0 is the start: nothing divided yet.
+// The graph, and every step of the search, worked out before anything is drawn.
+const nodes = [{ id: 'S', x: 0, y: 1 }, { id: 'A', x: 1, y: 0 }, { id: 'B', x: 1, y: 2 }, { id: 'C', x: 2, y: 0 }, { id: 'D', x: 2, y: 2 }, { id: 'E', x: 3, y: 1 }];
+const edges = [['S', 'A'], ['S', 'B'], ['A', 'C'], ['B', 'D'], ['C', 'E'], ['D', 'E'], ['A', 'B']].map(([from, to]) => ({ from, to }));
+const near = (u) => edges.flatMap((e) => (e.from === u ? [e.to] : e.to === u ? [e.from] : []));
 
-function draw() {
-  document.getElementById('where').textContent = `Bước ${at} / ${steps.length}`;
-  document.getElementById('back').disabled = at === 0;
-  document.getElementById('next').disabled = at === steps.length;
-  const s = steps[at - 1];
-  document.getElementById('line').textContent = at === 0
-    ? `Bắt đầu: chia ${n} cho 2 tới khi thương bằng 0`
-    : `${s.q} = 2 · ${s.next} + ${s.r}`;
-  const rows = document.getElementById('rows');
-  rows.replaceChildren();
-  steps.forEach((step, i) => {
-    const state = i < at - 1 ? 'done' : i === at - 1 ? 'current' : 'todo';
-    const tr = document.createElement('tr');
-    tr.style.color = state === 'todo' ? 'var(--muted)' : 'var(--text)';
-    tr.style.background = state === 'current' ? 'color-mix(in srgb, var(--accent) 12%, transparent)' : '';
-    tr.style.borderLeft = `3px solid var(--${state === 'done' ? 'success' : state === 'current' ? 'accent' : 'border'})`;
-    for (const value of [step.q, i < at ? step.next : '·', i < at ? step.r : '·']) {
-      const td = document.createElement('td');
-      td.style.padding = '4px 12px';
-      td.textContent = typeof value === 'number' ? synabit.number(value, 0) : value;
-      tr.appendChild(td);
-    }
-    rows.appendChild(tr);
-  });
-  // The remainders, read from the last to the first.
-  const bits = steps.slice(0, at).map((s) => s.r).reverse().join('');
-  document.getElementById('bits').textContent = at === steps.length ? bits : bits ? `…${bits}` : '—';
-  if (at === steps.length) synabit.expect('read back', parseInt(bits, 2), n);
+const dist = { S: 0 };
+const done = [];
+const queue = ['S'];
+const tree = {};
+const snap = (line, current) => ({
+  line,
+  nodes: Object.fromEntries(nodes.map((n) => [n.id, n.id === current ? 'current' : done.includes(n.id) ? 'done' : n.id in dist ? 'seen' : 'todo'])),
+  edges: Object.fromEntries(Object.entries(tree).map(([v, u]) => [`${u}-${v}`, 'chosen'])),
+  notes: Object.fromEntries(Object.entries(dist).map(([k, d]) => [k, `d = ${d}`])),
+  queue: [...queue],
+});
+const steps = [snap('Bắt đầu từ S: d(S) = 0, hàng đợi [S]', null)];
+while (queue.length) {
+  const u = queue.shift();
+  const added = near(u).filter((v) => !(v in dist));
+  for (const v of added) {
+    dist[v] = dist[u] + 1;
+    tree[v] = u;
+    queue.push(v);
+  }
+  done.push(u);
+  steps.push(snap(added.length ? `Lấy ${u}: thêm ${added.join(', ')} với d = ${dist[u]} + 1 = ${dist[u] + 1}` : `Lấy ${u}: không có đỉnh mới`, u));
 }
-document.getElementById('back').addEventListener('click', () => { at = Math.max(0, at - 1); draw(); });
-document.getElementById('next').addEventListener('click', () => { at = Math.min(steps.length, at + 1); draw(); });
-const all = steps.map((s) => s.r).reverse().join('');
-synabit.report({ 'nhị phân của 13': all });
-synabit.expect('13 in binary, read back', parseInt(all, 2), n);
-draw();
+// Checked: along every edge, the distances differ by at most one.
+for (const e of edges) synabit.expect(`${e.from}-${e.to} differ by at most 1`, Math.abs(dist[e.from] - dist[e.to]) <= 1, true);
+synabit.report(Object.fromEntries(Object.entries(dist).map(([k, d]) => [`d(${k})`, d])));
+
+synabit.stepper('#v', {
+  steps,
+  render: (step, i, stage) => {
+    synabit.graph(stage, {
+      nodes, edges, directed: false,
+      state: { nodes: step.nodes, edges: step.edges, notes: step.notes },
+      legend: { done: 'đã duyệt', current: 'đang duyệt', seen: 'trong hàng đợi', todo: 'chưa thấy', chosen: 'cạnh của cây BFS' },
+    });
+    const q = document.createElement('div');
+    q.className = 'muted';
+    q.textContent = `Hàng đợi: [${step.queue.join(', ')}]`;
+    stage.appendChild(q);
+  },
+});
 </script>
 ```

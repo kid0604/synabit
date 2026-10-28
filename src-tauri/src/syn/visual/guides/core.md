@@ -39,10 +39,10 @@ question gets at most one visual unless asked for more.
 
 ## The parts to build it from
 
-The kit has four parts that lay themselves out: axes with units and round
+The kit has parts that lay themselves out: axes with units and round
 ticks, margins wide enough for their labels, legends with colours, sliders
 with their values and ranges. Build with them, and draw by hand only what
-they do not cover — a circuit, a graph of nodes, a pendulum. Each draws into
+they do not cover — a circuit, a pendulum, a molecule. Each draws into
 an element, replacing what was there; call it again to redraw.
 
 - `synabit.layout(el, 'side' | 'stack' | 'compare')` returns slots to draw
@@ -62,6 +62,15 @@ an element, replacing what was there; call it again to redraw.
   `x: { categories }` and `series: [{ name, values }]`, bars. One panel can
   be written without `panels`: `{ x, y, series, areas, marks }`. Returns
   `{ x, y, svgs }` to draw anything else on it.
+- `synabit.stepper(el, { steps, render: (step, i, el) => … })` — steps worked
+  out before anything is drawn, step 0 the start, each with a `line` saying
+  what it did; back, next and play, "step i / n".
+- `synabit.graph(el, { nodes: [{ id, x, y }], edges: [{ from, to, weight }],
+  directed, state: { nodes: { id: 'done' | 'current' | 'seen' | 'todo' },
+  edges: { 'from-to': 'chosen' | 'active' | 'rejected' }, notes: { id: … } },
+  legend: { done: '…', … } })` — nodes and edges coloured by their state,
+  weights on boxes, a legend that names each state. Arrows only if
+  `directed`.
 
 ## What the frame does not have
 
