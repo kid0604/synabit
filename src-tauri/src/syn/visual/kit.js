@@ -170,6 +170,17 @@
   const LITERAL_COLOUR = /^(#[0-9a-f]{3,8}|rgba?\(.*\)|hsla?\(.*\)|[a-z]+)$/i;
 
   const checks = {
+    // Nothing on the page has a size: no markup, or a script that stopped
+    // before drawing into it. One page kept on 2026-10-28 was "[]".
+    empty: () => {
+      const drawn = [...document.body.querySelectorAll('*')].some((element) => {
+        if (element.closest('script, style, link, template')) return false;
+        const box = element.getBoundingClientRect();
+        return box.width > 0 && box.height > 0;
+      });
+      return drawn ? [] : ['nothing on the page has a size: there is no visual'];
+    },
+
     // Something threw.
     error: () => errors.map((e) => `${e.kind}: ${e.message}${e.where ? ` (${e.where})` : ''}`),
 

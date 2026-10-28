@@ -1,5 +1,12 @@
 [
   {
+    "file": "empty.html",
+    "fault": "The whole visual is \"[]\": no element, so nothing is drawn.",
+    "checks": [
+      "empty"
+    ]
+  },
+  {
     "file": "error.html",
     "fault": "Its script looks up an element by an id the fragment does not have, and stops.",
     "checks": [
