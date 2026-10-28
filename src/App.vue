@@ -1585,6 +1585,13 @@ onUnmounted(() => {
     </div>
 
 
+    <!--
+      Syn's visuals are drawn here first, unseen, and looked at before they are
+      kept (`syn::visual::look`). Desktop only, as visuals are; with or without
+      a vault, since it only answers the engine and holds nothing.
+    -->
+    <SynVisualLooker v-if="!isMobileOS" />
+
     <!-- ═══ Auto-Update Banner ═══ -->
     <Transition name="slide-down">
       <div v-if="updateAvailable && !updateDownloading"
@@ -1702,8 +1709,6 @@ onUnmounted(() => {
 
         <template #banner>
           <VaultBackupNotice v-if="vaultPath" :vaultPath="vaultPath" />
-          <!-- Syn's visuals are drawn here first, unseen, and looked at before they are kept. Desktop only, as visuals are. -->
-          <SynVisualLooker v-if="vaultPath && !isMobileOS" />
         </template>
         
         <!--

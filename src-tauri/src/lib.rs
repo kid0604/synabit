@@ -695,6 +695,9 @@ pub fn run() {
             use tauri::Manager;
             log::info!("Starting Synabit Backend...");
             invariants::watch(app.handle().clone());
+            // `SYN_VISUAL_LOOK_TRIAL`: time the visual self-check in the real app, then quit.
+            #[cfg(debug_assertions)]
+            syn::visual::look::trial_on_start(app.handle().clone());
 
             // Where the app lives, learnt from the app rather than written down:
             // it is `tauri://localhost` in a bundle and `http://localhost:1420`

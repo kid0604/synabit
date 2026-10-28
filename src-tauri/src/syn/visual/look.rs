@@ -186,6 +186,7 @@ async fn in_frame<R: tauri::Runtime>(app: &tauri::AppHandle<R>, html: &str, proo
     } else {
         return Looked::Not("the draft could not be held".into());
     }
+    let started = std::time::Instant::now();
     let looked = match app.emit(EVENT, serde_json::json!({ "token": token })) {
         Err(e) => Looked::Not(format!("the page was not reached: {e}")),
         Ok(()) => match tokio::time::timeout(WITHIN, rx).await {
@@ -200,17 +201,73 @@ async fn in_frame<R: tauri::Runtime>(app: &tauri::AppHandle<R>, html: &str, proo
     if let Ok(mut waiting) = waiting().lock() {
         waiting.remove(&token);
     }
+    // What looking costs the answer it is part of (gate item 6: under 1.5 s).
+    match &looked {
+        Looked::Seen(lint) => log::info!("[syn-visual] looked at a draft in {} ms: {} problem(s)", started.elapsed().as_millis(), lint.problems.len()),
+        Looked::Not(why) => log::info!("[syn-visual] a draft was not looked at after {} ms: {why}", started.elapsed().as_millis()),
+    }
     looked
+}
+
+/// Debug builds: with `SYN_VISUAL_LOOK_TRIAL` naming a folder of fragments,
+/// look at each in the running app's hidden frame, write what each took and
+/// found to `SYN_VISUAL_LOOK_OUT`, and quit. The real path end to end — the
+/// webview, `SynVisualLooker.vue`, `synvisual://…/draft/` — timed, which no
+/// test without the app can do.
+#[cfg(debug_assertions)]
+pub fn trial_on_start<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    let Ok(folder) = std::env::var("SYN_VISUAL_LOOK_TRIAL") else { return };
+    let out = std::env::var("SYN_VISUAL_LOOK_OUT").unwrap_or_else(|_| format!("{folder}/looked.json"));
+    tauri::async_runtime::spawn(async move {
+        let mut pages: Vec<std::path::PathBuf> = std::fs::read_dir(&folder)
+            .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "html")).collect())
+            .unwrap_or_default();
+        pages.sort();
+        // The page loads, and its looker starts listening, some seconds in.
+        let mut ready = false;
+        for _ in 0..30 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if matches!(in_frame(&app, "<p>ready</p>", &[]).await, Looked::Seen(_)) {
+                ready = true;
+                break;
+            }
+        }
+        let mut results = Vec::new();
+        for page in pages.iter().filter(|_| ready) {
+            let html = std::fs::read_to_string(page).unwrap_or_default();
+            for round in 1..=3 {
+                let started = std::time::Instant::now();
+                let looked = in_frame(&app, &html, &[]).await;
+                let ms = started.elapsed().as_millis();
+                let (seen, problems) = match &looked {
+                    Looked::Seen(lint) => (true, lint.problems.iter().map(|p| p.check.clone()).collect::<Vec<_>>()),
+                    Looked::Not(why) => (false, vec![why.clone()]),
+                };
+                results.push(serde_json::json!({ "page": page.file_name().map(|n| n.to_string_lossy().to_string()), "round": round, "ms": ms, "seen": seen, "problems": problems }));
+            }
+        }
+        let _ = std::fs::write(&out, serde_json::to_string_pretty(&serde_json::json!({ "ready": ready, "results": results })).unwrap_or_default());
+        app.exit(0);
+    });
 }
 
 #[cfg(desktop)]
 async fn by_script(repo: &std::path::Path, html: &str, proof: &[Proof]) -> Looked {
-    let dir = match tempfile::tempdir() {
-        Ok(d) => d,
-        Err(e) => return Looked::Not(format!("no folder to draw it in: {e}")),
-    };
-    let page = dir.path().join("draft.html");
-    let out = dir.path().join("lint.json");
+    // A folder of its own under the system's temporary one, removed after:
+    // `tempfile` is a crate for tests only, and this is compiled into the app.
+    let dir = std::env::temp_dir().join(format!("synabit-look-{}", uuid::Uuid::new_v4().simple()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return Looked::Not(format!("no folder to draw it in: {e}"));
+    }
+    struct Gone(std::path::PathBuf);
+    impl Drop for Gone {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _gone = Gone(dir.clone());
+    let page = dir.join("draft.html");
+    let out = dir.join("lint.json");
     if std::fs::write(&page, super::assets::standalone(html, "light")).is_err() {
         return Looked::Not("the draft could not be written".into());
     }
