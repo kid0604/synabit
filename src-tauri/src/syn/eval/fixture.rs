@@ -56,6 +56,13 @@ impl Vault {
         handle.manage(crate::chat_engine::ChatEngineState::default());
         handle.manage(crate::timeline::TimelineState::new(crate::timeline::TimelineStore::open_in_memory().expect("timeline")));
         handle.manage(crate::timeline::ledger::LedgerDb::in_memory());
+        // `SYN_EVAL_TRIAL=1`: a visual is looked at in WebKit before it is
+        // kept, as the app looks at it in a hidden frame. Without it, kept
+        // unlooked, as before PR Q4.
+        if std::env::var("SYN_EVAL_TRIAL").is_ok_and(|v| v == "1") {
+            let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("the repository").to_path_buf();
+            handle.manage(crate::syn::visual::look::Looker::Script { repo });
+        }
 
         let settings = SynSettings {
             enabled: true,

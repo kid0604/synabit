@@ -998,3 +998,91 @@ So với dự đoán:
   khi bản thân hệ là điều cần thấy. Sửa xong phải đo lại trên cả phần giữ lại.
 - **`zoom` và `areas` vẫn yếu nhất ở tự kiểm**, do chữ đè và tràn khung. Đó là việc của thành phần trong kit
   (Q5), không phải của bản thiết kế.
+
+## 2026-10-28 — PR Q4 (vòng tự kiểm trước khi giữ): dự đoán, ghi trước khi đo
+
+Q4 thêm vòng tự kiểm. Trước khi giữ, hình được vẽ ở chỗ người dùng không thấy và chạy `synabit.lint`, có
+dùng thử mọi điều khiển và đối chiếu `brief.proof`:
+- **Trong app:** một khung ẩn trên `synvisual://…/draft/<token>`, hạn 4 giây.
+- **Trong eval:** WebKit qua `visualTrial.mjs`, bật bằng `SYN_EVAL_TRIAL=1`.
+
+Lỗi được chia hai loại:
+- **Lỗi làm hỏng hình không bao giờ được giữ:** `error`, `empty`, `nan`, `expect`, `proof`, `hang`.
+- **Lỗi chỉ làm xấu hình** (chữ đè, tràn khung, `dead-control`, `unreported`…) được trả về khi còn lượt.
+  Ở lần thử cuối thì vẫn giữ, kèm ghi chú.
+
+Số hình `report` đi vào kết quả của `show_visual`. Đo trên `gpt-6-luna`, 32 câu × 3, so với Q3 (tự kiểm 60%,
+đúng 93%, vẽ 94%).
+
+Một lưu ý trước khi đọc số: tự kiểm của bộ đo dùng cùng mã lint với vòng tự kiểm, nên phần tăng ở cột đó một
+phần là do cấu trúc. Hai cột độc lập hơn là **đúng** và **vẽ**.
+
+Dự đoán:
+- **Tự kiểm qua: khoảng 80%** (§5 của kế hoạch: Q4 thêm khoảng 35 điểm). Không tới 100%, vì lỗi bố cục vẫn
+  được giữ ở lần cuối.
+- **Đúng: khoảng 95%.** `expect` sai giờ chặn hình. `tax` sẽ hoặc đúng hoặc không vẽ được, nhưng không còn
+  hình nào được giữ mà sai.
+- **Vẽ:** phần phát triển tụt từ 100% xuống khoảng 90%, vì một số hình hết 3 lượt thử. Lần chạy thử, `tax`
+  bị trả về hai lần vì `expect` rồi lần ba vì tiêu đề quá dài, nên không giữ được hình.
+- **Hình được giữ mà còn lỗi `expect`: 0.**
+- **Thời gian:** mỗi nhóm lâu hơn Q3 khoảng 30–50%. Trong eval, mỗi lần nhìn khởi động WebKit mất vài giây.
+  Trong app, test `look.spec.ts` đo được 1,2 giây cho một hình có 3 điều khiển, dưới mức 1,5 giây của mục
+  6 trong gate.
+
+### Kết quả Q4 (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Q3: tất cả | 96 | 94% | 60% | 93% (87) | 1,48 | 1,15 | 82% (90) |
+| Dự đoán sau Q4 | | ~90% (phát triển) | ~80% | ~95% | | | |
+| **Q4: tất cả** | 96 | **83%** | **78%** | **85%** (87) | 1,35 | 0,99 | 86% (80) |
+| Q4: phát triển | 66 | 88% | 83% | 83% (60) | 1,44 | 1,03 | 81% (58) |
+| Q4: giữ lại | 30 | 73% | 67% | 89% (27) | 1,17 | 0,90 | 100% (22) |
+
+⚠ người chấm chưa được tin.
+
+Theo kiểu (phần phát triển, Q3 → Q4):
+
+| Kiểu | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| `step` | 100% → 100% | 92% → 100% | 100% → 100% |
+| `compare` | 100% → 94% | 61% → 89% | 93% → 93% |
+| `decompose` | 100% → 100% | 92% → 100% | 100% → 92% |
+| `zoom` | 100% → 67% | 33% → 56% | 89% → 44% |
+| `areas` | 100% → 50% | 17% → 50% | 50% → 83% |
+| `explore` | 100% → 89% | 67% → 78% | 100% → 78% |
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `overlap` 2, `overflow` 1. Không còn `expect`,
+`error`, `nan` hay `dead-control`.
+
+Một lượt bị lẫn: `euler-e` lượt 1 được giữ mà không được nhìn ("WebKit said nothing"). Trong lúc đo, tôi chạy
+`git stash` vài giây, nên `visualTrial.mjs` và `kit.js` trên đĩa tạm là bản cũ. Không tính lại lượt đó.
+
+So với dự đoán:
+- **Tự kiểm: 78%, dự đoán khoảng 80%.** Đúng hướng, nhưng như đã lưu ý, cột này một phần do cấu trúc.
+- **Vẽ: 83%, dự đoán khoảng 90% ở phần phát triển; đo được 88%.** Phần giữ lại cũng tụt, 80% → 73%.
+- **Đúng: 85%, dự đoán khoảng 95%. Sai hướng.**
+  - Tính riêng các lần có vẽ: phần phát triển 46 / 52 (88%), Q3 là 55 / 60 (92%). Trong mức dao động.
+  - Phần còn lại là các lần không vẽ: chỉ còn số trong câu trả lời để kiểm, và đúng 4 / 8.
+  - `tax` lần đầu đúng: 0 / 3 → 2 / 3. `expect` chặn hình sai, và model sửa được.
+- **Hình được giữ mà `expect` sai: 0**, đúng dự đoán.
+- **Thời gian mỗi nhóm:** 11–18 phút, so với 12–15 phút ở Q3.
+- **Trong app:** `look.spec.ts` đo được 1,2 giây cho một hình có 3 điều khiển, trong khung ẩn kiểu của app.
+  Chưa đo trong app thật.
+
+Vì sao mất hình. Có 157 lần gọi `show_visual`, 82 lần được giữ. Lý do bị trả về: `overlap` 32, `unreported`
+14, `overflow` 10, `expect` 8, `error` 7, `long-decimal` 6, `proof` 5, tiêu đề quá 120 ký tự 5,
+`dead-control` 2, `nan` 1.
+
+Chuỗi gọi của 8 lượt phần phát triển không giữ được hình:
+- 6 lượt là `overlap` / `overflow` bị trả về hai lần, rồi **model bỏ cuộc**: không gọi lần thứ ba mà trả
+  lời bằng chữ. Luật "lần cuối thì giữ kèm ghi chú" gần như không bao giờ được dùng tới.
+- `pendulum`: `unreported` rồi `expect`.
+- `tax`: `overlap`, `overlap`, rồi `error` + `unreported`.
+
+Ba chỗ sửa chung, chưa làm, cần người dùng quyết:
+- **Lỗi chỉ làm xấu hình chỉ trả về một lần.** Bản sửa sau được giữ dù còn lỗi đó, kèm ghi chú.
+- **`unreported` không bao giờ là lý do từ chối**, chỉ ghi chú: đó là lỗi sổ sách.
+- **Tiêu đề quá dài thì cắt bớt, không từ chối.**
+
+Dự đoán nếu sửa: tỷ lệ vẽ về lại khoảng Q3; tự kiểm thấp hơn 78%, khoảng 70%; đúng khoảng 90% hoặc hơn.
