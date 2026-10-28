@@ -212,6 +212,22 @@ pub fn read_guide(offered_here: bool, args: &Value) -> String {
     guide(args)
 }
 
+/// Arguments that did not arrive as a JSON object: their length and why they
+/// do not parse. A provider keeps what it could not parse as a string
+/// (`openai::arguments_to_value`), and a call read as having no `title` was
+/// told about its title — ten times on 2026-10-28, each the retry after a
+/// visual was sent back, each a try lost to the wrong fix.
+fn unreadable(args: &Value) -> Option<(usize, String)> {
+    match args {
+        Value::Object(_) => None,
+        Value::String(raw) => Some((
+            raw.chars().count(),
+            serde_json::from_str::<Value>(raw).err().map(|e| e.to_string()).unwrap_or_else(|| "not an object".into()),
+        )),
+        other => Some((other.to_string().chars().count(), "not an object".into())),
+    }
+}
+
 /// `show_visual`: look at the fragment, keep it, say what happened. What
 /// comes back is the tool's answer and, when a visual was kept, what it was.
 pub async fn show<R: tauri::Runtime>(
@@ -225,6 +241,11 @@ pub async fn show<R: tauri::Runtime>(
 ) -> (String, Option<Shown>) {
     if !offered_here {
         return refused(NOT_HERE);
+    }
+    if let Some((chars, error)) = unreadable(args) {
+        return refused(format!(
+            "The call's arguments did not arrive as JSON ({error}; {chars} characters received). Most likely the call was cut off because the visual is too long, or a quote or a backslash in the HTML was not escaped. Call show_visual again with every field — title, kind, brief, html — and a shorter visual."
+        ));
     }
     if !tried.guide_read {
         return refused(format!("Call {GUIDE_TOOL} with this visual's kind first: it says how a visual is drawn here."));
@@ -338,11 +359,26 @@ pub fn drawn(m: &crate::models::syn::SynMessage) -> Vec<String> {
 /// lives in the visual's node, once. A refused call keeps the start of its
 /// HTML and its length, enough to see what was tried.
 pub fn compact(args: &Value, shown: Option<&Shown>) -> Value {
+    if let Some((chars, error)) = unreadable(args) {
+        // Both ends and where the parse stopped: enough to tell a call cut off
+        // from one with a quote left unescaped.
+        let raw = args.as_str().unwrap_or("");
+        let end: String = raw.chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
+        return json!({
+            "unreadable": true,
+            "raw_chars": chars,
+            "json_error": error,
+            "raw_start": raw.chars().take(400).collect::<String>(),
+            "raw_end": end,
+        });
+    }
     match shown {
         Some(shown) => json!({ "visual_id": shown.id, "title": shown.title, "kind": shown.kind }),
         None => {
             let html = args.get("html").and_then(Value::as_str).unwrap_or("");
             json!({
+                // Which fields it sent: a retry has come back without its title.
+                "keys": args.as_object().map(|o| o.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
                 "title": args.get("title").cloned().unwrap_or(Value::Null),
                 "kind": args.get("kind").cloned().unwrap_or(Value::Null),
                 "html_chars": html.chars().count(),
@@ -509,6 +545,27 @@ mod tests {
         assert!(shown.title.ends_with('…'));
         let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&guide_for("explore")), &ASKED, &json!({ "title": " ", "kind": "simulation", "brief": brief, "html": "<svg></svg>" })).await;
         assert!(shown.is_none() && said.contains("`title`"), "an empty one is still refused: {said}");
+    }
+
+    /// Arguments that are not JSON are said to be that — not a missing title —
+    /// and what is kept of them shows where they broke.
+    #[tokio::test]
+    async fn arguments_that_are_not_json_are_named() {
+        use tauri::Manager;
+        let (_dir, vault, app) = app();
+        let db = app.state::<crate::db::DbState>();
+        let cut = Value::String(format!("{{\"title\":\"Con lắc\",\"kind\":\"simulation\",\"html\":\"<svg>{}", "<p></p>".repeat(200)));
+        let (said, shown) = show(app.handle(), db.inner(), &vault, true, Tried::from_steps(&guide_for("explore")), &ASKED, &cut).await;
+        assert!(shown.is_none());
+        assert!(said.contains("did not arrive as JSON") && said.contains("EOF while parsing"), "{said}");
+        assert!(!said.contains("`title` is what"), "not told about its title: {said}");
+
+        let kept = compact(&cut, None);
+        assert_eq!(kept["unreadable"], json!(true));
+        assert!(kept["json_error"].as_str().is_some_and(|e| e.starts_with("EOF while parsing")), "{kept}");
+        assert_eq!(kept["raw_end"].as_str().map(|e| e.chars().count()), Some(400));
+        assert!(kept["raw_start"].as_str().is_some_and(|s| s.starts_with("{\"title\"")));
+        assert!(unreadable(&json!({ "title": "x" })).is_none());
     }
 
     #[test]
