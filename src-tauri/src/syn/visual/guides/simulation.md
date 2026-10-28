@@ -6,16 +6,29 @@ reasoning, so a wrong one teaches the wrong thing. Make it right first.
 
 - Say the model in the visual, in one line under it: the equations or the
   rule, and what it leaves out ("no air resistance", "small angles only").
-- Step with a fixed time step and a method that holds: semi-implicit
-  (symplectic) Euler or velocity Verlet for mechanics, RK4 for other ODEs.
-  Never plain explicit Euler for anything that oscillates or orbits — it gains
-  energy and drifts.
+- Run it with `synabit.sim`: it steps with a fixed time step and a method
+  that holds — velocity Verlet for mechanics (`method: 'verlet'`, `pairs`
+  naming each position's velocity), RK4 otherwise — and gives run, pause and
+  reset, and each invariant with its drift. Never step it by hand with plain
+  Euler: anything that oscillates or orbits gains energy and drifts.
+
+  ```js
+  synabit.sim(stage, {
+    state: { x: 1, y: 0, vx: 0, vy: 1 },
+    rates: (s) => { const r3 = Math.hypot(s.x, s.y) ** 3; return { x: s.vx, y: s.vy, vx: -s.x / r3, vy: -s.y / r3 }; },
+    method: 'verlet', pairs: { x: 'vx', y: 'vy' },
+    dt: 0.001, speed: 1,
+    invariants: { 'năng lượng': (s) => 0.5 * (s.vx ** 2 + s.vy ** 2) - 1 / Math.hypot(s.x, s.y) },
+    draw: (s, t) => { /* draw the state */ },
+  });
+  ```
+
+- A curve over time that does not need to move — a population, an epidemic
+  — is `synabit.ode(...)` drawn with `synabit.chart`, not an animation.
 - Show a check the person can see: the energy for a mechanical system, the
-  total population for an epidemic, the period against its formula. If it
-  drifts, the step is too large.
-- Draw with `requestAnimationFrame`, several physics steps per frame if
-  needed. A play / pause button and a reset; start paused if the motion would
-  be missed.
+  total population for an epidemic, the period against its formula — as an
+  invariant of `synabit.sim`. If it drifts, the step is too large.
+- Start paused (`paused: true`) if the motion would be missed.
 - Show the whole of what was asked. An orbit draws at least one full
   revolution; a trail that drops old points keeps more than one period of
   them (work the period out from the parameters, or keep every point). An
@@ -29,7 +42,7 @@ reasoning, so a wrong one teaches the wrong thing. Make it right first.
 - Controls for the two or three parameters that matter, through
   `synabit.controls`; the quantity asked about and the check beside it
   through `synabit.stats`. Changing a control resets the run.
-- Keep the state in plain variables and one `step(dt)` function; draw from the
-  state, never the other way round.
+- Draw from the state `synabit.sim` passes to `draw`, never the other way
+  round.
 - Canvas or SVG both work. On a canvas, read colours with `synabit.color()`
   and redraw on `synabit.onContext`.

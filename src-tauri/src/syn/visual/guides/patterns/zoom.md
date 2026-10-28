@@ -8,8 +8,8 @@ Must have:
   the region magnified is marked on the whole view.
 - **The phenomenon measured**, as a number with its unit or as a share,
   written large next to the magnified view: how high, how wide, how far off.
-- The measure found by searching the whole range the model covers, not a
-  part of it, and checked with `synabit.expect` against a value worked out
+- The measure found from the model with `synabit.solve` or `synabit.peak`,
+  over the whole range the model covers, not a part of it, and checked with `synabit.expect` against a value worked out
   another way (a formula, a limit, a known constant).
 - Both views drawn from the same function; the magnified one only narrows
   the range.
@@ -26,11 +26,10 @@ Copy how this is built, not what it shows:
 </div>
 <script>
 const curves = [{ name: 'sin x', fn: Math.sin }, { name: 'x', fn: (x) => x, dashed: true }];
-// The measure, searched over the whole range drawn: where x stops being
+// The measure, solved from the curves themselves: where x stops being
 // within 1% of sin x.
 const off = (x) => (x - Math.sin(x)) / Math.sin(x);
-let from = null;
-for (let x = 1e-4; x <= 2 && from === null; x += 1e-4) if (off(x) >= 0.01) from = x;
+const from = synabit.solve((x) => off(x) - 0.01, 0.01, 2);
 // Checked another way: the first term the approximation leaves out, x³/6,
 // is 1% of x where x² = 0.06.
 synabit.expect('1% where x²/6 = 1%', from, Math.sqrt(0.06), 0.005);

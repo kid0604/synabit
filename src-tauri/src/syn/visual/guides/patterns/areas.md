@@ -28,13 +28,8 @@ Copy how this is built, not what it shows:
 const end = 10;
 // The model, once: speeds up evenly to `top` in `up` seconds, then holds it.
 const v = (t, top, up) => (t < up ? (top * t) / up : top);
-// Each amount from the same function: the area under it, summed in small steps.
-const area = (a, b, top, up) => {
-  let s = 0;
-  const n = 1000, h = (b - a) / n;
-  for (let i = 0; i < n; i++) s += ((v(a + i * h, top, up) + v(a + (i + 1) * h, top, up)) / 2) * h;
-  return s;
-};
+// Each amount from the same function: the area under it.
+const area = (a, b, top, up) => synabit.integrate((t) => v(t, top, up), a, b);
 const slots = synabit.layout('#v', 'side');
 synabit.controls(slots.controls, [
   { id: 'top', label: 'Vận tốc tối đa', min: 2, max: 30, step: 1, value: 10, unit: 'm/s' },

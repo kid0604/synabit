@@ -89,10 +89,18 @@ have and gives an example. Build yours the way the example is built.
 - A reference drawn beside a result — the exact curve an approximation tends
   to, the theory a simulation should follow — comes from the same
   definitions and variables as the result.
-- A crossing, a peak, a root: solve the model's own functions for it, by a
-  few lines of bisection or a search over the range drawn, rather than a
-  formula derived by hand. If a formula is used, substitute its answer back
-  into the equations it came from.
+- A crossing, a peak, an area, a path over time: let the kit work it out
+  from the model's own functions, never a formula derived by hand —
+  - `synabit.solve(f, lo, hi)`: where `f` is zero, as
+    `solve((p) => demand(p) - supply(p), 0, 100)`;
+  - `synabit.peak(f, lo, hi)` (or `'min'`): `{ x, y }`, searched over the
+    whole range;
+  - `synabit.integrate(f, a, b)`: an area under a curve;
+  - `synabit.ode(rates, state, t0, t1, { dt })`: a system followed over
+    time — an epidemic, a population, a step response — as states with `t`,
+    ready for `synabit.chart`.
+  If a formula is used anyway, substitute its answer back into the equations
+  it came from.
 - Every derived number is checked that way with `synabit.expect`: the price
   put back into demand and supply, the parts summed to the whole, the
   result read back. A check that fails is a visual that is wrong.
