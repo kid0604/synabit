@@ -1296,3 +1296,87 @@ sửa được:
 
 Model thấy phép thế ngược của chính nó sai, nhưng sửa không ra. Đó là việc của `synabit.solve` (Q7),
 không phải của vòng tự kiểm.
+
+## 2026-10-28 — PR Q5 (thành phần trong kit): dự đoán, ghi trước khi đo
+
+Q5 thêm bốn thành phần vào kit:
+- **`synabit.chart`**: mỗi panel một thước đo trên chung một trục x. Vạch tròn số, lề theo nhãn, tiêu đề trục
+  kèm đơn vị, chú giải có màu. Có vùng tô kèm số, điểm đánh dấu, cột theo hạng mục. Nhãn nằm trên ô nền.
+- **`synabit.controls`**, **`synabit.stats`** và **`synabit.layout`**.
+
+`core.md` dạy bốn thành phần này. Bốn trong sáu hình mẫu (`compare`, `areas`, `zoom`, `explore`) được viết lại
+bằng chúng.
+
+Đo trên `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`. So với lần đo gần nhất: vẽ 85%, tự kiểm 71%, đúng 89%.
+
+Dự đoán:
+- **Tự kiểm: khoảng 80%.** Phần lớn lỗi còn lại là chữ đè và tràn khung trên trục và nhãn, những thứ biểu
+  đồ của kit tự lo.
+- **Vẽ: khoảng 88–90%.** Ít lần bị trả về vì bố cục hơn.
+- **Đúng:** trong mức dao động. Thành phần không đụng tới phép tính.
+- **Hình được giữ ở phần phát triển dùng ít nhất một thành phần: khoảng 60%.**
+- **Tầng 2** (chưa được tin) tăng.
+- §5 của kế hoạch dự đoán "sau Q5–Q7: tự kiểm 95%". Riêng Q5 thì chưa tới mức đó.
+
+### Kết quả Q5 (2026-10-28, `gpt-6-luna`, 32 câu × 3, `SYN_EVAL_TRIAL=1`)
+
+| | Lần thử | Vẽ | Tự kiểm qua | Đúng (lần có đáp số) | Tầng 1 ⚠ | Tầng 2 ⚠ | Đúng kiểu |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Trước Q5: tất cả | 96 | 85% | 71% | 89% (87) | 1,39 | 1,03 | 85% |
+| Dự đoán | | ~88–90% | ~80% | ≈ | | ↑ | |
+| **Q5: tất cả** | 96 | **89%** | **79%** | **86%** (87) | 1,31 | 1,06 | 84% (85) |
+| Q5: phát triển | 66 | 92% | 83% | 87% (60) | 1,39 | 1,08 | 79% (61) |
+| Q5: giữ lại | 30 | 80% | 70% | 85% (27) | 1,13 | 1,03 | 96% (24) |
+
+⚠ người chấm chưa được tin.
+
+Theo kiểu giải thích (phần phát triển):
+
+| Kiểu | Vẽ | Tự kiểm qua | Đúng |
+| --- | --- | --- | --- |
+| `step` | 100% | 100% | 100% |
+| `compare` | 100% | 100% | 100% |
+| `decompose` | 100% | 100% | 100% |
+| `zoom` | 78% | 44% | 56% |
+| `areas` | 67% | 50% | 67% |
+| `explore` | 89% | 67% | 78% |
+
+Hình được giữ ở phần phát triển có dùng thành phần (chỉ đếm trong phần thân hình, không đếm kit nhúng kèm):
+
+| Thành phần | Q5 | Trước Q5 |
+| --- | --- | --- |
+| ít nhất một thành phần | **46 / 67 (69%)** | 0 / 60 |
+| `stats` | 45 | 0 |
+| `layout` | 40 | 0 |
+| `chart` | 33 | 0 |
+| `controls` | 29 | 0 |
+
+Lý do bị trả về (Q5, có 132 lần gọi, 91 lần được giữ):
+
+| Lý do | Q5 | Trước Q5 |
+| --- | --- | --- |
+| `overlap` | 13 | 19 |
+| `overflow` | **1** | **14** |
+| `expect` | 10 | 9 |
+| `proof` | 8 | 5 |
+| `unreported` (chỉ ghi chú) | 10 | 7 |
+| `error` | 5 | 4 |
+| `long-decimal` | 4 | 6 |
+| `empty` | 1 | 0 |
+
+Lỗi tự kiểm còn lại trong hình được giữ (phần phát triển): `overlap` 3, `long-decimal` 2, `dead-control` 1.
+
+So với dự đoán:
+- **Tự kiểm: 79%, dự đoán khoảng 80%.** Đúng. Tràn khung gần như hết.
+- **Vẽ: 89%, dự đoán 88–90%.** Đúng. Phần giữ lại lên 80%, cao nhất từ trước tới giờ.
+- **Đúng: 86%, giảm 3 điểm**, trong mức dao động.
+  - Tính riêng hình được giữ ở phần phát triển: 52 / 55, như trước.
+  - 5 lượt không vẽ đều sai (0 / 5): `gibbs` và `tax` vì `expect`, `logistic` vì `proof`.
+- **Dùng thành phần: 69%, dự đoán 60%.**
+- **Thời gian mỗi nhóm:** 19–26 phút, so với 15–20 trước Q5.
+
+Còn lại:
+- **`zoom` và `areas` vẫn yếu nhất.** `areas` không bao giờ được chọn đúng kiểu (0 / 4), và thua ở `tax`, nơi
+  model không sửa được phép thế ngược sai.
+- **`overlap` vẫn là lý do bị trả về nhiều nhất**, chủ yếu ở các hình vẽ tay ngoài biểu đồ. Trình bước và đồ thị
+  nút là việc của Q6.
