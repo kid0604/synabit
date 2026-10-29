@@ -1303,6 +1303,7 @@ pub fn run() {
             syn::visual::spike::visual_spike_report,
             #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_keep,
+            #[cfg(debug_assertions)]
             syn::visual::spike::visual_spike_read,
                 ]);
             move |invoke| {
