@@ -840,12 +840,7 @@ pub const MIN_CHAIN: usize = 3;
 /// reading reuses steps the first already claimed, and a person watching would
 /// see one wobble rather than two passes.
 pub fn repeated_chain(run: &crate::syn::run::Run) -> Option<Vec<String>> {
-    let calls: Vec<&str> = run
-        .steps
-        .iter()
-        .filter(|s| s.ok == Some(true))
-        .filter_map(|s| s.tool.as_deref())
-        .collect();
+    let calls = successful_calls(run);
 
     if calls.len() < MIN_CHAIN * 2 {
         return None;
@@ -981,6 +976,20 @@ pub const ACROSS_DAYS: usize = 2;
 /// hundred runs it would repeat in all of them and name nothing.
 const LOOKING_AROUND: &[&str] = &["query_nodes", "get_node", "get_linked_nodes", "list_schemas", "recall"];
 
+/// Tools that get Syn ready to do a job and are no part of it.
+///
+/// Not counted as calls at all, measured on the real vault (2026-10-30). The
+/// false habit was `find_tools → visual_guide → show_visual`: a loan, then a
+/// battle map, offered as "a way of doing it" when all three runs had in common
+/// was the way any visual gets drawn. And `find_tools` comes and goes with what
+/// the words happened to load, so counting it also splits one job into two
+/// shapes.
+pub fn is_setup(tool: &str) -> bool {
+    tool == crate::syn::toolset::FIND_TOOL
+        || tool == crate::syn::visual::tool::GUIDE_TOOL
+        || tool == crate::syn::tools::PLAN_TOOL
+}
+
 /// Successful calls a run needs before finding its way counts as hard won.
 pub const HARD_WON_CALLS: usize = 6;
 
@@ -1003,6 +1012,7 @@ fn successful_calls(run: &crate::syn::run::Run) -> Vec<&str> {
         .iter()
         .filter(|s| s.ok == Some(true))
         .filter_map(|s| s.tool.as_deref())
+        .filter(|t| !is_setup(t))
         .collect()
 }
 
@@ -1096,7 +1106,7 @@ pub fn hard_won(run: &crate::syn::run::Run) -> bool {
     }
     let calls: Vec<&crate::syn::run::Step> =
         run.steps.iter().filter(|s| s.tool.is_some() && s.ok.is_some()).collect();
-    if calls.iter().filter(|s| s.ok == Some(true)).count() < HARD_WON_CALLS {
+    if successful_calls(run).len() < HARD_WON_CALLS {
         return false;
     }
     calls.iter().enumerate().any(|(i, failed)| {
@@ -1726,6 +1736,29 @@ mod tests {
         assert!(chain_across_runs(&finished(looking, "c3", "2026-10-15T08:00:00Z"), &earlier).is_none());
     }
 
+    /// A loan and a battle map share only the way any visual gets drawn.
+    #[test]
+    fn getting_ready_to_draw_is_not_a_habit() {
+        let drawing = &["find_tools", "visual_guide", "show_visual"];
+        let earlier = vec![finished(drawing, "c1", "2026-10-28T00:46:00Z"), finished(drawing, "c2", "2026-10-30T15:20:00Z")];
+        assert!(chain_across_runs(&finished(drawing, "c2", "2026-10-30T15:23:00Z"), &earlier).is_none());
+
+        let again = run_calling(&["visual_guide", "show_visual", "visual_guide", "show_visual", "visual_guide", "show_visual"]);
+        assert!(repeated_chain(&again).is_none());
+    }
+
+    /// `find_tools` comes and goes with what the words happened to load, and
+    /// the job is the same job either way.
+    #[test]
+    fn getting_ready_in_the_middle_does_not_hide_a_habit() {
+        let earlier = vec![
+            finished(&["get_transactions", "find_tools", "crunch", "create_node"], "c1", "2026-10-06T08:00:00Z"),
+            finished(WEEKLY, "c2", "2026-10-13T08:00:00Z"),
+        ];
+        let now = finished(&["find_tools", "get_transactions", "crunch", "update_plan", "create_node"], "c3", "2026-10-20T08:00:00Z");
+        assert_eq!(chain_across_runs(&now, &earlier).expect("a habit").0, WEEKLY);
+    }
+
     /// A routine repeats because it was scheduled to, and a run following a
     /// skill repeats because the skill works. Neither is a skill waiting to be
     /// written.
@@ -2023,12 +2056,7 @@ mod what_syn_would_have_offered {
 
         let mut offered = 0;
         for run in &runs {
-            let calls: Vec<&str> = run
-                .steps
-                .iter()
-                .filter(|s| s.ok == Some(true))
-                .filter_map(|s| s.tool.as_deref())
-                .collect();
+            let calls = successful_calls(run);
             match repeated_chain(run) {
                 Some(chain) => {
                     offered += 1;

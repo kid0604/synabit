@@ -230,7 +230,7 @@ pub fn recipe_across_runs(
 }
 
 fn ok_calls(run: &crate::syn::run::Run) -> Vec<&crate::syn::run::Step> {
-    run.steps.iter().filter(|s| s.ok == Some(true) && s.tool.is_some()).collect()
+    run.steps.iter().filter(|s| s.ok == Some(true) && s.tool.as_deref().is_some_and(|t| !skill::is_setup(t))).collect()
 }
 
 /// Where `chain` next starts in `calls`, from `from` on.
@@ -548,6 +548,27 @@ mod tests {
         assert_eq!(r.steps[0].args["query"], json!("{{query}}"));
         assert_eq!(r.steps[1].args["node_type"], json!("note"));
         assert!(recipe_across_runs(&last_week, &run_of(vec![]), &chain).is_none(), "no second pass, no recipe");
+    }
+
+    /// The detector does not count getting ready, so a pass it found may have
+    /// `find_tools` in the middle of it, and the recipe has to find it too.
+    #[test]
+    fn getting_ready_in_the_middle_of_a_pass_is_not_a_step() {
+        let last_week = run_of(vec![
+            step("query_nodes", json!({ "query": "since:2026-10-01" }), "[]"),
+            step("find_tools", json!({ "group": "timeline" }), "{}"),
+            step("create_node", json!({ "node_type": "note", "title": "Tổng kết" }), "{}"),
+            step("timeline", json!({ "span": "week" }), "{}"),
+        ]);
+        let this_week = run_of(vec![
+            step("query_nodes", json!({ "query": "since:2026-10-08" }), "[]"),
+            step("create_node", json!({ "node_type": "note", "title": "Tổng kết" }), "{}"),
+            step("timeline", json!({ "span": "week" }), "{}"),
+        ]);
+        let chain = vec!["query_nodes".to_string(), "create_node".to_string(), "timeline".to_string()];
+        let r = recipe_across_runs(&last_week, &this_week, &chain).expect("a recipe");
+        assert_eq!(r.steps.len(), 3);
+        assert_eq!(r.steps[0].args["query"], json!("{{query}}"));
     }
 
     #[test]
