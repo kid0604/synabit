@@ -646,6 +646,7 @@ pub fn all() -> Vec<Task> {
             .visuals_off(),
     ];
     tasks.extend(stale_answers());
+    tasks.extend(where_it_goes());
     tasks
 }
 
@@ -702,6 +703,62 @@ fn stale_answers() -> Vec<Task> {
         tasks.push(pi("tg-pi-real-cut-vi", cut));
     }
     tasks
+}
+
+/// Whether Syn understands where a person means something to go, however they
+/// put it.
+///
+/// From Telegram on 2026-10-31, "Daily: sau bao ngày trì hoãn thì cuối cùng
+/// cũng lắp xong sàn ban công" went to QuickCap, with today's daily note there
+/// and empty. The rule it should have followed gave "ghi vào daily note" as its
+/// example. Only the first task here is what was said; the others are ways of
+/// saying it that no rule quotes, so a rule that lists the words cannot pass
+/// them, and things that look alike and go nowhere, so one that files anything
+/// starting with a label cannot either.
+fn where_it_goes() -> Vec<Task> {
+    use Category::*;
+    use Check::*;
+    use Preset::*;
+
+    let today: &'static str = Box::leak(super::fixture::today().into_boxed_str());
+    let in_today = |id: &'static str, ask: &'static str, words: &'static str| {
+        let body_has: &'static [&'static str] = kept_and(words);
+        task(id, MultiStep, Days, vec![say(ask)],
+            vec![NotCalled("capture"), NodeWith { title_has: today, node_type: None, props: vec![], body_has }]).from_telegram()
+    };
+    let nowhere = |id: &'static str, ask: &'static str| {
+        task(id, MultiStep, Days, vec![say(ask)], vec![NotCalled("update_node")]).from_telegram()
+    };
+
+    vec![
+        in_today("tg-where-daily-vi", "Daily: sau bao ngày trì hoãn thì cuối cùng cũng lắp xong sàn ban công", "sàn ban công"),
+        in_today("tg-where-diary-vi", "Nhật ký: tối nay Cam tự xúc cơm ăn hết cả bát", "xúc cơm"),
+        in_today("tg-where-dash-vi", "daily - chiều mưa to, về nhà muộn hơn mọi hôm", "mưa to"),
+        in_today("tg-where-today-en", "Today's note: finally fixed the kitchen tap", "kitchen tap"),
+        // The edge of the rule: "today" says when, and arguably not where.
+        in_today("tg-where-today-vi", "Hôm nay: bắt đầu đọc lại cuốn Thinking in Systems", "Thinking in Systems"),
+        // A label that is the title of a note, with nothing about days in it.
+        task("tg-where-named-note-vi", MultiStep, Days, vec![say("Ý tưởng Synabit: thêm phím tắt mở nhanh note hôm nay")],
+            vec![NotCalled("capture"), NodeWith { title_has: "Ý tưởng Synabit", node_type: None, props: vec![], body_has: &["màn hình tìm kiếm", "phím tắt"] }])
+            .from_telegram(),
+        // Said on Telegram on 2026-10-14: labels with no note behind them.
+        nowhere("tg-where-not-idea-vi", "Ý tưởng: chụp ảnh lavabo để AI hiểu cấu tạo và tìm cách thông tắc"),
+        nowhere("tg-where-not-quick-vi", "Quick: Gọi điện và email cmc phối hợp golive"),
+        // The word and no destination: a meeting, not a diary.
+        nowhere("tg-where-not-standup-vi", "Daily standup mai đổi sang 9h30 ở phòng họp tầng 5"),
+        // Written after the rule was, to see it meet words it was not written against.
+        in_today("tg-where-journal-en", "Journal: walked to work for the first time this year", "walked to work"),
+        in_today("tg-where-so-vi", "Sổ nhật ký — trưa nay ăn cơm với bố mẹ", "cơm với bố mẹ"),
+        in_today("tg-where-short-vi", "vào daily nhé: Cam biết đếm đến mười rồi", "đếm đến mười"),
+        nowhere("tg-where-not-report-vi", "Daily report tuần này phải gửi sếp trước 5h chiều thứ Sáu"),
+        nowhere("tg-where-not-note-vi", "Note: nhớ mang ô khi đi họp ở Cầu Giấy"),
+    ]
+}
+
+/// One word, as the `&'static [&'static str]` a check takes, with the line each
+/// task starts from: what was there must still be there.
+fn kept_and(word: &'static str) -> &'static [&'static str] {
+    Box::leak(vec!["Sáng đưa Cam đi học", word].into_boxed_slice())
 }
 
 /// The conversation `SYN_EVAL_HISTORY` names: a JSON list of `{role, content}`,

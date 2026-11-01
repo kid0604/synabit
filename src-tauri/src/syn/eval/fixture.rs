@@ -149,6 +149,22 @@ pub enum Preset {
     /// Everything above and more of it: a month of meetings, long retro notes,
     /// two months of money, a stack of feed articles. For the `hard` tier.
     Hard,
+    /// A daily note for today and yesterday, and one note kept for ideas. For
+    /// where something told to Syn from a phone ends up.
+    Days,
+}
+
+/// Today's daily note, by title, as `Preset::Days` writes it.
+pub fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
+}
+
+fn days(v: &Vault) {
+    use serde_json::json;
+    let yesterday = (chrono::Local::now() - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
+    v.node("Notes/hom-qua.md", "note", &yesterday, json!({ "tags": ["daily"] }), "Tối đi ăn phở với cả nhà.");
+    v.node("Notes/hom-nay.md", "note", &today(), json!({ "tags": ["daily"] }), "Sáng đưa Cam đi học.");
+    v.node("Notes/y-tuong-synabit.md", "note", "Ý tưởng Synabit", json!({ "tags": ["synabit"] }), "- Xem lại màn hình tìm kiếm");
 }
 
 pub fn build(preset: Preset, provider: SynProvider, model: &str) -> Vault {
@@ -179,6 +195,7 @@ pub fn build(preset: Preset, provider: SynProvider, model: &str) -> Vault {
             board(&v);
             hard(&v);
         }
+        Preset::Days => days(&v),
     }
     v
 }
