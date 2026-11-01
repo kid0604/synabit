@@ -752,6 +752,35 @@ fn where_it_goes() -> Vec<Task> {
         in_today("tg-where-short-vi", "vào daily nhé: Cam biết đếm đến mười rồi", "đếm đến mười"),
         nowhere("tg-where-not-report-vi", "Daily report tuần này phải gửi sếp trước 5h chiều thứ Sáu"),
         nowhere("tg-where-not-note-vi", "Note: nhớ mang ô khi đi họp ở Cầu Giấy"),
+        // What came next on 2026-11-01. The harness presses the first button
+        // on a "which one" card, which here was the note just written.
+        task("tg-where-move-vi", MultiStep, Days, vec![say("Mục \"lắp xong kệ sách\" trong QuickCap đáng ra phải vào daily note hôm nay, chuyển sang đó đi")],
+            vec![Gone("QuickCaps/ke-sach.md"), NodeWith { title_has: today, node_type: None, props: vec![], body_has: kept_and("kệ sách") }])
+            .from_telegram(),
+        // Asked on 2026-11-01 to check its own work, Syn read back the markup it
+        // had made up, found it there, and said it was right.
+        task("tg-gallery-recheck-vi", MultiStep, Days, vec![say("Kiểm tra lại xem đúng chưa")],
+            vec![AnyOf(vec![
+                NodeWith { title_has: "Ảnh sân thượng", node_type: None, props: vec![], body_has: &["synabit-gallery", "assets/mot.jpg", "assets/hai.jpg"] },
+                AnswerHas(&["chưa", "không đúng", "không phải", "không hiểu"]),
+            ])])
+            .from_telegram()
+            .after(vec![
+                they("Trong note Ảnh sân thượng, tao muốn 2 ảnh thành một collection, không phải rời rạc"),
+                syn("Đã gom 2 ảnh vào cùng một nhóm trong [[Ảnh sân thượng]]."),
+            ]),
+        // A button pressed on a "which one" card, as the phone says it. Pressed
+        // four times running on 2026-11-01, each time asked again.
+        task("tg-choice-answered-vi", MultiStep, Days, vec![say("I mean “Ảnh ban công” (Notes/anh-ban-cong.md).")],
+            vec![NodeWith { title_has: "Ảnh ban công", node_type: None, props: vec![], body_has: &["synabit-gallery", "assets/truoc.jpg", "assets/sau.jpg"] }])
+            .from_telegram()
+            .after(vec![
+                they("Trong note ảnh, tao muốn 2 ảnh thành một collection, không phải rời rạc"),
+                syn("Có hai note khớp: [[Ảnh ban công]] và [[Ảnh sân thượng]]. Mày muốn note nào?"),
+            ]),
+        task("tg-gallery-vi", MultiStep, Days, vec![say("Trong note Ảnh ban công, tao muốn 2 ảnh thành một collection, không phải rời rạc")],
+            vec![NodeWith { title_has: "Ảnh ban công", node_type: None, props: vec![], body_has: &["synabit-gallery", "assets/truoc.jpg", "assets/sau.jpg"] }])
+            .from_telegram(),
     ]
 }
 

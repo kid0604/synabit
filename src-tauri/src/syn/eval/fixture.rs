@@ -165,6 +165,9 @@ fn days(v: &Vault) {
     v.node("Notes/hom-qua.md", "note", &yesterday, json!({ "tags": ["daily"] }), "Tối đi ăn phở với cả nhà.");
     v.node("Notes/hom-nay.md", "note", &today(), json!({ "tags": ["daily"] }), "Sáng đưa Cam đi học.");
     v.node("Notes/y-tuong-synabit.md", "note", "Ý tưởng Synabit", json!({ "tags": ["synabit"] }), "- Xem lại màn hình tìm kiếm");
+    v.node("Notes/anh-ban-cong.md", "note", "Ảnh ban công", json!({}), "![](assets/truoc.jpg)\n\n![](assets/sau.jpg)");
+    v.node("Notes/anh-san-thuong.md", "note", "Ảnh sân thượng", json!({}), "<div class=\"image-collection\">\n\n![](assets/mot.jpg)\n![](assets/hai.jpg)\n\n</div>");
+    v.node("QuickCaps/ke-sach.md", "quickcap", "Daily: lắp xong kệ sách", json!({}), "Daily: lắp xong kệ sách");
 }
 
 pub fn build(preset: Preset, provider: SynProvider, model: &str) -> Vault {
