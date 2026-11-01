@@ -109,6 +109,7 @@ fn latest(vault: &str, conversation: &str) -> Option<Run> {
 pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) -> Outcome {
     let started = Instant::now();
     let vault = fixture::build(task.preset, provider, model);
+    let _locks = task.locks.clone().map(crate::syn::locks::hold_locks);
     if !task.visuals {
         let mut settings = crate::syn::settings::load_settings(&vault.path).expect("settings");
         settings.visuals = false;

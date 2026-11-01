@@ -148,6 +148,9 @@ pub struct Task {
     /// off — which is how a run that is not offered the two visual tools is
     /// measured on the one model the eval runs on.
     pub visuals: bool,
+    /// What the app lock protects while the task runs. Nothing, unless a task
+    /// says.
+    pub locks: Option<crate::syn::locks::Locks>,
     pub checks: Vec<Check>,
 }
 
@@ -156,10 +159,15 @@ fn html(title: &str, body: &str) -> String {
 }
 
 fn task(id: &'static str, category: Category, preset: Preset, turns: Vec<Turn>, checks: Vec<Check>) -> Task {
-    Task { id, category, smoke: false, hard: false, preset, turns, web: Vec::new(), connectors: Vec::new(), declared: Vec::new(), rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, checks }
+    Task { id, category, smoke: false, hard: false, preset, turns, web: Vec::new(), connectors: Vec::new(), declared: Vec::new(), rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None, checks }
 }
 
 impl Task {
+    fn locks(mut self, locks: crate::syn::locks::Locks) -> Self {
+        self.locks = Some(locks);
+        self
+    }
+
     fn ssh(mut self) -> Self {
         self.ssh = true;
         self
@@ -754,6 +762,17 @@ fn where_it_goes() -> Vec<Task> {
         nowhere("tg-where-not-note-vi", "Note: nhớ mang ô khi đi họp ở Cầu Giấy"),
         // What came next on 2026-11-01. The harness presses the first button
         // on a "which one" card, which here was the note just written.
+        // Spending sent from the phone with Finance behind the PIN. On
+        // 2026-11-01 Syn said to unlock it and message again, which would have
+        // been refused again.
+        task("tg-finance-locked-vi", Finance, MoneyVault, vec![say("Hôm 2026-09-20 tiền taxi hết 103k")],
+            vec![AnswerHas(&["khóa", "khoá"]), AnswerLacks(&["nhắn lại", "nhắn tao lại", "rồi nhắn", "thử lại", "gửi lại"])])
+            .from_telegram()
+            .locks(crate::syn::locks::Locks::new(vec!["finance".into()], vec![])),
+        task("tg-finance-allowed-vi", Finance, MoneyVault, vec![say("Hôm 2026-09-20 tiền taxi hết 103k")],
+            vec![Transaction { month: "2026-09", amount: 103000, category_has: None }])
+            .from_telegram()
+            .locks(crate::syn::locks::Locks::new(vec!["finance".into()], vec![]).allowing(vec!["finance".into()])),
         task("tg-where-move-vi", MultiStep, Days, vec![say("Mục \"lắp xong kệ sách\" trong QuickCap đáng ra phải vào daily note hôm nay, chuyển sang đó đi")],
             vec![Gone("QuickCaps/ke-sach.md"), NodeWith { title_has: today, node_type: None, props: vec![], body_has: kept_and("kệ sách") }])
             .from_telegram(),
