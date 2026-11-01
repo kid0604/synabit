@@ -639,6 +639,8 @@
    * else into.
    */
   let plots = 0;
+  /** The widest the kit lays anything out: a little past the chat at its widest. */
+  const WIDEST = 960;
   const chart = (el, opts) => {
     const root = target(el);
     if (!root) throw new Error('synabit.chart: no element to draw into');
@@ -656,7 +658,7 @@
     // As wide as where it is drawn, so its text is drawn at the size it is
     // set: a 640-wide drawing squeezed into two thirds of the frame made
     // 11px ticks into 7px ones.
-    const W = Math.round(Math.min(640, Math.max(280, root.clientWidth || 640)));
+    const W = Math.round(Math.min(WIDEST, Math.max(280, root.clientWidth || 640)));
 
     // The x domain: given, or from every point drawn.
     let xs = [];
@@ -726,7 +728,8 @@
       const yHi = p.y.max != null ? p.y.max : yTicks.max;
       const yFormat = p.y.format || ((v) => formatNumber(v, yTicks.digits));
 
-      const H = p.height || (panels.length > 1 ? 180 : 240);
+      // Taller as it gets wider: a fixed height is a ribbon across a wide frame.
+      const H = p.height || (panels.length > 1 ? Math.max(180, Math.round(W * 0.3)) : Math.max(240, Math.round(W * 0.5)));
       const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': p.y.label ? `${p.y.label}${unitOf(p.y)}` : o.title || 'chart', 'data-synabit': 'chart' }, root);
       svg.style.width = '100%';
       svg.style.display = 'block';
@@ -922,6 +925,7 @@
         input.type = 'checkbox';
         input.checked = !!spec.value;
         head.insertBefore(input, label);
+        head.style.justifyContent = 'flex-start';
         read[id] = () => input.checked;
       } else {
         input = htmlEl('input', 'width:100%;margin-top:4px', wrap);
@@ -985,22 +989,30 @@
 
   /**
    * The frame of a visual, as named slots to draw into:
-   * - `side`: `controls` beside `stats` over `stage`; one column when narrow.
+   * - `side`: `controls` over `stats` in a narrow column, `stage` taking the
+   *   rest of the width; one column when narrow.
    * - `stack`: `controls`, then `stats`, then `stage`.
    * - `compare`: `controls`, then two cases side by side, `a` and `b`, each
    *   with its own `aStats` / `bStats`; one column when narrow.
+   *
+   * The drawing is what the person came for, so it gets the room. Capped at
+   * 640 with a third of that given to two sliders, the air-conditioning cycle
+   * of 2026-11-01 was drawn 410 wide in a 945 frame, its 11px labels at 7px.
    */
   const layout = (el, kind) => {
     const root = target(el);
     if (!root) throw new Error('synabit.layout: no element to draw into');
     root.replaceChildren();
-    const frame = htmlEl('div', 'max-width:640px;display:flex;flex-direction:column;gap:14px', root);
+    const frame = htmlEl('div', `max-width:${WIDEST}px;display:flex;flex-direction:column;gap:14px`, root);
     const slot = (parent, style) => htmlEl('div', style || '', parent);
     if (kind === 'side') {
       const row = slot(frame, 'display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start');
-      const controlsSlot = slot(row, 'flex:1 1 180px;min-width:0');
-      const main = slot(row, 'flex:2 1 340px;min-width:0;display:flex;flex-direction:column;gap:10px');
-      return { controls: controlsSlot, stats: slot(main), stage: slot(main) };
+      const rail = slot(row, 'flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:14px');
+      const controlsSlot = slot(rail);
+      const statsSlot = slot(rail);
+      // Growing far faster than the rail: all the room there is goes here,
+      // and when the two no longer fit side by side each takes the whole row.
+      return { controls: controlsSlot, stats: statsSlot, stage: slot(row, 'flex:999 1 420px;min-width:0') };
     }
     if (kind === 'compare') {
       const controlsSlot = slot(frame);
@@ -1390,7 +1402,7 @@
     const edgeState = state.edges || {};
     const notes = state.notes || {};
     root.replaceChildren();
-    const W = Math.round(Math.min(640, Math.max(280, root.clientWidth || 640)));
+    const W = Math.round(Math.min(WIDEST, Math.max(280, root.clientWidth || 640)));
     const H = o.height || Math.round(W * 0.55);
     const R = o.radius || 17;
     // Positions: given, scaled to fit; or round a circle.

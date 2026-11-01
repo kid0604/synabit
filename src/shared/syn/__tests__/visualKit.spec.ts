@@ -264,6 +264,15 @@ describe("the kit's components", () => {
     expect(Object.keys(kit.layout(fresh(), 'stack')).sort()).toEqual(['controls', 'stage', 'stats']);
     expect(Object.keys(kit.layout(fresh(), 'compare')).sort()).toEqual(['a', 'aStats', 'b', 'bStats', 'controls']);
   });
+
+  /** Two sliders took a third of 640, and the drawing sat small beside them. */
+  it('gives the drawing the room, and the controls and numbers a narrow column', () => {
+    const { controls, stats, stage } = kit.layout(fresh(), 'side');
+    expect(controls.parentElement).toBe(stats.parentElement);
+    expect(stage.parentElement).toBe(controls.parentElement?.parentElement);
+    expect(Number(stage.style.flexGrow)).toBeGreaterThan(Number(controls.parentElement?.style.flexGrow));
+    expect((stage.parentElement?.parentElement as HTMLElement).style.maxWidth).toBe('960px');
+  });
 });
 
 /**

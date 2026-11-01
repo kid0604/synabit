@@ -14,7 +14,8 @@ Must have:
   one function of the controls; moving a control redraws all of it.
 - Built with `synabit.layout(el, 'side')`: `synabit.controls` in `controls`,
   whose callback redraws `synabit.stats` (the quantity, with the check as its
-  note) and the drawing in `stage`.
+  note) and the drawing in `stage`. Controls and numbers share a narrow column;
+  the drawing gets the rest of the width.
 
 Copy how this is built, not what it shows:
 
@@ -43,7 +44,7 @@ synabit.controls(slots.controls, [
   // The state, drawn: each resistor as long as its share of the total.
   const ns = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(ns, 'svg');
-  svg.setAttribute('viewBox', '0 0 300 200');
+  svg.setAttribute('viewBox', '0 0 640 360');
   svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Mạch chia áp: nguồn, R1 và R2 nối tiếp');
   svg.style.width = '100%';
@@ -53,15 +54,15 @@ synabit.controls(slots.controls, [
     if (text != null) e.textContent = text;
     svg.appendChild(e);
   };
-  const span = 150, top = 25, h1 = (span * r1) / (r1 + r2);
-  for (const [x1, y1, x2, y2] of [[50, top, 50, top + span], [50, top, 150, top], [50, top + span, 150, top + span]]) {
-    el('line', { x1, y1, x2, y2, stroke: 'var(--text-2)', 'stroke-width': 2 });
+  const span = 300, top = 30, h1 = (span * r1) / (r1 + r2);
+  for (const [x1, y1, x2, y2] of [[110, top, 110, top + span], [110, top, 340, top], [110, top + span, 340, top + span]]) {
+    el('line', { x1, y1, x2, y2, stroke: 'var(--text-2)', 'stroke-width': 3 });
   }
-  el('rect', { x: 140, y: top, width: 20, height: h1, rx: 3, fill: 'var(--c2)', 'fill-opacity': 0.5, stroke: 'var(--c2)' });
-  el('rect', { x: 140, y: top + h1, width: 20, height: span - h1, rx: 3, fill: 'var(--c1)', 'fill-opacity': 0.5, stroke: 'var(--c1)' });
-  el('text', { x: 170, y: top + h1 / 2 + 4, 'font-size': 12 }, `R1 · ${synabit.number(s.v1, 1)} V`);
-  el('text', { x: 170, y: top + h1 + (span - h1) / 2 + 4, 'font-size': 12 }, `R2 · ${synabit.number(s.v2, 1)} V`);
-  el('text', { x: 8, y: top + span / 2 + 4, 'font-size': 12 }, `${vin} V`);
+  el('rect', { x: 310, y: top, width: 60, height: h1, rx: 4, fill: 'var(--c2)', 'fill-opacity': 0.5, stroke: 'var(--c2)' });
+  el('rect', { x: 310, y: top + h1, width: 60, height: span - h1, rx: 4, fill: 'var(--c1)', 'fill-opacity': 0.5, stroke: 'var(--c1)' });
+  el('text', { x: 390, y: top + h1 / 2 + 6, 'font-size': 18 }, `R1 · ${synabit.number(s.v1, 1)} V`);
+  el('text', { x: 390, y: top + h1 + (span - h1) / 2 + 6, 'font-size': 18 }, `R2 · ${synabit.number(s.v2, 1)} V`);
+  el('text', { x: 20, y: top + span / 2 + 6, 'font-size': 18 }, `${vin} V`);
   slots.stage.replaceChildren(svg);
 });
 </script>

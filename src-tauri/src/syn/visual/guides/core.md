@@ -123,8 +123,12 @@ have and gives an example. Build yours the way the example is built.
   headings or explanations inside it — a short label or legend at most.
 - Every number in it comes from a tool result, the person's words, or a formula
   you state. Never invent data to fill a chart.
-- Keep it compact: about 640 px wide, as tall as it needs. Fill the width with
-  `width: 100%` or an SVG `viewBox`; never a fixed pixel width over 640.
+- Fill the width you are given: the frame is as wide as the chat, up to about
+  950 px and much less in a narrow window. Use `width: 100%` and an SVG
+  `viewBox` about 640 wide; never a fixed pixel width or a `max-width`.
+- The drawing is the biggest thing in the frame. Let it fill its `viewBox`,
+  with no empty panels or margins around small boxes, and make its boxes big
+  enough to hold their labels at 13 or more.
 - One measure per set of axes, whatever the kind — a chart, a simulation, an
   explainer. Two measures on different scales — a loan's balance and its
   monthly payment, spending by group and by day — are two plots, each its

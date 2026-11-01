@@ -20,7 +20,7 @@ Must have:
 Copy how this is built, not what it shows:
 
 ```html
-<div style="display:grid;grid-template-columns:3fr 2fr;gap:12px;align-items:start;max-width:640px">
+<div style="display:grid;grid-template-columns:3fr 2fr;gap:12px;align-items:start">
   <div id="whole"></div>
   <div><div id="near"></div><div id="measure"></div></div>
 </div>

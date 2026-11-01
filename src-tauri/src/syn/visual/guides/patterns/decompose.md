@@ -17,7 +17,7 @@ Must have:
 Copy how this is built, not what it shows:
 
 ```html
-<div style="max-width:640px">
+<div>
   <div class="row" style="justify-content:space-between;margin-bottom:6px">
     <span style="font-weight:600">Một ly cà phê sữa</span>
     <span class="stat" id="total"></span>
