@@ -92,6 +92,12 @@ export const BUILT_IN_APPS: readonly AppEntry[] = [
  */
 export const SELF_LOCKING_APPS: readonly string[] = ['safe'];
 
+/**
+ * Apps the lock never keeps from Syn, so there is nothing to allow: `messages`
+ * is Syn's own window and `nexus` a view that keeps nothing. See `syn::locks`.
+ */
+export const APPS_SYN_ALWAYS_READS: readonly string[] = ['messages', 'nexus'];
+
 /** The entry for an app id, or `undefined` for a name nothing ships. */
 export function appById(appId: string): AppEntry | undefined {
   return BUILT_IN_APPS.find((a) => a.id === appId);

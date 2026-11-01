@@ -11,10 +11,41 @@ describe('app lock store', () => {
     vi.mocked(invoke).mockReset();
   });
 
+  it('opens an app to Syn with the PIN and closes it without', async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    const store = useAppLockStore();
+    store.protectedApps = ['finance'];
+
+    await store.toggleSynAllowedApp('finance', '123456');
+    expect(invoke).toHaveBeenLastCalledWith('update_app_lock_config', { config: { syn_allowed_apps: ['finance'] }, pin: '123456' });
+    expect(store.isSynAllowed('finance')).toBe(true);
+
+    await store.toggleSynAllowedApp('finance');
+    expect(invoke).toHaveBeenLastCalledWith('update_app_lock_config', { config: { syn_allowed_apps: [] }, pin: null });
+    expect(store.isSynAllowed('finance')).toBe(false);
+  });
+
+  it('keeps an app closed to Syn when the backend refuses', async () => {
+    vi.mocked(invoke).mockRejectedValue('PIN_WRONG');
+    const store = useAppLockStore();
+    await expect(store.toggleSynAllowedApp('finance', '000000')).rejects.toBe('PIN_WRONG');
+    expect(store.isSynAllowed('finance')).toBe(false);
+  });
+
+  it('closes an app to Syn when it stops being protected', async () => {
+    vi.mocked(invoke).mockResolvedValue(null);
+    const store = useAppLockStore();
+    store.protectedApps = ['finance', 'people'];
+    store.synAllowedApps = ['finance', 'people'];
+
+    await store.toggleProtectedApp('finance', '123456');
+    expect(store.synAllowedApps).toEqual(['people']);
+  });
+
   it('removes the lock only by handing the backend the PIN', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) =>
       command === 'get_app_lock_config'
-        ? { is_enabled: false, app_lock_active: false, protected_apps: [], protected_notes: [], auto_lock_timeout_secs: 300 }
+        ? { is_enabled: false, app_lock_active: false, protected_apps: [], protected_notes: [], syn_allowed_apps: [], auto_lock_timeout_secs: 300 }
         : null);
     const store = useAppLockStore();
     store.isEnabled = true;
@@ -26,7 +57,7 @@ describe('app lock store', () => {
   it('leaves nothing locked after a reset', async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) =>
       command === 'get_app_lock_config'
-        ? { is_enabled: false, app_lock_active: false, protected_apps: [], protected_notes: [], auto_lock_timeout_secs: 300 }
+        ? { is_enabled: false, app_lock_active: false, protected_apps: [], protected_notes: [], syn_allowed_apps: [], auto_lock_timeout_secs: 300 }
         : null);
     const store = useAppLockStore();
     store.isAppLocked = true;

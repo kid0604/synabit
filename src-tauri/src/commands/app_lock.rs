@@ -59,6 +59,7 @@ pub struct AppLockConfig {
     pub app_lock_active: bool,
     pub protected_apps: Vec<String>,
     pub protected_notes: Vec<String>,
+    pub syn_allowed_apps: Vec<String>,
     pub auto_lock_timeout_secs: u64,
 }
 
@@ -66,6 +67,8 @@ pub struct AppLockConfig {
 pub struct AppLockConfigUpdate {
     pub protected_apps: Option<Vec<String>>,
     pub protected_notes: Option<Vec<String>>,
+    #[serde(default)]
+    pub syn_allowed_apps: Option<Vec<String>>,
     pub auto_lock_timeout_secs: Option<u64>,
     pub app_lock_active: Option<bool>,
 }
@@ -246,7 +249,7 @@ fn store_pin(app: &tauri::AppHandle, pin: &str) -> Result<(), String> {
     // Set default timeout if not already set
     let (_, _, timeout, _) = SecretManager::get_app_lock_config(Some(app));
     if timeout.is_none() {
-        SecretManager::update_app_lock_config(Some(app), None, None, Some(DEFAULT_TIMEOUT_SECS), None)?;
+        SecretManager::update_app_lock_config(Some(app), None, None, None, Some(DEFAULT_TIMEOUT_SECS), None)?;
     }
     Ok(())
 }
@@ -310,6 +313,7 @@ fn read_config(app: &tauri::AppHandle) -> AppLockConfig {
         app_lock_active: app_lock_active.unwrap_or(false),
         protected_apps: protected_apps.unwrap_or_default(),
         protected_notes: protected_notes.unwrap_or_default(),
+        syn_allowed_apps: SecretManager::get_syn_allowed_apps(Some(app)),
         auto_lock_timeout_secs: timeout.unwrap_or(DEFAULT_TIMEOUT_SECS),
     }
 }
@@ -321,8 +325,9 @@ fn timeout_loosens(current: u64, next: u64) -> bool {
 }
 
 /// Whether `update` would guard less than `current` does: the whole-app lock
-/// switched off, any app or note no longer protected, or a longer (or no)
-/// auto-lock timeout. Adding protection, or leaving a field out, never does.
+/// switched off, any app or note no longer protected, a protected app newly
+/// open to Syn, or a longer (or no) auto-lock timeout. Adding protection, or
+/// leaving a field out, never does.
 fn loosens(current: &AppLockConfig, update: &AppLockConfigUpdate) -> bool {
     let lock_off = current.app_lock_active && update.app_lock_active == Some(false);
     let drops = |now: &[String], next: &Option<Vec<String>>| {
@@ -331,10 +336,34 @@ fn loosens(current: &AppLockConfig, update: &AppLockConfigUpdate) -> bool {
     let timeout = update
         .auto_lock_timeout_secs
         .is_some_and(|next| timeout_loosens(current.auto_lock_timeout_secs, next));
+    let opens_to_syn = update
+        .syn_allowed_apps
+        .as_ref()
+        .is_some_and(|next| next.iter().any(|id| !current.syn_allowed_apps.contains(id)));
     lock_off
         || drops(&current.protected_apps, &update.protected_apps)
         || drops(&current.protected_notes, &update.protected_notes)
+        || opens_to_syn
         || timeout
+}
+
+/// Which apps Syn may use once `update` is saved, or `None` when that does not
+/// change.
+///
+/// Only an app still protected keeps its place: one that stops being protected
+/// loses it, so locking that app again later does not find it already open to
+/// Syn. An app with a lock of its own is refused rather than dropped, since
+/// asking for it is a mistake worth hearing about.
+fn syn_allowed_after(current: &AppLockConfig, update: &AppLockConfigUpdate) -> Result<Option<Vec<String>>, String> {
+    if let Some(asked) = &update.syn_allowed_apps {
+        if let Some(app) = asked.iter().find(|app| !crate::syn::locks::can_be_allowed(app)) {
+            return Err(format!("The PIN cannot open `{app}` to Syn: it has a lock of its own"));
+        }
+    }
+    let protected = update.protected_apps.as_ref().unwrap_or(&current.protected_apps);
+    let asked = update.syn_allowed_apps.as_ref().unwrap_or(&current.syn_allowed_apps);
+    let next: Vec<String> = asked.iter().filter(|app| protected.contains(app)).cloned().collect();
+    Ok((next != current.syn_allowed_apps).then_some(next))
 }
 
 /// Change what the PIN guards. Tightening is free; loosening (see `loosens`)
@@ -348,7 +377,9 @@ pub fn update_app_lock_config(
     pin: Option<String>,
     state: tauri::State<'_, AppLockState>,
 ) -> Result<(), String> {
-    if loosens(&read_config(&app), &config) {
+    let current = read_config(&app);
+    let syn_allowed = syn_allowed_after(&current, &config)?;
+    if loosens(&current, &config) {
         let hash = SecretManager::get_app_lock_hash(Some(&app));
         require_pin(&state, hash.as_deref(), pin.as_deref())?;
     }
@@ -356,6 +387,7 @@ pub fn update_app_lock_config(
         Some(&app),
         config.protected_apps,
         config.protected_notes,
+        syn_allowed,
         config.auto_lock_timeout_secs,
         config.app_lock_active,
     )
@@ -554,16 +586,58 @@ mod tests {
             app_lock_active: active,
             protected_apps: apps.iter().map(|s| s.to_string()).collect(),
             protected_notes: notes.iter().map(|s| s.to_string()).collect(),
+            syn_allowed_apps: Vec::new(),
             auto_lock_timeout_secs: timeout,
         }
     }
 
     fn change() -> AppLockConfigUpdate {
-        AppLockConfigUpdate { protected_apps: None, protected_notes: None, auto_lock_timeout_secs: None, app_lock_active: None }
+        AppLockConfigUpdate { protected_apps: None, protected_notes: None, syn_allowed_apps: None, auto_lock_timeout_secs: None, app_lock_active: None }
     }
 
     fn ids(v: &[&str]) -> Option<Vec<String>> {
         Some(v.iter().map(|s| s.to_string()).collect())
+    }
+
+    /// Opening a protected app to Syn takes the PIN; closing it does not.
+    #[test]
+    fn opening_an_app_to_syn_is_loosening_and_closing_it_is_not() {
+        let mut now = guards(false, &["finance", "people"], &[], 300);
+        now.syn_allowed_apps = vec!["people".into()];
+
+        assert!(loosens(&now, &AppLockConfigUpdate { syn_allowed_apps: ids(&["people", "finance"]), ..change() }));
+        // Swapping one for another still opens one.
+        assert!(loosens(&now, &AppLockConfigUpdate { syn_allowed_apps: ids(&["finance"]), ..change() }));
+        assert!(!loosens(&now, &AppLockConfigUpdate { syn_allowed_apps: ids(&["people"]), ..change() }));
+        assert!(!loosens(&now, &AppLockConfigUpdate { syn_allowed_apps: ids(&[]), ..change() }));
+    }
+
+    #[test]
+    fn an_app_no_longer_protected_is_no_longer_open_to_syn() {
+        let mut now = guards(false, &["finance", "people"], &[], 300);
+        now.syn_allowed_apps = vec!["finance".into(), "people".into()];
+
+        let unprotected = AppLockConfigUpdate { protected_apps: ids(&["people"]), ..change() };
+        assert_eq!(syn_allowed_after(&now, &unprotected), Ok(ids(&["people"])));
+
+        // Nothing about either list: nothing to save.
+        assert_eq!(syn_allowed_after(&now, &change()), Ok(None));
+        // Protected again later, it starts closed.
+        let mut after = guards(false, &["people"], &[], 300);
+        after.syn_allowed_apps = vec!["people".into()];
+        let again = AppLockConfigUpdate { protected_apps: ids(&["people", "finance"]), ..change() };
+        assert_eq!(syn_allowed_after(&after, &again), Ok(None));
+        // Asked for one that is not protected, there is nothing to open.
+        let open = guards(false, &["people"], &[], 300);
+        let stray = AppLockConfigUpdate { syn_allowed_apps: ids(&["finance", "people"]), ..change() };
+        assert_eq!(syn_allowed_after(&open, &stray), Ok(ids(&["people"])));
+    }
+
+    #[test]
+    fn the_pin_cannot_open_an_app_with_a_lock_of_its_own_to_syn() {
+        let now = guards(false, &["safe", "finance"], &[], 300);
+        let asked = AppLockConfigUpdate { syn_allowed_apps: ids(&["finance", "safe"]), ..change() };
+        assert!(syn_allowed_after(&now, &asked).unwrap_err().contains("safe"));
     }
 
     #[test]

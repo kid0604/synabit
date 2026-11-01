@@ -12,6 +12,7 @@ const lockConfig = (enabled: boolean) => ({
   app_lock_active: enabled,
   protected_apps: [],
   protected_notes: [],
+  syn_allowed_apps: [],
   auto_lock_timeout_secs: 300,
 });
 

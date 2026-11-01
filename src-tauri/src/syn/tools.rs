@@ -272,17 +272,18 @@ pub struct ToolContext<'a, R: tauri::Runtime> {
 ///
 /// The lists are read from memory (`locks::current`, which reads the keychain
 /// once and again only after a change); resolving the protected notes' other
-/// names is one small query.
+/// names is one small query. An app opened to Syn is not locked here, and only
+/// here; see `locks::Locks::for_tools`.
 fn locked_for<R: tauri::Runtime>(ctx: &ToolContext<'_, R>) -> AppResult<Option<crate::syn::locks::Hidden>> {
     if ctx.model.is_none() {
         return Ok(None);
     }
     crate::syn::locks::know_handle_of(ctx.app);
-    let locks = crate::syn::locks::current();
+    let locks = crate::syn::locks::current().for_tools();
     if locks.is_empty() {
         return Ok(None);
     }
-    Ok(Some(crate::syn::locks::Hidden::resolve(locks, &*lock(ctx)?)))
+    Ok(Some(crate::syn::locks::Hidden::resolve(std::sync::Arc::new(locks), &*lock(ctx)?)))
 }
 
 /// Why a call would be refused for reaching something locked with the app
@@ -3325,8 +3326,9 @@ fn tool_look_back<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppR
 /// and then to the newer run.
 ///
 /// A run that touched a note locked with the app PIN — named it in a call, or
-/// in a result — is left out whole when `hidden` is given: its answer may well
-/// quote the note, from before it was locked. See `syn::locks`.
+/// in a result — or called a tool of a locked app is left out whole when
+/// `hidden` is given: its answer may well quote it, from before it was locked.
+/// See `syn::locks`.
 fn look_back(
     vault_path: &str,
     args: &Value,
@@ -3408,6 +3410,9 @@ fn look_back(
                 !run.steps.iter().any(|step| {
                     hidden.mentioned_in(&step.preview)
                         || step.args.as_ref().is_some_and(|a| hidden.mentioned_in(&a.to_string()))
+                        // Used while the app was open to Syn: what it read then
+                        // is not to be read back now it is closed.
+                        || step.tool.as_deref().is_some_and(|t| hidden.locks().locked_app_of_tool(t).is_some())
                 })
             })
         })
@@ -6462,6 +6467,31 @@ mod tests {
         assert!(error.contains("tell the user"), "{error}");
     }
 
+    /// Closed to Syn again, an app's figures do not come back through a run
+    /// that read them while it was open.
+    #[test]
+    fn looking_back_leaves_out_runs_that_used_a_locked_app() {
+        let dir = tempfile::tempdir().expect("temp vault");
+        let vault = dir.path().to_str().expect("utf8");
+        let db = DbBridge::new_in_memory_full().expect("db");
+
+        let mut run = finished_run(vault, "tháng này tao tiêu bao nhiêu");
+        run.record_tool(0, "get_finance_summary", serde_json::json!({}), true, crate::syn::registry::Reversal::Nothing, "{}", 1);
+        run.record_assistant(1, "Tháng này tiêu 12 triệu.", Default::default(), 5);
+        crate::syn::run::save_run(vault, &run).expect("saved");
+
+        let asked = serde_json::json!({ "query": "tiêu" });
+        let found = |locks: crate::syn::locks::Locks| -> usize {
+            let hidden = crate::syn::locks::Hidden::resolve(std::sync::Arc::new(locks.for_tools()), &db);
+            let out: serde_json::Value =
+                serde_json::from_str(&look_back(vault, &asked, None, Some(&hidden)).expect("reads")).expect("json");
+            out["runs"].as_array().expect("an array").len()
+        };
+        let locked = || crate::syn::locks::Locks::new(vec!["finance".into()], vec![]);
+        assert_eq!(found(locked()), 0);
+        assert_eq!(found(locked().allowing(vec!["finance".into()])), 1);
+    }
+
     /// Syn can read its own record, which is the point of the whole tool.
     #[test]
     fn looking_back_finds_what_was_asked_and_what_was_answered() {
@@ -8063,6 +8093,36 @@ mod tests {
         // Unlocked, the same model reads it.
         let read = call_as(handle, &vault_path, model, "get_node", serde_json::json!({ "node_id": diary }));
         assert!(read["content"].as_str().unwrap().contains("secret"), "{read}");
+    }
+
+    /// Finance opened to Syn: its tools run for a model, and what else is
+    /// locked stays locked.
+    #[test]
+    fn a_model_can_use_a_locked_app_that_was_opened_to_syn() {
+        let (_holder, vault_path, app) = phase_f_vault();
+        let handle = app.handle();
+        seed_month(handle, &vault_path);
+        let diary = call_as(handle, &vault_path, None, "create_node", serde_json::json!({
+            "node_type": "note", "title": "Diary", "content": "the marigold plan is secret",
+        }))["id"].as_str().expect("created").to_string();
+
+        let taint = crate::syn::taint::Taint::new();
+        let model = Some(&taint);
+        let summary = serde_json::json!({});
+        let locks = || crate::syn::locks::Locks::new(vec!["finance".into()], vec![diary.clone()]);
+
+        // Locked, and not opened: refused.
+        crate::syn::locks::with_locks(locks(), || {
+            let refused = call_as(handle, &vault_path, model, "get_finance_summary", summary.clone());
+            assert_eq!(refused["locked"], true, "{refused}");
+        });
+
+        crate::syn::locks::with_locks(locks().allowing(vec!["finance".into()]), || {
+            let open = call_as(handle, &vault_path, model, "get_finance_summary", summary.clone());
+            assert!(open.get("locked").is_none(), "{open}");
+            let note = call_as(handle, &vault_path, model, "get_node", serde_json::json!({ "node_id": diary }));
+            assert_eq!(note["locked"], true, "{note}");
+        });
     }
 
     /// A month the way the Finance app leaves one: minor units, stamped, with

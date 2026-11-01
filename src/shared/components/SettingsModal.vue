@@ -29,7 +29,7 @@ import { useAppLockStore, pinErrorKey, timeoutLoosens } from '../../stores/useAp
 import { showAppNotice } from '../../composables/useAppNotice';
 import { useAppUpdate } from '../../composables/useAppUpdate';
 import { appInPlatformScope } from '../platformScope';
-import { BUILT_IN_APPS, SELF_LOCKING_APPS, appName } from '../appRegistry';
+import { APPS_SYN_ALWAYS_READS, BUILT_IN_APPS, SELF_LOCKING_APPS, appName } from '../appRegistry';
 import { appOffered } from '../appAccess';
 import { SIMPLE_MODE_HOME } from '../simpleMode';
 import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
@@ -466,6 +466,14 @@ const handleToggleProtectedApp = (appId: string, appName: string) => {
     requirePin(t('settings.security.pin_to_unprotect', { app: appName }), pin => saveLockChange(() => appLockStore.toggleProtectedApp(appId, pin)));
   } else {
     saveLockChange(() => appLockStore.toggleProtectedApp(appId));
+  }
+};
+
+const handleToggleSynAllowed = (appId: string, appName: string) => {
+  if (appLockStore.isSynAllowed(appId)) {
+    saveLockChange(() => appLockStore.toggleSynAllowedApp(appId));
+  } else {
+    requirePin(t('settings.security.pin_to_allow_syn', { app: appName }), pin => saveLockChange(() => appLockStore.toggleSynAllowedApp(appId, pin)));
   }
 };
 
@@ -1193,20 +1201,29 @@ const setupE2ee = () => {
                     <!-- Part 3: Protected Mini Apps -->
                     <div class="bg-[#f8f8f8] dark:bg-surface-dark p-4 rounded-xl border border-border dark:border-border-dark">
                       <p class="text-[13px] font-semibold text-text dark:text-text-dark mb-2">{{ $t('settings.security.protected_mini_apps') }}</p>
-                      <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">{{ $t('settings.security.protected_mini_apps_desc') }}</p>
-                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label v-for="app in lockableApps" :key="app.id"
-                          class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
-                          :class="appLockStore.isAppProtected(app.id) ? 'bg-accent/10 border-accent/40' : 'bg-white dark:bg-surface-hover-dark border-border dark:border-border-subtle-dark hover:border-gray-300 dark:hover:border-gray-500'"
-                        >
-                          <span class="text-[12px] font-medium text-text dark:text-text-dark flex items-center gap-2">
-                            <component :is="app.icon" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                            {{ appName(app.id) }}
-                          </span>
-                          <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isAppProtected(app.id) ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleProtectedApp(app.id, appName(app.id))">
-                            <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isAppProtected(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                      <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">{{ $t('settings.security.protected_mini_apps_desc') }}</p>
+                      <p class="text-[12px] text-gray-500 dark:text-gray-400 mb-4 leading-relaxed">{{ $t('settings.security.syn_can_use_desc') }}</p>
+                      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+                        <div v-for="app in lockableApps" :key="app.id">
+                          <label
+                            class="flex items-center justify-between p-2 rounded-lg border transition-colors cursor-pointer"
+                            :class="appLockStore.isAppProtected(app.id) ? 'bg-accent/10 border-accent/40' : 'bg-white dark:bg-surface-hover-dark border-border dark:border-border-subtle-dark hover:border-gray-300 dark:hover:border-gray-500'"
+                          >
+                            <span class="text-[12px] font-medium text-text dark:text-text-dark flex items-center gap-2">
+                              <component :is="app.icon" class="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                              {{ appName(app.id) }}
+                            </span>
+                            <div class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isAppProtected(app.id) ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleProtectedApp(app.id, appName(app.id))">
+                              <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isAppProtected(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                            </div>
+                          </label>
+                          <div v-if="appLockStore.isAppProtected(app.id) && !APPS_SYN_ALWAYS_READS.includes(app.id)" class="flex items-center justify-between pl-8 pr-2 pt-2">
+                            <span class="text-[12px] text-gray-500 dark:text-gray-400">{{ $t('settings.security.syn_can_use') }}</span>
+                            <button type="button" role="switch" :aria-checked="appLockStore.isSynAllowed(app.id)" :aria-label="$t('settings.security.syn_can_use_app', { app: appName(app.id) })" class="relative inline-flex h-4 w-7 shrink-0 items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-accent transition-colors duration-200 ease-in-out cursor-pointer" :class="appLockStore.isSynAllowed(app.id) ? 'bg-accent' : 'bg-gray-300 dark:bg-gray-600'" @click="handleToggleSynAllowed(app.id, appName(app.id))">
+                              <span class="pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out" :class="appLockStore.isSynAllowed(app.id) ? 'translate-x-1.5' : '-translate-x-1.5'"/>
+                            </button>
                           </div>
-                        </label>
+                        </div>
                       </div>
                     </div>
                   </template>

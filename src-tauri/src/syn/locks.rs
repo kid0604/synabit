@@ -40,6 +40,24 @@
 //! If the app surface should ever see an unlocked note, the front end would
 //! have to say so with the request, and only `Surface::App` should listen.
 //!
+//! # An app can be opened to Syn, and stay locked on the screen
+//!
+//! Protecting an app says two things: who may open its window, and what Syn may
+//! read. Somebody who keeps Finance behind the PIN and records spending from
+//! Telegram wants the first without the second, so `syn_allowed_apps` lets
+//! Syn's tools go on using a protected app ([`Locks::for_tools`]).
+//!
+//! - It is kept with the lists, not in `syn::approvals`: that file sits in the
+//!   vault where anything can edit it, and this takes the PIN to widen
+//!   (`commands::app_lock::loosens`). It is changed only in Settings; no tool
+//!   and no button on Telegram can, or a lost account could open what it wants.
+//! - It reaches the tools alone. `current` still answers with the app locked,
+//!   so retrieval before the turn, the timeline block and the instant-count
+//!   sample leave it out, and its contents go to a hosted model only when a
+//!   tool was called for them. A reader nobody thought about stays locked.
+//! - It is by app. A locked note stays locked whatever its app allows, and an
+//!   app with a lock of its own ([`can_be_allowed`]) is never the PIN's to open.
+//!
 //! # The app's own code is not a model
 //!
 //! A screen calling a tool on the user's behalf (`model: None` — Nexus, a
@@ -72,16 +90,41 @@ use crate::db::DbBridge;
 pub struct Locks {
     apps: Vec<String>,
     notes: Vec<String>,
+    /// Of `apps`, the ones Syn's tools may still use. See [`Locks::for_tools`].
+    syn_allowed: Vec<String>,
+}
+
+/// Whether the PIN can open this app to Syn. Safe has a master password and a
+/// Secret Key of its own, and a PIN is not what protects it.
+pub fn can_be_allowed(app: &str) -> bool {
+    app != "safe"
 }
 
 impl Locks {
     pub fn new(apps: Vec<String>, notes: Vec<String>) -> Self {
         let notes = notes.iter().map(|n| normalise(n).to_string()).filter(|n| !n.is_empty()).collect();
-        Self { apps, notes }
+        Self { apps, notes, syn_allowed: Vec::new() }
+    }
+
+    /// The same, with these of its apps open to Syn's tools.
+    pub fn allowing(mut self, apps: Vec<String>) -> Self {
+        self.syn_allowed = apps;
+        self
     }
 
     pub fn none() -> Self {
         Self::default()
+    }
+
+    /// What a model's own tool calls are held to: the same, without the apps
+    /// that were opened to Syn. Everything else reads [`current`] as it stands.
+    pub fn for_tools(&self) -> Self {
+        let open = |app: &String| self.syn_allowed.contains(app) && can_be_allowed(app);
+        Self {
+            apps: self.apps.iter().filter(|app| !open(app)).cloned().collect(),
+            notes: self.notes.clone(),
+            syn_allowed: Vec::new(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -213,7 +256,7 @@ fn load() -> Option<Locks> {
         return None;
     }
     match crate::secrets::SecretManager::try_app_lock_lists(handle) {
-        Ok(Some((apps, notes))) => Some(Locks::new(apps, notes)),
+        Ok(Some(lists)) => Some(Locks::new(lists.apps, lists.notes).allowing(lists.syn_allowed)),
         Ok(None) => Some(Locks::none()),
         Err(e) => {
             log::warn!("[Syn Locks] Could not read the app lock: {e}");
@@ -236,6 +279,21 @@ pub fn with_locks<T>(locks: Locks, f: impl FnOnce() -> T) -> T {
     OVERRIDE.with(|o| *o.borrow_mut() = Some(Arc::new(locks)));
     let _reset = Reset;
     f()
+}
+
+/// The same for as long as what this returns is kept, for work that awaits: a
+/// `#[tokio::test]` drives its future on the thread that started it.
+#[cfg(test)]
+pub fn hold_locks(locks: Locks) -> impl Drop {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            OVERRIDE.with(|o| *o.borrow_mut() = None);
+            *KNOWN_IDS.write().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+    OVERRIDE.with(|o| *o.borrow_mut() = Some(Arc::new(locks)));
+    Reset
 }
 
 // ── Resolved against the vault ────────────────────────────────────────
@@ -530,12 +588,19 @@ fn type_of(db: &DbBridge, id: &str) -> Option<String> {
 /// What a model is told about a locked note. It names nothing, so it says
 /// nothing the model did not already have.
 pub const LOCKED: &str = "That is locked with the app PIN. Syn cannot read, search or change \
-     locked notes or apps. Tell the person it is locked; they can open it in the app themselves.";
+     locked notes or apps, and typing the PIN in the app does not change that, so do not ask the \
+     person to unlock it and try again. Tell them it is locked; they can open it in the app \
+     themselves.";
 
+/// Unlocking the app was what Syn told somebody to do on 2026-11-01, from a
+/// refusal that did not say it would not help. The switch is named because an
+/// app, unlike a note, has one.
 fn app_refusal(app: &str) -> String {
     format!(
-        "The `{app}` app is locked with the app PIN, so Syn cannot use it. Tell the person it is \
-         locked; they can open it in the app themselves."
+        "The `{app}` app is locked with the app PIN, so Syn cannot use it, and typing the PIN in \
+         the app does not change that, so do not ask the person to unlock it and try again. Tell \
+         them it is locked. They can do this themselves in the app, or allow Syn with the Syn \
+         switch under that app in the app's Settings, Security section, which needs the PIN."
     )
 }
 
@@ -576,6 +641,56 @@ mod tests {
             apps.iter().map(|s| s.to_string()).collect(),
             notes.iter().map(|s| s.to_string()).collect(),
         ))
+    }
+
+    fn allowing(apps: &[&str], notes: &[&str], allowed: &[&str]) -> Locks {
+        (*locks(apps, notes)).clone().allowing(allowed.iter().map(|s| s.to_string()).collect())
+    }
+
+    #[test]
+    fn an_app_opened_to_syn_is_open_to_its_tools_and_locked_to_everything_else() {
+        let l = allowing(&["finance", "people"], &[], &["finance"]);
+
+        // What every reader but the tools goes by.
+        assert!(l.app_locked("finance"));
+        assert!(l.hides_type("finance_month"));
+        assert_eq!(l.locked_app_of_tool("get_transactions"), Some("finance"));
+
+        let tools = l.for_tools();
+        assert!(!tools.app_locked("finance"));
+        assert!(!tools.hides_type("finance_month"));
+        assert_eq!(tools.locked_app_of_tool("get_transactions"), None);
+        assert_eq!(tools.locked_app_of_tool("create_transaction"), None);
+        // The one beside it was not opened.
+        assert!(tools.hides_type("person"));
+    }
+
+    #[test]
+    fn opening_an_app_leaves_its_locked_notes_locked() {
+        let db = vault();
+        let tools = allowing(&["note"], &["Notes/diary.md"], &["note"]).for_tools();
+        assert!(!tools.is_empty());
+        assert!(!tools.hides_type("note"));
+        assert!(Hidden::resolve(Arc::new(tools), &db).hides_ref("Notes/diary.md"));
+    }
+
+    #[test]
+    fn nothing_opens_an_app_with_a_lock_of_its_own() {
+        let tools = allowing(&["safe"], &[], &["safe"]).for_tools();
+        assert!(tools.app_locked("safe"));
+        assert_eq!(tools.locked_app_of_tool("safe_list"), Some("safe"));
+    }
+
+    /// Told on 2026-11-01 only that somebody could open it themselves, Syn said
+    /// to unlock Finance and message again, which would have been refused again.
+    #[test]
+    fn a_refusal_says_the_pin_in_the_app_will_not_help() {
+        for said in [LOCKED.to_string(), app_refusal("finance")] {
+            assert!(said.contains("does not change that"), "{said}");
+            assert!(said.contains("do not ask the person to unlock it"), "{said}");
+        }
+        assert!(app_refusal("finance").contains("Settings"));
+        assert!(!LOCKED.contains("Settings"), "a note has no switch to point at");
     }
 
     #[test]

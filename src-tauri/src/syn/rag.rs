@@ -1724,6 +1724,14 @@ mod tests {
         let said = format_context(&locked);
         assert!(!said.contains("Diary") && !said.contains("secret"), "{said}");
         assert!(!said.contains("Mai"), "{said}");
+
+        // Opened to Syn's tools, an app still stays out of what is sent along
+        // with every question.
+        let allowed = crate::syn::locks::with_locks(
+            crate::syn::locks::Locks::new(vec!["people".into()], vec![]).allowing(vec!["people".into()]),
+            || retrieve_context(&db, q, &[], &RagConfig::default()).expect("retrieval"),
+        );
+        assert_eq!(ids(&allowed), ["Notes/diary.md", "Notes/garden.md"]);
     }
 
     /// Without a name the vault has, `kiến` and `trúc` are searched as the one

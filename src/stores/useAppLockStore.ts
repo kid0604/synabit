@@ -7,6 +7,7 @@ interface AppLockConfig {
   app_lock_active: boolean;
   protected_apps: string[];
   protected_notes: string[];
+  syn_allowed_apps: string[];
   auto_lock_timeout_secs: number;
 }
 
@@ -58,6 +59,7 @@ export const useAppLockStore = defineStore('appLock', () => {
   const appLockActive = ref(false);   // Tier 1 toggle (lock whole app)
   const protectedApps = ref<string[]>([]);
   const protectedNotes = ref<string[]>([]);
+  const synAllowedApps = ref<string[]>([]); // Protected apps Syn may still use
   const autoLockTimeoutSecs = ref(300);
 
   // Runtime state
@@ -75,6 +77,7 @@ export const useAppLockStore = defineStore('appLock', () => {
       appLockActive.value = config.app_lock_active;
       protectedApps.value = config.protected_apps;
       protectedNotes.value = config.protected_notes;
+      synAllowedApps.value = config.syn_allowed_apps;
       autoLockTimeoutSecs.value = config.auto_lock_timeout_secs;
 
       // If Tier 1 is active, start locked
@@ -156,6 +159,10 @@ export const useAppLockStore = defineStore('appLock', () => {
     return protectedApps.value.includes(appId);
   }
 
+  function isSynAllowed(appId: string): boolean {
+    return synAllowedApps.value.includes(appId);
+  }
+
   function isMiniAppAccessible(appId: string): boolean {
     if (!isAppProtected(appId)) return true;
     const unlockedAt = unlockedApps.value.get(appId);
@@ -196,8 +203,9 @@ export const useAppLockStore = defineStore('appLock', () => {
 
   // Changes to what the PIN guards. Each saves first and changes the store
   // only once the backend agrees, so a refusal leaves the screen as it was.
-  // Loosening (unprotecting, switching the whole-app lock off, a longer or no
-  // timeout) needs `pin` when one is set: `update_app_lock_config` checks it.
+  // Loosening (unprotecting, opening an app to Syn, switching the whole-app lock
+  // off, a longer or no timeout) needs `pin` when one is set:
+  // `update_app_lock_config` checks it.
 
   async function toggleProtectedApp(appId: string, pin?: string) {
     const next = protectedApps.value.includes(appId)
@@ -205,6 +213,16 @@ export const useAppLockStore = defineStore('appLock', () => {
       : [...protectedApps.value, appId];
     await invoke('update_app_lock_config', { config: { protected_apps: next }, pin: pin ?? null });
     protectedApps.value = next;
+    // The backend closes an app to Syn when it stops being protected.
+    synAllowedApps.value = synAllowedApps.value.filter(id => next.includes(id));
+  }
+
+  async function toggleSynAllowedApp(appId: string, pin?: string) {
+    const next = synAllowedApps.value.includes(appId)
+      ? synAllowedApps.value.filter(id => id !== appId)
+      : [...synAllowedApps.value, appId];
+    await invoke('update_app_lock_config', { config: { syn_allowed_apps: next }, pin: pin ?? null });
+    synAllowedApps.value = next;
   }
 
   async function toggleProtectedNote(noteId: string, pin?: string) {
@@ -238,6 +256,7 @@ export const useAppLockStore = defineStore('appLock', () => {
       appLockActive.value = config.app_lock_active;
       protectedApps.value = config.protected_apps;
       protectedNotes.value = config.protected_notes;
+      synAllowedApps.value = config.syn_allowed_apps;
       autoLockTimeoutSecs.value = config.auto_lock_timeout_secs;
     } catch (e) {
       console.error('Failed to refresh app lock config:', e);
@@ -249,6 +268,7 @@ export const useAppLockStore = defineStore('appLock', () => {
     appLockActive,
     protectedApps,
     protectedNotes,
+    synAllowedApps,
     autoLockTimeoutSecs,
     isAppLocked,
     unlockedApps,
@@ -267,11 +287,13 @@ export const useAppLockStore = defineStore('appLock', () => {
     touchMiniAppSession,
     touchNoteSession,
     isAppProtected,
+    isSynAllowed,
     isMiniAppAccessible,
     isNoteProtected,
     isNoteAccessible,
     resetActivity,
     toggleProtectedApp,
+    toggleSynAllowedApp,
     toggleProtectedNote,
     setAutoLockTimeout,
     setAppLockActive,

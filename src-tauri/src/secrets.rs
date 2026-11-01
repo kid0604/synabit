@@ -5,6 +5,13 @@ use std::collections::HashMap;
 #[cfg(target_os = "android")]
 const ANDROID_SECRETS_KEY: &str = "app_secrets";
 
+/// What the app lock protects, as `syn::locks` reads it.
+pub struct AppLockLists {
+    pub apps: Vec<String>,
+    pub notes: Vec<String>,
+    pub syn_allowed: Vec<String>,
+}
+
 #[derive(Serialize, Deserialize, Default, Clone, Debug)]
 pub struct AppSecrets {
     pub e2ee_password: Option<String>, // KEEP for migration
@@ -23,6 +30,8 @@ pub struct AppSecrets {
     pub protected_apps: Option<Vec<String>>, // ["finance", "people"]
     #[serde(default)]
     pub protected_notes: Option<Vec<String>>, // ["Notes/diary.md"]
+    #[serde(default)]
+    pub syn_allowed_apps: Option<Vec<String>>, // Protected apps Syn may still use. See `syn::locks`
     #[serde(default)]
     pub auto_lock_timeout_secs: Option<u64>, // Default 300
     #[serde(default)]
@@ -512,6 +521,7 @@ impl SecretManager {
             secrets.app_lock_hash = None;
             secrets.protected_apps = None;
             secrets.protected_notes = None;
+            secrets.syn_allowed_apps = None;
             secrets.auto_lock_timeout_secs = None;
             secrets.app_lock_active = None;
         })
@@ -547,27 +557,33 @@ impl SecretManager {
         )
     }
 
-    /// What the app lock protects, for Syn: `Ok(None)` when no PIN is set —
-    /// the lock screen guards nothing then, and neither does this — and `Err`
-    /// when the store could not be read, which the caller must not mistake for
-    /// "nothing protected" and keep. See `syn::locks`.
-    pub fn try_app_lock_lists(
-        app_handle: Option<&tauri::AppHandle>,
-    ) -> Result<Option<(Vec<String>, Vec<String>)>, String> {
+    /// The protected apps Syn was allowed to go on using.
+    pub fn get_syn_allowed_apps(app_handle: Option<&tauri::AppHandle>) -> Vec<String> {
+        Self::load_secrets(app_handle).syn_allowed_apps.unwrap_or_default()
+    }
+
+    /// What the app lock protects, for Syn, and which of those apps Syn may
+    /// still use: `Ok(None)` when no PIN is set — the lock screen guards
+    /// nothing then, and neither does this — and `Err` when the store could not
+    /// be read, which the caller must not mistake for "nothing protected" and
+    /// keep. See `syn::locks`.
+    pub fn try_app_lock_lists(app_handle: Option<&tauri::AppHandle>) -> Result<Option<AppLockLists>, String> {
         let secrets = Self::try_load_secrets(app_handle)?;
         if secrets.app_lock_hash.is_none() {
             return Ok(None);
         }
-        Ok(Some((
-            secrets.protected_apps.unwrap_or_default(),
-            secrets.protected_notes.unwrap_or_default(),
-        )))
+        Ok(Some(AppLockLists {
+            apps: secrets.protected_apps.unwrap_or_default(),
+            notes: secrets.protected_notes.unwrap_or_default(),
+            syn_allowed: secrets.syn_allowed_apps.unwrap_or_default(),
+        }))
     }
 
     pub fn update_app_lock_config(
         app_handle: Option<&tauri::AppHandle>,
         protected_apps: Option<Vec<String>>,
         protected_notes: Option<Vec<String>>,
+        syn_allowed_apps: Option<Vec<String>>,
         timeout: Option<u64>,
         app_lock_active: Option<bool>,
     ) -> Result<(), String> {
@@ -577,6 +593,9 @@ impl SecretManager {
             }
             if let Some(notes) = protected_notes {
                 secrets.protected_notes = Some(notes);
+            }
+            if let Some(apps) = syn_allowed_apps {
+                secrets.syn_allowed_apps = Some(apps);
             }
             if let Some(t) = timeout {
                 secrets.auto_lock_timeout_secs = Some(t);
