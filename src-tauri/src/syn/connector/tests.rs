@@ -248,6 +248,7 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         approved_writes: &[],
         surface: Surface::App,
         seen: &[],
+        said: "",
         ledger,
         allowed_until_done: until_done,
         call_allowed_until_done: false,

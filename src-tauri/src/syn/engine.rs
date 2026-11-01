@@ -375,6 +375,16 @@ fn audit_detail(tool: &str, args: &serde_json::Value) -> Option<String> {
 /// and a dry run described something instead of doing it, and counting either
 /// as a success told `footing` the answer stood on a source it never opened,
 /// and spent a skill allowance on a skill that was never read.
+/// The node a successful write landed on: named by the call when it edits, by
+/// the result when it makes one.
+fn wrote(tool: &str, arguments: &serde_json::Value, result: &str) -> Option<String> {
+    match tool {
+        "update_node" | "table_rows" => arguments.get("node_id")?.as_str().map(str::to_string),
+        "create_node" => serde_json::from_str::<serde_json::Value>(result).ok()?.get("id")?.as_str().map(str::to_string),
+        _ => None,
+    }
+}
+
 pub(crate) fn tool_succeeded(content: &str) -> bool {
     match serde_json::from_str::<serde_json::Value>(content) {
         Ok(v) => ["error", "refused", "planned"].iter().all(|k| v.get(k).is_none()),
@@ -639,6 +649,9 @@ impl SynEngine {
         // JSON document is not something to base a question on. This is the
         // untruncated result, at the moment it came back.
         let mut seen: Vec<crate::syn::ambiguity::Candidate> = Vec::new();
+        // The nodes this run has written, which a later search does not offer
+        // back as something the person might mean. See `other_than_written`.
+        let mut written: Vec<String> = Vec::new();
 
         // Whether this run has read something written outside the vault — a
         // page, a feed article, a file, a forwarded message.
@@ -1691,7 +1704,10 @@ impl SynEngine {
                 // A query that found one thing, or none, clears it — after that
                 // there is nothing to be ambiguous between.
                 if tc.function.name == "query_nodes" {
-                    seen = crate::syn::ambiguity::candidates_from(&content);
+                    seen = crate::syn::ambiguity::other_than_written(crate::syn::ambiguity::candidates_from(&content), &written);
+                }
+                if tool_succeeded(&content) {
+                    written.extend(wrote(&tc.function.name, &tc.function.arguments, &content));
                 }
 
                 // A result that filed a table brings `crunch`, the one way to a
@@ -2645,6 +2661,7 @@ fn weigh<R: tauri::Runtime>(
             },
             surface: run.surface,
             seen,
+            said: &run.goal,
             ledger: &ledger,
             allowed_until_done: &until_done,
             call_allowed_until_done: consent_conversation.is_some_and(|conv| {

@@ -72,6 +72,8 @@ pub struct View<'a> {
     pub surface: Surface,
     /// What the most recent `query_nodes` turned up, whole.
     pub seen: &'a [Candidate],
+    /// What the person said that this run answers.
+    pub said: &'a str,
     pub ledger: &'a Ledger,
     /// Whether "just this once" was said for this capability earlier in the
     /// same piece of work. See `consent::allowed_until_done`.
@@ -363,9 +365,11 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         )));
     }
 
-    // 4. Which one.
-    if let Some(choice) = crate::syn::ambiguity::should_ask(tool, args, view.seen, view.now) {
-        return Decided::quietly(Gate::Choose(Box::new(choice)));
+    // 4. Which one, unless they have just said.
+    if !crate::syn::ambiguity::already_said(view.said, args, view.seen) {
+        if let Some(choice) = crate::syn::ambiguity::should_ask(tool, args, view.seen, view.now) {
+            return Decided::quietly(Gate::Choose(Box::new(choice)));
+        }
     }
 
     // 5. Consent.
@@ -599,6 +603,7 @@ mod tests {
             approved_writes: &[],
             surface: Surface::App,
             seen: &[],
+            said: "",
             ledger,
             allowed_until_done: until_done,
             call_allowed_until_done: false,
@@ -739,6 +744,26 @@ mod tests {
         let d = decide("trash_node", &args(), Some(&Capability::VaultWrite), &v);
         assert!(matches!(d.gate, Gate::Choose(_)), "{d:?}");
         assert_eq!(d.audit, None);
+    }
+
+    #[test]
+    fn which_one_is_not_asked_of_somebody_who_just_said() {
+        let empty = Ledger::default();
+        let seen = vec![
+            Candidate { id: "Notes/a.md".into(), title: "A".into(), node_type: Some("note".into()) },
+            Candidate { id: "Notes/b.md".into(), title: "B".into(), node_type: Some("note".into()) },
+        ];
+        let mut v = view(&empty, &never_until_done);
+        v.seen = &seen;
+        let call = serde_json::json!({ "node_id": "Notes/b.md" });
+
+        v.said = "I mean “B” (Notes/b.md).";
+        let d = decide("update_node", &call, Some(&Capability::VaultWrite), &v);
+        assert!(!matches!(d.gate, Gate::Choose(_)), "{d:?}");
+
+        v.said = "I mean “A” (Notes/a.md).";
+        let d = decide("update_node", &call, Some(&Capability::VaultWrite), &v);
+        assert!(matches!(d.gate, Gate::Choose(_)), "not the one they said: {d:?}");
     }
 
     #[test]

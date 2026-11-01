@@ -113,6 +113,30 @@ pub fn candidates_from(result: &str) -> Vec<Candidate> {
         .collect()
 }
 
+/// Whether the person has just said which one, in the words this run answers.
+///
+/// A run that asked has stopped for good, and the answer starts a new one: the
+/// note's title from the app, its title and id from a phone. That run searches
+/// again, finds the same two, and without this asks again. On 2026-11-01 a
+/// person pressed the same button four times, and each press got the same card.
+pub fn already_said(said: &str, tool_args: &serde_json::Value, seen: &[Candidate]) -> bool {
+    let Some(target) = tool_args.get("node_id").and_then(|t| t.as_str()) else {
+        return false;
+    };
+    said.contains(target) || seen.iter().any(|c| c.id == target && !c.title.is_empty() && c.title == said.trim())
+}
+
+/// What a search turned up, less the notes this run has just written.
+///
+/// On 2026-11-01, asked to move a QuickCap into the daily note, Syn wrote the
+/// note, looked for the QuickCap to remove it, and found both, since they now
+/// said the same thing. The person was asked which to delete, with the note
+/// they had asked for among the answers. It was never one they could have
+/// meant.
+pub fn other_than_written(found: Vec<Candidate>, written: &[String]) -> Vec<Candidate> {
+    found.into_iter().filter(|c| !written.contains(&c.id)).collect()
+}
+
 /// Whether this call is a pick among several, and what the choices were.
 ///
 /// `seen` is what the run's most recent multi-row query returned. `None` — no
@@ -165,6 +189,33 @@ mod tests {
             Candidate { id: "Notes/b.md".into(), title: "Hợp đồng VPB".into(), node_type: Some("note".into()) },
             Candidate { id: "Notes/c.md".into(), title: "Hợp đồng thuê nhà".into(), node_type: Some("note".into()) },
         ]
+    }
+
+    /// The two ways an answer comes back, and what is not an answer.
+    #[test]
+    fn an_answer_is_not_asked_again() {
+        let call = serde_json::json!({ "node_id": "Notes/b.md" });
+        assert!(already_said("I mean “Hợp đồng VPB” (Notes/b.md).", &call, &three()), "from a phone");
+        assert!(already_said("Hợp đồng VPB", &call, &three()), "from the app");
+
+        assert!(!already_said("xoá cái note về hợp đồng", &call, &three()));
+        assert!(!already_said("I mean “Hợp đồng FPT” (Notes/a.md).", &call, &three()), "it said the other one");
+        assert!(!already_said("Hợp đồng VPB", &serde_json::json!({ "node_ids": ["Notes/b.md"] }), &three()));
+    }
+
+    #[test]
+    fn what_this_run_just_wrote_is_not_a_choice() {
+        let found = vec![
+            Candidate { id: "Notes/daily.md".into(), title: "2026-10-31".into(), node_type: Some("note".into()) },
+            Candidate { id: "QuickCaps/q.md".into(), title: "Daily: ban công".into(), node_type: Some("quickcap".into()) },
+        ];
+        let seen = other_than_written(found, &["Notes/daily.md".to_string()]);
+        assert_eq!(seen.len(), 1);
+        let call = serde_json::json!({ "node_id": "QuickCaps/q.md" });
+        assert!(should_ask("trash_node", &call, &seen, now()).is_none(), "one thing left to mean");
+
+        let others = other_than_written(three(), &["Notes/daily.md".to_string()]);
+        assert_eq!(others.len(), 3, "and three it did not write are still a question");
     }
 
     /// The whole point: three notes, one about to go, and the user is asked.

@@ -1234,6 +1234,13 @@ async fn deliver(app: &AppHandle, api: &Api, words: &Words, turn: &Turn<'_>, mes
     // Changes held after reading something from outside wait on a card, here
     // as in the app: the answer first, then what is waiting for a yes.
     if let Some(run) = latest_run(turn.vault, turn.conversation_id) {
+        // A run that stopped to ask says so in words too, which is `answer`,
+        // so the card above was never reached: "pick from these" with nothing
+        // to pick from, and the question open until somebody opened the app.
+        // Not marked done, for the same reason it is not above.
+        if open_kind(&run).is_some() && send_card(app, api, words, chat_id, &run).await {
+            return;
+        }
         send_changes_card(app, api, words, chat_id, &run).await;
     }
     if reply.lost {
