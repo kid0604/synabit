@@ -976,6 +976,17 @@ pub const ACROSS_DAYS: usize = 2;
 /// hundred runs it would repeat in all of them and name nothing.
 const LOOKING_AROUND: &[&str] = &["query_nodes", "get_node", "get_linked_nodes", "list_schemas", "recall"];
 
+/// Whether a chain is only finding a node and editing it.
+///
+/// Editing a note goes this way whatever the note and whatever the edit, so
+/// the tools repeating says nothing about the job repeating. On 2026-11-01
+/// `query_nodes`, `get_node`, `update_node`, taken from fixing one note's
+/// pictures, was written up as a skill for grouping pictures, with nothing in
+/// it about how.
+fn only_edits(chain: &[&str]) -> bool {
+    chain.iter().all(|t| *t == "update_node" || LOOKING_AROUND.contains(t))
+}
+
 /// Tools that get Syn ready to do a job and are no part of it.
 ///
 /// Not counted as calls at all, measured on the real vault (2026-10-30). The
@@ -1051,7 +1062,7 @@ pub fn chain_across_runs<'a>(
         let mut tried = std::collections::HashSet::new();
         for start in 0..=calls.len() - len {
             let candidate = &calls[start..start + len];
-            if !tried.insert(candidate) || candidate.iter().all(|t| LOOKING_AROUND.contains(t)) {
+            if !tried.insert(candidate) || only_edits(candidate) {
                 continue;
             }
             let matching: Vec<&crate::syn::run::Run> = others
@@ -1679,6 +1690,13 @@ mod tests {
     }
 
     const WEEKLY: &[&str] = &["get_transactions", "crunch", "create_node"];
+
+    #[test]
+    fn finding_a_note_and_editing_it_is_not_a_habit() {
+        const EDIT: &[&str] = &["query_nodes", "get_node", "update_node"];
+        let earlier = vec![finished(EDIT, "c1", "2026-10-06T08:00:00Z"), finished(EDIT, "c2", "2026-10-13T08:00:00Z")];
+        assert!(chain_across_runs(&finished(EDIT, "c3", "2026-10-20T08:00:00Z"), &earlier).is_none());
+    }
 
     /// Monday's spending, asked for each week, is the
     /// skill a person is most obviously owed and the one `repeated_chain`
