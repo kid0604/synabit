@@ -336,6 +336,16 @@ pub const BROWSE_TOOL: &str = "browse";
 /// the app — see `syn::surface`.
 pub const CAPTURE_TOOL: &str = "capture";
 
+/// How a note holds pictures shown together, the one form the editor reads
+/// (`ImageGallery.ts`).
+///
+/// Nothing told Syn this. On 2026-11-01, asked to make two photos one
+/// collection, it wrote `<div class="image-collection">`, which no part of the
+/// app knows: the editor drew two loose pictures and dropped the `div` on save,
+/// and Syn said they were grouped, since all it was told was that the write
+/// went through.
+const GALLERY_FORMAT: &str = "Pictures shown together, as a gallery or collection: `<div class=\"synabit-gallery\" data-template=\"classic\">`, one `<img src=\"…\" />` for each on its own line, then `</div>`. The app knows no other markup for this.";
+
 /// Searching Syn's own transcripts.
 ///
 /// # Why this is the one tool worth adding
@@ -890,7 +900,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "title": { "type": "string", "description": "The title." },
                         "content": {
                             "type": "string",
-                            "description": "Markdown body. Optional. A table followed by `<!-- rich-table` is a Rich Table: keep the comment; numbers plain (45000), dates YYYY-MM-DD, [x]/[ ]; leave `type: formula` cells empty, the app computes them."
+                            "description": format!("Markdown body. Optional. A table followed by `<!-- rich-table` is a Rich Table: keep the comment; numbers plain (45000), dates YYYY-MM-DD, [x]/[ ]; leave `type: formula` cells empty, the app computes them. {GALLERY_FORMAT}")
                         },
                         "properties": {
                             "type": "object",
@@ -924,7 +934,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         },
                         "content": {
                             "type": "string",
-                            "description": "Replaces the whole body. Omit for a field-only change. A table followed by `<!-- rich-table` is a Rich Table: keep the comment; numbers plain (45000), dates YYYY-MM-DD, [x]/[ ]; leave `type: formula` cells empty, the app computes them."
+                            "description": "Replaces the whole body, in the form create_node's content describes. Omit for a field-only change."
                         }
                     }
                 }),
@@ -2547,6 +2557,14 @@ fn tool_run_recipe<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
 }
 
 /// 2. get_node — Read full node content
+/// Says in a tool's result what the editor will not keep of a body it wrote or
+/// read. See `note_markup`.
+fn warn_of_markup(output: &mut Value, body: Option<&str>) {
+    if let Some(warning) = body.and_then(crate::syn::note_markup::warning) {
+        output["markup_warning"] = Value::String(warning);
+    }
+}
+
 fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
     let node_id = args
         .get("node_id")
@@ -2561,7 +2579,7 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
             let content: String = n.content.chars().take(crate::syn::room::scaled(MAX_CONTENT_CHARS)).collect();
             let content_truncated = content.len() < n.content.len();
 
-            let output = serde_json::json!({
+            let mut output = serde_json::json!({
                 "id": n.id,
                 "type": n.node_type,
                 "title": n.title,
@@ -2571,6 +2589,7 @@ fn tool_get_node(db: &DbBridge, args: &Value) -> AppResult<String> {
                 "created_at": n.created_at,
                 "updated_at": n.updated_at,
             });
+            warn_of_markup(&mut output, Some(&content));
             Ok(output.to_string())
         }
         None => Ok(serde_json::json!({"error": "Node not found", "node_id": node_id}).to_string()),
@@ -4261,14 +4280,15 @@ fn tool_create_node<R: tauri::Runtime>(
         Value::Object(properties),
     )?;
 
-    Ok(serde_json::json!({
+    let mut output = serde_json::json!({
         "success": true,
         "id": id,
         "type": node_type,
         "title": created_title,
         "message": format!("Created {} '{}'", node_type, created_title),
-    })
-    .to_string())
+    });
+    warn_of_markup(&mut output, args.get("content").and_then(|v| v.as_str()));
+    Ok(output.to_string())
 }
 
 /// Change fields on a node, leaving everything it did not mention alone.
@@ -4590,14 +4610,15 @@ fn tool_update_node<R: tauri::Runtime>(
         changed.push("content".to_string());
     }
 
-    Ok(serde_json::json!({
+    let mut output = serde_json::json!({
         "success": true,
         "id": node.id,
         "type": node.node_type,
         "title": title,
         "changed": changed,
-    })
-    .to_string())
+    });
+    warn_of_markup(&mut output, args.get("content").and_then(|v| v.as_str()));
+    Ok(output.to_string())
 }
 
 /// 12. create_note

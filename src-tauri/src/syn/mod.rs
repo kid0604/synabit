@@ -28,6 +28,7 @@ pub mod instructions;
 pub mod locks;
 pub mod connector;
 pub mod memory;
+pub mod note_markup;
 pub mod narrative;
 pub mod notice;
 pub mod onboarding;
