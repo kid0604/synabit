@@ -10,13 +10,16 @@
 //! hold before anything else is worth building: [`profile`] writes the rules,
 //! [`cell`] runs a command under them, [`watch`] finds what a command left
 //! behind, and [`selftest`] attacks the result and refuses to call it safe
-//! unless the attacks failed for the right reason.
+//! unless the attacks failed for the right reason. [`export`] is the one way a
+//! file leaves, and [`sanitize`] is what a person is shown of a room's words.
 //!
 //! macOS only, and macOS 14 or later: 13 does not know the `file-lock` rule, so
 //! the profile does not compile there and [`selftest`] reports the room broken.
 //! The app itself still runs on 13.3.
 
 pub mod cell;
+pub mod export;
 pub mod profile;
+pub mod sanitize;
 pub mod selftest;
 pub mod watch;

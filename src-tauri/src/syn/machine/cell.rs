@@ -5,7 +5,10 @@
 //! through pipes, because `sandbox-exec` cannot write to a file outside the room
 //! and because a command must not choose where its output goes.
 
+use std::ffi::{CStr, CString, OsStr};
 use std::io;
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -94,9 +97,21 @@ impl Cell {
 
     /// Puts the folders back. A room can delete its own, and a scan needs them
     /// to exist (see [`watch`]), so this runs from outside before each.
+    ///
+    /// By descriptor, because a room can also put a link where its folder was,
+    /// and this runs with everything the app can do. The folder above the room
+    /// is not the room's to change.
     pub fn restore(&self) -> io::Result<()> {
-        std::fs::create_dir_all(self.work())?;
-        std::fs::create_dir_all(self.room().join("tmp"))
+        let room = self.room();
+        let (Some(above), Some(name)) = (room.parent(), room.file_name()) else {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "no parent"));
+        };
+        std::fs::create_dir_all(above)?;
+        let above = std::fs::File::open(above)?;
+        let room = real_folder(above.as_fd(), &c_name(name)?)?;
+        real_folder(room.as_fd(), c"work")?;
+        real_folder(room.as_fd(), c"tmp")?;
+        Ok(())
     }
 
     /// Runs `/bin/sh -c script` in the room's `work` folder.
@@ -165,6 +180,60 @@ impl Cell {
             timed_out,
         })
     }
+}
+
+pub(super) fn c_name(name: &OsStr) -> io::Result<CString> {
+    CString::new(name.as_bytes())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "NUL in path"))
+}
+
+/// Opens without following a link in the last step. Always close-on-exec.
+pub(super) fn open_at(parent: BorrowedFd, name: &CStr, flags: libc::c_int) -> io::Result<OwnedFd> {
+    // SAFETY: `name` is a valid string for the call, and a descriptor that
+    // `openat` returns is ours alone to own.
+    unsafe {
+        let fd = libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o644 as libc::c_uint,
+        );
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(OwnedFd::from_raw_fd(fd))
+    }
+}
+
+pub(super) fn open_folder_at(parent: BorrowedFd, name: &CStr) -> io::Result<OwnedFd> {
+    open_at(parent, name, libc::O_RDONLY | libc::O_DIRECTORY)
+}
+
+/// The folder called `name`, a real one, whatever the room left there. `mkdirat`
+/// and `unlinkat` act on the entry itself and never follow it. A few tries, since
+/// a daemon may be swapping it back; the caller gets an error rather than a link.
+fn real_folder(parent: BorrowedFd, name: &CStr) -> io::Result<OwnedFd> {
+    for _ in 0..8 {
+        // SAFETY: `name` is a valid string; failure is read from errno below.
+        if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o755) } != 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::EEXIST) {
+                return Err(error);
+            }
+        }
+        match open_folder_at(parent, name) {
+            Ok(folder) => return Ok(folder),
+            Err(error) => match error.raw_os_error() {
+                Some(libc::ELOOP) | Some(libc::ENOTDIR) => {
+                    // SAFETY: as above. If it is already gone, the next try makes it.
+                    unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) };
+                }
+                Some(libc::ENOENT) => {}
+                _ => return Err(error),
+            },
+        }
+    }
+    Err(io::Error::other("the room keeps replacing its folder"))
 }
 
 /// A descriptor is a door the profile never sees: Seatbelt checks a file when it
@@ -321,6 +390,29 @@ mod tests {
         let ran = cell.run(&script, Limits::default()).await.unwrap();
         assert!(!ran.ok(), "{ran:?}");
         assert!(ran.stdout.is_empty(), "{ran:?}");
+    }
+
+    /// A room can write to its own path, so it can put a link there. What runs
+    /// outside the room must not then make folders wherever the link points.
+    #[tokio::test]
+    async fn a_room_that_becomes_a_link_does_not_steer_the_app() {
+        let (dir, cell) = cell();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        let room = cell.room().display().to_string();
+        let script = format!(
+            "cd /; rm -rf '{room}'; ln -s '{}' '{room}'",
+            elsewhere.canonicalize().unwrap().display()
+        );
+        let ran = cell.run(&script, Limits::default()).await.unwrap();
+        assert!(ran.ok(), "{ran:?}");
+        assert!(cell.room().is_symlink(), "the room did not manage it");
+
+        cell.restore().unwrap();
+
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+        assert!(!cell.room().is_symlink());
+        assert!(cell.work().is_dir());
     }
 
     #[tokio::test]

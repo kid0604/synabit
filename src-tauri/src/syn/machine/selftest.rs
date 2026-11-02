@@ -290,13 +290,9 @@ fn attacks(cell: &Cell, canary: &Path, home: &Path) -> Vec<Attack> {
             "A1",
             "reach the internet by name",
             "curl -s --max-time 4 -o /dev/null https://example.com".into(),
-            "curl --version",
-        ),
-        plain(
-            "A1",
-            "reach the internet by address",
-            "nc -z -G 3 1.1.1.1 443".into(),
-            "nc -z -G 1 -h 2>/dev/null; true",
+            // A real transfer: `curl --version` passed while curl was dying on
+            // its config file. The path has a space, which a URL cannot.
+            r#"curl -s -o /dev/null "file://$(pwd | sed 's/ /%20/g')/own""#,
         ),
         loud(
             "A25",
@@ -317,13 +313,13 @@ fn attacks(cell: &Cell, canary: &Path, home: &Path) -> Vec<Attack> {
             "A25",
             "open an app",
             "open -g -a Finder".into(),
-            "ls /usr/bin/open",
+            "open 2>&1 | grep -q Usage",
         ),
         loud(
             "A25",
             "capture the screen",
             "screencapture -x shot.png && test -s shot.png".into(),
-            "ls /usr/sbin/screencapture",
+            "screencapture -h 2>&1 | grep -q usage",
         ),
     ]
 }
@@ -415,6 +411,12 @@ async fn check_network(closed: &Cell, root: &Path, tools: &Path) -> io::Result<V
     let nc = |port: u16| format!("nc -z -G 2 127.0.0.1 {port}");
     let control = net.run(&nc(allowed_port), QUICK).await?;
     let mut lines = vec![
+        judge(
+            "A1",
+            "reach the internet by address",
+            &control,
+            &closed.run("nc -z -G 3 1.1.1.1 443", QUICK).await?,
+        ),
         judge("A24", "a local port, from a closed room", &control, &closed.run(&nc(allowed_port), QUICK).await?),
         judge("A24", "another local port, from a room with a proxy", &control, &net.run(&nc(other_port), QUICK).await?),
         judge(
@@ -434,8 +436,13 @@ async fn check_network(closed: &Cell, root: &Path, tools: &Path) -> io::Result<V
     ];
     // `nc` exits 0 on some versions whatever happened. The listener cannot lie.
     if socket.accept().is_ok() {
-        lines[2].verdict = Verdict::Leaked;
-        lines[2].detail = "the socket was connected to".to_string();
+        let line = lines
+            .iter_mut()
+            .find(|line| line.what == "a Unix socket outside the room");
+        if let Some(line) = line {
+            line.verdict = Verdict::Leaked;
+            line.detail = "the socket was connected to".to_string();
+        }
     }
     let _ = std::fs::remove_file(&socket_path);
     Ok(lines)

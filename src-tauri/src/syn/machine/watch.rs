@@ -16,10 +16,12 @@
 //!   write access and would otherwise match; none of the room's processes can
 //!   write to the bait.
 
+use std::collections::BTreeSet;
 use std::ffi::CString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::time::Duration;
 
 use super::cell::Cell;
 
@@ -27,6 +29,10 @@ use super::cell::Cell;
 const PROC_UID_ONLY: u32 = 4;
 const SANDBOX_FILTER_NONE: libc::c_int = 0;
 const SANDBOX_FILTER_PATH: libc::c_int = 1;
+
+const STOP_ROUNDS: usize = 64;
+const KILL_POLLS: usize = 50;
+const KILL_POLL: Duration = Duration::from_millis(40);
 
 extern "C" {
     /// Private to Apple, like `sandbox-exec` itself, which is why
@@ -100,12 +106,61 @@ pub fn room_processes(cell: &Cell, bait: &Path) -> io::Result<Vec<libc::pid_t>> 
         .collect())
 }
 
-/// Ends everything the room still has running, and says how many that was.
-pub fn clear_room(cell: &Cell, bait: &Path) -> io::Result<usize> {
-    let found = room_processes(cell, bait)?;
-    for &pid in &found {
+fn signal(pids: impl IntoIterator<Item = libc::pid_t>, signal: libc::c_int) {
+    for pid in pids {
         // SAFETY: a plain signal; a pid that has since gone only returns ESRCH.
-        unsafe { libc::kill(pid, libc::SIGKILL) };
+        unsafe { libc::kill(pid, signal) };
     }
-    Ok(found.len())
+}
+
+/// Ends everything the room still has running, and says how many that was.
+///
+/// Stopped first and killed afterwards, scanning until no new process turns up:
+/// killing a process that is forking in a loop only ever catches the last round.
+/// An error means something may still be running.
+pub fn clear_room(cell: &Cell, bait: &Path) -> io::Result<usize> {
+    let mut stopped = BTreeSet::new();
+    let mut settled = false;
+    for _ in 0..STOP_ROUNDS {
+        let found = room_processes(cell, bait)?;
+        let new: Vec<_> = found.into_iter().filter(|p| !stopped.contains(p)).collect();
+        if new.is_empty() {
+            settled = true;
+            break;
+        }
+        signal(new.iter().copied(), libc::SIGSTOP);
+        stopped.extend(new);
+    }
+    signal(stopped.iter().copied(), libc::SIGKILL);
+    if !settled {
+        return Err(io::Error::other("the room starts processes faster than they stop"));
+    }
+    for _ in 0..KILL_POLLS {
+        let left = room_processes(cell, bait)?;
+        if left.is_empty() {
+            return Ok(stopped.len());
+        }
+        signal(left, libc::SIGKILL);
+        std::thread::sleep(KILL_POLL);
+    }
+    Err(io::Error::other("a process in the room would not die"))
+}
+
+/// Proof that nothing was running in a room when this was made. What leaves a
+/// room is read only with one of these: a file checked while a daemon can still
+/// rewrite it has not been checked. Holds as long as nobody runs the room again.
+#[derive(Debug)]
+pub struct Frozen<'a> {
+    cell: &'a Cell,
+}
+
+impl Frozen<'_> {
+    pub fn cell(&self) -> &Cell {
+        self.cell
+    }
+}
+
+pub fn freeze<'a>(cell: &'a Cell, bait: &Path) -> io::Result<Frozen<'a>> {
+    clear_room(cell, bait)?;
+    Ok(Frozen { cell })
 }
