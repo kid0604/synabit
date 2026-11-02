@@ -553,6 +553,13 @@ fn fail_startup_on_database(app: &tauri::AppHandle, error: &crate::error::AppErr
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Behind `black_box`, so the linker keeps the whole app: what is measured
+    // has to be this binary, with everything it loads, not a stripped stub.
+    #[cfg(all(target_os = "macos", feature = "machine-selftest"))]
+    if std::hint::black_box(true) {
+        syn::machine::selftest::run_as_the_app();
+        return;
+    }
     install_panic_logger();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())

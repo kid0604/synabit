@@ -1,0 +1,2 @@
+(allow network-outbound (remote ip (string-append "localhost:" (param "PROXY"))))
+(allow mach-lookup (global-name "com.apple.trustd.agent") (global-name "com.apple.trustd"))

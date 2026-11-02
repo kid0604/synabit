@@ -26,6 +26,8 @@ pub mod footing;
 pub mod family_safe;
 pub mod instructions;
 pub mod locks;
+#[cfg(target_os = "macos")]
+pub mod machine;
 pub mod connector;
 pub mod memory;
 pub mod note_markup;
