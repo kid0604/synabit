@@ -25,6 +25,7 @@ async function translateTrayMenu() {
       capture: i18n.global.t('tray.tray_capture'),
       open: i18n.global.t('tray.tray_open'),
       quit: i18n.global.t('tray.tray_quit'),
+      stopRooms: i18n.global.t('tray.tray_stop_rooms'),
     });
   } catch {
     // No tray on this platform.

@@ -92,6 +92,13 @@ pub enum Capability {
     Spend { cents_estimate: u32 },
     /// Runs code. Always asks, and the code is shown as it will run.
     Execute,
+    /// Runs commands in a room on this machine, which the kernel keeps from the
+    /// network and from every file outside it (`syn::machine`). One decision for
+    /// the whole thing, because it is what the kernel holds that makes a command
+    /// safe, not which command it is. Off until somebody turns it on, and a
+    /// `Never` turns it off again, so it is asked about like the browser and not
+    /// let through like the vault.
+    Cell,
     /// Sends a value from the Safe to one place: the item by the name Syn
     /// uses for it, the place as `connector:<id>`. Per pair, because "may use
     /// the GitHub token for GitHub" and "for anything else" are not one
@@ -183,6 +190,7 @@ impl Capability {
             Capability::VaultWrite => Some("vault_write".to_string()),
             Capability::VaultStructural => Some("vault_structural".to_string()),
             Capability::Browse => Some("browse".to_string()),
+            Capability::Cell => Some("cell".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -213,6 +221,7 @@ impl Capability {
                 format!("spend about {:.2} USD", *cents_estimate as f64 / 100.0)
             }
             Capability::Execute => "run code on this computer".to_string(),
+            Capability::Cell => "run commands in a sealed room on this computer".to_string(),
             Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
                 if tool.is_empty() {
@@ -241,7 +250,7 @@ impl Capability {
     pub fn can_be_remembered(&self) -> bool {
         matches!(
             self,
-            Capability::Browse | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
+            Capability::Browse | Capability::Cell | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
         )
     }
 }
@@ -685,6 +694,38 @@ mod tests {
             revoke(&vault, &scope).expect("and switching it back on is a revoke");
             assert_eq!(decide(&capability, &load(&vault), NOW), Decision::Allow);
         }
+    }
+
+    /// Off until turned on, and off again the moment somebody says so: `Never`
+    /// is read before anything else, including an `Always` still in date.
+    #[test]
+    fn a_room_is_off_until_turned_on_and_a_no_turns_it_off() {
+        let (_dir, vault) = vault();
+        let room = Capability::Cell;
+
+        assert_eq!(decide(&room, &load(&vault), NOW), Decision::Ask);
+
+        record(&vault, &room, Answer::Always, at(NOW)).expect("turned on");
+        assert_eq!(decide(&room, &load(&vault), NOW), Decision::Allow);
+
+        record(&vault, &room, Answer::Never, at(NOW)).expect("turned off");
+        assert_eq!(decide(&room, &load(&vault), NOW), Decision::Refuse);
+        assert_eq!(
+            decide(&room, &load(&vault), "2099-01-01T00:00:00Z"),
+            Decision::Refuse,
+            "a refusal does not lapse"
+        );
+
+        // A ledger with both rows, which `record` would not write: the no wins.
+        let mut both = load(&vault);
+        let mut yes = both.grants[0].clone();
+        yes.answer = Answer::Always;
+        yes.expires_at = None;
+        both.grants.insert(0, yes);
+        assert_eq!(decide(&room, &both, NOW), Decision::Refuse);
+
+        revoke(&vault, "cell").expect("and back to asking");
+        assert_eq!(decide(&room, &load(&vault), NOW), Decision::Ask);
     }
 
     /// A switch is not a grant.

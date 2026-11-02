@@ -94,7 +94,9 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
             how: "the nodes were trashed, not erased; list_trash and restore_node bring them back"
                 .into(),
         },
-        Capability::Browse | Capability::NetRead { .. } => Reversal::Nothing,
+        // A room changes nothing but itself until something leaves it, and what
+        // leaves goes through a tool with its own answer to this.
+        Capability::Browse | Capability::Cell | Capability::NetRead { .. } => Reversal::Nothing,
         Capability::NetWrite { domain, .. } => Reversal::Manual {
             how: format!("whatever was sent is at {domain} now; undoing it happens there"),
         },

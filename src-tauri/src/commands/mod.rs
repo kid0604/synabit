@@ -12,6 +12,8 @@ pub mod nexus;
 
 pub mod app_lock;
 pub mod feeds;
+#[cfg(target_os = "macos")]
+pub mod machine;
 pub mod maps;
 pub mod migration;
 pub mod nodes;

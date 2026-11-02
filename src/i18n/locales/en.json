@@ -4062,6 +4062,7 @@
     "consent_netwrite": "Syn wants to send something to {domain}, using {tool}. What goes out cannot be taken back by this app.",
     "consent_spend": "Syn wants to spend about {amount} USD.",
     "consent_execute": "Syn wants to run code on this computer. Nothing in this app undoes that.",
+    "consent_cell": "Syn wants to run commands on this computer, in a sealed room: no network, and no files but its own.",
     "consent_once": "Yes, for this",
     "consent_always": "Always allow this",
     "consent_never": "Never",
@@ -4239,6 +4240,7 @@
     "cap_netwrite": "Sends to {domain} ({tool})",
     "cap_spend": "Spends about {amount} USD",
     "cap_execute": "Runs code on this computer",
+    "cap_cell": "Runs commands in a sealed room",
     "tools_payload": "{n} tool declarations · {chars} chars · ~{tokens} tokens",
     "tools_payload_note": "Sent alongside the prompt on every turn, not inside it. This is what it costs to tell Syn what it can do.",
     "tools_cost": "{chars} characters, about {tokens} tokens every turn",
@@ -4654,7 +4656,8 @@
   "tray": {
     "tray_capture": "New quick cap",
     "tray_open": "Open Synabit",
-    "tray_quit": "Quit Synabit"
+    "tray_quit": "Quit Synabit",
+    "tray_stop_rooms": "Stop all commands Syn is running"
   },
   "trash": {
     "title": "Trash",

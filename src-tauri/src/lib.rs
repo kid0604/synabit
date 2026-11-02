@@ -253,18 +253,24 @@ pub struct TrayLabels {
     pub capture: tauri::menu::MenuItem<tauri::Wry>,
     pub open: tauri::menu::MenuItem<tauri::Wry>,
     pub quit: tauri::menu::MenuItem<tauri::Wry>,
+    #[cfg(target_os = "macos")]
+    pub stop_rooms: tauri::menu::MenuItem<tauri::Wry>,
 }
 
 /// Translate the tray menu. Called by the front end at startup and whenever
 /// the language changes.
 #[cfg(desktop)]
 #[tauri::command]
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 fn set_tray_labels(
     state: tauri::State<'_, TrayLabels>,
     capture: String,
     open: String,
     quit: String,
+    stop_rooms: String,
 ) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    state.stop_rooms.set_text(stop_rooms).map_err(|e| e.to_string())?;
     state.capture.set_text(capture).map_err(|e| e.to_string())?;
     state.open.set_text(open).map_err(|e| e.to_string())?;
     state.quit.set_text(quit).map_err(|e| e.to_string())?;
@@ -356,15 +362,31 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Synabit", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit Synabit", true, None::<&str>)?;
 
+    // Always there rather than only while a room runs: this is what somebody
+    // reaches for when something has gone wrong, and it does nothing if nothing is
+    // running. It asks no model and depends on nothing but the kernel's answer.
+    #[cfg(target_os = "macos")]
+    let stop_rooms =
+        MenuItem::with_id(app, "stop_rooms", "Stop all commands Syn is running", true, None::<&str>)?;
+
     let menu = Menu::with_items(
         app,
-        &[&capture, &open, &PredefinedMenuItem::separator(app)?, &quit],
+        &[
+            &capture,
+            &open,
+            &PredefinedMenuItem::separator(app)?,
+            #[cfg(target_os = "macos")]
+            &stop_rooms,
+            &quit,
+        ],
     )?;
 
     app.manage(TrayLabels {
         capture: capture.clone(),
         open: open.clone(),
         quit: quit.clone(),
+        #[cfg(target_os = "macos")]
+        stop_rooms: stop_rooms.clone(),
     });
 
     TrayIconBuilder::with_id("main")
@@ -388,6 +410,8 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
             // The only way out, now that closing the window hides it. Without
             // this the app would be genuinely impossible to quit.
             "quit" => app.exit(0),
+            #[cfg(target_os = "macos")]
+            "stop_rooms" => commands::machine::stop_all_from_tray(app),
             _ => {}
         })
         .build(app)?;
@@ -702,6 +726,8 @@ pub fn run() {
             use tauri::Manager;
             log::info!("Starting Synabit Backend...");
             invariants::watch(app.handle().clone());
+            #[cfg(target_os = "macos")]
+            commands::machine::setup(app.handle());
             // `SYN_VISUAL_LOOK_TRIAL`: time the visual self-check in the real app, then quit.
             #[cfg(debug_assertions)]
             syn::visual::look::trial_on_start(app.handle().clone());
@@ -1087,6 +1113,12 @@ pub fn run() {
             whiteboards::list_board_libraries,
             whiteboards::write_board_library,
             crate::quit::quit_ready,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_machine_status,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_machine_check,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_machine_stop_all,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,
@@ -1340,6 +1372,9 @@ pub fn run() {
             }
             if let tauri::RunEvent::Exit = event {
                 commands::safe::lock_now(app);
+                // Here rather than in `quit`, which a restart does not go through.
+                #[cfg(target_os = "macos")]
+                commands::machine::stop_all_on_exit(app);
             }
             // Clicking the Dock icon of an app with no open windows fires
             // this, and nothing else does. Without handling it, closing the

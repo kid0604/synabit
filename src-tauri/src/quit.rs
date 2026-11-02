@@ -7,7 +7,8 @@
 //! told (`app:before-quit`), finishes its writes, and says so (`quit_ready`);
 //! then the app quits for real. If it never answers — no window loaded, a
 //! write that hangs — the app quits anyway after [`WAIT`]: quitting must
-//! always work.
+//! always work. Rooms are stopped at the very end (`RunEvent::Exit`), by every
+//! way out, including a restart, which does not come through here.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};

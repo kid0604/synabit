@@ -25,6 +25,7 @@ const every: Capability[] = [
   { NetWrite: { domain: 'example.com', tool: 'post_message' } },
   { Spend: { cents_estimate: 250 } },
   'Execute',
+  'Cell',
   // A Safe value to one server: named by the server's name, not its uuid.
   { UseSecret: { item: 'linear-key', destination: 'connector:3f2a-uuid', label: 'Linear' } },
 ];
