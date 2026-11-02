@@ -143,7 +143,7 @@ Tài liệu của dự án có một bộ nguyên tắc nhất quán và hiếm 
 - **Số học trước suy luận** — không dùng mô hình cho việc phép tính làm được.
 - **Đo được mới xây** — dự đoán eval ghi trước khi chạy.
 - **Quên là một tính năng** — "ghi lại phải nhẹ hơn quên".
-- **Biết nói không** — không shell, không marketplace skill, không nhận diện
+- **Biết nói không** — không shell chạy trần (đã đổi 2026-11-01: shell trong phòng do kernel giữ trên desktop, xem `syn/machine/`), không marketplace skill, không nhận diện
   khuôn mặt, không "luôn cho phép" với việc gửi.
 
 Đây là nền văn hoá kỹ thuật của một OS tốt. Vấn đề không nằm ở nguyên tắc, mà ở
