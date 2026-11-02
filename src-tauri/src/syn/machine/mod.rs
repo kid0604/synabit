@@ -12,6 +12,8 @@
 //! behind, and [`selftest`] attacks the result and refuses to call it safe
 //! unless the attacks failed for the right reason. [`export`] is the one way a
 //! file leaves, and [`sanitize`] is what a person is shown of a room's words.
+//! [`rooms`] is the way in from the rest of the app: it hands out a room only
+//! after the attacks have failed on this macOS, and can stop them all.
 //!
 //! macOS only, and macOS 14 or later: 13 does not know the `file-lock` rule, so
 //! the profile does not compile there and [`selftest`] reports the room broken.
@@ -20,6 +22,7 @@
 pub mod cell;
 pub mod export;
 pub mod profile;
+pub mod rooms;
 pub mod sanitize;
 pub mod selftest;
 pub mod watch;

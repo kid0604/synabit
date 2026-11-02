@@ -28,6 +28,9 @@ pub struct Limits {
     /// Bytes kept of each of stdout and stderr. The rest is read and dropped,
     /// so a command never blocks on a full pipe.
     pub output: usize,
+    /// The largest one file may get, held by the kernel. [`watch`] measures the
+    /// whole folder, but only once a second, and a disk fills faster than that.
+    pub file: u64,
 }
 
 impl Default for Limits {
@@ -36,6 +39,7 @@ impl Default for Limits {
             wall: Duration::from_secs(120),
             cpu: 600,
             output: 1 << 20,
+            file: 20 << 30,
         }
     }
 }
@@ -72,10 +76,17 @@ pub struct Cell {
 impl Cell {
     /// Makes the room's folders and resolves its path. The kernel matches
     /// resolved paths, so a room under `/tmp` would otherwise match nothing.
-    pub fn make(dir: &Path, tools: &Path, reach: Reach) -> io::Result<Self> {
-        std::fs::create_dir_all(dir)?;
+    ///
+    /// Only the folder above is resolved. `dir` itself may be a link a room left
+    /// there, and following it would make that link's target the room. Not `pub`
+    /// outside this module: everyone else gets a room from [`super::rooms`].
+    pub(super) fn make(dir: &Path, tools: &Path, reach: Reach) -> io::Result<Self> {
+        let (Some(above), Some(name)) = (dir.parent(), dir.file_name()) else {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "no parent"));
+        };
+        std::fs::create_dir_all(above)?;
         std::fs::create_dir_all(tools)?;
-        let room = dir.canonicalize()?;
+        let room = above.canonicalize()?.join(name);
         let tools = tools.canonicalize()?;
         if !usable(&room) || !usable(&tools) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "unusable path"));
@@ -125,6 +136,7 @@ impl Cell {
         );
         let processes = watch::process_count()? as u64 + SPARE_PROCESSES;
         let cpu = limits.cpu;
+        let file = limits.file;
 
         let mut command = tokio::process::Command::new("/usr/sbin/taskpolicy");
         command
@@ -148,6 +160,7 @@ impl Cell {
                 limit(libc::RLIMIT_NPROC, processes)?;
                 limit(libc::RLIMIT_CPU, cpu)?;
                 limit(libc::RLIMIT_CORE, 0)?;
+                limit(libc::RLIMIT_FSIZE, file)?;
                 close_inherited();
                 Ok(())
             });
@@ -413,6 +426,40 @@ mod tests {
         assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
         assert!(!cell.room().is_symlink());
         assert!(cell.work().is_dir());
+    }
+
+    #[tokio::test]
+    async fn making_a_room_does_not_follow_a_link_left_in_its_place() {
+        let (dir, cell) = cell();
+        let elsewhere = dir.path().canonicalize().unwrap().join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::remove_dir_all(cell.room()).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, cell.room()).unwrap();
+
+        let again = Cell::make(cell.room(), &cell.profile.tools, Reach::Closed).unwrap();
+
+        assert_eq!(again.room(), cell.room());
+        assert!(!again.room().is_symlink());
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+    }
+
+    /// The control is the first file, under the limit, in the same room.
+    #[tokio::test]
+    async fn the_kernel_stops_a_file_past_its_limit() {
+        let (_dir, cell) = cell();
+        let limits = Limits {
+            file: 1 << 20,
+            ..Limits::default()
+        };
+        let size = |name: &str| cell.work().join(name).metadata().unwrap().len();
+
+        let small = "dd if=/dev/zero of=small bs=1024 count=512";
+        assert!(cell.run(small, limits).await.unwrap().ok());
+        assert_eq!(size("small"), 512 << 10);
+
+        let large = "dd if=/dev/zero of=large bs=1024 count=4096";
+        assert!(!cell.run(large, limits).await.unwrap().ok());
+        assert!(size("large") <= 1 << 20, "{}", size("large"));
     }
 
     #[tokio::test]

@@ -368,15 +368,22 @@ mod tests {
         let ran = room
             .cell
             .run(
-                r#"perl -e 'use POSIX; fork && exit; setsid(); fork && exit; POSIX::close($_) for 0..64; while (1) { open(F, ">", "out"); print F "changing"; close(F); select(undef, undef, undef, 0.01); }'"#,
+                &super::super::selftest::daemon(
+                    r#"while (1) { open(F, ">", "out"); print F "changing"; close(F); select(undef, undef, undef, 0.01); }"#,
+                ),
                 Limits::default(),
             )
             .await
             .unwrap();
         assert!(ran.ok(), "{ran:?}");
         // The control: it really is out there, writing.
-        tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(watch::room_processes(&room.cell, &room.bait).unwrap().len(), 1);
+        for _ in 0..500 {
+            if room.cell.work().join("out").exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         assert!(room.cell.work().join("out").exists());
 
         let frozen = watch::freeze(&room.cell, &room.bait).unwrap();

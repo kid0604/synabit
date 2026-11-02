@@ -22,6 +22,7 @@ use std::io;
 use std::net::TcpListener;
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -91,14 +92,29 @@ struct Attack {
     needs: Option<PathBuf>,
 }
 
+/// Generous on the clock: rooms run at utility priority, and on a busy machine
+/// `osascript` alone was measured past ten seconds. A control that runs out of time
+/// reads as broken, and that turns the room off.
 const QUICK: Limits = Limits {
-    wall: Duration::from_secs(10),
+    wall: Duration::from_secs(30),
     cpu: 30,
     output: 1 << 16,
+    file: 1 << 30,
 };
 
 fn quote(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+}
+
+/// A daemon that has left everything behind, doing `body`: forks twice, leaves the
+/// group, closes every descriptor. The command only returns once it is clear of
+/// the group, because `Cell::run` kills the group as soon as the command exits. A
+/// fixed wait instead lost that race on a busy machine, and the room reported
+/// itself broken for it.
+pub(super) fn daemon(body: &str) -> String {
+    format!(
+        r#"perl -e 'use POSIX; if (fork) {{ select(undef, undef, undef, 0.02) until -e "daemon-is-out"; exit }} setsid(); fork && exit; open(F, ">", "daemon-is-out"); close(F); POSIX::close($_) for 0..64; {body}'"#
+    )
 }
 
 /// Tries a lock from perl, which every macOS has: rooms share system files, and
@@ -115,7 +131,11 @@ pub async fn run(root: &Path) -> io::Result<Report> {
     run_with(root, |_| {}, false).await
 }
 
-async fn run_with(root: &Path, adjust: impl Fn(&mut Cell), quiet_only: bool) -> io::Result<Report> {
+pub(super) async fn run_with(
+    root: &Path,
+    adjust: impl Fn(&mut Cell),
+    quiet_only: bool,
+) -> io::Result<Report> {
     std::fs::create_dir_all(root)?;
     let root = root.canonicalize()?;
     let tools = root.join("tools");
@@ -400,9 +420,11 @@ async fn check_network(closed: &Cell, root: &Path, tools: &Path) -> io::Result<V
     let other_port = other.local_addr()?.port();
     let net = Cell::make(&root.join("cells/net"), tools, Reach::Proxy(allowed_port))?;
     // Not under `root`: a socket's path has to fit in 104 bytes.
+    static NEXT: AtomicU32 = AtomicU32::new(0);
     let socket_path = PathBuf::from(format!(
-        "/private/tmp/synabit-room-{}.sock",
-        std::process::id()
+        "/private/tmp/synabit-room-{}-{}.sock",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let _ = std::fs::remove_file(&socket_path);
     let socket = UnixListener::bind(&socket_path)?;
@@ -538,10 +560,7 @@ async fn check_daemon(a: &Cell, b: &Cell, bait: &Path) -> io::Result<Line> {
         detail,
     };
     let started = a
-        .run(
-            r#"perl -e 'use POSIX; fork && exit; setsid(); fork && exit; chdir "/"; POSIX::close($_) for 0..64; sleep 15'"#,
-            QUICK,
-        )
+        .run(&daemon(r#"chdir "/"; sleep 15"#), QUICK)
         .await?;
     if !started.ok() {
         return Ok(line(
@@ -549,7 +568,6 @@ async fn check_daemon(a: &Cell, b: &Cell, bait: &Path) -> io::Result<Line> {
             format!("exit {:?}: {}", started.code, first_line(&started.stderr)),
         ));
     }
-    tokio::time::sleep(Duration::from_millis(300)).await;
 
     let here = watch::room_processes(a, bait)?;
     let elsewhere = watch::room_processes(b, bait)?;
