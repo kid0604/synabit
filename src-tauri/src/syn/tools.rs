@@ -6089,11 +6089,38 @@ fn sheet_table<R: tauri::Runtime>(ctx: &ToolContext<R>, run_id: &str, sheet: &cr
         },
         chrono::Utc::now().timestamp(),
     )?;
+    // Past what a table keeps, the table is the first part of the sheet, and
+    // saying "all" of it made a model report a part as the whole (eval of
+    // 2026-11-03: 100,000 of 150,000 rows, totalled and called every row).
+    let kept = n.min(crate::syn::resultset::MAX_ROWS);
+    if kept < n {
+        let mut note = format!(
+            "Only the first {kept} of this sheet's {n} rows are in table {handle}; the other {} are not. A total from it leaves them out, so do not give one as the sheet's.",
+            n - kept
+        );
+        if has_rooms(ctx.app) {
+            note.push_str(&format!(
+                " To count every row, copy the file into the room with machine_take (path \"{file}\") and add it up there with machine_run."
+            ));
+        }
+        return Ok(Some(serde_json::json!({ "handle": handle, "rows": kept, "rows_in_sheet": n, "note": note })));
+    }
     Ok(Some(serde_json::json!({
         "handle": handle,
         "rows": n,
         "note": format!("All {n} rows of this sheet, its first row as the header, are in table {handle}: crunch it for totals; stage_transactions turns a statement into transactions for the user to review."),
     })))
+}
+
+/// Whether this app has rooms on this machine: a Mac whose app set them up.
+pub(crate) fn has_rooms<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    #[cfg(target_os = "macos")]
+    return app.try_state::<std::sync::Arc<crate::syn::machine::rooms::Rooms>>().is_some();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        false
+    }
 }
 
 /// The most sheets, and rows in each, one call may write. Far past a budget or
@@ -8545,6 +8572,39 @@ mod tests {
         for path in ["../outside.csv", "/etc/hosts"] {
             let out = call_as(&handle, &vault_path, None, "read_spreadsheet", serde_json::json!({ "path": path }));
             assert!(out["error"].is_string(), "{path}: {out}");
+        }
+    }
+
+    /// A sheet larger than a table keeps is said to be cut, never "all" of it:
+    /// a model told every row was in the table totalled part of the sheet and
+    /// gave it as the whole. Where there is a room, it is told the way to all of it.
+    #[test]
+    fn a_sheet_past_what_a_table_keeps_is_said_to_be_cut() {
+        let (_holder, vault_path, app) = phase_f_vault();
+        let handle = app.handle().clone();
+        std::fs::create_dir_all(std::path::Path::new(&vault_path).join("assets")).unwrap();
+        let over = crate::syn::resultset::MAX_ROWS + 5;
+        let csv: String = std::iter::once("region,amount\n".to_string()).chain((0..over).map(|i| format!("r{},{}\n", i % 3, i))).collect();
+        std::fs::write(std::path::Path::new(&vault_path).join("assets/big.csv"), csv).unwrap();
+
+        let read = |handle: &tauri::AppHandle<tauri::test::MockRuntime>| -> serde_json::Value {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: handle, run_id: Some("run-cut"), model: None };
+            serde_json::from_str(&execute_tool(&ctx, "read_spreadsheet", &serde_json::json!({ "path": "assets/big.csv" })).unwrap()).unwrap()
+        };
+        let table = read(&handle)["table"].clone();
+        assert_eq!(table["rows"], serde_json::json!(crate::syn::resultset::MAX_ROWS), "{table}");
+        assert_eq!(table["rows_in_sheet"], serde_json::json!(over));
+        let note = table["note"].as_str().unwrap();
+        assert!(note.contains("Only the first") && !note.contains("All "), "{note}");
+        assert!(!note.contains("machine_take"), "no room here: {note}");
+
+        #[cfg(target_os = "macos")]
+        {
+            let dir = tempfile::tempdir().unwrap();
+            handle.manage(std::sync::Arc::new(crate::syn::machine::rooms::Rooms::at(dir.path()).unwrap()));
+            let note = read(&handle)["table"]["note"].as_str().unwrap().to_string();
+            assert!(note.contains("machine_take") && note.contains("assets/big.csv"), "{note}");
         }
     }
 
