@@ -1008,6 +1008,29 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "machine_find".to_string(),
+                description: "Find where a file is on this Mac, outside the vault, by words from its name: Downloads, Desktop, Documents, the person's cloud drives. Returns names and places only. It opens nothing, and nothing here can open what it finds, so say where the file is and let the person open it. For anything in the vault use query_nodes or search_files instead.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Words from the file's name, in any order. Every word has to be in the name, so use the fewest that are distinctive." },
+                        "limit": { "type": "integer", "description": "How many to return, newest first. Default 30, at most 200." }
+                    },
+                    "required": ["name"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "machine_status".to_string(),
+                description: "How this Mac is doing right now: battery, free disk space, memory in use, load, and which processes hold the most memory.".to_string(),
+                parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: "list_trash".to_string(),
                 description: "What is in the vault's trash and can still be restored, newest first. Use this when the user asks what was deleted, or wants something back and cannot say exactly what it was called.".to_string(),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
@@ -1812,6 +1835,14 @@ pub fn execute_tool<R: tauri::Runtime>(
         // rest exist so a wrong move can be undone in the same conversation.
         "trash_node" => over_each(ctx, args, tool_trash_node),
         "list_trash" => tool_list_trash(ctx),
+        #[cfg(target_os = "macos")]
+        "machine_find" => Ok(crate::syn::machine::find::run(args, ctx.vault_path).to_string()),
+        #[cfg(target_os = "macos")]
+        "machine_status" => Ok(crate::syn::machine::status::run().to_string()),
+        #[cfg(not(target_os = "macos"))]
+        "machine_find" | "machine_status" => {
+            Ok(serde_json::json!({ "error": "this only works on a Mac for now" }).to_string())
+        }
         "safe_list" => tool_safe_list(ctx),
         "safe_health" => Ok(match crate::safe::bridge::health(ctx.vault_path) {
             Ok(v) => v.to_string(),
@@ -7029,6 +7060,7 @@ mod tests {
             .chain(staging)
             .chain(skills)
             .chain(visuals)
+            .chain(["machine_find", "machine_status"])
             .collect();
         for name in &names {
             assert!(

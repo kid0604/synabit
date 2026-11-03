@@ -99,6 +99,11 @@ pub enum Capability {
     /// `Never` turns it off again, so it is asked about like the browser and not
     /// let through like the vault.
     Cell,
+    /// Learns where files are on this machine, by name, outside the vault.
+    /// Nothing is opened. Asked once and remembered, like the browser: until now
+    /// everything Syn could look at was in the vault, and this is the first thing
+    /// past it that nobody put there for Syn to see. See `syn::machine::find`.
+    MachineFiles,
     /// Sends a value from the Safe to one place: the item by the name Syn
     /// uses for it, the place as `connector:<id>`. Per pair, because "may use
     /// the GitHub token for GitHub" and "for anything else" are not one
@@ -191,6 +196,7 @@ impl Capability {
             Capability::VaultStructural => Some("vault_structural".to_string()),
             Capability::Browse => Some("browse".to_string()),
             Capability::Cell => Some("cell".to_string()),
+            Capability::MachineFiles => Some("machine_files".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -222,6 +228,7 @@ impl Capability {
             }
             Capability::Execute => "run code on this computer".to_string(),
             Capability::Cell => "run commands in a sealed room on this computer".to_string(),
+            Capability::MachineFiles => "find files on this computer by name".to_string(),
             Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
                 if tool.is_empty() {
@@ -250,7 +257,7 @@ impl Capability {
     pub fn can_be_remembered(&self) -> bool {
         matches!(
             self,
-            Capability::Browse | Capability::Cell | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
+            Capability::Browse | Capability::Cell | Capability::MachineFiles | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
         )
     }
 }
@@ -726,6 +733,17 @@ mod tests {
 
         revoke(&vault, "cell").expect("and back to asking");
         assert_eq!(decide(&room, &load(&vault), NOW), Decision::Ask);
+    }
+
+    #[test]
+    fn looking_for_files_is_asked_about_once_and_can_be_refused() {
+        let (_dir, vault) = vault();
+        let looking = Capability::MachineFiles;
+        assert_eq!(decide(&looking, &load(&vault), NOW), Decision::Ask);
+        record(&vault, &looking, Answer::Always, at(NOW)).expect("allowed");
+        assert_eq!(decide(&looking, &load(&vault), NOW), Decision::Allow);
+        record(&vault, &looking, Answer::Never, at(NOW)).expect("refused");
+        assert_eq!(decide(&looking, &load(&vault), NOW), Decision::Refuse);
     }
 
     /// A switch is not a grant.

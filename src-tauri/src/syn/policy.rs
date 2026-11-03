@@ -44,6 +44,8 @@ pub enum Power {
     /// Writes a draft into the vault — or, given a spec's address, reads that
     /// host first. The one tool whose power depends on what it was given.
     DraftFromSpec,
+    /// Learns where files are on this machine, by name.
+    MachineFiles,
 }
 
 /// Which group brings a tool into a run — `toolset::Group` without the
@@ -67,6 +69,7 @@ pub enum Home {
     Skills,
     Jobs,
     Visuals,
+    Machine,
 }
 
 impl Home {
@@ -89,6 +92,7 @@ impl Home {
             Home::Skills => Group::Skills,
             Home::Jobs => Group::Jobs,
             Home::Visuals => Group::Visuals,
+            Home::Machine => Group::Machine,
         }
     }
 }
@@ -122,6 +126,9 @@ pub struct Policy {
     /// What happens to it once the run has read somebody else's words.
     pub after_reading: AfterReading,
     pub app: bool,
+    /// Only with the person at this computer, and not from their phone, which
+    /// Telegram otherwise counts as (see `on`).
+    pub at_the_computer: bool,
     pub telegram: bool,
     pub routine: bool,
     /// A helper run (`delegate`) may use it.
@@ -144,6 +151,7 @@ impl Policy {
             outside_words: false,
             after_reading: AfterReading::Allow,
             app: true,
+            at_the_computer: false,
             telegram: true,
             routine: true,
             helper: true,
@@ -162,6 +170,7 @@ impl Policy {
             outside_words: false,
             after_reading: AfterReading::Refuse,
             app: true,
+            at_the_computer: false,
             telegram: false,
             routine: false,
             helper: false,
@@ -201,6 +210,9 @@ impl Policy {
     /// connectors live.
     const fn app_only(self) -> Policy {
         Policy { telegram: false, routine: false, ..self }
+    }
+    const fn at_the_computer(self) -> Policy {
+        Policy { at_the_computer: true, telegram: false, routine: false, ..self }
     }
     const fn not_in_app(self) -> Policy {
         Policy { app: false, ..self }
@@ -268,6 +280,19 @@ pub static POLICIES: &[Policy] = &[
     Policy::read("read_spreadsheet", Home::Files).outside().locked_with("file"),
     // The engine sets the taint for this one: it is not in `execute_tool`.
     Policy::browse(BROWSE_TOOL).engine(),
+
+    // ── Looking at the machine ─────────────────────────────────────
+    // Names and places of the person's files, outside the vault. A name is
+    // whoever made the file's words. Never from a phone: whoever holds the
+    // Telegram chat would be holding a list of what is on this Mac. Not a helper,
+    // which has nobody to ask. Goes on after reading, or a second try at a name
+    // would be refused by the first. See `syn::machine::find`.
+    Policy { power: Power::MachineFiles, ..Policy::read("machine_find", Home::Machine) }
+        .outside()
+        .at_the_computer()
+        .no_helper(),
+    // Battery, disk, memory, load. Says nothing about what is in anything.
+    Policy::read("machine_status", Home::Machine),
 
     // ── The run itself ─────────────────────────────────────────────
     // Touches nothing but the run's own list.
@@ -384,6 +409,7 @@ pub fn capability(tool: &str, args: &Value) -> Option<Capability> {
         Power::Write => Capability::VaultWrite,
         Power::Structural => Capability::VaultStructural,
         Power::Browse => Capability::Browse,
+        Power::MachineFiles => Capability::MachineFiles,
         Power::DraftFromSpec => match args
             .get("openapi_url")
             .and_then(Value::as_str)
@@ -426,7 +452,7 @@ pub fn on(tool: &str, surface: Surface) -> Option<bool> {
         // Telegram is the person at the computer, from their phone
         // (2026-10-15): what the app is offered, and `capture` besides. Its
         // questions come to the phone as cards with buttons.
-        Surface::Telegram => p.app || p.telegram,
+        Surface::Telegram => (p.app && !p.at_the_computer) || p.telegram,
         Surface::Routine => p.routine,
     })
 }
@@ -503,7 +529,10 @@ mod tests {
             }
             // Whatever reads outside words is a read.
             if p.outside_words {
-                assert!(matches!(p.power, Power::Read | Power::Browse), "{n}");
+                assert!(matches!(p.power, Power::Read | Power::Browse | Power::MachineFiles), "{n}");
+            }
+            if p.at_the_computer {
+                assert!(p.app && !p.telegram && !p.routine, "{n}");
             }
         }
     }
@@ -547,6 +576,26 @@ mod tests {
         assert_eq!(lock("draw_board"), Some("whiteboard"));
         assert_eq!(lock("safe_request"), Some("safe"));
         assert_eq!(lock("query_nodes"), None);
+    }
+
+    /// Finding files on the Mac: at the Mac, asked about, and tainting. Its status
+    /// goes wherever a read goes, and does neither.
+    #[test]
+    fn the_machine_is_looked_at_from_the_machine() {
+        assert_eq!(on("machine_find", Surface::App), Some(true));
+        assert_eq!(on("machine_find", Surface::Telegram), Some(false));
+        assert_eq!(on("machine_find", Surface::Routine), Some(false));
+        assert_eq!(helper("machine_find"), Some(false));
+        assert!(outside_words("machine_find"));
+        assert!(after_reading("machine_find"));
+        assert_eq!(capability("machine_find", &serde_json::json!({})), Some(Capability::MachineFiles));
+
+        for surface in [Surface::App, Surface::Telegram, Surface::Routine] {
+            assert_eq!(on("machine_status", surface), Some(true), "{surface:?}");
+        }
+        assert!(!outside_words("machine_status"));
+        assert_eq!(capability("machine_status", &serde_json::json!({})), Some(Capability::VaultRead));
+        assert_eq!(lock("machine_find"), None);
     }
 
     #[test]

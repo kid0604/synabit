@@ -521,6 +521,8 @@ export type Capability =
   | 'Execute'
   // Commands in a room on this machine, which the kernel seals. Off until asked.
   | 'Cell'
+  // Where files are on this Mac, by name. Nothing is opened.
+  | 'MachineFiles'
   // A value from Safe, to one server. `label` is the server's name, for the
   // card; the scope is the item and `destination`.
   | { UseSecret: { item: string; destination: string; label: string } };

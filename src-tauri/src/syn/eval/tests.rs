@@ -66,6 +66,7 @@ async fn harness_runs_the_product_path() {
         text("Xong, đã đánh dấu task là hoàn thành."),
     ]);
     let task = Task {
+        machine_files: Vec::new(),
         id: "self-mark-done",
         category: Category::MultiStep,
         smoke: false,
@@ -94,6 +95,7 @@ async fn harness_runs_the_product_path() {
 async fn saying_done_is_not_doing_it() {
     let _model = scripted(vec![text("Xong, đã đánh dấu task là hoàn thành.")]);
     let task = Task {
+        machine_files: Vec::new(),
         id: "self-claims-done",
         category: Category::MultiStep,
         smoke: false,
@@ -121,6 +123,7 @@ async fn a_stop_is_answered_and_counted() {
         text("Kotlin 2.4 ra ngày 2026-09-18."),
     ]);
     let task = Task {
+        machine_files: Vec::new(),
         id: "self-stop",
         category: Category::Web,
         smoke: false,

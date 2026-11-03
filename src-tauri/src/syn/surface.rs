@@ -270,6 +270,11 @@ mod tests {
             if name == crate::syn::tools::CAPTURE_TOOL {
                 continue;
             }
+            // A list of what is on the Mac is not for whoever holds the chat.
+            if crate::syn::policy::of(&name).is_some_and(|p| p.at_the_computer) {
+                assert!(!Surface::Telegram.offers(&name, cap.as_ref()), "{name}");
+                continue;
+            }
             assert_eq!(Surface::Telegram.offers(&name, cap.as_ref()), Surface::App.offers(&name, cap.as_ref()), "{name}");
         }
         for leaving in [

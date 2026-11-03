@@ -181,30 +181,46 @@ pub enum Over {
     Disk { bytes: u64 },
 }
 
-/// Resident memory of these processes. One that has gone counts for nothing.
+/// A process's resident memory. One that has gone counts for nothing.
+fn resident(pid: libc::pid_t) -> u64 {
+    // SAFETY: `info` is a plain struct of integers, zero is a valid value for all
+    // of them, and the size passed is its own.
+    unsafe {
+        let mut info: libc::proc_taskinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
+        let got = libc::proc_pidinfo(pid, libc::PROC_PIDTASKINFO, 0, (&raw mut info).cast(), size);
+        if got == size {
+            info.pti_resident_size
+        } else {
+            0
+        }
+    }
+}
+
 fn memory_of(pids: &[libc::pid_t]) -> u64 {
-    pids.iter()
-        .map(|&pid| {
-            // SAFETY: `info` is a plain struct of integers, zero is a valid value
-            // for all of them, and the size passed is its own.
-            unsafe {
-                let mut info: libc::proc_taskinfo = std::mem::zeroed();
-                let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
-                let got = libc::proc_pidinfo(
-                    pid,
-                    libc::PROC_PIDTASKINFO,
-                    0,
-                    (&raw mut info).cast(),
-                    size,
-                );
-                if got == size {
-                    info.pti_resident_size
-                } else {
-                    0
-                }
-            }
+    pids.iter().map(|&pid| resident(pid)).sum()
+}
+
+/// How many processes this user has, and the `most` holding the most memory, by
+/// name, largest first.
+pub fn heaviest_processes(most: usize) -> io::Result<(usize, Vec<(String, u64)>)> {
+    let pids = own_processes()?;
+    let mut sized: Vec<(libc::pid_t, u64)> = pids.iter().map(|&pid| (pid, resident(pid))).collect();
+    sized.sort_by(|a, b| b.1.cmp(&a.1));
+    let named = sized
+        .into_iter()
+        .take(most)
+        .filter_map(|(pid, bytes)| {
+            let mut name = [0u8; 256];
+            // SAFETY: `name` is valid for the size passed; the call writes at most that.
+            let length =
+                unsafe { libc::proc_name(pid, name.as_mut_ptr().cast(), name.len() as u32) };
+            (length > 0).then(|| {
+                (String::from_utf8_lossy(&name[..length as usize]).into_owned(), bytes)
+            })
         })
-        .sum()
+        .collect();
+    Ok((pids.len(), named))
 }
 
 /// Space under `folder`, stopping as soon as it is past `enough`. The larger of a

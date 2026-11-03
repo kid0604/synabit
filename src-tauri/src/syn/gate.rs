@@ -349,7 +349,10 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
 
     // 3. Plan first. Reads still run — a plan built without looking is a
     // guess — and so does writing the plan down. Everything else is described.
-    let only_looks = matches!(capability, None | Some(Capability::VaultRead) | Some(Capability::Browse));
+    let only_looks = matches!(
+        capability,
+        None | Some(Capability::VaultRead) | Some(Capability::Browse) | Some(Capability::MachineFiles)
+    );
     if view.plan_only && !only_looks {
         let about = capability.map(|c| c.describe()).unwrap_or_else(|| tool.to_string());
         return Decided::quietly(Gate::Go(How::Describe(

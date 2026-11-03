@@ -96,7 +96,7 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
         },
         // A room changes nothing but itself until something leaves it, and what
         // leaves goes through a tool with its own answer to this.
-        Capability::Browse | Capability::Cell | Capability::NetRead { .. } => Reversal::Nothing,
+        Capability::Browse | Capability::Cell | Capability::MachineFiles | Capability::NetRead { .. } => Reversal::Nothing,
         Capability::NetWrite { domain, .. } => Reversal::Manual {
             how: format!("whatever was sent is at {domain} now; undoing it happens there"),
         },
@@ -839,7 +839,8 @@ mod tests {
         for name in ["query_nodes", "get_node", "create_node", "remember", "update_node", "trash_node"] {
             assert!(from_telegram.iter().any(|n| n == name), "Telegram lost `{name}`");
         }
-        for name in in_the_app.iter() {
+        // The other exception: what a row keeps to the person at this computer.
+        for name in in_the_app.iter().filter(|n| !crate::syn::policy::of(n).is_some_and(|p| p.at_the_computer)) {
             assert!(from_telegram.contains(name), "Telegram was not offered `{name}`, which the app is");
         }
     }

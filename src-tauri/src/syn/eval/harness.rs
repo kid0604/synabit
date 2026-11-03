@@ -116,6 +116,21 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         crate::syn::settings::save_settings(&vault.path, &settings).expect("settings");
     }
     let _web = super::web::serve(task.web.clone());
+    // For every task, wanted or not: an eval never reads the real machine, or sends
+    // what is on it to a model. Runs are one at a time, so this is the only one.
+    #[cfg(target_os = "macos")]
+    {
+        use crate::syn::machine::{find, status};
+        let files = task.machine_files.iter().map(|f| f.to_string()).collect();
+        *find::PRETEND.lock().expect("fake") = Some((super::tasks::EVAL_HOME.into(), files));
+        *status::PRETEND.lock().expect("fake") = Some(serde_json::json!({
+            "battery": { "percent": 64, "state": "discharging", "on_power": false },
+            "disk": { "free_gb": 412.5, "total_gb": 994.7 },
+            "memory": { "total_gb": 32.0, "used_gb": 21.3 },
+            "cpu": { "cores": 10, "load": { "one_minute": 2.1 } },
+            "processes": { "count": 540, "using_most_memory": [{ "name": "Safari", "memory_gb": 3.2 }] },
+        }));
+    }
     let _servers = super::connectors::start(&vault.path, &task.connectors).await;
     let rest = if task.rest.is_empty() {
         None

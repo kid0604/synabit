@@ -6,7 +6,7 @@
 //! network, no file outside the room's own folder, no other process, no system
 //! service. What keeps a secret in is the kernel, not a list of commands.
 //!
-//! Nothing here is reachable from a model yet. This is the part that has to
+//! No room is reachable from a model yet. This is the part that has to
 //! hold before anything else is worth building: [`profile`] writes the rules,
 //! [`cell`] runs a command under them, [`watch`] finds what a command left
 //! behind, and [`selftest`] attacks the result and refuses to call it safe
@@ -15,14 +15,20 @@
 //! [`rooms`] is the way in from the rest of the app: it hands out a room only
 //! after the attacks have failed on this macOS, and can stop them all.
 //!
+//! [`find`] and [`status`] are the exception to all of that, and the only part of
+//! this a model reaches so far: they run no command the model wrote, so they need
+//! no room. They look at the machine, and that is all they do.
+//!
 //! macOS only, and macOS 14 or later: 13 does not know the `file-lock` rule, so
 //! the profile does not compile there and [`selftest`] reports the room broken.
 //! The app itself still runs on 13.3.
 
 pub mod cell;
 pub mod export;
+pub mod find;
 pub mod profile;
 pub mod rooms;
 pub mod sanitize;
 pub mod selftest;
+pub mod status;
 pub mod watch;

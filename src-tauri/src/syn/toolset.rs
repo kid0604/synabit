@@ -75,6 +75,8 @@ pub enum Group {
     /// Drawing an interactive visual: `visual_guide`, `show_visual`. Only in
     /// runs offered them. See `syn::visual::tool::offered`.
     Visuals,
+    /// This machine: where a file is, and how the machine is doing. macOS only.
+    Machine,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -100,6 +102,7 @@ impl Group {
             Group::Skills => "skills".into(),
             Group::Jobs => "jobs".into(),
             Group::Visuals => "visuals".into(),
+            Group::Machine => "machine".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -123,6 +126,7 @@ impl Group {
             "skills" => Group::Skills,
             "jobs" => Group::Jobs,
             "visuals" => Group::Visuals,
+            "machine" => Group::Machine,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -153,6 +157,7 @@ impl Group {
             Group::Authoring => "connect to a new service: draft a connector from its API or OpenAPI spec, and ask the user to approve it".into(),
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
             Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
+            Group::Machine => "this Mac, outside the vault: find a file by name anywhere in the person's folders, and how the battery, disk and memory are doing".into(),
             Group::Visuals => "draw an interactive visual under the answer: a diagram, a chart of the user's data, an explainer with sliders, a simulation".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
@@ -183,6 +188,12 @@ pub fn group_of(tool: &str) -> Group {
 /// the collision is the question's own and nothing better is possible.
 fn cues(group: &Group) -> &'static [&'static str] {
     match group {
+        Group::Machine => &[
+            "trên máy", "máy tính", "máy mình", "máy tôi", "máy tao", "máy tớ", "macbook", "my mac",
+            "this mac", "my computer", "this computer", "my laptop", "downloads", "thư mục tải",
+            "battery", "còn pin", "hết pin", "bao nhiêu pin", "pin yếu", "disk space", "free space",
+            "dung lượng", "ổ đĩa", "ổ cứng", "ram",
+        ],
         Group::Finance => &[
             "tiền", "chi tiêu", "tiêu", "thu nhập", "lương", "giao dịch", "ngân sách", "tài khoản",
             "số dư", "tài chính", "vnd", "triệu", "hoá đơn", "hóa đơn", "thanh toán", "spend",
@@ -316,7 +327,11 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Skills,
         Group::Jobs,
         Group::Visuals,
+        Group::Machine,
     ] {
+        if group == Group::Machine && !cfg!(target_os = "macos") {
+            continue;
+        }
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);
         }
