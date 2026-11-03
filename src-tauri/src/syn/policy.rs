@@ -233,9 +233,9 @@ impl Policy {
     const fn engine(self) -> Policy {
         Policy { engine: true, ..self }
     }
-    /// A room tool: see the rows.
+    /// A room tool: see the rows. Telegram reaches it as the app does.
     const fn room(self) -> Policy {
-        Policy { power: Power::Cell, ..self }.after_reading().at_the_computer().no_helper().engine()
+        Policy { power: Power::Cell, telegram: false, ..self }.after_reading().routine().no_helper().engine()
     }
 }
 
@@ -309,9 +309,11 @@ pub static POLICIES: &[Policy] = &[
     // Asked once (`Capability::Cell`), and allowed after reading: a room has no
     // way out, so a page that talks Syn into a command gets a command in a
     // room. What a room holds after that is marked, and what it says taints
-    // whoever hears it (`machine::tool`). The app only until the eval for
-    // Telegram and routines passes (plan, M2). Not a helper, which cannot ask.
-    // The engine runs them: a command is awaited. Never a recipe step.
+    // whoever hears it (`machine::tool`). From the phone too, as the person at
+    // the computer, and in a routine once the person said always — a routine
+    // asks nobody (plan M2, opened after the eval of 2026-11-03). Not a helper,
+    // which cannot ask. The engine runs them: a command is awaited. Never a
+    // recipe step.
     Policy::read(ROOM_RUN, Home::Room).room(),
     Policy::read(ROOM_READ, Home::Room).room(),
     Policy::read(ROOM_WRITE, Home::Room).room(),
@@ -320,10 +322,11 @@ pub static POLICIES: &[Policy] = &[
     // note's stamp apply to what goes into the room.
     Policy::read(ROOM_TAKE, Home::Room).room(),
     // Out of the room into the vault: only ever a new file, or a new note made
-    // the way `create_node` makes one. Hidden with the Files app.
+    // the way `create_node` makes one — which is all a routine may do. Hidden
+    // with the Files app.
     Policy::write(ROOM_KEEP, Home::Room)
         .after_reading()
-        .at_the_computer()
+        .routine()
         .locked_with("file")
         .undone_by("a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash")
         .engine(),
@@ -633,14 +636,15 @@ mod tests {
         assert_eq!(lock("machine_find"), None);
     }
 
-    /// The room: the app only for now, never a helper, asked about as its own
-    /// switch, open after reading. Keeping a file is a write the Files lock hides.
+    /// The room: wherever the person is, the phone and their routines
+    /// included, never a helper, asked about as its own switch, open after
+    /// reading. Keeping a file is a write the Files lock hides.
     #[test]
-    fn the_room_is_the_apps_until_the_eval_says_otherwise() {
+    fn the_room_goes_where_the_person_is() {
         for tool in crate::syn::tools::ROOM_TOOLS {
-            assert_eq!(on(tool, Surface::App), Some(true), "{tool}");
-            assert_eq!(on(tool, Surface::Telegram), Some(false), "{tool}");
-            assert_eq!(on(tool, Surface::Routine), Some(false), "{tool}");
+            for surface in [Surface::App, Surface::Telegram, Surface::Routine] {
+                assert_eq!(on(tool, surface), Some(true), "{tool} {surface:?}");
+            }
             assert_eq!(helper(tool), Some(false), "{tool}");
             assert!(after_reading(tool), "{tool}");
             assert!(engine(tool), "{tool}");

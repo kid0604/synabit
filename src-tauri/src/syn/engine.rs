@@ -799,13 +799,7 @@ impl SynEngine {
             crate::syn::visual::tool::offered(&capability, &settings, run.surface, sub_run)
         };
         // And the room's only where there are rooms: a Mac whose app set them up.
-        #[cfg(target_os = "macos")]
-        let has_rooms = {
-            use tauri::Manager;
-            req.app.try_state::<Arc<crate::syn::machine::rooms::Rooms>>().is_some()
-        };
-        #[cfg(not(target_os = "macos"))]
-        let has_rooms = false;
+        let has_rooms = crate::syn::tools::has_rooms(req.app);
         let all_tools: Vec<_> = req
             .registry
             .definitions(&ctx)
@@ -9318,6 +9312,39 @@ mod driving {
         let kept = run.steps.iter().find(|s| s.tool.as_deref() == Some(crate::syn::tools::ROOM_KEEP)).expect("kept");
         assert!(!kept.preview.contains("\"kept\""), "{}", kept.preview);
         assert!(!dir.path().join("assets/out.txt").exists());
+    }
+
+    /// From the phone and from a routine the room is the same room. A routine
+    /// asks nobody: allowed always, it runs; not, it stops and waits for the
+    /// person, as anything else it is not allowed does.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn the_room_is_there_from_the_phone_and_for_a_routine_the_person_allowed() {
+        use crate::syn::surface::Surface;
+        let command = || vec![calls(crate::syn::tools::ROOM_RUN, serde_json::json!({ "command": "echo $((6 * 7))" })), text("42")];
+        for surface in [Surface::Telegram, Surface::Routine] {
+            let dir = tempfile::tempdir().expect("temp");
+            let vault = dir.path().to_str().expect("utf8").to_string();
+            let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+            let mut run = Run::new("tính", Some(format!("conv-room-{surface:?}")), budget(6));
+            run.surface = surface;
+            drive_script_in(&app, &vault, &mut run, "tính", command()).await;
+            let ran = run.steps.iter().find(|s| s.tool.as_deref() == Some(crate::syn::tools::ROOM_RUN)).expect("ran");
+            assert!(ran.preview.contains("42"), "{surface:?}: {}", ran.preview);
+            assert_eq!(run.state, RunState::Done, "{surface:?}");
+        }
+
+        // A routine whose person never said always.
+        use tauri::Manager;
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_db(a_vault_worth_attacking(dir.path()));
+        app.manage(shared_rooms());
+        let mut run = Run::new("tính", Some("conv-room-routine-unasked".into()), budget(6));
+        run.surface = Surface::Routine;
+        drive_script_in(&app, &vault, &mut run, "tính", command()).await;
+        assert_eq!(run.state, RunState::AwaitingConsent, "{:?}", run.steps);
+        assert!(!run.steps.iter().any(|s| s.tool.as_deref() == Some(crate::syn::tools::ROOM_RUN) && s.preview.contains("42")));
     }
 
     /// The stop button stops the room too, not only the run: a long command
