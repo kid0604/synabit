@@ -159,6 +159,23 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         }
         std::fs::write(&at, text).expect("a task's file");
     }
+    for (path, make) in &task.room.made {
+        let at = std::path::Path::new(&vault.path).join(path);
+        if let Some(dir) = at.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        std::fs::write(&at, make()).expect("a task's made file");
+    }
+    // As a vault's files are, so a search finds them: notes are already nodes.
+    if task.room.indexed {
+        let made = task.room.made.iter().map(|(p, _)| *p);
+        for path in task.files.iter().map(|(p, _)| *p).chain(made).filter(|p| !p.ends_with(".md") && !p.starts_with('@')) {
+            let at = std::path::Path::new(&vault.path).join(path);
+            crate::commands::files::index_written_file(vault.db().inner(), &at).expect("indexed");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    let _rooms = task.room.on.then(|| rooms::lend(vault.handle()));
     let nodes_before = grade::nodes(&vault).iter().filter(|(_, ty, _, _, _)| !ty.starts_with("syn_")).count();
 
     let mut answers: Vec<SynMessage> = Vec::new();
@@ -419,6 +436,40 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         budget_exhausted: top.iter().any(|r| r.state == RunState::BudgetExhausted),
         footing: top.last().and_then(|r| r.footing).map(|f| format!("{f:?}").to_lowercase()),
         error,
+    }
+}
+
+/// The rooms an eval lends a task: real ones, on this Mac, set up once for the
+/// process, since the self-check attacks them and takes seconds. Runs are one at
+/// a time, so what a task left in them is cleared when the next is lent them.
+#[cfg(target_os = "macos")]
+mod rooms {
+    use std::sync::{Arc, LazyLock};
+
+    use tauri::Manager;
+
+    use crate::syn::machine::rooms::Rooms;
+
+    static ROOMS: LazyLock<(std::path::PathBuf, Arc<Rooms>)> = LazyLock::new(|| {
+        let root = std::env::temp_dir().join(format!("synabit-eval-rooms-{}", std::process::id())).join("machine");
+        let rooms = Rooms::at(&root).expect("rooms for the eval");
+        (root, Arc::new(rooms))
+    });
+
+    /// Clears the folders when dropped: a video a task made is not kept.
+    pub struct Lent;
+
+    impl Drop for Lent {
+        fn drop(&mut self) {
+            let _ = ROOMS.1.stop_all();
+            let _ = std::fs::remove_dir_all(ROOMS.0.join("cells"));
+            let _ = std::fs::remove_dir_all(ROOMS.0.join("outside"));
+        }
+    }
+
+    pub fn lend(app: &tauri::AppHandle<tauri::test::MockRuntime>) -> Lent {
+        app.manage(ROOMS.1.clone());
+        Lent
     }
 }
 
