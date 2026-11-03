@@ -18,10 +18,11 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 
 use super::cell::{Cell, Limits};
 use super::profile::Reach;
+use super::proxy::{self, Allow, Proxy};
 use super::selftest::{self, Report, Verdict};
 use super::watch::{self, Ceiling, Frozen, Watched};
 
@@ -54,6 +55,10 @@ pub struct Rooms {
     /// This launch's answer. Also what keeps two callers from running the attack
     /// set at once.
     known: Mutex<Option<Result<(), String>>>,
+    /// Every sealed command holds this to read for as long as it runs; a room
+    /// with a network holds it to write for all of its time. So the two never run
+    /// at once (I8): a channel they could share needs both ends running.
+    window: RwLock<()>,
     /// Replaces the rules, so a test can prove a broken profile closes the door.
     #[cfg(test)]
     rules: Option<String>,
@@ -109,6 +114,7 @@ impl Rooms {
             bait,
             ceiling: Ceiling::default(),
             known: Mutex::new(None),
+            window: RwLock::new(()),
             #[cfg(test)]
             rules: None,
             root,
@@ -195,9 +201,79 @@ impl Rooms {
             .map_err(|error| Unavailable::Setup(error.to_string()))
     }
 
-    /// Runs a command, watched against this machine's ceilings.
+    /// Runs a command, watched against this machine's ceilings. Waits while a
+    /// room with a network is open.
     pub async fn run(&self, cell: &Cell, script: &str, limits: Limits) -> io::Result<Watched> {
+        let _sealed = self.window.read().await;
         watch::run_watched(cell, &self.bait, script, limits, self.ceiling).await
+    }
+
+    /// Opens a room with a network for as long as `work` takes, and nothing else
+    /// in any room runs meanwhile (I8). In order: no sealed command may start or
+    /// is still running; whatever any room left behind is ended and the kernel
+    /// asked to confirm it; only then the port opens and the room is made. After
+    /// `work`, its room is ended and confirmed empty before the port closes, and
+    /// only then may a sealed room run again. If anything cannot be confirmed
+    /// gone, the port never opens.
+    ///
+    /// `tools` is copied in by `work` itself; nothing shared is in reach.
+    pub async fn with_network<T, F, Fut>(&self, name: &str, allow: Allow, work: F) -> Result<T, Unavailable>
+    where
+        F: FnOnce(Cell) -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        if !usable_name(name) {
+            return Err(Unavailable::BadName);
+        }
+        self.ready().await?;
+        let _all = self.window.write().await;
+
+        let cells = self.every_cell().map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let bait = self.bait.clone();
+        let cleared = tokio::task::spawn_blocking(move || -> io::Result<()> {
+            for cell in &cells {
+                watch::clear_room(cell, &bait)?;
+                if !watch::room_processes(cell, &bait)?.is_empty() {
+                    return Err(io::Error::other("a sealed room still has something running"));
+                }
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| Unavailable::Setup(e.to_string()))?;
+        cleared.map_err(|e| Unavailable::Setup(format!("the sealed rooms could not be stopped, so no network was opened: {e}")))?;
+
+        let proxy = Proxy::open(name, allow, &proxy::audit_file(&self.root))
+            .await
+            .map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let place = self.root.join("prep").join(name);
+        let _ = std::fs::remove_dir_all(&place);
+        let cell = Cell::make_bare(&place.join("room"), &place.join("tools"), proxy.port)
+            .map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let out = work(cell.clone()).await;
+
+        let bait = self.bait.clone();
+        let ended = tokio::task::spawn_blocking(move || -> io::Result<()> {
+            watch::clear_room(&cell, &bait)?;
+            if !watch::room_processes(&cell, &bait)?.is_empty() {
+                return Err(io::Error::other("the room with a network would not end"));
+            }
+            Ok(())
+        })
+        .await;
+        drop(proxy);
+        // The port is closed either way. A room that would not end is reported,
+        // and the sealed rooms wait for nothing more: nothing can reach out now.
+        match ended {
+            Ok(Ok(())) => Ok(out),
+            Ok(Err(e)) => Err(Unavailable::Setup(e.to_string())),
+            Err(e) => Err(Unavailable::Setup(e.to_string())),
+        }
+    }
+
+    /// Where a room with a network keeps what it made, for the caller to take.
+    pub fn prep_place(&self, name: &str) -> PathBuf {
+        self.root.join("prep").join(name)
     }
 
     /// Stops everything in one room, for a file to leave it.
@@ -235,9 +311,9 @@ impl Rooms {
     /// Every room with a folder, this launch's or not. A room can put a link
     /// where its folder was, and [`Cell::make`] puts the folder back.
     fn every_cell(&self) -> io::Result<Vec<Cell>> {
-        let entries = match std::fs::read_dir(self.cells()) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        let entries: Vec<io::Result<std::fs::DirEntry>> = match std::fs::read_dir(self.cells()) {
+            Ok(entries) => entries.collect(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
             Err(error) => return Err(error),
         };
         let mut cells = Vec::new();
@@ -245,6 +321,15 @@ impl Rooms {
             let name = entry?.file_name();
             if let Some(name) = name.to_str().filter(|name| usable_name(name)) {
                 cells.push(self.cell_at(name)?);
+            }
+        }
+        // Rooms with a network, one a crash may have left: ended the same way.
+        if let Ok(entries) = std::fs::read_dir(self.root.join("prep")) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                if name.to_str().is_some_and(usable_name) {
+                    cells.push(Cell::make(&entry.path().join("room"), &entry.path().join("tools"), Reach::Closed)?);
+                }
             }
         }
         Ok(cells)
@@ -429,6 +514,134 @@ mod tests {
         assert!(next_launch.carries_outside("a"));
         assert!(!next_launch.carries_outside("b"));
         assert!(!next_launch.carries_outside("../a"));
+    }
+
+    fn exec(path: &str, args: &[&str]) -> (std::path::PathBuf, Vec<std::ffi::OsString>) {
+        (path.into(), args.iter().map(|a| a.into()).collect())
+    }
+
+    /// A31: a sealed room leaves a daemon beating out a signal, and a sealed
+    /// command is about to run. Before the port opens the daemon is gone, and the
+    /// command waits until the port has closed.
+    #[tokio::test]
+    async fn nothing_sealed_runs_while_a_room_has_a_network() {
+        let (_dir, rooms) = rooms();
+        let rooms = std::sync::Arc::new(rooms);
+        let a = rooms.cell_at("a").unwrap();
+        let beat = a.work().join("beat");
+        let daemon = selftest::daemon(&format!(
+            r#"while (1) {{ open(B, ">>", "{}"); print B "x"; close(B); select(undef, undef, undef, 0.1) }}"#,
+            beat.display()
+        ));
+        assert!(a.run(&daemon, Limits::default()).await.unwrap().ok());
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(std::fs::metadata(&beat).unwrap().len() > 0, "the control: it beats");
+
+        let (opened_tx, opened_rx) = tokio::sync::oneshot::channel::<()>();
+        let later = {
+            let (rooms, b) = (rooms.clone(), rooms.cell_at("b").unwrap());
+            tokio::spawn(async move {
+                opened_rx.await.unwrap();
+                rooms.run(&b, "date +%s%N", Limits::default()).await.unwrap();
+                std::time::Instant::now()
+            })
+        };
+        let silent = rooms
+            .with_network("n1", Allow::Hosts(vec![]), |_cell| async {
+                let _ = opened_tx.send(());
+                let before = std::fs::metadata(&beat).map(|m| m.len()).unwrap_or(0);
+                tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                let after = std::fs::metadata(&beat).map(|m| m.len()).unwrap_or(0);
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                (before == after, std::time::Instant::now())
+            })
+            .await
+            .unwrap();
+        assert!(silent.0, "the daemon still beat while the port was open");
+        assert!(later.await.unwrap() > silent.1, "a sealed command ran while the port was open");
+    }
+
+    /// A36: what a sealed room reads on the data volume, a room with a network
+    /// cannot even look at, so no access time a sealed room left there can reach
+    /// it. The control: its own files and the system's programs it can.
+    #[tokio::test]
+    async fn a_room_with_a_network_cannot_see_what_a_sealed_room_reads() {
+        let (_dir, rooms) = rooms();
+        let shared_tools = rooms.tools.clone();
+        std::fs::create_dir_all(&shared_tools).unwrap();
+        std::fs::write(shared_tools.join("marker"), "x").unwrap();
+        let mut shared: Vec<String> = [
+            "/private/etc/ssl/cert.pem",
+            "/private/etc/passwd",
+            "/private/var/db/timezone",
+            "/private/var/select/sh",
+            "/private/var/db/xcode_select_link",
+            "/opt/homebrew/bin",
+            "/Library/Developer/CommandLineTools",
+        ]
+        .iter()
+        .filter(|p| std::path::Path::new(p).exists() || std::path::Path::new(p).is_symlink())
+        .map(|p| p.to_string())
+        .collect();
+        shared.push(shared_tools.join("marker").display().to_string());
+        assert!(shared.len() >= 5, "{shared:?}");
+
+        let seen = rooms
+            .with_network("n2", Allow::Hosts(vec![]), |cell| async move {
+                let mut seen = Vec::new();
+                let (stat, mut args) = exec("/usr/bin/stat", &["-f", "%a"]);
+                std::fs::write(cell.work().join("own"), "mine").unwrap();
+                args.push("own".into());
+                let own = cell.exec(&stat, &args, &[], Limits::default()).await.unwrap();
+                seen.push(("own".to_string(), own.ok()));
+                for path in &shared {
+                    let (stat, mut args) = exec("/usr/bin/stat", &["-f", "%a"]);
+                    args.push(path.into());
+                    let ran = cell.exec(&stat, &args, &[], Limits::default()).await.unwrap();
+                    seen.push((path.clone(), ran.ok()));
+                }
+                let (ls, args) = exec("/bin/ls", &["/usr/bin/true"]);
+                seen.push(("/bin/ls".to_string(), cell.exec(&ls, &args, &[], Limits::default()).await.unwrap().ok()));
+                seen
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(seen[0], ("own".to_string(), true), "the control: {seen:?}");
+        assert!(seen.last().unwrap().1, "the control: {seen:?}");
+        for (path, could) in &seen[1..seen.len() - 1] {
+            assert!(!could, "a room with a network could stat {path}");
+        }
+    }
+
+    /// The port is the room's one way out, and the proxy decides the rest:
+    /// a raw connection to an address fails, a request through the port is heard.
+    #[tokio::test]
+    async fn a_room_with_a_network_reaches_only_its_port() {
+        let (_dir, rooms) = rooms();
+        let said = rooms
+            .with_network("n3", Allow::Hosts(vec![]), |cell| async move {
+                let port = match cell.profile.reach {
+                    Reach::Proxy(port) => port,
+                    Reach::Closed => 0,
+                };
+                // Perl, from the system volume: the system's curl cannot start
+                // here at all, since it reads its TLS settings from /private/etc.
+                let (perl, args) = exec("/usr/bin/perl", &["-MIO::Socket::INET", "-e", r#"IO::Socket::INET->new(PeerAddr => "1.1.1.1:443", Timeout => 5) or exit 3"#]);
+                let direct = cell.exec(&perl, &args, &[], Limits::default()).await.unwrap();
+                let ask = format!(
+                    r#"$s = IO::Socket::INET->new("127.0.0.1:{port}") or exit 3; print $s "CONNECT pypi.org:443 HTTP/1.1\r\n\r\n"; print scalar <$s>"#
+                );
+                let (perl, args) = exec("/usr/bin/perl", &["-MIO::Socket::INET", "-e", &ask]);
+                let proxied = cell.exec(&perl, &args, &[], Limits::default()).await.unwrap();
+                (direct, proxied)
+            })
+            .await
+            .unwrap();
+        assert!(!said.0.ok(), "a raw connection got out: {:?}", said.0);
+        assert!(said.1.stdout.starts_with("HTTP/1.1 403"), "the port answered: {:?}", said.1);
+        let audit = std::fs::read_to_string(proxy::audit_file(&rooms.root)).unwrap();
+        assert!(audit.contains("pypi.org") && audit.contains("not a host this room may reach"), "{audit}");
     }
 
     /// Nothing has ever needed a room: finding that out costs no attack.

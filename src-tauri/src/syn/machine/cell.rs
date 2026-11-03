@@ -5,7 +5,7 @@
 //! through pipes, because `sandbox-exec` cannot write to a file outside the room
 //! and because a command must not choose where its output goes.
 
-use std::ffi::{CStr, CString, OsStr};
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::io;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -98,6 +98,14 @@ impl Cell {
         Ok(cell)
     }
 
+    /// A room with a network: the one port of `port`, and nothing of the data
+    /// volume but its own folder and `tools` ([`super::profile::Sight::Bare`]).
+    pub(super) fn make_bare(dir: &Path, tools: &Path, port: u16) -> io::Result<Self> {
+        let mut cell = Self::make(dir, tools, Reach::Proxy(port))?;
+        cell.profile.sight = super::profile::Sight::Bare;
+        Ok(cell)
+    }
+
     pub fn room(&self) -> &Path {
         &self.profile.room
     }
@@ -127,6 +135,19 @@ impl Cell {
 
     /// Runs `/bin/sh -c script` in the room's `work` folder.
     pub async fn run(&self, script: &str, limits: Limits) -> io::Result<Ran> {
+        self.exec(Path::new("/bin/sh"), &["-c".into(), script.into()], &[], limits).await
+    }
+
+    /// Runs one program, with no shell between: a room that cannot read what
+    /// `/bin/sh` needs ([`super::profile::Sight::Bare`]) runs programs this way.
+    /// `env` is added to the blank environment, after what every room gets.
+    pub async fn exec(
+        &self,
+        program: &Path,
+        args: &[OsString],
+        env: &[(&str, OsString)],
+        limits: Limits,
+    ) -> io::Result<Ran> {
         self.restore()?;
         let room = self.room();
         let path = format!(
@@ -142,12 +163,14 @@ impl Cell {
         command
             .args(["-c", "utility", "/usr/bin/sandbox-exec"])
             .args(self.profile.args())
-            .args(["/bin/sh", "-c", script])
+            .arg(program)
+            .args(args)
             .current_dir(self.work())
             .env_clear()
             .env("PATH", path)
             .env("HOME", self.work())
             .env("TMPDIR", room.join("tmp"))
+            .envs(env.iter().map(|(k, v)| (*k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

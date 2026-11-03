@@ -11,6 +11,13 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 const CLOSED: &str = include_str!("closed.sb");
+/// What a room with a network sees: the system's own volume and its own folder,
+/// nothing else on the data volume. No Homebrew, no command-line tools, no shared
+/// `tools/`, no `/private/etc`, not even `/private/var/select`, which `/bin/sh`
+/// reads: a sealed room reads those, and reading leaves an access time a room
+/// with a network could read after it (design §5.8, A36). So nothing runs in it
+/// through a shell; Rust runs one program.
+const BARE: &str = include_str!("bare.sb");
 const NET: &str = include_str!("net.sb");
 
 /// Stat-only, so tools can walk down to what they are allowed to read. The
@@ -36,6 +43,15 @@ pub enum Reach {
     Proxy(u16),
 }
 
+/// How much of the machine a room sees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sight {
+    /// The programs on this Mac: Homebrew, the command-line tools, `tools/`.
+    Machine,
+    /// The system volume and its own folder. For a room with a network.
+    Bare,
+}
+
 /// What a room is allowed to see of the machine.
 #[derive(Clone, Debug)]
 pub struct Profile {
@@ -45,6 +61,7 @@ pub struct Profile {
     pub tools: PathBuf,
     pub homebrew: PathBuf,
     pub reach: Reach,
+    pub sight: Sight,
     /// Replaces the rules, so a test can prove a broken profile is noticed.
     #[cfg(test)]
     pub rules: Option<String>,
@@ -57,6 +74,7 @@ impl Profile {
             tools,
             homebrew: homebrew(),
             reach,
+            sight: Sight::Machine,
             #[cfg(test)]
             rules: None,
         }
@@ -92,12 +110,17 @@ impl Profile {
         if let Some(rules) = &self.rules {
             return rules.clone();
         }
-        let mut text = String::from(CLOSED);
+        let mut text = String::from(match self.sight {
+            Sight::Machine => CLOSED,
+            Sight::Bare => BARE,
+        });
         text.push_str("(allow file-read-metadata file-test-existence\n");
         for waypoint in WAYPOINTS {
             text.push_str(&format!("  (literal \"{waypoint}\")\n"));
         }
-        text.push_str("  (literal (param \"HB\"))\n");
+        if self.sight == Sight::Machine {
+            text.push_str("  (literal (param \"HB\"))\n");
+        }
         for i in 0..folders_above {
             text.push_str(&format!("  (literal (param \"UP{i}\"))\n"));
         }
