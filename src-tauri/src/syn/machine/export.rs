@@ -15,11 +15,12 @@ use std::ffi::{CStr, CString};
 use std::io::{self, Read, Write};
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::fs::MetadataExt;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::cell::{c_name, open_at, open_folder_at};
+use super::cell::open_at;
+use super::inside;
 use super::sanitize;
 use super::watch::Frozen;
 
@@ -57,56 +58,13 @@ pub struct Out {
     pub bytes: Vec<u8>,
 }
 
-fn refused_open(error: io::Error) -> Refused {
-    match error.raw_os_error() {
-        Some(libc::ENOENT) => Refused::Missing,
-        Some(libc::ELOOP) => Refused::Link,
-        // A socket refuses to open at all, and a link met on the way to a folder
-        // can answer as "not a folder" rather than as a link.
-        Some(libc::ENOTDIR) | Some(libc::EOPNOTSUPP) | Some(libc::ENXIO) => Refused::NotAFile,
-        _ => Refused::Io(error),
-    }
-}
-
 /// Reads `relative`, a path under the room's `work` folder.
 pub fn read(frozen: &Frozen, relative: &Path, max: u64) -> Result<Out, Refused> {
-    let mut names = Vec::new();
-    for part in relative.components() {
-        match part {
-            Component::Normal(name) => names.push(name),
-            _ => return Err(Refused::NotInside),
-        }
-    }
-    let Some((&last, folders)) = names.split_last() else {
-        return Err(Refused::NotInside);
-    };
-
-    // `restore` has just made these real, and nothing is running to change that.
-    let above = frozen.cell().room().parent().ok_or(Refused::NotInside)?;
-    let above = std::fs::File::open(above)?;
-    let room_name = frozen.cell().room().file_name().ok_or(Refused::NotInside)?;
-    let room = open_folder_at(above.as_fd(), &c_name(room_name)?).map_err(refused_open)?;
-    let mut folder = open_folder_at(room.as_fd(), c"work").map_err(refused_open)?;
-    for name in folders {
-        folder = open_folder_at(folder.as_fd(), &c_name(name)?).map_err(refused_open)?;
-    }
-
-    // O_NONBLOCK so that opening a FIFO with no writer returns, instead of
-    // waiting for one that will never come. It has no effect on a regular file.
-    let file = open_at(
-        folder.as_fd(),
-        &c_name(last)?,
-        libc::O_RDONLY | libc::O_NONBLOCK,
-    )
-    .map_err(refused_open)?;
-    let file = std::fs::File::from(file);
+    let last = relative.file_name().ok_or(Refused::NotInside)?;
+    // Walked by descriptor, following nothing, and nothing is running to change
+    // what was found. See [`inside`].
+    let file = inside::open_file(frozen.cell(), relative)?;
     let meta = file.metadata()?;
-    if !meta.file_type().is_file() {
-        return Err(Refused::NotAFile);
-    }
-    if meta.nlink() != 1 {
-        return Err(Refused::HardLinked);
-    }
     if meta.size() > max {
         return Err(Refused::TooLarge { max });
     }

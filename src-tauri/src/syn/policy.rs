@@ -46,6 +46,8 @@ pub enum Power {
     DraftFromSpec,
     /// Learns where files are on this machine, by name.
     MachineFiles,
+    /// Runs a command in a sealed room, or reads or changes the room's files.
+    Cell,
 }
 
 /// Which group brings a tool into a run — `toolset::Group` without the
@@ -70,6 +72,7 @@ pub enum Home {
     Jobs,
     Visuals,
     Machine,
+    Room,
 }
 
 impl Home {
@@ -93,6 +96,7 @@ impl Home {
             Home::Jobs => Group::Jobs,
             Home::Visuals => Group::Visuals,
             Home::Machine => Group::Machine,
+            Home::Room => Group::Room,
         }
     }
 }
@@ -229,10 +233,16 @@ impl Policy {
     const fn engine(self) -> Policy {
         Policy { engine: true, ..self }
     }
+    /// A room tool: see the rows.
+    const fn room(self) -> Policy {
+        Policy { power: Power::Cell, ..self }.after_reading().at_the_computer().no_helper().engine()
+    }
 }
 
 use crate::syn::connector::authoring::{DRAFT_TOOL, FIND_TOOL as CONNECTOR_FIND, PROPOSE_TOOL as CONNECTOR_CONNECT, TRY_TOOL};
-use crate::syn::tools::{BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL};
+use crate::syn::tools::{
+    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_EDIT, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
+};
 
 /// Every built-in tool.
 pub static POLICIES: &[Policy] = &[
@@ -293,6 +303,30 @@ pub static POLICIES: &[Policy] = &[
         .no_helper(),
     // Battery, disk, memory, load. Says nothing about what is in anything.
     Policy::read("machine_status", Home::Machine),
+
+    // ── A room on the machine ──────────────────────────────────────
+    // Real programs in a sealed room: no network, nothing outside its folder.
+    // Asked once (`Capability::Cell`), and allowed after reading: a room has no
+    // way out, so a page that talks Syn into a command gets a command in a
+    // room. What a room holds after that is marked, and what it says taints
+    // whoever hears it (`machine::tool`). The app only until the eval for
+    // Telegram and routines passes (plan, M2). Not a helper, which cannot ask.
+    // The engine runs them: a command is awaited. Never a recipe step.
+    Policy::read(ROOM_RUN, Home::Room).room(),
+    Policy::read(ROOM_READ, Home::Room).room(),
+    Policy::read(ROOM_WRITE, Home::Room).room(),
+    Policy::read(ROOM_EDIT, Home::Room).room(),
+    // Through the table every model read goes through, so the lock and a
+    // note's stamp apply to what goes into the room.
+    Policy::read(ROOM_TAKE, Home::Room).room(),
+    // Out of the room into the vault: only ever a new file, or a new note made
+    // the way `create_node` makes one. Hidden with the Files app.
+    Policy::write(ROOM_KEEP, Home::Room)
+        .after_reading()
+        .at_the_computer()
+        .locked_with("file")
+        .undone_by("a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash")
+        .engine(),
 
     // ── The run itself ─────────────────────────────────────────────
     // Touches nothing but the run's own list.
@@ -410,6 +444,7 @@ pub fn capability(tool: &str, args: &Value) -> Option<Capability> {
         Power::Structural => Capability::VaultStructural,
         Power::Browse => Capability::Browse,
         Power::MachineFiles => Capability::MachineFiles,
+        Power::Cell => Capability::Cell,
         Power::DraftFromSpec => match args
             .get("openapi_url")
             .and_then(Value::as_str)
@@ -596,6 +631,26 @@ mod tests {
         assert!(!outside_words("machine_status"));
         assert_eq!(capability("machine_status", &serde_json::json!({})), Some(Capability::VaultRead));
         assert_eq!(lock("machine_find"), None);
+    }
+
+    /// The room: the app only for now, never a helper, asked about as its own
+    /// switch, open after reading. Keeping a file is a write the Files lock hides.
+    #[test]
+    fn the_room_is_the_apps_until_the_eval_says_otherwise() {
+        for tool in crate::syn::tools::ROOM_TOOLS {
+            assert_eq!(on(tool, Surface::App), Some(true), "{tool}");
+            assert_eq!(on(tool, Surface::Telegram), Some(false), "{tool}");
+            assert_eq!(on(tool, Surface::Routine), Some(false), "{tool}");
+            assert_eq!(helper(tool), Some(false), "{tool}");
+            assert!(after_reading(tool), "{tool}");
+            assert!(engine(tool), "{tool}");
+            assert!(!outside_words(tool), "{tool}: its taint is the room's mark, not the row's");
+        }
+        for tool in [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE] {
+            assert_eq!(capability(tool, &serde_json::json!({})), Some(Capability::Cell), "{tool}");
+        }
+        assert_eq!(capability(ROOM_KEEP, &serde_json::json!({})), Some(Capability::VaultWrite));
+        assert_eq!(lock(ROOM_KEEP), Some("file"));
     }
 
     #[test]

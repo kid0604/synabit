@@ -6,18 +6,21 @@
 //! network, no file outside the room's own folder, no other process, no system
 //! service. What keeps a secret in is the kernel, not a list of commands.
 //!
-//! No room is reachable from a model yet. This is the part that has to
-//! hold before anything else is worth building: [`profile`] writes the rules,
-//! [`cell`] runs a command under them, [`watch`] finds what a command left
-//! behind, and [`selftest`] attacks the result and refuses to call it safe
-//! unless the attacks failed for the right reason. [`export`] is the one way a
-//! file leaves, and [`sanitize`] is what a person is shown of a room's words.
-//! [`rooms`] is the way in from the rest of the app: it hands out a room only
-//! after the attacks have failed on this macOS, and can stop them all.
+//! [`profile`] writes the rules, [`cell`] runs a command under them, [`watch`]
+//! finds what a command left behind, and [`selftest`] attacks the result and
+//! refuses to call it safe unless the attacks failed for the right reason.
+//! [`export`] is the one way a file leaves, [`inside`] is how the app reads and
+//! writes a room's files without following anything the room left, and
+//! [`sanitize`] is what a person is shown of a room's words. [`rooms`] is the way
+//! in from the rest of the app: it hands out a room only after the attacks have
+//! failed on this macOS, remembers which rooms hold somebody else's words, and
+//! can stop them all.
 //!
-//! [`find`] and [`status`] are the exception to all of that, and the only part of
-//! this a model reaches so far: they run no command the model wrote, so they need
-//! no room. They look at the machine, and that is all they do.
+//! [`tool`] is the model's way in, from the app only so far: a command, a file
+//! in or out, each weighed by the gate like any tool and run by the engine.
+//!
+//! [`find`] and [`status`] run no command the model wrote, so they need no room.
+//! They look at the machine, and that is all they do.
 //!
 //! macOS only, and macOS 14 or later: 13 does not know the `file-lock` rule, so
 //! the profile does not compile there and [`selftest`] reports the room broken.
@@ -26,9 +29,11 @@
 pub mod cell;
 pub mod export;
 pub mod find;
+pub mod inside;
 pub mod profile;
 pub mod rooms;
 pub mod sanitize;
 pub mod selftest;
 pub mod status;
+pub mod tool;
 pub mod watch;

@@ -23,7 +23,7 @@ use tokio::sync::Mutex;
 use super::cell::{Cell, Limits};
 use super::profile::Reach;
 use super::selftest::{self, Report, Verdict};
-use super::watch::{self, Ceiling, Watched};
+use super::watch::{self, Ceiling, Frozen, Watched};
 
 /// Why there is no room to be had. English, for the log and for the model's
 /// refusal; a screen says it through i18n.
@@ -198,6 +198,38 @@ impl Rooms {
     /// Runs a command, watched against this machine's ceilings.
     pub async fn run(&self, cell: &Cell, script: &str, limits: Limits) -> io::Result<Watched> {
         watch::run_watched(cell, &self.bait, script, limits, self.ceiling).await
+    }
+
+    /// Stops everything in one room, for a file to leave it.
+    pub fn freeze<'a>(&self, cell: &'a Cell) -> io::Result<Frozen<'a>> {
+        watch::freeze(cell, &self.bait)
+    }
+
+    /// Ends whatever is running in one room. Blocks, as [`Self::stop_all`] does.
+    pub fn clear(&self, cell: &Cell) -> io::Result<usize> {
+        watch::clear_room(cell, &self.bait)
+    }
+
+    /// Where a room's one remembered fact is kept: outside every room's folder,
+    /// so no command can take it back.
+    fn mark_of(&self, name: &str) -> Option<PathBuf> {
+        usable_name(name).then(|| self.root.join("outside").join(name))
+    }
+
+    /// The room now holds somebody else's words: a file, a page's figures, or a
+    /// command a run wrote after reading them. Never unset; what is in a room
+    /// cannot be told apart once it is there.
+    pub fn mark_outside(&self, name: &str) -> io::Result<()> {
+        let mark = self.mark_of(name).ok_or_else(|| io::Error::other("not a name for a room"))?;
+        if let Some(folder) = mark.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        std::fs::write(mark, "")
+    }
+
+    /// Whether what comes out of the room is somebody else's words.
+    pub fn carries_outside(&self, name: &str) -> bool {
+        self.mark_of(name).is_some_and(|mark| mark.exists())
     }
 
     /// Every room with a folder, this launch's or not. A room can put a link
@@ -375,6 +407,28 @@ mod tests {
 
         assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
         assert!(!a.room().is_symlink());
+    }
+
+    /// The mark outlives the launch, and the room it marks cannot remove it.
+    #[tokio::test]
+    async fn a_room_cannot_forget_what_it_was_given() {
+        let (dir, rooms) = rooms();
+        let root = dir.path().join("Application Support/machine");
+        let a = rooms.cell_at("a").unwrap();
+        assert!(!rooms.carries_outside("a"));
+        rooms.mark_outside("a").unwrap();
+
+        let mark = rooms.root.join("outside/a");
+        let ran = a
+            .run(&format!("rm -f '{}'; : > '{}.x'", mark.display(), mark.display()), Limits::default())
+            .await
+            .unwrap();
+        assert!(!ran.ok(), "{ran:?}");
+
+        let next_launch = Rooms::at(&root).unwrap();
+        assert!(next_launch.carries_outside("a"));
+        assert!(!next_launch.carries_outside("b"));
+        assert!(!next_launch.carries_outside("../a"));
     }
 
     /// Nothing has ever needed a room: finding that out costs no attack.

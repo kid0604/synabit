@@ -161,6 +161,9 @@ pub enum How {
     /// A visual's guide, or a visual looked at and kept: both read the run,
     /// which says whether it was offered them. See `syn::visual::tool`.
     ShowVisual,
+    /// A sealed room on this machine: a command awaited, or a file in or out of
+    /// it. See `syn::machine::tool`.
+    Cell,
     /// The registry runs it.
     Execute,
 }
@@ -349,9 +352,11 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
 
     // 3. Plan first. Reads still run — a plan built without looking is a
     // guess — and so does writing the plan down. Everything else is described.
+    // A room changes nothing but itself, so working something out in one is
+    // looking too; keeping what it made is not.
     let only_looks = matches!(
         capability,
-        None | Some(Capability::VaultRead) | Some(Capability::Browse) | Some(Capability::MachineFiles)
+        None | Some(Capability::VaultRead) | Some(Capability::Browse) | Some(Capability::MachineFiles) | Some(Capability::Cell)
     );
     if view.plan_only && !only_looks {
         let about = capability.map(|c| c.describe()).unwrap_or_else(|| tool.to_string());
@@ -559,6 +564,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::DraftRoutine
     } else if tool == crate::syn::visual::tool::SHOW_TOOL || tool == crate::syn::visual::tool::GUIDE_TOOL {
         How::ShowVisual
+    } else if crate::syn::tools::ROOM_TOOLS.contains(&tool) {
+        How::Cell
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.
         How::Connector
@@ -882,6 +889,38 @@ mod tests {
                 other => panic!("{tool}: expected a description, got {other:?}"),
             }
             assert_eq!(d.audit, None, "nothing was asked, so nothing to log");
+        }
+    }
+
+    /// A room changes nothing but itself, so a plan may work something out in
+    /// one — asked about like any other use of it. Keeping what it made is a
+    /// change, and is described.
+    #[test]
+    fn plan_mode_works_in_a_room_and_describes_keeping_from_it() {
+        let allowed = ledger(&Capability::Cell, Answer::Always);
+        let mut v = view(&allowed, &never_until_done);
+        v.plan_only = true;
+        let run = decide(crate::syn::tools::ROOM_RUN, &serde_json::json!({ "command": "ls" }), Some(&Capability::Cell), &v);
+        assert!(matches!(run.gate, Gate::Go(How::Cell)), "{run:?}");
+        let keep = decide(crate::syn::tools::ROOM_KEEP, &serde_json::json!({ "path": "a.pdf" }), Some(&Capability::VaultWrite), &v);
+        assert!(matches!(keep.gate, Gate::Go(How::Describe(_))), "{keep:?}");
+
+        let empty = Ledger::default();
+        let first = decide(crate::syn::tools::ROOM_RUN, &serde_json::json!({ "command": "ls" }), Some(&Capability::Cell), &view(&empty, &never_until_done));
+        assert!(matches!(first.gate, Gate::Ask(_)), "off until turned on: {first:?}");
+    }
+
+    /// Reading a page does not close the room: whatever the page talks Syn
+    /// into happens in a room with no way out, and is marked there.
+    #[test]
+    fn a_room_stays_open_after_reading() {
+        let allowed = ledger(&Capability::Cell, Answer::Always);
+        let mut v = view(&allowed, &never_until_done);
+        v.tainted = true;
+        for tool in crate::syn::tools::ROOM_TOOLS {
+            let capability = crate::syn::policy::capability(tool, &serde_json::json!({})).expect("a row");
+            let d = decide(tool, &serde_json::json!({}), Some(&capability), &v);
+            assert!(matches!(d.gate, Gate::Go(How::Cell)), "{tool}: {d:?}");
         }
     }
 

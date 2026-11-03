@@ -77,6 +77,8 @@ pub enum Group {
     Visuals,
     /// This machine: where a file is, and how the machine is doing. macOS only.
     Machine,
+    /// A sealed room on this machine, for real programs. macOS only.
+    Room,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -103,6 +105,7 @@ impl Group {
             Group::Jobs => "jobs".into(),
             Group::Visuals => "visuals".into(),
             Group::Machine => "machine".into(),
+            Group::Room => "room".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -127,6 +130,7 @@ impl Group {
             "jobs" => Group::Jobs,
             "visuals" => Group::Visuals,
             "machine" => Group::Machine,
+            "room" => Group::Room,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -158,6 +162,7 @@ impl Group {
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
             Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
             Group::Machine => "this Mac, outside the vault: find a file by name anywhere in the person's folders, and how the battery, disk and memory are doing".into(),
+            Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — convert or compress a video, work through a large CSV, make a file — and keep the result in the vault".into(),
             Group::Visuals => "draw an interactive visual under the answer: a diagram, a chart of the user's data, an explainer with sliders, a simulation".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
@@ -193,6 +198,12 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "this mac", "my computer", "this computer", "my laptop", "downloads", "thư mục tải",
             "battery", "còn pin", "hết pin", "bao nhiêu pin", "pin yếu", "disk space", "free space",
             "dung lượng", "ổ đĩa", "ổ cứng", "ram",
+        ],
+        Group::Room => &[
+            "chạy lệnh", "chạy thử", "chạy script", "viết script", "dòng lệnh", "terminal", "shell",
+            "python", "ffmpeg", "sqlite", "nén video", "cắt video", "chuyển định dạng", "đổi định dạng",
+            "run a command", "run this", "run a script", "write a script", "command line", "compress",
+            "convert", "transcode", "large csv", "csv lớn", "file csv", "phân tích file",
         ],
         Group::Finance => &[
             "tiền", "chi tiêu", "tiêu", "thu nhập", "lương", "giao dịch", "ngân sách", "tài khoản",
@@ -328,8 +339,9 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Jobs,
         Group::Visuals,
         Group::Machine,
+        Group::Room,
     ] {
-        if group == Group::Machine && !cfg!(target_os = "macos") {
+        if matches!(group, Group::Machine | Group::Room) && !cfg!(target_os = "macos") {
             continue;
         }
         if cues(&group).iter().any(|cue| said(cue)) {

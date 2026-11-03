@@ -363,7 +363,7 @@ fn does(tool: &str) -> &'static str {
         Some(Power::Write) | Some(Power::DraftFromSpec) => "write",
         Some(Power::Structural) => "structural",
         Some(Power::Browse) => "browse",
-        Some(Power::MachineFiles) | None => "other",
+        Some(Power::MachineFiles) | Some(Power::Cell) | None => "other",
     }
 }
 

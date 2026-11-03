@@ -381,6 +381,17 @@ pub const LOOK_BACK_TOOL: &str = "look_back";
 /// `run::PlanStep`.
 pub const PLAN_TOOL: &str = "update_plan";
 
+/// A sealed room on this Mac, for real programs: a shell with no network that
+/// sees only its own folder. Driven by the engine, since a command is awaited.
+/// See `syn::machine::tool`.
+pub const ROOM_RUN: &str = "machine_run";
+pub const ROOM_READ: &str = "machine_read";
+pub const ROOM_WRITE: &str = "machine_write";
+pub const ROOM_EDIT: &str = "machine_edit";
+pub const ROOM_TAKE: &str = "machine_take";
+pub const ROOM_KEEP: &str = "machine_keep";
+pub const ROOM_TOOLS: [&str; 6] = [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE, ROOM_KEEP];
+
 /// How many runs one answer may name.
 ///
 /// Five. The result carries a truncated answer for each, so ten would push the
@@ -1026,6 +1037,104 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 name: "machine_status".to_string(),
                 description: "How this Mac is doing right now: battery, free disk space, memory in use, load, and which processes hold the most memory.".to_string(),
                 parameters: serde_json::json!({ "type": "object", "properties": {} }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_RUN.to_string(),
+                description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed. Anything left running when the command ends is stopped.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "The command, run in the room's folder." },
+                        "timeout_s": { "type": "integer", "description": "Seconds before it is stopped. Default 120, at most 600." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_READ.to_string(),
+                description: "Read a text file in the room, whole or by lines.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative to the room's folder, like 'out/summary.txt'." },
+                        "lines": { "type": "string", "description": "A range, like '1-200'. Default: the whole file." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_WRITE.to_string(),
+                description: "Write a whole text file in the room — a script, a config — making folders as needed. Replaces a file of that name in the room; never touches the vault.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Relative to the room's folder, like 'make_chart.py'." },
+                        "content": { "type": "string", "description": "The whole file." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["path", "content"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_EDIT.to_string(),
+                description: "Change one piece of a text file in the room: `old`, exactly as it is in the file and there only once, becomes `new`.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string" },
+                        "old": { "type": "string", "description": "The text to replace, copied exactly." },
+                        "new": { "type": "string", "description": "What goes there instead." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["path", "old", "new"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_TAKE.to_string(),
+                description: "Copy something from the vault into the room, for a command to work on: a file or a note by its node_id (from search_files or query_nodes) or its path, or a table a tool returned by its handle (r1, r2…, as CSV). The vault itself is never changed.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "node_id": { "type": "string", "description": "The file's or note's id." },
+                        "path": { "type": "string", "description": "Or a file by where it is in the vault, like 'Imports/sales.csv'." },
+                        "handle": { "type": "string", "description": "A table's handle, instead of node_id." },
+                        "as": { "type": "string", "description": "The name it gets in the room. Default: its own name." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_KEEP.to_string(),
+                description: "Keep a file the room made in the vault, as a new file in the Files app (a .md file becomes a note). Never overwrites anything. Whatever is still running in the room is stopped first.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "The file in the room." },
+                        "name": { "type": "string", "description": "Its name in the vault, like 'Báo cáo 2025.pdf', or 'Folder/name.pdf'. Default: its name in the room." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["path"]
+                }),
             },
         },
         ToolDefinition {
@@ -7038,6 +7147,14 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // A sealed room on the Mac, for real programs: the `room` group, brought
+        // by asking to run or convert something, and sent nowhere but the app.
+        // See `syn::machine::tool`.
+        let room = ROOM_TOOLS;
+        for tool in room {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -7060,6 +7177,7 @@ mod tests {
             .chain(staging)
             .chain(skills)
             .chain(visuals)
+            .chain(room)
             .chain(["machine_find", "machine_status"])
             .collect();
         for name in &names {

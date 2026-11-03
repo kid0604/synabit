@@ -756,6 +756,20 @@ mod tests {
         }
     }
 
+    /// A recipe runs unattended and step by step through `execute_tool`; a
+    /// command in a room is the engine's, asked for and awaited in a
+    /// conversation. Repeated work on the machine is a tool the person approved
+    /// (design §12), never a recipe.
+    #[test]
+    fn a_recipe_cannot_run_a_command_in_a_room() {
+        let known: Vec<String> = crate::syn::tools::get_tool_definitions().into_iter().map(|d| d.function.name).collect();
+        for tool in crate::syn::tools::ROOM_TOOLS {
+            let recipe = recipe_of(vec![step(tool, None, None, serde_json::json!({ "command": "ls" }))], vec![]);
+            let said = problems(&recipe, &known);
+            assert!(said.iter().any(|p| p.contains("only a conversation can use")), "{tool}: {said:?}");
+        }
+    }
+
     /// Steps run in order, and each may use what the ones before produced.
     #[test]
     fn a_recipe_runs_its_steps_in_order_and_passes_results_along() {
