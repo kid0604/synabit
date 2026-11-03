@@ -176,6 +176,10 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     }
     #[cfg(target_os = "macos")]
     let _rooms = task.room.on.then(|| rooms::lend(vault.handle()));
+    if task.room.allowed {
+        crate::syn::consent::record(&vault.path, &crate::syn::consent::Capability::Cell, crate::syn::consent::Answer::Always, chrono::Utc::now())
+            .expect("the room allowed");
+    }
     let nodes_before = grade::nodes(&vault).iter().filter(|(_, ty, _, _, _)| !ty.starts_with("syn_")).count();
 
     let mut answers: Vec<SynMessage> = Vec::new();
