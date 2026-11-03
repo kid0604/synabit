@@ -148,20 +148,43 @@ pub fn network_for(base_url: &str) -> Network {
     let Some(host) = url::Url::parse(base_url).ok().and_then(|u| u.host_str().map(str::to_lowercase)) else { return Network::Public };
     let host = host.trim_matches(|c| c == '[' || c == ']').to_string();
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        let private = match ip {
-            std::net::IpAddr::V4(v) => {
-                let [a, b, ..] = v.octets();
-                v.is_loopback() || v.is_private() || v.is_link_local() || (a == 100 && (64..128).contains(&b))
-            }
-            std::net::IpAddr::V6(v) => v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00 || (v.segments()[0] & 0xffc0) == 0xfe80,
-        };
-        return if private { Network::Internal } else { Network::Public };
+        return if internal_ip(ip) { Network::Internal } else { Network::Public };
     }
     let home = ["localhost", ".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain", ".ts.net"];
     if !host.contains('.') || home.iter().any(|h| host == h.trim_start_matches('.') || host.ends_with(h)) {
         Network::Internal
     } else {
         Network::Public
+    }
+}
+
+/// Whether an address is the person's own network, or no network at all: a
+/// loopback, private, link-local or Tailscale address, and the ones that are
+/// nobody's (unspecified, multicast, broadcast). An IPv4 address written as IPv6
+/// is judged as the IPv4 one, so `::ffff:10.0.0.1` is not a way past this.
+pub fn internal_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v) => {
+            let [a, b, ..] = v.octets();
+            v.is_loopback()
+                || v.is_private()
+                || v.is_link_local()
+                || v.is_unspecified()
+                || v.is_multicast()
+                || v.is_broadcast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+        }
+        std::net::IpAddr::V6(v) => match v.to_ipv4_mapped() {
+            Some(v4) => internal_ip(std::net::IpAddr::V4(v4)),
+            None => {
+                v.is_loopback()
+                    || v.is_unspecified()
+                    || v.is_multicast()
+                    || (v.segments()[0] & 0xfe00) == 0xfc00
+                    || (v.segments()[0] & 0xffc0) == 0xfe80
+            }
+        },
     }
 }
 

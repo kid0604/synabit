@@ -31,6 +31,7 @@ pub mod export;
 pub mod find;
 pub mod inside;
 pub mod profile;
+pub mod proxy;
 pub mod rooms;
 pub mod sanitize;
 pub mod selftest;
