@@ -27,6 +27,7 @@ const NAMED_BY_CONSTANT: Record<string, string> = {
   ROOM_EDIT: 'machine_edit',
   ROOM_TAKE: 'machine_take',
   ROOM_KEEP: 'machine_keep',
+  ROOM_ENV: 'machine_env',
 };
 
 const declared = (): string[] => {

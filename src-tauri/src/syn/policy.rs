@@ -48,6 +48,8 @@ pub enum Power {
     MachineFiles,
     /// Runs a command in a sealed room, or reads or changes the room's files.
     Cell,
+    /// Installs packages for the rooms, from the registry.
+    Packages,
 }
 
 /// Which group brings a tool into a run — `toolset::Group` without the
@@ -241,7 +243,7 @@ impl Policy {
 
 use crate::syn::connector::authoring::{DRAFT_TOOL, FIND_TOOL as CONNECTOR_FIND, PROPOSE_TOOL as CONNECTOR_CONNECT, TRY_TOOL};
 use crate::syn::tools::{
-    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_EDIT, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
+    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
 };
 
 /// Every built-in tool.
@@ -321,6 +323,15 @@ pub static POLICIES: &[Policy] = &[
     // Through the table every model read goes through, so the lock and a
     // note's stamp apply to what goes into the room.
     Policy::read(ROOM_TAKE, Home::Room).room(),
+    // Packages for the rooms: code that will run in every room that uses it.
+    // The app only, where the list is shown on a card and asked every time, and
+    // never after reading — a page that talks Syn into a package would be
+    // installing it into rooms that hold the person's data later (A15). The
+    // engine runs it: the install is awaited.
+    Policy { power: Power::Packages, after_reading: AfterReading::Refuse, ..Policy::read(ROOM_ENV, Home::Room) }
+        .at_the_computer()
+        .no_helper()
+        .engine(),
     // Out of the room into the vault: only ever a new file, or a new note made
     // the way `create_node` makes one — which is all a routine may do. Hidden
     // with the Files app.
@@ -448,6 +459,7 @@ pub fn capability(tool: &str, args: &Value) -> Option<Capability> {
         Power::Browse => Capability::Browse,
         Power::MachineFiles => Capability::MachineFiles,
         Power::Cell => Capability::Cell,
+        Power::Packages => Capability::Packages,
         Power::DraftFromSpec => match args
             .get("openapi_url")
             .and_then(Value::as_str)

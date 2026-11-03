@@ -271,6 +271,11 @@ impl Rooms {
         }
     }
 
+    /// The folder everything is kept under.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// Where a room with a network keeps what it made, for the caller to take.
     pub fn prep_place(&self, name: &str) -> PathBuf {
         self.root.join("prep").join(name)

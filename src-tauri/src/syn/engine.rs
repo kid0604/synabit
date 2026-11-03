@@ -806,7 +806,7 @@ impl SynEngine {
             .into_iter()
             .filter(|t| crate::syn::tools::offered_at(&t.function.name, room))
             .filter(|t| draws || !crate::syn::visual::tool::TOOLS.contains(&t.function.name.as_str()))
-            .filter(|t| has_rooms || !crate::syn::tools::ROOM_TOOLS.contains(&t.function.name.as_str()))
+            .filter(|t| has_rooms || !crate::syn::tools::is_room_tool(&t.function.name))
             .filter(|t| {
                 !sub_run
                     || crate::syn::delegate::may_use(
@@ -1181,7 +1181,11 @@ impl SynEngine {
                     // answering can carry it out rather than start again.
                     crate::syn::gate::Gate::Ask(mut ask) => {
                         run.pending_rest = reply.tool_calls[index + 1..].to_vec();
-                        ask.detail = crate::syn::connector::declared::detail(req.vault_path, &tc.function.name, &tc.function.arguments);
+                        ask.detail = if tc.function.name == crate::syn::tools::ROOM_ENV {
+                            crate::syn::packages::detail(&tc.function.arguments)
+                        } else {
+                            crate::syn::connector::declared::detail(req.vault_path, &tc.function.name, &tc.function.arguments)
+                        };
                         break 'drive LoopEnd::NeedsConsent(ask, Box::new(tc.clone()))
                     }
                     crate::syn::gate::Gate::Go(how) => how,
@@ -9345,6 +9349,55 @@ mod driving {
         drive_script_in(&app, &vault, &mut run, "tính", command()).await;
         assert_eq!(run.state, RunState::AwaitingConsent, "{:?}", run.steps);
         assert!(!run.steps.iter().any(|s| s.tool.as_deref() == Some(crate::syn::tools::ROOM_RUN) && s.preview.contains("42")));
+    }
+
+    /// Packages stop at a card that lists them in Rust's words, every time; a
+    /// command names an environment and gets its programs first, and one that
+    /// names none that exists is told so.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn packages_wait_on_a_card_and_a_command_uses_the_environment_it_names() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+
+        let mut asking = Run::new("cài docx", Some("conv-room-env-card".into()), budget(6));
+        drive_script_in(
+            &app,
+            &vault,
+            &mut asking,
+            "cài docx",
+            vec![calls(crate::syn::tools::ROOM_ENV, serde_json::json!({ "packages": ["python-docx", "openpyxl==3.1.5"] })), text("xong")],
+        )
+        .await;
+        assert_eq!(asking.state, RunState::AwaitingConsent);
+        let ask = asking.pending_consent.as_ref().expect("a card");
+        assert_eq!(ask.capability, crate::syn::consent::Capability::Packages);
+        assert_eq!(ask.detail.as_deref(), Some("From PyPI, with Python 3.12:\npython-docx\nopenpyxl==3.1.5"));
+
+        let id = "0123456789abcdef";
+        let bin = shared_rooms().root().join("tools").join(id).join("bin");
+        std::fs::create_dir_all(&bin).expect("bin");
+        std::fs::write(bin.join("python3"), "#!/bin/sh\necho from-the-environment\n").expect("python");
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(bin.join("python3"), std::fs::Permissions::from_mode(0o755)).expect("mode");
+
+        let mut run = Run::new("chạy", Some("conv-room-env-use".into()), budget(6));
+        drive_script_in(
+            &app,
+            &vault,
+            &mut run,
+            "chạy",
+            vec![
+                calls(crate::syn::tools::ROOM_RUN, serde_json::json!({ "command": "python3", "env": id })),
+                calls(crate::syn::tools::ROOM_RUN, serde_json::json!({ "command": "python3", "env": "ffffffffffffffff" })),
+                text("xong"),
+            ],
+        )
+        .await;
+        let ran: Vec<&str> = run.steps.iter().filter(|s| s.tool.as_deref() == Some(crate::syn::tools::ROOM_RUN)).map(|s| s.preview.as_str()).collect();
+        assert!(ran[0].contains("from-the-environment"), "{}", ran[0]);
+        assert!(ran[1].contains("There is no environment"), "{}", ran[1]);
     }
 
     /// The stop button stops the room too, not only the run: a long command

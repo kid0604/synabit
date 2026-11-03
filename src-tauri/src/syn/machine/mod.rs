@@ -27,6 +27,7 @@
 //! The app itself still runs on 13.3.
 
 pub mod cell;
+pub mod env;
 pub mod export;
 pub mod find;
 pub mod inside;

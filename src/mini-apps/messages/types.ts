@@ -523,6 +523,8 @@ export type Capability =
   | 'Cell'
   // Where files are on this Mac, by name. Nothing is opened.
   | 'MachineFiles'
+  // Packages from PyPI for the rooms. Asked every time; the list is the detail.
+  | 'Packages'
   // A value from Safe, to one server. `label` is the server's name, for the
   // card; the scope is the item and `destination`.
   | { UseSecret: { item: string; destination: string; label: string } };

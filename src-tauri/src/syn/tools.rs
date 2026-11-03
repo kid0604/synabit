@@ -389,6 +389,15 @@ pub const ROOM_EDIT: &str = "machine_edit";
 pub const ROOM_TAKE: &str = "machine_take";
 pub const ROOM_KEEP: &str = "machine_keep";
 pub const ROOM_TOOLS: [&str; 6] = [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE, ROOM_KEEP];
+/// Packages for the rooms, installed by Rust in a room that reaches only the
+/// registry. Not one of `ROOM_TOOLS`: it is the app's alone, and never after
+/// reading. See `syn::machine::env`.
+pub const ROOM_ENV: &str = "machine_env";
+
+/// Whether the engine runs it in a room, or makes a room's environment.
+pub fn is_room_tool(name: &str) -> bool {
+    ROOM_TOOLS.contains(&name) || name == ROOM_ENV
+}
 
 /// How many runs one answer may name.
 ///
@@ -1047,9 +1056,24 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                     "properties": {
                         "command": { "type": "string", "description": "The command, run in the room's folder." },
                         "timeout_s": { "type": "integer", "description": "Seconds before it is stopped. Default 120, at most 600." },
+                        "env": { "type": "string", "description": "An environment machine_env made, by its id: its Python and packages come first on the PATH. Use `python3 -m <tool>` rather than a tool's own command." },
                         "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
                     },
                     "required": ["command"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_ENV.to_string(),
+                description: "Make a Python environment with these packages from PyPI, for machine_run to use with `env`. The user approves the list on a card first. Installed outside the room by the app, through a connection that reaches only PyPI; the rooms themselves still have no network. Returns the environment's id and every package in it. Ask for what the job needs and no more; an environment with the same packages is made once and reused. Not available once you have read something from outside.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "packages": { "type": "array", "items": { "type": "string" }, "description": "Package names, each with an optional version: [\"python-docx\", \"numpy==2.5.4\"]. No URLs, paths or options." }
+                    },
+                    "required": ["packages"]
                 }),
             },
         },
@@ -7203,7 +7227,7 @@ mod tests {
             .chain(skills)
             .chain(visuals)
             .chain(room)
-            .chain(["machine_find", "machine_status"])
+            .chain([ROOM_ENV, "machine_find", "machine_status"])
             .collect();
         for name in &names {
             assert!(

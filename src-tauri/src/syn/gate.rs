@@ -400,10 +400,13 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         // to its scope does not after a stranger's words, nor for an ssh
         // `run`, whose every call is another command: it would carry other
         // arguments too.
-        let per_call = sends && crate::syn::connector::declared::asks_per_call(tool);
+        // A list of packages is asked about as the list it is: a yes to one is
+        // no yes to the next, which would run other code in every room after.
+        let packages = matches!(capability, Capability::Packages);
+        let per_call = (sends && crate::syn::connector::declared::asks_per_call(tool)) || packages;
         if decision == Decision::Ask
             && (view.call_allowed_until_done
-                || ((view.allowed_until_done)(capability) && !(sends && (view.untrusted_before || per_call))))
+                || ((view.allowed_until_done)(capability) && !packages && !(sends && (view.untrusted_before || per_call))))
         {
             decision = Decision::Allow;
         }
@@ -564,7 +567,7 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::DraftRoutine
     } else if tool == crate::syn::visual::tool::SHOW_TOOL || tool == crate::syn::visual::tool::GUIDE_TOOL {
         How::ShowVisual
-    } else if crate::syn::tools::ROOM_TOOLS.contains(&tool) {
+    } else if crate::syn::tools::is_room_tool(tool) {
         How::Cell
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.
@@ -908,6 +911,42 @@ mod tests {
         let empty = Ledger::default();
         let first = decide(crate::syn::tools::ROOM_RUN, &serde_json::json!({ "command": "ls" }), Some(&Capability::Cell), &view(&empty, &never_until_done));
         assert!(matches!(first.gate, Gate::Ask(_)), "off until turned on: {first:?}");
+    }
+
+    /// A15: packages are never installed after reading — what was read may be
+    /// what asked for them, and they would run in every room after. Otherwise
+    /// asked each time, about the list, with no "this whole work" to it; and not
+    /// at all where nobody can see the card, nor in a plan.
+    #[test]
+    fn packages_are_asked_about_each_time_and_never_after_reading() {
+        let tool = crate::syn::tools::ROOM_ENV;
+        let args = serde_json::json!({ "packages": ["python-docx"] });
+        let empty = Ledger::default();
+
+        let mut v = view(&empty, &always_until_done);
+        let first = decide(tool, &args, Some(&Capability::Packages), &v);
+        match first.gate {
+            Gate::Ask(ask) => assert!(ask.per_call && !ask.can_be_remembered, "{ask:?}"),
+            other => panic!("expected a card: {other:?}"),
+        }
+
+        v.tainted = true;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &v).gate, Gate::Refuse { .. }));
+
+        let mut phone = view(&empty, &never_until_done);
+        phone.surface = Surface::Telegram;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &phone).gate, Gate::Refuse { .. }));
+
+        let mut plan = view(&empty, &never_until_done);
+        plan.plan_only = true;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &plan).gate, Gate::Go(How::Describe(_))));
+
+        let mut once = view(&empty, &never_until_done);
+        once.call_allowed_until_done = true;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &once).gate, Gate::Go(How::Cell)));
+
+        let off = ledger(&Capability::Packages, Answer::Never);
+        assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &view(&off, &never_until_done)).gate, Gate::Refuse { .. }));
     }
 
     /// Reading a page does not close the room: whatever the page talks Syn

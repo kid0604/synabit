@@ -37,7 +37,7 @@ use super::sanitize;
 use super::watch::{Over, Watched};
 use crate::db::Hold;
 use crate::syn::taint::{Origin, Taint};
-use crate::syn::tools::{execute_tool, ToolContext, ROOM_EDIT, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
+use crate::syn::tools::{execute_tool, ToolContext, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
 
 /// Characters of each of stdout and stderr shown, before the window scales it.
 const SHOWN: usize = 8_000;
@@ -183,6 +183,9 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
     let Some(rooms) = call.ctx.app.try_state::<Arc<Rooms>>().map(|r| r.inner().clone()) else {
         return error("The room could not be set up when the app started, so no command can run. Say so; there is no other way to run one.");
     };
+    if tool == ROOM_ENV {
+        return make_env(&rooms, call, args).await;
+    }
     let name = match name_for(call.scope, str_arg(args, "cell")) {
         Ok(name) => name,
         Err(said) => return error(said),
@@ -242,6 +245,16 @@ impl Room<'_> {
         if command.contains('\0') {
             return error("A command cannot hold a NUL character.");
         }
+        // An environment first on the PATH. Its id is sixteen hex digits, checked,
+        // so it cannot close the quotes it is put in.
+        let script = match str_arg(args, "env").map(str::trim).filter(|e| !e.is_empty()) {
+            None => command.to_string(),
+            Some(id) => match super::env::bin_of(self.rooms.root(), id) {
+                Some(bin) => format!("PATH='{}':\"$PATH\"; export PATH PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\n{command}", bin.display()),
+                None => return error(format!("There is no environment '{}'. Make one with machine_env, and use the id it returns.", sanitize::shown(id))),
+            },
+        };
+        let command = script.as_str();
         let wait = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(WAIT).clamp(1, LONGEST_WAIT);
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as u64;
         let limits = Limits {
@@ -421,6 +434,32 @@ impl Room<'_> {
         // Before anything is written: a stamp is what a tainted run's notes carry.
         self.coming_out(call.taint);
         keep_in_vault(call, args, out)
+    }
+}
+
+/// An environment, made by Rust in a room that reaches only the registry. What
+/// comes back is the list of what is in it; if it failed, the installer's last
+/// lines, which are the registry's words and taint the run.
+async fn make_env<R: tauri::Runtime>(rooms: &Arc<Rooms>, call: &Call<'_, R>, args: &Value) -> String {
+    let packages = match crate::syn::packages::parse(args) {
+        Ok(packages) => packages,
+        Err(said) => return error(said),
+    };
+    let stamp = chrono::Utc::now().timestamp_millis();
+    let name = format!("env-{}", &hex::encode(Sha256::digest(format!("{}{stamp}", call.scope)))[..12]);
+    match super::env::make(rooms, rooms.root(), &name, &packages).await {
+        Ok(made) => json!({
+            "env": made.id,
+            "python": made.python,
+            "packages": made.packages,
+            "note": "Use it with machine_run's `env`. Nothing can be added to it from a room; another list is another environment.",
+        })
+        .to_string(),
+        Err(super::env::Failed::Step { step, said }) => {
+            call.taint.set();
+            json!({ "error": format!("Making the environment failed while {step}."), "said": sanitize::shown(&said) }).to_string()
+        }
+        Err(other) => error(format!("The environment could not be made: {other}")),
     }
 }
 

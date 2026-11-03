@@ -99,6 +99,12 @@ pub enum Capability {
     /// `Never` turns it off again, so it is asked about like the browser and not
     /// let through like the vault.
     Cell,
+    /// Installs packages from their registry into an environment the rooms on
+    /// this machine use, in a room whose one way out is that registry. Asked
+    /// every time, with the list on the card, and never remembered: one list
+    /// is not another, and a package runs inside every room that uses it later.
+    /// A `Never` turns it off. See `syn::machine::env`.
+    Packages,
     /// Learns where files are on this machine, by name, outside the vault.
     /// Nothing is opened. Asked once and remembered, like the browser: until now
     /// everything Syn could look at was in the vault, and this is the first thing
@@ -197,6 +203,7 @@ impl Capability {
             Capability::Browse => Some("browse".to_string()),
             Capability::Cell => Some("cell".to_string()),
             Capability::MachineFiles => Some("machine_files".to_string()),
+            Capability::Packages => Some("packages".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -229,6 +236,7 @@ impl Capability {
             Capability::Execute => "run code on this computer".to_string(),
             Capability::Cell => "run commands in a sealed room on this computer".to_string(),
             Capability::MachineFiles => "find files on this computer by name".to_string(),
+            Capability::Packages => "install packages from PyPI for the rooms on this computer".to_string(),
             Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
                 if tool.is_empty() {

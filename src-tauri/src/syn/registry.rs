@@ -107,6 +107,11 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
             how: format!("a secret sent cannot be taken back; change “{item}” where it is used, then in Safe"),
         },
         Capability::Execute => Reversal::Irreversible,
+        // A new folder of its own: nothing that was there is touched, and no room
+        // uses it until a command asks for it by name.
+        Capability::Packages => Reversal::Automatic {
+            how: "a new environment beside the others; nothing that was there changed, and a room uses it only when a command names it".into(),
+        },
     }
 }
 
