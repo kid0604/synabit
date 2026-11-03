@@ -1050,7 +1050,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: ROOM_RUN.to_string(),
-                description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed. Anything left running when the command ends is stopped.".to_string(),
+                description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed from inside the room: for Python packages (python-docx, openpyxl, reportlab, pandas…) ask machine_env for an environment, then pass its id as `env`. Anything left running when the command ends is stopped.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -1840,7 +1840,15 @@ fn phase_f_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "write_spreadsheet".to_string(),
-                description: "Make a NEW .xlsx file; an existing name is refused, never overwritten. Numbers stay numbers and the first row is the bold header.".to_string(),
+                // What it cannot do, said where a model reads it: measured
+                // 2026-11-03, asked for a workbook with a chart, a model wrote
+                // one here every time and then said the chart could not be done.
+                description: if cfg!(target_os = "macos") {
+                    "Make a NEW .xlsx file of plain rows; an existing name is refused, never overwritten. Numbers stay numbers and the first row is the bold header. No charts, formulas or styling: for those, make the workbook in the room with openpyxl (machine_env, then machine_run) and keep it with machine_keep."
+                } else {
+                    "Make a NEW .xlsx file; an existing name is refused, never overwritten. Numbers stay numbers and the first row is the bold header."
+                }
+                .to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["path", "sheets"],

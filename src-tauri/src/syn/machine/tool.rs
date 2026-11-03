@@ -155,7 +155,15 @@ fn hints(ran: &super::cell::Ran, over: Option<Over>) -> Vec<Value> {
     if said.contains("command not found") || (said.contains("no such file or directory") && ran.code == Some(127)) {
         found.push(json!({
             "what": "program",
-            "try": "That program is not installed on this Mac, and nothing can be installed from the room. Use what is there (sh, python3, perl, sqlite3, and whatever Homebrew has), or say what is missing.",
+            "try": "That program is not installed on this Mac, and nothing can be installed from inside the room. Use what is there (sh, python3, perl, sqlite3, and whatever Homebrew has); for a Python package, see machine_env.",
+        }));
+    }
+    // A Python package that is not there is the one thing that can be added:
+    // measured 2026-11-03, a model that was not told so wrote a PDF by hand.
+    if said.contains("modulenotfounderror") || said.contains("no module named") {
+        found.push(json!({
+            "what": "package",
+            "try": "That Python package is not installed. Ask for it with machine_env (the user approves the list), then run the command again with `env` set to the id it returns.",
         }));
     }
     match over {
@@ -712,6 +720,19 @@ mod tests {
         let found = hints(&ran, None);
         assert_eq!(found[0]["what"], "network");
         assert!(found[0]["try"].as_str().unwrap().contains("Do not retry"));
+    }
+
+    #[test]
+    fn a_missing_package_points_at_the_one_way_to_add_it() {
+        let ran = super::super::cell::Ran {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "Traceback (most recent call last):\n  File \"<stdin>\", line 1\nModuleNotFoundError: No module named 'reportlab'".into(),
+            timed_out: false,
+        };
+        let found = hints(&ran, None);
+        assert_eq!(found[0]["what"], "package");
+        assert!(found[0]["try"].as_str().unwrap().contains("machine_env"));
     }
 
     #[test]
