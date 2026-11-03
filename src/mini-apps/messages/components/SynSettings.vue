@@ -9,6 +9,7 @@ import { SETTINGS_SAVED } from '../../../shared/syn/useSynEnabled';
 import { useSynSettings } from '../composables/useSynSettings';
 import SynTelegramSettings from './SynTelegramSettings.vue';
 import SynConnections from './SynConnections.vue';
+import SynMachine from './SynMachine.vue';
 import SettingsSection from './SettingsSection.vue';
 import LockScreen from '../../../shared/components/LockScreen.vue';
 import { useAppLockStore, pinErrorKey } from '../../../stores/useAppLockStore';
@@ -20,7 +21,7 @@ import VisualSpikePanel from './VisualSpikePanel.vue';
 import { usePlatform } from '../../../composables/usePlatform';
 
 const visualSpikeBuild = import.meta.env.DEV || import.meta.env.VITE_SYNVISUAL_SPIKE === '1';
-const { isMobileOS } = usePlatform();
+const { isMobileOS, isMac } = usePlatform();
 
 /** Tuning — temperature, rounds, window, budgets — is for whoever asked to
  *  see Syn's workings; everybody else gets the defaults. See `synDeveloper`. */
@@ -660,6 +661,11 @@ watch(() => props.vaultPath, async () => {
 
       <SettingsSection id="connectors" :title="t('syn.connections_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
         <SynConnections :vault-path="vaultPath" />
+      </SettingsSection>
+
+      <!-- The room on this Mac. Only where there is one. -->
+      <SettingsSection v-if="isMac" id="machine" :title="t('syn.machine_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
+        <SynMachine />
       </SettingsSection>
 
       <!-- HOW WE WORK TOGETHER

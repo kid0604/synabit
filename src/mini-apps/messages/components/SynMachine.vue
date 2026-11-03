@@ -1,0 +1,142 @@
+<script setup lang="ts">
+/**
+ * The room on this Mac, as far as a person needs to see it: whether it holds,
+ * what is running in it, and the button that ends all of it.
+ *
+ * Whether Syn may use the room at all is a permission like the others, asked
+ * on a card the first time and listed with them; it is not repeated here.
+ * Stopping is here, and in the tray, because it must not depend on anything
+ * the model could be talked out of: it goes straight to `syn_machine_stop_all`.
+ */
+import { onMounted, onBeforeUnmount, ref, computed } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { useI18n } from 'vue-i18n';
+import { Loader2, ShieldCheck, ShieldAlert, Square } from 'lucide-vue-next';
+import { logger } from '../../../utils/logger';
+
+interface Status {
+  sealed: boolean | null;
+  broken: string | null;
+  running: number;
+}
+
+interface Report {
+  sealed: boolean;
+  broken: string | null;
+  lines: { verdict: 'held' | 'leaked' | 'no_control' | 'skipped' }[];
+}
+
+const { t } = useI18n();
+
+const status = ref<Status | null>(null);
+const checking = ref(false);
+const stopping = ref(false);
+const said = ref('');
+
+const load = async () => {
+  try {
+    status.value = await invoke<Status>('syn_machine_status');
+  } catch (e) {
+    logger.warn('[Syn] Could not read the room status', e);
+  }
+};
+
+const check = async () => {
+  checking.value = true;
+  said.value = '';
+  try {
+    const report = await invoke<Report>('syn_machine_check');
+    const count = (v: string) => report.lines.filter(l => l.verdict === v).length;
+    said.value = t('syn.machine_check_result', {
+      held: count('held'),
+      leaked: count('leaked'),
+      other: count('no_control'),
+    });
+  } catch (e) {
+    said.value = String(e);
+  } finally {
+    checking.value = false;
+    await load();
+  }
+};
+
+const stopAll = async () => {
+  stopping.value = true;
+  try {
+    const n = await invoke<number>('syn_machine_stop_all');
+    said.value = t('syn.machine_stopped', { n }, n);
+  } catch (e) {
+    said.value = String(e);
+  } finally {
+    stopping.value = false;
+    await load();
+  }
+};
+
+const state = computed(() => {
+  const s = status.value;
+  if (!s || s.sealed === null) return { tone: 'quiet', text: t('syn.machine_state_unknown') };
+  if (s.sealed) return { tone: 'good', text: t('syn.machine_state_sealed') };
+  return { tone: 'bad', text: t('syn.machine_state_broken', { why: s.broken ?? '' }) };
+});
+
+// What is running changes while the section is open; a few seconds is soon enough.
+let timer: ReturnType<typeof setInterval> | undefined;
+onMounted(() => {
+  void load();
+  timer = setInterval(load, 4000);
+});
+onBeforeUnmount(() => clearInterval(timer));
+</script>
+
+<template>
+  <div class="space-y-3">
+    <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.machine_intro') }}</p>
+
+    <div
+      class="flex items-start gap-2 p-3 rounded-xl border text-xs leading-relaxed"
+      :class="state.tone === 'bad'
+        ? 'border-amber-300 dark:border-amber-500/40 bg-amber-50/50 dark:bg-amber-500/5 text-amber-800 dark:text-amber-200'
+        : 'border-gray-200 dark:border-gray-700/50 text-gray-600 dark:text-gray-300'"
+    >
+      <ShieldAlert v-if="state.tone === 'bad'" class="w-4 h-4 mt-px shrink-0" aria-hidden="true" />
+      <ShieldCheck v-else class="w-4 h-4 mt-px shrink-0" :class="state.tone === 'good' ? 'text-accent dark:text-accent-dark' : 'opacity-60'" aria-hidden="true" />
+      <span class="min-w-0 break-words">{{ state.text }}</span>
+    </div>
+
+    <p v-if="status" class="text-xs text-gray-600 dark:text-gray-300">
+      {{ t('syn.machine_running', { n: status.running }, status.running) }}
+    </p>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        :disabled="checking"
+        @click="check"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+               bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-200
+               hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer
+               disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Loader2 v-if="checking" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+        <ShieldCheck v-else class="w-3.5 h-3.5" aria-hidden="true" />
+        <span>{{ checking ? t('syn.machine_checking') : t('syn.machine_check') }}</span>
+      </button>
+      <button
+        type="button"
+        :disabled="stopping"
+        @click="stopAll"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+               bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-300
+               hover:bg-red-100 dark:hover:bg-red-500/20 transition-colors cursor-pointer
+               disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Loader2 v-if="stopping" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+        <Square v-else class="w-3.5 h-3.5" aria-hidden="true" />
+        <span>{{ t('syn.machine_stop_all') }}</span>
+      </button>
+    </div>
+
+    <p v-if="said" class="text-xs text-gray-500 dark:text-gray-400" role="status">{{ said }}</p>
+  </div>
+</template>

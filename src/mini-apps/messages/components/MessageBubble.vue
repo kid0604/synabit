@@ -91,6 +91,25 @@ const formatArgs = (args: Record<string, unknown>) => {
   }
 };
 
+/** A command run in the room, as the person is shown it: folded to its first
+ *  line, whole when opened. It is the model's words, shown as text. */
+const commandOf = (args: Record<string, unknown> | undefined): string =>
+  typeof args?.command === 'string' ? args.command : '';
+const firstLine = (text: string): string => text.split('\n', 1)[0] ?? '';
+
+/** What the command printed, from the call's result: its stdout, or the error.
+ *  The preview may be cut short, and then it is shown as it is. */
+const outputOf = (preview: string | undefined): string => {
+  if (!preview) return '';
+  try {
+    const got = JSON.parse(preview) as { stdout?: unknown; stderr?: unknown; error?: unknown };
+    const said = [got.stdout, got.stderr, got.error].filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return said.join('\n');
+  } catch {
+    return preview;
+  }
+};
+
 const debouncedContent = ref(props.message.content);
 
 const updateContent = useDebounceFn((content: string) => {
@@ -836,6 +855,18 @@ const copyContent = async () => {
                   <span class="text-gray-500 dark:text-gray-400 font-mono truncate">{{ formatArgs(tc.tool_args) }}</span>
                   <span v-if="tc.result_preview" class="text-gray-500 dark:text-gray-400 truncate ml-auto">→ {{ tc.result_preview.slice(0, 80) }}</span>
                 </template>
+                <details v-else-if="tc.tool_name === 'machine_run' && commandOf(tc.tool_args)" class="min-w-0 flex-1">
+                  <summary class="cursor-pointer text-text dark:text-text-dark truncate">
+                    {{ toolLabel(t, tc.tool_name) }}
+                    <code class="ml-1.5 font-mono text-gray-500 dark:text-gray-400">{{ firstLine(commandOf(tc.tool_args)) }}</code>
+                  </summary>
+                  <p class="mt-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ $t('syn.machine_command') }}</p>
+                  <pre class="mt-0.5 whitespace-pre-wrap break-all font-mono text-[11px] text-gray-700 dark:text-gray-300">{{ commandOf(tc.tool_args) }}</pre>
+                  <template v-if="outputOf(tc.result_preview)">
+                    <p class="mt-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ $t('syn.machine_output') }}</p>
+                    <pre class="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-gray-700 dark:text-gray-300">{{ outputOf(tc.result_preview) }}</pre>
+                  </template>
+                </details>
                 <span v-else class="text-text dark:text-text-dark">{{ toolLabel(t, tc.tool_name) }}</span>
               </div>
             </div>
