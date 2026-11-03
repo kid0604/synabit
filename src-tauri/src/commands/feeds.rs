@@ -10,7 +10,7 @@ use futures::StreamExt;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use crate::db::DbState;
+use crate::db::{DbState, Hold};
 use crate::feed_engine::{
     cleanup, discovery, fetcher, highlights, image_cache, opml as feed_opml, parser, readability,
     scrape, state_sync,
@@ -400,7 +400,7 @@ pub fn feed_get_sources(
     let path = feeds_dir.join("sources.json");
     let mut stored: Vec<StoredFeedSource> = read_json_file(&path)?;
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     // A vault written by an earlier version still carries fetch state in the
@@ -582,7 +582,7 @@ pub fn feed_remove_source(
     write_json_file(&path, &sources)?;
 
     // Delete cached articles from DB
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     db.conn()
         .execute(
             "DELETE FROM feed_articles WHERE feed_source_id = ?1",
@@ -686,7 +686,7 @@ pub fn feed_get_articles(
     db: tauri::State<'_, DbState>,
     filter: ArticleFilter,
 ) -> Result<Vec<CachedArticle>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     // Older scraped rows carry words, not dates; see `repair_published_dates`.
     if let Err(e) = crate::feed_engine::cleanup::repair_published_dates(db.conn()) {
         log::warn!("Could not repair feed publish dates: {}", e);
@@ -819,7 +819,7 @@ pub fn feed_search_articles(
         return Ok(Vec::new());
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -907,7 +907,7 @@ pub fn feed_get_view_counts(
     db: tauri::State<'_, DbState>,
     today_start: Option<String>,
 ) -> Result<ViewCounts, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     view_counts_in(db.conn(), today_start.as_ref())
 }
 
@@ -949,7 +949,7 @@ pub fn feed_get_article(
     db: tauri::State<'_, DbState>,
     article_id: String,
 ) -> Result<CachedArticle, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     db.conn()
         .query_row(
             &format!("SELECT {} FROM feed_articles WHERE id = ?1", ARTICLE_COLUMNS),
@@ -963,7 +963,7 @@ pub fn feed_get_article(
 pub fn feed_get_unread_counts(
     db: tauri::State<'_, DbState>,
 ) -> Result<HashMap<String, usize>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let mut stmt = conn
@@ -990,7 +990,7 @@ pub fn feed_get_unread_counts(
 
 #[tauri::command]
 pub fn feed_get_total_unread(db: tauri::State<'_, DbState>) -> Result<usize, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let count: i64 = conn
@@ -1010,7 +1010,7 @@ pub fn feed_mark_read(
     article_id: String,
     read: bool,
 ) -> Result<(), String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     db.conn()
         .execute(
             "UPDATE feed_articles SET is_read = ?1, state_updated_at = ?3 WHERE id = ?2",
@@ -1032,7 +1032,7 @@ pub fn feed_mark_all_read(
     db: tauri::State<'_, DbState>,
     source_ids: Option<Vec<String>>,
 ) -> Result<Vec<String>, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     mark_all_read_in(db.conn(), source_ids.as_deref())
 }
 
@@ -1102,7 +1102,7 @@ pub fn feed_mark_read_bulk(
         return Ok(());
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     // Marking a busy account read can touch thousands of rows, and SQLite has
@@ -1129,7 +1129,7 @@ pub fn feed_mark_read_bulk(
 
 #[tauri::command]
 pub fn feed_toggle_star(db: tauri::State<'_, DbState>, article_id: String) -> Result<bool, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let current: i64 = conn
@@ -1155,7 +1155,7 @@ pub fn feed_toggle_read_later(
     db: tauri::State<'_, DbState>,
     article_id: String,
 ) -> Result<bool, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let current: i64 = conn
@@ -1264,7 +1264,7 @@ pub(crate) async fn refresh_sources(
     // person asked" would have exempted the only caller the backoff exists
     // for.
     let (backing_off, states) = {
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         let conn = db.conn();
         let backing_off = if manual {
             std::collections::HashSet::new()
@@ -1356,7 +1356,7 @@ pub(crate) async fn refresh_sources(
         errors: Vec::new(),
     };
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     for (target, outcome) in fetched {
@@ -1787,7 +1787,7 @@ pub async fn feed_fetch_article_content(
 
     // 1. Get article from DB
     let (url, current_content) = {
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         let conn = db.conn();
         conn.query_row(
             "SELECT url, content FROM feed_articles WHERE id = ?1",
@@ -1799,7 +1799,7 @@ pub async fn feed_fetch_article_content(
 
     // 2. If already has content, just return the article
     if !current_content.is_empty() && !force {
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         let conn = db.conn();
         let article = conn
             .query_row(
@@ -1824,7 +1824,7 @@ pub async fn feed_fetch_article_content(
     //    and there is no copy to restore it from.
     let worth_keeping = extracted.content.len() > current_content.len();
     if worth_keeping {
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         let conn = db.conn();
         conn.execute(
             "UPDATE feed_articles SET content = ?1, author = CASE WHEN author = '' THEN ?2 ELSE author END,
@@ -1844,7 +1844,7 @@ pub async fn feed_fetch_article_content(
         .map_err(|e| format!("Update error: {}", e))?;
     } else {
         // Mark the attempt so the reader does not try again on every open.
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         db.conn()
             .execute(
                 "UPDATE feed_articles SET content_type = 'full-text' WHERE id = ?1",
@@ -1854,7 +1854,7 @@ pub async fn feed_fetch_article_content(
     }
 
     // 6. Return updated article
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
     conn.query_row(
         &format!("SELECT {} FROM feed_articles WHERE id = ?1", ARTICLE_COLUMNS),
@@ -1924,7 +1924,7 @@ fn identity_for_highlights(
     vault_path: &str,
     article_id: &str,
 ) -> Result<(String, String), String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
     if let Err(e) = highlights::adopt_from_cache(conn, vault_path) {
         log::warn!("feed highlights: could not move the cache's into the vault: {e}");
@@ -2126,7 +2126,7 @@ pub fn feed_apply_rules(
         return Ok(0);
     }
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let conn = db.conn();
 
     let existing: Vec<(String, String, String, String, String, String)> = {
@@ -2346,7 +2346,7 @@ pub fn feed_state_sync(
     vault_path: String,
     force: Option<bool>,
 ) -> Result<usize, String> {
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     let device_id = ensure_feed_device_id(&db)?;
     let conn = db.conn();
 
@@ -2406,7 +2406,7 @@ pub fn feed_run_cleanup(
     // somebody else's page, and cleanup deleting the first because it deleted
     // the second would be the app throwing away the only part that was theirs.
 
-    let db = db.lock().map_err(|e| e.to_string())?;
+    let db = db.hold();
     cleanup::run_cleanup(db.conn(), max_age_days, max_per_feed)
 }
 

@@ -32,6 +32,8 @@
 //!   wrote, or one already approved, keeps its name.
 
 use serde::Serialize;
+
+use crate::db::Hold;
 use serde_json::Value;
 
 use crate::syn::skill::{self, Skill, Tier};
@@ -137,7 +139,7 @@ pub fn write<R: tauri::Runtime>(
     read_before: &[String],
 ) -> Result<String, String> {
     let existing = {
-        let db = ctx.db.lock().map_err(|e| e.to_string())?;
+        let db = ctx.db.hold();
         skill::find(&skill::all(&db).map_err(|e| e.to_string())?, &draft.name).cloned()
     };
     if let Some(s) = &existing {
@@ -184,7 +186,7 @@ pub fn write<R: tauri::Runtime>(
     }
     // The id as the index has it, found again by name: the one thing the
     // card, the answer and the run are all going to look it up by.
-    let db = ctx.db.lock().map_err(|e| e.to_string())?;
+    let db = ctx.db.hold();
     skill::find(&skill::all(&db).map_err(|e| e.to_string())?, &draft.name)
         .map(|s| s.id.clone())
         .or_else(|| v.get("id").and_then(Value::as_str).map(str::to_string))
@@ -448,7 +450,7 @@ pub fn answer<R: tauri::Runtime>(
     }
     // Kept on this device, by the person, on the card: allowed here as it is.
     if keep {
-        let db = db.lock().map_err(|e| e.to_string())?;
+        let db = db.hold();
         if let Some(s) = crate::syn::skill::all(&db).map_err(|e| e.to_string())?.into_iter().find(|s| s.id == skill_id) {
             crate::syn::skill::approve_here(vault_path, &s).map_err(|e| e.to_string())?;
         }

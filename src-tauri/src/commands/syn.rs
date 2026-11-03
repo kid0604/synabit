@@ -1,3 +1,4 @@
+use crate::db::Hold;
 use crate::error::AppError;
 use tauri::Emitter;
 use crate::models::syn::{
@@ -901,8 +902,7 @@ fn gather<R: tauri::Runtime>(
     // Retrieval, memory and the skill index in one lock: they are all reads,
     // and the lock has to be gone before anything async.
     let db = state
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        .hold();
 
     // What the timeline holds for the time asked about.
     let timeline_block = asked_about.as_ref().zip(events.as_ref()).map(|(asked, items)| {
@@ -2113,8 +2113,7 @@ pub async fn syn_recipe_problems(
 ) -> Result<std::collections::HashMap<String, Vec<String>>, AppError> {
     let skills = {
         let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            .hold();
         crate::syn::skill::all(&db)?
     };
 
@@ -2166,8 +2165,7 @@ pub async fn syn_create_skill(
 
     {
         let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            .hold();
         if crate::syn::skill::find(&crate::syn::skill::all(&db)?, name).is_some() {
             return Err(AppError::General(format!(
                 "There is already a skill called `{name}`"
@@ -2254,8 +2252,7 @@ pub async fn syn_skill_trial(
 
     let (skill, remembered, index_without) = {
         let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            .hold();
         let skills = crate::syn::skill::all(&db)?;
         let skill = skills
             .iter()
@@ -2762,7 +2759,7 @@ pub(crate) fn answer_changes<R: tauri::Runtime>(
 pub async fn syn_waiting_skill_proposals(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::syn::drafting::Proposal>, AppError> {
-    let db = state.lock().map_err(|e| AppError::General(format!("DB lock error: {e}")))?;
+    let db = state.hold();
     Ok(crate::syn::drafting::waiting(&db))
 }
 
@@ -3153,8 +3150,7 @@ pub async fn syn_list_skills(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::syn::skill::Skill>, AppError> {
     let db = state
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        .hold();
     crate::syn::skill::all_here(&db, &vault_path)
 }
 
@@ -3168,8 +3164,7 @@ pub async fn syn_skill_approve_here(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<(), AppError> {
     let db = state
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        .hold();
     let skill = crate::syn::skill::all(&db)?
         .into_iter()
         .find(|s| s.id == skill_id)
@@ -3196,8 +3191,7 @@ pub async fn syn_list_memories(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::syn::memory::Memory>, AppError> {
     let db = state
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        .hold();
     crate::syn::memory::all(&db)
 }
 
@@ -3226,8 +3220,7 @@ pub async fn syn_memory_budget(
 ) -> Result<MemoryBudget, AppError> {
     let memories = {
         let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            .hold();
         crate::syn::memory::all(&db)?
     };
     let total = memories.len();
@@ -3382,8 +3375,7 @@ pub async fn syn_preview_prompt(
     // visible.
     let (remembered, skill_index) = {
         let db = state
-            .lock()
-            .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+            .hold();
         (
             crate::syn::memory::all(&db)
                 .map(|m| {
@@ -3408,8 +3400,7 @@ pub async fn syn_preview_prompt(
                 graph_expansion_depth: settings.graph_expansion_depth,
             };
             let db = state
-                .lock()
-                .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+                .hold();
             let retrieved = rag::retrieve_context(&db, message, &[], &config)?;
             rag::format_context(&retrieved)
         }
@@ -3450,8 +3441,7 @@ pub async fn syn_list_threads(
     state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<crate::syn::thread::Thread>, AppError> {
     let db = state
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error: {}", e)))?;
+        .hold();
     crate::syn::thread::all(&db)
 }
 

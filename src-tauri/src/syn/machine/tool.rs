@@ -35,6 +35,7 @@ use super::inside;
 use super::rooms::{Rooms, Unavailable};
 use super::sanitize;
 use super::watch::{Over, Watched};
+use crate::db::Hold;
 use crate::syn::taint::{Origin, Taint};
 use crate::syn::tools::{execute_tool, ToolContext, ROOM_EDIT, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
 
@@ -468,7 +469,7 @@ fn fetch<R: tauri::Runtime>(call: &Call<'_, R>, args: &Value) -> Result<(String,
     let kind = node.get("type").and_then(Value::as_str).unwrap_or_default();
     let title = node.get("title").and_then(Value::as_str).unwrap_or("item");
 
-    let db = call.ctx.db.lock().map_err(|e| error(e.to_string()))?;
+    let db = call.ctx.db.hold();
     let located = db.file_locations_for_node(node_id).unwrap_or_default();
     drop(db);
     if let Some(location) = located.first().filter(|_| kind == "file") {
@@ -533,7 +534,7 @@ fn csv_cell(value: &Value) -> String {
 
 /// A table this conversation brought back, as CSV with a header row.
 fn fetch_table<R: tauri::Runtime>(call: &Call<'_, R>, handle: &str) -> Result<(String, Vec<u8>), String> {
-    let db = call.ctx.db.lock().map_err(|e| error(e.to_string()))?;
+    let db = call.ctx.db.hold();
     let set = crate::syn::resultset::load(db.conn(), call.scope, handle, chrono::Utc::now().timestamp())
         .map_err(|e| error(e.to_string()))?
         .ok_or_else(|| error(format!("There is no table {handle} in this conversation, or it has expired.")))?;

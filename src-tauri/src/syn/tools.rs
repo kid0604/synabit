@@ -22,7 +22,7 @@
 
 use serde_json::Value;
 
-use crate::db::DbBridge;
+use crate::db::{DbBridge, Hold};
 use crate::error::{AppError, AppResult};
 use crate::models::syn::{FunctionDefinition, ToolDefinition};
 use tauri::{Emitter, Manager};
@@ -300,9 +300,7 @@ pub fn locked_refusal<R: tauri::Runtime>(ctx: &ToolContext<'_, R>, name: &str, a
 fn lock<'a, R: tauri::Runtime>(
     ctx: &ToolContext<'a, R>,
 ) -> AppResult<std::sync::MutexGuard<'a, crate::db::DbBridge>> {
-    ctx.db
-        .lock()
-        .map_err(|e| AppError::General(format!("DB lock error during tool call: {e}")))
+    Ok(ctx.db.hold())
 }
 
 // ═══════════════════════════════════════════════════════════════
