@@ -84,7 +84,7 @@ pub fn read(frozen: &Frozen, relative: &Path, max: u64) -> Result<Out, Refused> 
 /// Marks a file as having come from outside, so Gatekeeper stops it when somebody
 /// opens it. This is what actually stops a room's `.app` or `.command`: without
 /// it they run at a double click. Same value as was measured against Gatekeeper.
-fn quarantine(file: BorrowedFd) -> io::Result<()> {
+pub(super) fn quarantine(file: BorrowedFd) -> io::Result<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|t| t.as_secs())

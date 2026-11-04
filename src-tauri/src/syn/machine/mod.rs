@@ -26,14 +26,19 @@
 //! the profile does not compile there and [`selftest`] reports the room broken.
 //! The app itself still runs on 13.3.
 
+pub mod apply;
 pub mod cell;
 pub mod doors;
 pub mod env;
 pub mod export;
+pub mod fd;
 pub mod find;
 pub mod inside;
 pub mod profile;
 pub mod proxy;
+pub mod rehearse;
+#[cfg(test)]
+mod rehearse_tests;
 pub mod rooms;
 pub mod sanitize;
 pub mod selftest;

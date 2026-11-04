@@ -8464,6 +8464,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
+ "unicode-normalization",
  "url",
  "urlencoding",
  "uuid",
