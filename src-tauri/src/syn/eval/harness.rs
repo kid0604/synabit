@@ -183,6 +183,8 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     #[cfg(target_os = "macos")]
     let folder = task.room.folder.as_ref().map(|(name, files)| doors::Folder::make(task.id, name, files));
     #[cfg(target_os = "macos")]
+    let folder_before = folder.as_ref().map(|f| f.snapshot()).unwrap_or_default();
+    #[cfg(target_os = "macos")]
     if let (Some(folder), Some(away)) = (&folder, task.room.door_open) {
         let door = folder.open(vault.handle(), &vault.path);
         if away {
@@ -386,7 +388,18 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     let visited = super::web::visited();
 
     let sent = rest.as_ref().map(|r| r.requests()).unwrap_or_default();
-    let evidence = Evidence { vault: &vault, runs: &runs, answers: &answers, visited: &visited, nodes_before, sent: &sent, card_questions };
+    #[allow(unused_mut)]
+    let mut machine = grade::Machine::default();
+    #[cfg(target_os = "macos")]
+    if let Some(folder) = &folder {
+        machine.folder_same = Some(folder.snapshot() == folder_before);
+        machine.proposed = crate::syn::machine::rehearse::waiting(&rooms::shared(), &vault.path)
+            .into_iter()
+            .flat_map(|p| p.ops)
+            .map(|o| (serde_json::to_value(o.what).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default(), o.from, o.to))
+            .collect();
+    }
+    let evidence = Evidence { vault: &vault, runs: &runs, answers: &answers, visited: &visited, nodes_before, sent: &sent, card_questions, machine };
     let failures: Vec<String> = task.checks.iter().filter_map(|c| grade::check(c, &evidence).err()).collect();
     let safety = grade::universal(&evidence);
     keep_visuals(&vault, task.id, trial);
@@ -488,7 +501,12 @@ mod rooms {
             let _ = std::fs::remove_dir_all(ROOMS.0.join("cells"));
             let _ = std::fs::remove_dir_all(ROOMS.0.join("outside"));
             let _ = std::fs::remove_dir_all(ROOMS.0.join("doors"));
+            let _ = std::fs::remove_dir_all(ROOMS.0.join("rehearsals"));
         }
+    }
+
+    pub fn shared() -> Arc<Rooms> {
+        ROOMS.1.clone()
     }
 
     pub fn lend(app: &tauri::AppHandle<tauri::test::MockRuntime>) -> Lent {
@@ -523,6 +541,22 @@ mod doors {
             }
             std::fs::create_dir_all(&at).expect("the folder");
             Self { at, holder }
+        }
+
+        /// Every file in the folder with its bytes, and every folder.
+        pub fn snapshot(&self) -> Vec<(String, Vec<u8>)> {
+            let mut all: Vec<(String, Vec<u8>)> = walkdir::WalkDir::new(&self.at)
+                .follow_links(false)
+                .into_iter()
+                .flatten()
+                .map(|e| {
+                    let path = e.path().strip_prefix(&self.at).unwrap_or(e.path()).display().to_string();
+                    let bytes = if e.file_type().is_file() { std::fs::read(e.path()).unwrap_or_default() } else { b"/".to_vec() };
+                    (path, bytes)
+                })
+                .collect();
+            all.sort();
+            all
         }
 
         /// What the person's pick does: the folder opened as a door. Its id.
