@@ -15,6 +15,7 @@
 //! | `routines` | routines approved to run here | `syn::routine` |
 //! | `skills` | skills allowed into the prompt here, as they were | `syn::skill` |
 //! | `provider` | which AI provider, at which address, this device sends to | `syn::settings` |
+//! | `doors` | folders on this Mac opened to the rooms | `syn::machine::doors` |
 //!
 //! They were five files with five readers and five writers. One file is one
 //! place to see what this device has agreed to, one place to forget it, and one
@@ -56,6 +57,7 @@ pub enum Section {
     Routines,
     Skills,
     Provider,
+    Doors,
 }
 
 impl Section {
@@ -68,6 +70,7 @@ impl Section {
             Section::Routines => "routines",
             Section::Skills => "skills",
             Section::Provider => "provider",
+            Section::Doors => "doors",
         }
     }
 
@@ -79,7 +82,7 @@ impl Section {
             Section::ReadOnly => &["connectors-read-only.json", "mcp-read-only.json"],
             Section::Instances => &["connector-instances.json"],
             Section::Routines => &["routines-approved.json"],
-            Section::Skills | Section::Provider => &[],
+            Section::Skills | Section::Provider | Section::Doors => &[],
         }
     }
 }

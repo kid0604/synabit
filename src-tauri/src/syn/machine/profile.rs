@@ -62,6 +62,9 @@ pub struct Profile {
     pub homebrew: PathBuf,
     pub reach: Reach,
     pub sight: Sight,
+    /// Folders the person opened (`super::doors`), read-only. Only a room that
+    /// sees the machine gets them; a room with a network never does.
+    pub doors: Vec<PathBuf>,
     /// Replaces the rules, so a test can prove a broken profile is noticed.
     #[cfg(test)]
     pub rules: Option<String>,
@@ -75,6 +78,7 @@ impl Profile {
             homebrew: homebrew(),
             reach,
             sight: Sight::Machine,
+            doors: Vec::new(),
             #[cfg(test)]
             rules: None,
         }
@@ -102,7 +106,30 @@ impl Profile {
         for (i, folder) in above.iter().enumerate() {
             define(&format!("UP{i}"), folder.as_os_str());
         }
+        let (doors, door_steps) = self.doors();
+        for (i, door) in doors.iter().enumerate() {
+            define(&format!("DOOR{i}"), door.as_os_str());
+        }
+        for (i, step) in door_steps.iter().enumerate() {
+            define(&format!("DUP{i}"), step.as_os_str());
+        }
         args
+    }
+
+    /// The doors this room reads, and every folder above them, once each, for a
+    /// program to stat on its way down.
+    fn doors(&self) -> (Vec<&Path>, Vec<&Path>) {
+        if self.sight != Sight::Machine {
+            return (Vec::new(), Vec::new());
+        }
+        let doors: Vec<&Path> = self.doors.iter().map(PathBuf::as_path).filter(|d| usable(d)).collect();
+        let mut steps: Vec<&Path> = Vec::new();
+        for step in doors.iter().flat_map(|d| d.ancestors().skip(1)) {
+            if !steps.contains(&step) {
+                steps.push(step);
+            }
+        }
+        (doors, steps)
     }
 
     fn text(&self, folders_above: usize) -> String {
@@ -127,6 +154,25 @@ impl Profile {
         text.push_str(")\n");
         if matches!(self.reach, Reach::Proxy(_)) {
             text.push_str(NET);
+        }
+        let (doors, steps) = self.doors();
+        if !doors.is_empty() {
+            let each = |name: &str, count: usize, rule: &str| -> String {
+                (0..count).map(|i| format!("  ({rule} (param \"{name}{i}\"))\n")).collect()
+            };
+            text.push_str("(allow file-read* file-test-existence\n");
+            text.push_str(&each("DOOR", doors.len(), "subpath"));
+            text.push_str(")\n(allow file-read-metadata file-test-existence\n");
+            text.push_str(&each("DUP", steps.len(), "literal"));
+            // Last, so it wins over the door it narrows. Never a boundary: a key
+            // can be in any file (design §8).
+            text.push_str(")\n(deny file-read* file-test-existence\n  (require-all\n    (require-any\n");
+            text.push_str(&each("DOOR", doors.len(), "subpath").replace("  (", "      ("));
+            text.push_str("    )\n    (require-any\n");
+            for regex in super::doors::backstop_regexes() {
+                text.push_str(&format!("      (regex #\"{regex}\")\n"));
+            }
+            text.push_str("    )))\n");
         }
         text
     }

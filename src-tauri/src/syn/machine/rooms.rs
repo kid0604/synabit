@@ -313,6 +313,38 @@ impl Rooms {
         self.mark_of(name).is_some_and(|mark| mark.exists())
     }
 
+    /// Which doors a room reads: the ids, one a line, kept outside every room
+    /// like its mark, so no command can add one.
+    fn doors_file(&self, name: &str) -> Option<PathBuf> {
+        usable_name(name).then(|| self.root.join("doors").join(name))
+    }
+
+    /// The room reads this door from now on. What is in a door is anybody's
+    /// words, so the room is marked as well (design §6.1).
+    pub fn attach_door(&self, name: &str, id: &str) -> io::Result<()> {
+        if !(id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit())) {
+            return Err(io::Error::other("not a door's id"));
+        }
+        let file = self.doors_file(name).ok_or_else(|| io::Error::other("not a name for a room"))?;
+        self.mark_outside(name)?;
+        let mut ids = self.doors_of(name);
+        if !ids.iter().any(|known| known == id) {
+            ids.push(id.to_string());
+        }
+        if let Some(folder) = file.parent() {
+            std::fs::create_dir_all(folder)?;
+        }
+        std::fs::write(file, ids.join("\n"))
+    }
+
+    /// The doors a room has been given, whether or not they are still open.
+    pub fn doors_of(&self, name: &str) -> Vec<String> {
+        self.doors_file(name)
+            .and_then(|file| std::fs::read_to_string(file).ok())
+            .map(|text| text.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
     /// Every room with a folder, this launch's or not. A room can put a link
     /// where its folder was, and [`Cell::make`] puts the folder back.
     fn every_cell(&self) -> io::Result<Vec<Cell>> {
@@ -647,6 +679,74 @@ mod tests {
         assert!(said.1.stdout.starts_with("HTTP/1.1 403"), "the port answered: {:?}", said.1);
         let audit = std::fs::read_to_string(proxy::audit_file(&rooms.root)).unwrap();
         assert!(audit.contains("pypi.org") && audit.contains("not a host this room may reach"), "{audit}");
+    }
+
+    /// A door under the kernel (design §8, A9): the room reads the folder and
+    /// cannot change it; the backstop hides key-shaped names whatever their case;
+    /// a link in the folder to the vault or to a key leads nowhere; a room not
+    /// given the door, and a room with a network given it anyway, see none of it.
+    #[tokio::test]
+    async fn a_room_reads_its_door_and_nothing_past_it() {
+        let (dir, rooms) = rooms();
+        let root = dir.path().canonicalize().unwrap();
+        let door = root.join("Taxes");
+        let vault = root.join("Vault");
+        std::fs::create_dir_all(door.join(".ssh")).unwrap();
+        std::fs::create_dir_all(door.join("2025")).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::write(door.join("2025/income.txt"), "income 100").unwrap();
+        std::fs::write(door.join(".ssh/id_ed25519"), "KEY").unwrap();
+        std::fs::write(door.join(".env.local"), "TOKEN").unwrap();
+        std::fs::write(door.join("server.PEM"), "PEM").unwrap();
+        std::fs::write(vault.join("note.md"), "VAULT").unwrap();
+        std::os::unix::fs::symlink(vault.join("note.md"), door.join("note-link.md")).unwrap();
+        std::os::unix::fs::symlink(door.join(".ssh/id_ed25519"), door.join("2025/key-link")).unwrap();
+
+        let a = rooms.cell_at("a").unwrap().with_doors(vec![door.clone()]);
+        let at = |rel: &str| door.join(rel).display().to_string();
+        let cat = |rel: &str| format!("cat '{}'", at(rel));
+        let read = rooms.run(&a, &cat("2025/income.txt"), Limits::default()).await.unwrap();
+        assert_eq!(read.ran.stdout, "income 100", "the control: {read:?}");
+        let copied = rooms.run(&a, &format!("cp -R '{}' copy; cat copy/2025/income.txt", door.display()), Limits::default()).await.unwrap();
+        assert!(copied.ran.stdout.contains("income 100"), "a copy into the room: {copied:?}");
+        assert!(!a.work().join("copy/.env.local").exists() && !a.work().join("copy/.ssh").exists());
+
+        for hidden in [".ssh/id_ed25519", ".SSH/ID_ED25519", ".env.local", ".ENV.local", "server.PEM", "note-link.md", "2025/key-link"] {
+            let ran = rooms.run(&a, &cat(hidden), Limits::default()).await.unwrap();
+            assert!(!ran.ran.ok() && ran.ran.stdout.is_empty(), "{hidden}: {ran:?}");
+        }
+        let wrote = rooms.run(&a, &format!("echo x > '{}'; rm -f '{}'", at("new.txt"), at("2025/income.txt")), Limits::default()).await.unwrap();
+        assert!(!door.join("new.txt").exists() && door.join("2025/income.txt").exists(), "{wrote:?}");
+
+        let b = rooms.cell_at("b").unwrap();
+        assert!(!rooms.run(&b, &cat("2025/income.txt"), Limits::default()).await.unwrap().ran.ok(), "a room without the door");
+
+        let door_for_net = door.clone();
+        let networked = rooms
+            .with_network("n4", Allow::Hosts(vec![]), |cell| async move {
+                let cell = cell.with_doors(vec![door_for_net.clone()]);
+                let (cat, mut args) = exec("/bin/cat", &[]);
+                args.push(door_for_net.join("2025/income.txt").into());
+                cell.exec(&cat, &args, &[], Limits::default()).await.unwrap()
+            })
+            .await
+            .unwrap();
+        assert!(!networked.ok(), "a room with a network read a door: {networked:?}");
+    }
+
+    #[tokio::test]
+    async fn a_door_given_to_a_room_marks_it_and_stays_given() {
+        let (dir, rooms) = rooms();
+        let root = dir.path().join("Application Support/machine");
+        assert!(rooms.doors_of("a").is_empty());
+        rooms.attach_door("a", "0123456789abcdef").unwrap();
+        rooms.attach_door("a", "0123456789abcdef").unwrap();
+        assert!(rooms.attach_door("a", "../../x").is_err());
+        assert!(rooms.attach_door("../a", "0123456789abcdef").is_err());
+        let next_launch = Rooms::at(&root).unwrap();
+        assert_eq!(next_launch.doors_of("a"), ["0123456789abcdef"]);
+        assert!(next_launch.carries_outside("a"), "a door is somebody else's words");
+        assert!(next_launch.doors_of("b").is_empty());
     }
 
     /// Nothing has ever needed a room: finding that out costs no attack.

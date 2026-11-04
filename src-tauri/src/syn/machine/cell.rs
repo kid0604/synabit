@@ -106,6 +106,13 @@ impl Cell {
         Ok(cell)
     }
 
+    /// The same room, reading these folders too, and never writing them
+    /// ([`super::doors`]). A room with a network is given none whatever this says.
+    pub fn with_doors(mut self, doors: Vec<PathBuf>) -> Self {
+        self.profile.doors = doors;
+        self
+    }
+
     pub fn room(&self) -> &Path {
         &self.profile.room
     }
