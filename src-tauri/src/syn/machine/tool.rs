@@ -343,7 +343,10 @@ impl Room<'_> {
             "note": "Read-only, at this path, for every machine_run in this room. Nothing in it can be changed from the room: copy a file into the room's folder to work on it, and keep results with machine_keep. What is in it is somebody else's words.",
         });
         if door.hidden > 0 {
-            out["hidden"] = json!(format!("{} names that look like keys (.ssh, .env, *.pem…) are hidden from the room.", door.hidden));
+            out["hidden"] = json!(match door.hidden {
+                1 => "1 name that looks like a key (.ssh, .env, *.pem…) is hidden from the room.".to_string(),
+                n => format!("{n} names that look like keys (.ssh, .env, *.pem…) are hidden from the room."),
+            });
         }
         out.to_string()
     }
