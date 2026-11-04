@@ -328,6 +328,11 @@ mod tests {
             "syn_pick_door",
             "syn_remove_door",
             "syn_door_away",
+            "syn_waiting_rehearsals",
+            "syn_apply_rehearsal",
+            "syn_decline_rehearsal",
+            "syn_rehearsal_batches",
+            "syn_undo_rehearsal",
         ] {
             assert!(may_call(MAIN_WINDOW, command));
             for other in [QUICK_ENTRY, SAFE_QUICK, BROWSING_PANE, "somewhere-new"] {

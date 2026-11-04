@@ -262,6 +262,26 @@ pub fn key(name: &str, ignores_case: bool) -> String {
     }
 }
 
+/// Removes `name` under `at` and everything in it, by descriptor, following
+/// nothing: a link in it is removed, never what it points at. For a room's own
+/// copies only, where a room could have left a link to anywhere.
+pub fn remove_tree(at: BorrowedFd, name: &CStr) -> io::Result<()> {
+    let stat = stat_at(at, name)?;
+    if stat.kind == Kind::Folder {
+        let inside = open_folder_at(at, name)?;
+        for (child, _) in list(inside.as_fd())? {
+            remove_tree(inside.as_fd(), &child)?;
+        }
+        return remove_empty_dir(at, name);
+    }
+    // SAFETY: a valid name; `unlinkat` removes the entry itself.
+    if unsafe { libc::unlinkat(at.as_raw_fd(), name.as_ptr(), 0) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 pub fn text(name: &CStr) -> Option<&str> {
     OsStr::from_bytes(name.to_bytes()).to_str()
 }

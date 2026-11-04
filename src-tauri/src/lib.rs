@@ -1129,6 +1129,16 @@ pub fn run() {
             commands::machine::syn_remove_door,
             #[cfg(target_os = "macos")]
             commands::machine::syn_door_away,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_waiting_rehearsals,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_apply_rehearsal,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_decline_rehearsal,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_rehearsal_batches,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_undo_rehearsal,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,

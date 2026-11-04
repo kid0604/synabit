@@ -107,6 +107,20 @@ fn usable_id(id: &str) -> bool {
     id.len() == 16 && id.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// The newest rehearsal of a room that has not been proposed yet.
+pub fn latest(rooms: &Rooms, room: &str) -> Option<String> {
+    let entries = std::fs::read_dir(rooms.root().join("rehearsals")).ok()?;
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let id = e.file_name().to_str()?.to_string();
+            let manifest = load(rooms, &id).ok()?;
+            (manifest.room == room && load_proposal(rooms, &id).is_none()).then_some((manifest.made, id))
+        })
+        .max()
+        .map(|(_, id)| id)
+}
+
 pub fn load(rooms: &Rooms, id: &str) -> Result<Manifest, Refused> {
     if !usable_id(id) {
         return Err(Refused::Unknown(sanitize::shown(id)));
@@ -246,7 +260,7 @@ pub fn rehearse(rooms: &Rooms, cell: &Cell, room: &str, door: &super::doors::Doo
     let mut walk = Walk { entries: Vec::new(), copied: 0, cloned: 0, unnamed: 0 };
     let walked = walk.folder(root_fd.as_fd(), "", Some(copy_fd.as_fd()), 0);
     if let Err(refused) = walked {
-        let _ = std::fs::remove_dir_all(cell.work().join(&copy));
+        let _ = fd::remove_tree(work.as_fd(), &copy_c);
         return Err(refused);
     }
 
@@ -772,12 +786,18 @@ fn classify(manifest: &Manifest, ops: &mut [Op], root: Option<BorrowedFd>, stage
     }
 }
 
-/// Removes a rehearsal's copy and everything kept for it.
-pub fn forget(rooms: &Rooms, cell: &Cell, id: &str) {
-    if let Ok(manifest) = load(rooms, id) {
-        let _ = std::fs::remove_dir_all(cell.work().join(&manifest.copy));
+/// Ends a proposal the person answered: it is kept as answered, and the room's
+/// copy and the content copied out for it go. The journal holds what undo needs.
+pub fn settle(rooms: &Rooms, cell: Option<&Cell>, proposal: &mut Proposal, state: State) -> io::Result<()> {
+    proposal.state = state;
+    save_proposal(rooms, proposal)?;
+    if let (Ok(manifest), Some(cell)) = (load(rooms, &proposal.id), cell) {
+        if let (Ok(_frozen), Ok(work), Ok(copy)) = (rooms.freeze(cell), work_of(cell), CString::new(manifest.copy.as_str())) {
+            let _ = fd::remove_tree(work.as_fd(), &copy);
+        }
     }
-    if usable_id(id) {
-        let _ = std::fs::remove_dir_all(place(rooms, id));
-    }
+    let _ = std::fs::remove_dir_all(place(rooms, &proposal.id).join("staged"));
+    let _ = std::fs::remove_file(place(rooms, &proposal.id).join("manifest.json"));
+    Ok(())
 }
+

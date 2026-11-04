@@ -245,8 +245,8 @@ impl Policy {
 
 use crate::syn::connector::authoring::{DRAFT_TOOL, FIND_TOOL as CONNECTOR_FIND, PROPOSE_TOOL as CONNECTOR_CONNECT, TRY_TOOL};
 use crate::syn::tools::{
-    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE,
-    ROOM_WRITE,
+    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_PROPOSE, ROOM_READ,
+    ROOM_REHEARSE, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
 };
 
 /// Every built-in tool.
@@ -343,6 +343,13 @@ pub static POLICIES: &[Policy] = &[
     // too: what the folder holds reaches nothing but the model, through a
     // marked room, and the person chooses which folder.
     Policy { power: Power::Door, ..Policy::read(ROOM_DOOR, Home::Room).room() },
+    // Rehearsing on a copy of a folder, and proposing what it would change: the
+    // app only, at the computer (D4) — changing real files is never done from a
+    // phone or by a routine. Neither changes anything; the card the person
+    // answers does, and Rust applies it (`machine::apply`). After reading too:
+    // what was read is in the room, and the card says so.
+    Policy::read(ROOM_REHEARSE, Home::Room).room().at_the_computer(),
+    Policy::read(ROOM_PROPOSE, Home::Room).room().at_the_computer(),
     // Out of the room into the vault: only ever a new file, or a new note made
     // the way `create_node` makes one — which is all a routine may do. Hidden
     // with the Files app.
@@ -687,6 +694,18 @@ mod tests {
         }
         assert_eq!(capability(ROOM_KEEP, &serde_json::json!({})), Some(Capability::VaultWrite));
         assert_eq!(lock(ROOM_KEEP), Some("file"));
+    }
+
+    /// Changing real files is the app's alone, at the computer (D4).
+    #[test]
+    fn a_rehearsal_is_only_ever_at_the_computer() {
+        for tool in [ROOM_REHEARSE, ROOM_PROPOSE] {
+            assert_eq!(on(tool, Surface::App), Some(true));
+            assert_eq!(on(tool, Surface::Telegram), Some(false), "{tool}");
+            assert_eq!(on(tool, Surface::Routine), Some(false), "{tool}");
+            assert_eq!(capability(tool, &serde_json::json!({})), Some(Capability::Cell));
+            assert!(engine(tool) && helper(tool) == Some(false));
+        }
     }
 
     /// A folder: a new one is its own question, one already open is the room's.

@@ -303,6 +303,21 @@ async fn only_the_approved_ops_are_applied() {
     assert_eq!(names_in(&place.folder), vec!["b.txt".to_string()]);
 }
 
+/// The room puts a link to someone else's folder where its copy was, and then
+/// where its whole work folder was. Ending the rehearsal removes the links,
+/// never what they point at.
+#[tokio::test]
+async fn ending_a_rehearsal_never_follows_what_the_room_left() {
+    for trick in ["rm -rf Ends; ln -s '{to}' Ends", "cd ..; mkdir keep; mv work/Ends keep/; rm -rf work; ln -s '{to}' work"] {
+        let place = place("Ends", &[("a.txt", b"a")]);
+        let (cell, mut proposal) = proposed("rh-ends", &place, "rm a.txt").await;
+        run(&cell, &trick.replace("{to}", &place.elsewhere.display().to_string())).await;
+        rehearse::settle(&rooms(), Some(&cell), &mut proposal, rehearse::State::Declined).unwrap();
+        assert_eq!(std::fs::read_to_string(place.elsewhere.join("secret.txt")).unwrap(), "not yours", "{trick}");
+        assert_eq!(names_in(&place.folder), vec!["a.txt".to_string()], "declined: nothing changed");
+    }
+}
+
 // ── An app that dies half way ───────────────────────────────────────────
 
 const CHILD: &str = "SYNABIT_APPLY_CHILD";

@@ -398,10 +398,15 @@ pub const ROOM_ENV: &str = "machine_env";
 /// for a new folder is its own question, in the app only. See
 /// `syn::machine::doors`.
 pub const ROOM_DOOR: &str = "machine_door";
+/// A copy of a folder the person opened, to change in the room, and what that
+/// would change in the folder itself, for the person to approve on a card. The
+/// app only, at the computer (design §9, D4). See `syn::machine::rehearse`.
+pub const ROOM_REHEARSE: &str = "machine_rehearse";
+pub const ROOM_PROPOSE: &str = "machine_propose";
 
 /// Whether the engine runs it in a room, or makes a room's environment.
 pub fn is_room_tool(name: &str) -> bool {
-    ROOM_TOOLS.contains(&name) || name == ROOM_ENV || name == ROOM_DOOR
+    ROOM_TOOLS.contains(&name) || [ROOM_ENV, ROOM_DOOR, ROOM_REHEARSE, ROOM_PROPOSE].contains(&name)
 }
 
 /// How many runs one answer may name.
@@ -1093,6 +1098,36 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "door": { "type": "string", "description": "The name of a folder already open, as `list` shows it." },
                         "list": { "type": "boolean", "description": "Only list the folders open here." },
                         "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_REHEARSE.to_string(),
+                description: "To change files in a folder on this Mac — tidy Downloads, sort, rename, remove — first make a copy of it in the room: an open folder (machine_door), or a part of it with `folder`. Returns the copy's place in the room and a rehearsal id. Change the copy with machine_run however the job needs; the real folder is never touched. Then call machine_propose. Not for folders of code.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "door": { "type": "string", "description": "The open folder, by the name machine_door gave it." },
+                        "folder": { "type": "string", "description": "A folder inside it, like '2025/Taxes', to copy only that." },
+                        "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
+                    },
+                    "required": ["door"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_PROPOSE.to_string(),
+                description: "When the copy is as the folder should be: stops the room, compares the copy with the real folder, and puts what would change — moves, renames, files to the Trash, new files and folders — on a card for the user. Nothing changes until they approve; the app then does it, and it can be undone. Returns what was proposed. Say what you proposed and why; do not say it is done.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "rehearsal": { "type": "string", "description": "The id machine_rehearse returned. Default: the room's latest." },
+                        "cell": { "type": "string", "description": "The same room the rehearsal was made in, if not this conversation's." }
                     }
                 }),
             },
@@ -7255,7 +7290,7 @@ mod tests {
             .chain(skills)
             .chain(visuals)
             .chain(room)
-            .chain([ROOM_ENV, ROOM_DOOR, "machine_find", "machine_status"])
+            .chain([ROOM_ENV, ROOM_DOOR, ROOM_REHEARSE, ROOM_PROPOSE, "machine_find", "machine_status"])
             .collect();
         for name in &names {
             assert!(

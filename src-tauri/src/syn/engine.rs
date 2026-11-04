@@ -9479,6 +9479,53 @@ mod driving {
         assert!(allowed.contains("Rent 900"), "{allowed}");
     }
 
+    /// A rehearsal through the engine (design §9): a copy is made and changed in
+    /// the room, the proposal waits for the person, and the folder itself is
+    /// untouched until then. Never from the phone (D4).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_rehearsal_changes_a_copy_and_waits_for_the_person() {
+        use crate::syn::machine::{doors, rehearse};
+        use crate::syn::surface::Surface;
+        use crate::syn::tools::{ROOM_PROPOSE, ROOM_REHEARSE, ROOM_RUN};
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+        let folder = tempfile::Builder::new().prefix("door-").tempdir().expect("folder");
+        let real = folder.path().canonicalize().expect("real");
+        std::fs::write(real.join("lease.pdf"), b"%PDF-1.7").expect("file");
+        let protected = doors::Protected::of(&app, &vault).expect("folders");
+        let door = doors::open(&vault, &real, &protected, chrono::Utc::now()).expect("a door").door;
+        let copy = door.name.clone();
+
+        let mut run = Run::new("dọn", Some("conv-rehearse".into()), budget(10));
+        drive_script_in(
+            &app,
+            &vault,
+            &mut run,
+            "dọn",
+            vec![
+                calls(ROOM_REHEARSE, serde_json::json!({ "door": door.name })),
+                calls(ROOM_RUN, serde_json::json!({ "command": format!("cd '{copy}' && mkdir Docs && mv lease.pdf Docs/") })),
+                calls(ROOM_PROPOSE, serde_json::json!({})),
+                text("xong"),
+            ],
+        )
+        .await;
+        let proposed = run.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_PROPOSE)).expect("proposed");
+        assert!(proposed.preview.contains("\"proposed\":2"), "{}", proposed.preview);
+        assert!(run.read_untrusted, "what the room did with the folder is the room's words");
+        let waiting = rehearse::waiting(&shared_rooms(), &vault);
+        assert_eq!(waiting.len(), 1);
+        assert_eq!(waiting[0].conversation.as_deref(), Some("conv-rehearse"));
+        assert!(real.join("lease.pdf").exists() && !real.join("Docs").exists(), "the folder waits for the person");
+
+        let mut phone = Run::new("dọn", Some("conv-rehearse-phone".into()), budget(6));
+        phone.surface = Surface::Telegram;
+        drive_script_in(&app, &vault, &mut phone, "dọn", vec![calls(ROOM_REHEARSE, serde_json::json!({ "door": door.name })), text("không")]).await;
+        assert!(phone.steps.iter().any(|s| s.preview.contains("Refused `machine_rehearse`")), "{:?}", phone.steps);
+    }
+
     /// The stop button stops the room too, not only the run: a long command
     /// ends when it is pressed, not when it would have finished.
     #[cfg(target_os = "macos")]

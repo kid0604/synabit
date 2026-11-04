@@ -37,6 +37,13 @@ pub fn setup(app: &AppHandle) {
         }
     };
     app.manage(rooms.clone());
+    // A batch the last run did not finish: said in the log, and on the screen,
+    // where undo puts it back.
+    for batch in crate::syn::machine::apply::batches(rooms.root()) {
+        if batch.standing == crate::syn::machine::apply::Standing::Interrupted {
+            log::warn!("machine: a batch of changes to {} was cut short; it can be undone from Settings", batch.root);
+        }
+    }
     std::thread::spawn(move || log_stopped("left by the last run", rooms.stop_all()));
 }
 
@@ -167,4 +174,185 @@ pub async fn syn_remove_door(vault_path: String, id: String) -> Result<bool, Str
 #[tauri::command]
 pub async fn syn_door_away(vault_path: String, id: String, away: bool) -> Result<bool, String> {
     doors::set_away(&vault_path, &id, away, chrono::Utc::now()).map_err(|e| e.to_string())
+}
+
+// ── Rehearsals: the card, the apply, and undo (design §9) ─────────────
+
+/// One proposed change, as the card shows it: Rust's words, names made safe.
+#[derive(serde::Serialize)]
+pub struct OpView {
+    pub n: usize,
+    pub what: crate::syn::machine::rehearse::What,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub size: u64,
+    pub class: crate::syn::machine::rehearse::Class,
+    pub why: Option<crate::syn::machine::rehearse::Why>,
+}
+
+#[derive(serde::Serialize)]
+pub struct ProposalView {
+    pub id: String,
+    pub door_name: String,
+    pub root: String,
+    pub made: chrono::DateTime<chrono::Utc>,
+    pub unchanged: usize,
+    pub read_outside: bool,
+    pub ops: Vec<OpView>,
+}
+
+fn view(p: &crate::syn::machine::rehearse::Proposal) -> ProposalView {
+    use crate::syn::machine::sanitize::shown;
+    ProposalView {
+        id: p.id.clone(),
+        door_name: shown(&p.door_name),
+        root: shown(&p.root),
+        made: p.made,
+        unchanged: p.unchanged,
+        read_outside: p.read_outside,
+        ops: p
+            .ops
+            .iter()
+            .map(|o| OpView {
+                n: o.n,
+                what: o.what,
+                from: o.from.as_deref().map(shown),
+                to: o.to.as_deref().map(shown),
+                size: o.size,
+                class: o.class,
+                why: o.why,
+            })
+            .collect(),
+    }
+}
+
+/// The proposals waiting in one conversation.
+#[tauri::command]
+pub async fn syn_waiting_rehearsals(app: AppHandle, vault_path: String, conversation_id: String) -> Result<Vec<ProposalView>, String> {
+    let rooms = rooms(&app)?;
+    Ok(crate::syn::machine::rehearse::waiting(&rooms, &vault_path)
+        .iter()
+        .filter(|p| p.conversation.as_deref() == Some(conversation_id.as_str()))
+        .map(view)
+        .collect())
+}
+
+/// The system's own dialog, for files that are not plainly documents. A page
+/// can press the card's button; it cannot press this one (A22). In the app's two
+/// languages, from here: the words are not the page's to choose.
+async fn confirm_unknown(app: &AppHandle, locale: &str, names: &[String]) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let listed: String = names.iter().take(12).map(|n| format!("• {n}\n")).collect();
+    let more = names.len().saturating_sub(12);
+    let (title, body, ok, cancel) = if locale.starts_with("vi") {
+        (
+            "Áp dụng cả những file không rõ là tài liệu?",
+            format!(
+                "Những mục này không rõ là tài liệu: script, cài đặt, chương trình, hoặc file có nội dung không khớp với tên. Áp dụng thì chúng nằm trong thư mục của bạn đúng như Syn đã làm, sau khi nó đọc các file trong thư mục.\n\n{listed}{}\nChỉ chọn Áp dụng nếu bạn biết rõ từng mục là gì.",
+                if more > 0 { format!("… và {more} mục nữa\n") } else { String::new() }
+            ),
+            "Áp dụng",
+            "Huỷ",
+        )
+    } else {
+        (
+            "Also apply files that are not plainly documents?",
+            format!(
+                "These are not plainly documents: scripts, settings, programs, or files whose content does not match their name. Applied, they are in your folder as Syn made them, after it read the folder's files.\n\n{listed}{}\nChoose Apply only if you know what each one is.",
+                if more > 0 { format!("… and {more} more\n") } else { String::new() }
+            ),
+            "Apply",
+            "Cancel",
+        )
+    };
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .message(body)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), cancel.into()));
+    if let Some(window) = crate::app_shell::app_window(app) {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |yes| {
+        let _ = tx.send(yes);
+    });
+    rx.await.unwrap_or(false)
+}
+
+#[derive(serde::Serialize)]
+pub struct Applied {
+    /// False when the system's dialog was answered no: nothing was done.
+    pub confirmed: bool,
+    pub outcome: Option<crate::syn::machine::apply::Outcome>,
+}
+
+/// Applies what the person chose on the card. Only a waiting proposal of this
+/// vault, only the ops it holds, and the unknown ones only once the system's
+/// dialog says so.
+#[tauri::command]
+pub async fn syn_apply_rehearsal(app: AppHandle, vault_path: String, id: String, approved: Vec<usize>, locale: String) -> Result<Applied, String> {
+    use crate::syn::machine::rehearse::{self, Class, State};
+    let rooms = rooms(&app)?;
+    let mut proposal = rehearse::load_proposal(&rooms, &id).ok_or("there is no such proposal")?;
+    if proposal.state != State::Waiting || proposal.vault != vault_path {
+        return Err("that proposal is not waiting".into());
+    }
+    let unknown: Vec<String> = proposal
+        .ops
+        .iter()
+        .filter(|o| approved.contains(&o.n) && o.class == Class::Unknown)
+        .map(|o| crate::syn::machine::sanitize::shown(o.to.as_deref().or(o.from.as_deref()).unwrap_or_default()))
+        .collect();
+    if !unknown.is_empty() && !confirm_unknown(&app, &locale, &unknown).await {
+        return Ok(Applied { confirmed: false, outcome: None });
+    }
+    // Nothing in the room runs while the folder is changed.
+    let cell = rooms.open(&proposal.room).await.ok();
+    if let Some(cell) = cell.clone() {
+        let r = rooms.clone();
+        let _ = tokio::task::spawn_blocking(move || r.clear(&cell)).await;
+    }
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let (r, p) = (rooms.clone(), proposal.clone());
+    let outcome = tokio::task::spawn_blocking(move || {
+        crate::syn::machine::apply::apply(r.root(), &p, |n| rehearse::staged_file(&r, &p.id, n), &approved, &crate::syn::machine::apply::Trash::System { home })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    rehearse::settle(&rooms, cell.as_ref(), &mut proposal, State::Applied).map_err(|e| e.to_string())?;
+    Ok(Applied { confirmed: true, outcome: Some(outcome) })
+}
+
+/// The person said no to the whole proposal.
+#[tauri::command]
+pub async fn syn_decline_rehearsal(app: AppHandle, vault_path: String, id: String) -> Result<bool, String> {
+    use crate::syn::machine::rehearse::{self, State};
+    let rooms = rooms(&app)?;
+    let Some(mut proposal) = rehearse::load_proposal(&rooms, &id) else { return Ok(false) };
+    if proposal.state != State::Waiting || proposal.vault != vault_path {
+        return Ok(false);
+    }
+    let cell = rooms.open(&proposal.room).await.ok();
+    rehearse::settle(&rooms, cell.as_ref(), &mut proposal, State::Declined).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Every batch applied on this Mac, newest first, with whether it can be undone.
+#[tauri::command]
+pub async fn syn_rehearsal_batches(app: AppHandle) -> Result<Vec<crate::syn::machine::apply::Batch>, String> {
+    Ok(crate::syn::machine::apply::batches(rooms(&app)?.root()))
+}
+
+/// Puts a batch back, finished or cut short.
+#[tauri::command]
+pub async fn syn_undo_rehearsal(app: AppHandle, id: String) -> Result<crate::syn::machine::apply::Undone, String> {
+    let rooms = rooms(&app)?;
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || crate::syn::machine::apply::undo(rooms.root(), &id, &crate::syn::machine::apply::Trash::System { home }))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
 }

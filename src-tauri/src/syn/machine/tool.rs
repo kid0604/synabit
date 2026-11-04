@@ -43,7 +43,10 @@ use super::watch::{Over, Watched};
 use crate::db::Hold;
 use crate::syn::surface::Surface;
 use crate::syn::taint::{Origin, Taint};
-use crate::syn::tools::{execute_tool, ToolContext, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
+use crate::syn::tools::{
+    execute_tool, ToolContext, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_PROPOSE, ROOM_READ, ROOM_REHEARSE, ROOM_RUN, ROOM_TAKE,
+    ROOM_WRITE,
+};
 
 /// Characters of each of stdout and stderr shown, before the window scales it.
 const SHOWN: usize = 8_000;
@@ -224,6 +227,8 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
     let room = Room { rooms, cell: &cell, name: &name, closed };
     match tool {
         ROOM_DOOR => room.door(call, args),
+        ROOM_REHEARSE => room.rehearse(call, args).await,
+        ROOM_PROPOSE => room.propose(call, args).await,
         ROOM_RUN => room.run(call, args).await,
         ROOM_READ => room.read(call, args),
         ROOM_WRITE => room.write(call, args),
@@ -349,6 +354,85 @@ impl Room<'_> {
             });
         }
         out.to_string()
+    }
+
+    /// A copy of an open folder, in the room, to change instead of the folder.
+    async fn rehearse<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+        let Some(asked) = str_arg(args, "door").map(str::trim).filter(|d| !d.is_empty()) else {
+            return error("`door` is the name of an open folder; machine_door with `list: true` shows them.");
+        };
+        let vault = call.ctx.vault_path;
+        let Some(protected) = Protected::of(call.ctx.app, vault) else {
+            return error("This Mac's folders could not be found.");
+        };
+        let usable = doors::usable(vault, call.surface == Surface::App, &protected, chrono::Utc::now());
+        let open: Vec<doors::Door> = usable.iter().map(|(d, _)| d.clone()).collect();
+        let Some(door) = doors::find(&open, asked).cloned() else {
+            return error(format!("No open folder is called '{}'. Open it with machine_door first.", sanitize::shown(asked)));
+        };
+        let path = usable.iter().find(|(d, _)| d.id == door.id).map(|(_, p)| p.clone()).expect("listed");
+        if let Err(e) = self.rooms.attach_door(self.name, &door.id) {
+            return error(format!("The folder could not be given to the room: {e}"));
+        }
+        let within = str_arg(args, "folder").map(str::to_string);
+        let (rooms, cell, name) = (self.rooms.clone(), self.cell.clone(), self.name.to_string());
+        let made = tokio::task::spawn_blocking(move || super::rehearse::rehearse(&rooms, &cell, &name, &door, &path, within.as_deref())).await;
+        self.coming_out(call.taint);
+        match made {
+            Ok(Ok(r)) => json!({
+                "rehearsal": r.rehearsal,
+                "copy": r.at,
+                "files": r.files,
+                "folders": r.folders,
+                "left_as_they_are": r.left_as_they_are,
+                "note": "A copy of the folder, in the room's folder at `copy`. Change it as the job needs with machine_run: move, rename, delete, make folders and files. The real folder is not touched. Then call machine_propose with this rehearsal; the user sees exactly what would change, and approves it. Links, hidden key files and the like were left out of the copy and stay as they are.",
+            })
+            .to_string(),
+            Ok(Err(e)) => error(format!("The folder could not be copied: {e}")),
+            Err(e) => error(format!("The folder could not be copied: {e}")),
+        }
+    }
+
+    /// What the copy would change in the folder, put on a card for the person.
+    async fn propose<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+        let given = str_arg(args, "rehearsal").map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
+        let Some(id) = given.or_else(|| super::rehearse::latest(&self.rooms, self.name)) else {
+            return error("There is no rehearsal in this room to propose. Make one with machine_rehearse first.");
+        };
+        let (rooms, cell, vault, scope) = (self.rooms.clone(), self.cell.clone(), call.ctx.vault_path.to_string(), call.scope.to_string());
+        let made = tokio::task::spawn_blocking(move || super::rehearse::propose(&rooms, &cell, &id, &vault, Some(&scope))).await;
+        // What the room did is the room's words.
+        self.coming_out(call.taint);
+        let proposal = match made {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => return error(format!("Nothing could be proposed: {e}")),
+            Err(e) => return error(format!("Nothing could be proposed: {e}")),
+        };
+        use super::rehearse::{Class, What};
+        let count = |what: What| proposal.ops.iter().filter(|o| o.what == what).count();
+        let shown = |p: &Option<String>| p.as_deref().map(sanitize::shown);
+        let listed: Vec<Value> = proposal
+            .ops
+            .iter()
+            .take(40)
+            .map(|o| json!({ "what": o.what, "from": shown(&o.from), "to": shown(&o.to), "class": o.class, "why": o.why }))
+            .collect();
+        if proposal.ops.is_empty() {
+            return json!({ "proposed": 0, "note": "The copy is the same as the folder, so there is nothing to propose." }).to_string();
+        }
+        let _ = tauri::Emitter::emit(call.ctx.app, "syn-rehearsal-needed", json!({ "conversation_id": call.scope, "id": proposal.id }));
+        json!({
+            "proposed": proposal.ops.len(),
+            "moved": count(What::Move) + count(What::Rename),
+            "to_the_trash": count(What::Trash) + count(What::RemoveFolder),
+            "new": count(What::New) + count(What::NewFolder),
+            "changed": count(What::Change),
+            "not_chosen_beforehand": proposal.ops.iter().filter(|o| o.class == Class::Unknown).count(),
+            "cannot_be_applied": proposal.ops.iter().filter(|o| o.class == Class::Blocked).count(),
+            "ops": listed,
+            "note": "Nothing has changed yet. When you finish, the user sees these on a card, chooses which to apply, and the app applies them; they can be undone. Files that are not plainly documents are not chosen beforehand. In your answer say what you proposed and why; do not say it is done.",
+        })
+        .to_string()
     }
 
     async fn run<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
