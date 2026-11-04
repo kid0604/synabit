@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { Send, Square, Sparkles, ImagePlus, WifiOff, AlertCircle, ListChecks } from 'lucide-vue-next';
 import { open } from '@tauri-apps/plugin-dialog';
 import { readFile } from '@tauri-apps/plugin-fs';
-import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentAnswer, AmbiguousChoice, Tempo, PlanStep, RunProgress as Progress } from '../types';
+import type { SynMessage, SynToolCallEvent, SourceRef, ConsentAsk, ConsentReply, AmbiguousChoice, Tempo, PlanStep, RunProgress as Progress } from '../types';
 import MessageBubble from './MessageBubble.vue';
 import StreamingIndicator from './StreamingIndicator.vue';
 import SynVisual from '../../../shared/components/SynVisual.vue';
@@ -81,7 +81,7 @@ const emit = defineEmits<{
   /** A board the answer names, opened beside the conversation. */
   'open-board': [board: { id: string; path: string; title: string; data: any }];
   'notification-action': [notification: any];
-  consent: [choice: ConsentAnswer];
+  consent: [choice: ConsentReply];
   writes: [approved: string[]];
   connector: [approved: boolean];
   choice: [nodeId: string];

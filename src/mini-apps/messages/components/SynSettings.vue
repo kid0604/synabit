@@ -665,7 +665,7 @@ watch(() => props.vaultPath, async () => {
 
       <!-- The room on this Mac. Only where there is one. -->
       <SettingsSection v-if="isMac" id="machine" :title="t('syn.machine_title')" saves-itself :saves-itself-label="t('syn.settings_saves_itself')">
-        <SynMachine />
+        <SynMachine :vault-path="vaultPath" />
       </SettingsSection>
 
       <!-- HOW WE WORK TOGETHER

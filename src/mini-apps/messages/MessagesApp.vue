@@ -45,7 +45,7 @@ import { usePlatform } from '../../composables/usePlatform';
 import type { SynProviderId } from './composables/useSynSettings';
 import { tidyComposerText } from '../../shared/syn/composerText';
 import { useNodeService } from '../../composables/useNodeService';
-import type { ConsentAnswer, SynConversation, SynConversationFull, SynMessage } from './types';
+import type { ConsentReply, SynConversation, SynConversationFull, SynMessage } from './types';
 
 /**
  * Trying a skill by hand.
@@ -87,7 +87,7 @@ const consentHere = computed(() => consentPendingIn(activeConversationId.value))
  * alternative is the thing this was written to fix, which is a card that asks,
  * accepts an answer, and then says nothing at all.
  */
-const onConsent = async (choice: ConsentAnswer) => {
+const onConsent = async (choice: ConsentReply) => {
   // Read before answering: the composable clears the card, and with it the id
   // of the run whose pending call the resume has to pick up — and the
   // conversation that run belongs to.

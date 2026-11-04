@@ -7,12 +7,19 @@
  * on a card the first time and listed with them; it is not repeated here.
  * Stopping is here, and in the tray, because it must not depend on anything
  * the model could be talked out of: it goes straight to `syn_machine_stop_all`.
+ *
+ * The folders open to the rooms are here too: each can be closed, allowed away
+ * from the computer, or opened from here in the system's dialog. A folder is
+ * the app's alone until the switch says otherwise (design §8, A23).
  */
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
-import { Loader2, ShieldCheck, ShieldAlert, Square } from 'lucide-vue-next';
+import { FolderOpen, Loader2, ShieldCheck, ShieldAlert, Square, X as XIcon } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
+import { dialogTitle, refusedText, warnAboutHidden, type Door, type Picked } from '../composables/doorPick';
+
+const props = defineProps<{ vaultPath: string }>();
 
 interface Status {
   sealed: boolean | null;
@@ -26,7 +33,8 @@ interface Report {
   lines: { verdict: 'held' | 'leaked' | 'no_control' | 'skipped' }[];
 }
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
+const day = (iso: string) => new Date(iso).toLocaleDateString(locale.value);
 
 const status = ref<Status | null>(null);
 const checking = ref(false);
@@ -73,6 +81,56 @@ const stopAll = async () => {
   }
 };
 
+type Listed = Door & { expires: string };
+const doors = ref<Listed[]>([]);
+const opening = ref(false);
+const doorSaid = ref('');
+
+const loadDoors = async () => {
+  if (!props.vaultPath) return;
+  try {
+    doors.value = await invoke<Listed[]>('syn_doors', { vaultPath: props.vaultPath });
+  } catch (e) {
+    logger.warn('[Syn] Could not read the open folders', e);
+  }
+};
+
+const addDoor = async () => {
+  opening.value = true;
+  doorSaid.value = '';
+  try {
+    const picked = await invoke<Picked>('syn_add_door', { vaultPath: props.vaultPath, title: dialogTitle() });
+    if (picked.outcome === 'refused') doorSaid.value = refusedText(picked.why);
+    if (picked.outcome === 'opened') {
+      doorSaid.value = t('syn.door_opened', { name: picked.door.name });
+      await warnAboutHidden(picked);
+    }
+  } catch (e) {
+    doorSaid.value = String(e);
+  } finally {
+    opening.value = false;
+    await loadDoors();
+  }
+};
+
+const closeDoor = async (door: Listed) => {
+  try {
+    await invoke('syn_remove_door', { vaultPath: props.vaultPath, id: door.id });
+  } catch (e) {
+    doorSaid.value = String(e);
+  }
+  await loadDoors();
+};
+
+const setAway = async (door: Listed, away: boolean) => {
+  try {
+    await invoke('syn_door_away', { vaultPath: props.vaultPath, id: door.id, away });
+  } catch (e) {
+    doorSaid.value = String(e);
+  }
+  await loadDoors();
+};
+
 const state = computed(() => {
   const s = status.value;
   if (!s || s.sealed === null) return { tone: 'quiet', text: t('syn.machine_state_unknown') };
@@ -84,6 +142,7 @@ const state = computed(() => {
 let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => {
   void load();
+  void loadDoors();
   timer = setInterval(load, 4000);
 });
 onBeforeUnmount(() => clearInterval(timer));
@@ -138,5 +197,64 @@ onBeforeUnmount(() => clearInterval(timer));
     </div>
 
     <p v-if="said" class="text-xs text-gray-500 dark:text-gray-400" role="status">{{ said }}</p>
+
+    <div class="pt-3 space-y-2 border-t border-gray-100 dark:border-gray-800">
+      <h4 class="text-xs font-medium text-text dark:text-text-dark">{{ t('syn.machine_doors_title') }}</h4>
+      <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">{{ t('syn.machine_doors_intro') }}</p>
+      <p v-if="!doors.length" class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.machine_doors_none') }}</p>
+      <ul v-else class="space-y-2" data-test="doors">
+        <li
+          v-for="door in doors"
+          :key="door.id"
+          class="p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 text-xs space-y-1.5"
+        >
+          <div class="flex items-start gap-2">
+            <FolderOpen class="w-4 h-4 mt-px shrink-0 opacity-60" aria-hidden="true" />
+            <div class="min-w-0 flex-1">
+              <p class="font-medium text-text dark:text-text-dark break-words">{{ door.name }}</p>
+              <p class="text-gray-500 dark:text-gray-400 break-all">{{ door.path }}</p>
+              <p class="text-gray-500 dark:text-gray-400">
+                {{ t('syn.machine_door_expires', { date: day(door.expires) }) }}
+                <template v-if="door.hidden"> · {{ t('syn.machine_door_hidden', { n: door.hidden }, door.hidden) }}</template>
+              </p>
+            </div>
+            <button
+              type="button"
+              class="flex items-center gap-1 px-2 py-1 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-white/5 cursor-pointer"
+              @click="closeDoor(door)"
+            >
+              <XIcon class="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{{ t('syn.machine_door_close') }}</span>
+            </button>
+          </div>
+          <label class="flex items-start gap-2 pl-6 cursor-pointer">
+            <input
+              type="checkbox"
+              class="mt-0.5"
+              :checked="door.away"
+              @change="setAway(door, ($event.target as HTMLInputElement).checked)"
+            />
+            <span>
+              <span class="text-text dark:text-text-dark">{{ t('syn.machine_door_away') }}</span>
+              <span class="block text-gray-500 dark:text-gray-400">{{ t('syn.machine_door_away_hint') }}</span>
+            </span>
+          </label>
+        </li>
+      </ul>
+      <button
+        type="button"
+        :disabled="opening || !vaultPath"
+        @click="addDoor"
+        class="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
+               bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-200
+               hover:bg-gray-200 dark:hover:bg-white/10 transition-colors cursor-pointer
+               disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Loader2 v-if="opening" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+        <FolderOpen v-else class="w-3.5 h-3.5" aria-hidden="true" />
+        <span>{{ t('syn.machine_door_add') }}</span>
+      </button>
+      <p v-if="doorSaid" class="text-xs text-gray-500 dark:text-gray-400" role="status">{{ doorSaid }}</p>
+    </div>
   </div>
 </template>

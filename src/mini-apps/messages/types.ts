@@ -525,6 +525,9 @@ export type Capability =
   | 'MachineFiles'
   // Packages from PyPI for the rooms. Asked every time; the list is the detail.
   | 'Packages'
+  // A folder on this Mac for the rooms to read. Answered by choosing it in the
+  // system's dialog (`syn_pick_door`), not with a yes.
+  | 'Door'
   // A value from Safe, to one server. `label` is the server's name, for the
   // card; the scope is the item and `destination`.
   | { UseSecret: { item: string; destination: string; label: string } };
@@ -599,6 +602,12 @@ export interface ConsentAsk {
 
 /** What the user said. */
 export type ConsentAnswer = 'once' | 'always' | 'never' | 'not_now' | 'session';
+
+/**
+ * What a card can say back: an answer, or — on a card asking for a folder —
+ * choosing one, which answers it only once a folder is chosen.
+ */
+export type ConsentReply = ConsentAnswer | 'pick_folder';
 
 /** One decision, written down. */
 export interface Grant {

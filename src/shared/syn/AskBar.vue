@@ -47,7 +47,7 @@ import RoutineProposalCard from '../../mini-apps/messages/components/RoutineProp
 import { useSynWrites } from '../../mini-apps/messages/composables/useSynWrites';
 import ConnectorProposalCard from '../../mini-apps/messages/components/ConnectorProposalCard.vue';
 import { useSynConnectorProposal } from '../../mini-apps/messages/composables/useSynConnectorProposal';
-import type { ConsentAnswer, SynMessage } from '../../mini-apps/messages/types';
+import type { ConsentReply, SynMessage } from '../../mini-apps/messages/types';
 import { useSynChat } from '../../mini-apps/messages/composables/useSynChat';
 import RunProgress from './RunProgress.vue';
 import PlanList from './PlanList.vue';
@@ -344,7 +344,7 @@ const approvePlan = () => {
  * `MessagesApp.vue`, for the same reasons: pressing a button on the card *is*
  * saying go on, and a refusal still gets a sentence back rather than silence.
  */
-const onConsent = async (choice: ConsentAnswer) => {
+const onConsent = async (choice: ConsentReply) => {
   // Read before answering, which clears the card and the run id with it.
   const stopped = consentHere.value?.run_id;
   const id = consentHere.value?.conversation_id;

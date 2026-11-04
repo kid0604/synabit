@@ -21,7 +21,8 @@ import { computed, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { logger } from '../../../utils/logger';
-import type { ConsentAnswer, ConsentAsk } from '../types';
+import type { ConsentAsk, ConsentReply } from '../types';
+import { dialogTitle, refusedText, warnAboutHidden, type Picked } from './doorPick';
 import { errorText } from '../../../shared/errorText';
 import { humanize } from '../../../shared/syn/toolLabel';
 
@@ -132,9 +133,10 @@ export function useSynConsent(vaultPath: () => string) {
    * `consent::Decision::Refuse`.
    *
    * False only when there was nothing to answer: already answered, or answered
-   * in another window.
+   * in another window. And for a folder not chosen: the dialog closed, or a
+   * folder Rust would not open, which the card says.
    */
-  const answer = async (choice: ConsentAnswer, conversationId: string | null | undefined): Promise<boolean> => {
+  const answer = async (choice: ConsentReply, conversationId: string | null | undefined): Promise<boolean> => {
     const asked = pendingIn(conversationId);
     // One answer at a time: a second press while the first is on its way is
     // not a second decision.
@@ -142,6 +144,15 @@ export function useSynConsent(vaultPath: () => string) {
     error.value = null;
     answering.value = true;
     try {
+      if (choice === 'pick_folder') {
+        const picked = await invoke<Picked>('syn_pick_door', { vaultPath: vaultPath(), runId: asked.run_id, title: dialogTitle() });
+        if (picked.outcome === 'refused') error.value = refusedText(picked.why);
+        if (picked.outcome !== 'opened') return false;
+        const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;
+        questions.value = rest;
+        await warnAboutHidden(picked);
+        return true;
+      }
       const wasAsked = await invoke<boolean>('syn_answer_consent', {
         vaultPath: vaultPath(),
         runId: asked.run_id,

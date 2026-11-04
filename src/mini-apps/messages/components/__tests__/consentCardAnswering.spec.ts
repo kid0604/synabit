@@ -51,6 +51,29 @@ describe('the permission card', () => {
     }
   });
 
+  // A folder is answered by choosing it, in a dialog Rust puts up: no
+  // "always", nothing that would name a path, and "not now" to decline.
+  it('asks for a folder by having one chosen', async () => {
+    const wrapper = mount(ConsentCard, {
+      props: { ask: { ...ask, capability: 'Door', tool: 'machine_door', can_be_remembered: false, per_call: true } },
+      global: { plugins: [i18n] },
+    });
+    mounted.push(wrapper);
+    expect(wrapper.text()).toContain(en.syn.consent_door.split('.')[0]);
+    expect(wrapper.find('[data-test="consent-session"]').exists()).toBe(false);
+    expect(wrapper.find('input').exists()).toBe(false);
+    await wrapper.find('[data-test="consent-pick-folder"]').trigger('click');
+    await wrapper.find('[data-test="consent-not-now"]').trigger('click');
+    expect(wrapper.emitted('answer')).toEqual([['pick_folder'], ['not_now']]);
+    for (const lang of [en, vi]) {
+      expect(lang.syn.consent_door).toBeTruthy();
+      expect(lang.syn.consent_pick_folder).toBeTruthy();
+      for (const why of ['not_a_folder', 'too_wide', 'vault', 'app_data', 'library', 'hidden']) {
+        expect(lang.syn, why).toHaveProperty(`door_refused_${why}`);
+      }
+    }
+  });
+
   it('says it in both languages, with the reason', () => {
     expect(en.syn.consent_failed).toContain('{reason}');
     expect(vi.syn.consent_failed).toContain('{reason}');
