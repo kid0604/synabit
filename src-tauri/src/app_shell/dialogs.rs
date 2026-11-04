@@ -137,7 +137,7 @@ pub async fn ask_open<R: tauri::Runtime>(app: &tauri::AppHandle<R>, filters: &[F
 
 /// Ask for a folder, as the string the commands below hand back.
 #[cfg(desktop)]
-async fn ask_folder<R: tauri::Runtime>(
+pub(crate) async fn ask_folder<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     title: Option<String>,
     start: Option<std::path::PathBuf>,
@@ -154,7 +154,7 @@ async fn ask_folder<R: tauri::Runtime>(
 
 /// A phone has no folder picker; the plugin does not offer one there.
 #[cfg(not(desktop))]
-async fn ask_folder<R: tauri::Runtime>(
+pub(crate) async fn ask_folder<R: tauri::Runtime>(
     _app: &tauri::AppHandle<R>,
     _title: Option<String>,
     _start: Option<std::path::PathBuf>,

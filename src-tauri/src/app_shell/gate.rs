@@ -319,7 +319,16 @@ mod tests {
         let (dir, open) = vault();
         let a = args(json!({ "vaultPath": dir.path().to_string_lossy(), "relPath": "a.md" }));
         assert_eq!(judge(MAIN_WINDOW, "read_file", Some(&a), Some(&open), never), Ok(()));
-        for command in ["syn_machine_status", "syn_machine_check", "syn_machine_stop_all"] {
+        for command in [
+            "syn_machine_status",
+            "syn_machine_check",
+            "syn_machine_stop_all",
+            "syn_doors",
+            "syn_add_door",
+            "syn_pick_door",
+            "syn_remove_door",
+            "syn_door_away",
+        ] {
             assert!(may_call(MAIN_WINDOW, command));
             for other in [QUICK_ENTRY, SAFE_QUICK, BROWSING_PANE, "somewhere-new"] {
                 assert!(!may_call(other, command), "{other} can reach {command}");

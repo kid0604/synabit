@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use crate::syn::machine::doors::{self, Door, OpenFailed, Protected, Refused};
 use crate::syn::machine::rooms::{Rooms, Status};
 use crate::syn::machine::selftest::Report;
 
@@ -81,4 +82,89 @@ pub async fn syn_machine_stop_all(app: AppHandle) -> Result<usize, String> {
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
+}
+
+/// A door, as the screen lists it.
+#[derive(serde::Serialize)]
+pub struct DoorView {
+    #[serde(flatten)]
+    pub door: Door,
+    pub expires: chrono::DateTime<chrono::Utc>,
+}
+
+/// What came of putting the folder dialog up.
+#[derive(serde::Serialize)]
+#[serde(tag = "outcome", rename_all = "snake_case")]
+pub enum Picked {
+    Opened { door: Door, examples: Vec<String> },
+    Refused { why: Refused },
+    Cancelled,
+}
+
+/// The folder dialog, and the door it opens. The path is the person's answer to
+/// a dialog this process put up, never a string from the page; `title` is only
+/// what the dialog says, in the screen's language.
+async fn pick(app: &AppHandle, vault_path: &str, title: Option<String>) -> Result<Picked, String> {
+    let start = app.path().document_dir().ok();
+    let Some(picked) = crate::app_shell::dialogs::ask_folder(app, title, start).await.map_err(|e| e.to_string())? else {
+        return Ok(Picked::Cancelled);
+    };
+    let protected = Protected::of(app, vault_path).ok_or("this Mac's folders could not be found")?;
+    let vault = vault_path.to_string();
+    let opened = tokio::task::spawn_blocking(move || doors::open(&vault, std::path::Path::new(&picked), &protected, chrono::Utc::now()))
+        .await
+        .map_err(|e| e.to_string())?;
+    match opened {
+        Ok(opened) => Ok(Picked::Opened { door: opened.door, examples: opened.examples }),
+        Err(OpenFailed::Refused(why)) => Ok(Picked::Refused { why }),
+        Err(other) => Err(other.to_string()),
+    }
+}
+
+/// The folders open to the rooms.
+#[tauri::command]
+pub async fn syn_doors(vault_path: String) -> Result<Vec<DoorView>, String> {
+    Ok(doors::all(&vault_path, chrono::Utc::now())
+        .into_iter()
+        .map(|door| DoorView { expires: door.expires(), door })
+        .collect())
+}
+
+/// Opens a folder from the screen, before anything has asked for one.
+#[tauri::command]
+pub async fn syn_add_door(app: AppHandle, vault_path: String, title: Option<String>) -> Result<Picked, String> {
+    pick(&app, &vault_path, title).await
+}
+
+/// Answers a card asking for a folder by choosing one. Only a folder chosen
+/// answers it: a closed dialog, or a folder that cannot be a door, leaves the
+/// card where it is. The call that asked takes the door when the work carries
+/// on (`doors::take_pick`).
+#[tauri::command]
+pub async fn syn_pick_door(app: AppHandle, vault_path: String, run_id: String, title: Option<String>) -> Result<Picked, String> {
+    let run = crate::syn::run::get_run(&vault_path, &run_id).map_err(|e| e.to_string())?;
+    let asking = run.pending_consent.as_ref().is_some_and(|ask| ask.capability == crate::syn::consent::Capability::Door);
+    let (true, Some(conversation)) = (asking, run.conversation_id.clone()) else {
+        return Err("nothing is asking for a folder".into());
+    };
+    let picked = pick(&app, &vault_path, title).await?;
+    if let Picked::Opened { door, .. } = &picked {
+        doors::picked_for(&conversation, &door.id);
+        crate::commands::syn::syn_answer_consent(vault_path, run_id, crate::syn::consent::Answer::Once)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(picked)
+}
+
+/// Closes a door. A room reading it reads it no more from its next command.
+#[tauri::command]
+pub async fn syn_remove_door(vault_path: String, id: String) -> Result<bool, String> {
+    doors::remove(&vault_path, &id, chrono::Utc::now()).map_err(|e| e.to_string())
+}
+
+/// Whether a door may be used from Telegram and in routines too.
+#[tauri::command]
+pub async fn syn_door_away(vault_path: String, id: String, away: bool) -> Result<bool, String> {
+    doors::set_away(&vault_path, &id, away, chrono::Utc::now()).map_err(|e| e.to_string())
 }

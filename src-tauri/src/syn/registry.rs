@@ -112,6 +112,8 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
         Capability::Packages => Reversal::Automatic {
             how: "a new environment beside the others; nothing that was there changed, and a room uses it only when a command names it".into(),
         },
+        // Read-only, and closed from Settings → Machine.
+        Capability::Door => Reversal::Nothing,
     }
 }
 

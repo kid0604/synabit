@@ -105,6 +105,12 @@ pub enum Capability {
     /// is not another, and a package runs inside every room that uses it later.
     /// A `Never` turns it off. See `syn::machine::env`.
     Packages,
+    /// Opens a folder on this Mac for the rooms to read. Asked every time, and
+    /// answered by choosing the folder in the system's dialog rather than with
+    /// a yes: the folder is the answer. Each folder opened is kept as a door
+    /// (`syn::machine::doors`), so this is never remembered itself. A `Never`
+    /// turns it off.
+    Door,
     /// Learns where files are on this machine, by name, outside the vault.
     /// Nothing is opened. Asked once and remembered, like the browser: until now
     /// everything Syn could look at was in the vault, and this is the first thing
@@ -204,6 +210,7 @@ impl Capability {
             Capability::Cell => Some("cell".to_string()),
             Capability::MachineFiles => Some("machine_files".to_string()),
             Capability::Packages => Some("packages".to_string()),
+            Capability::Door => Some("doors".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -237,6 +244,7 @@ impl Capability {
             Capability::Cell => "run commands in a sealed room on this computer".to_string(),
             Capability::MachineFiles => "find files on this computer by name".to_string(),
             Capability::Packages => "install packages from PyPI for the rooms on this computer".to_string(),
+            Capability::Door => "read a folder you choose on this computer".to_string(),
             Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
                 if tool.is_empty() {

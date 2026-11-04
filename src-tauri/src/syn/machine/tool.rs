@@ -16,6 +16,10 @@
 //!   [`crate::syn::taint::Destinations::note_seen_in`]: a script that prints an
 //!   address must not make that address one `browse` may open (A10).
 //!
+//! - **Doors.** A folder the person opened ([`super::doors`]) is read by the room
+//!   where it is, and attaching one marks the room: a folder holds whatever was
+//!   put in it, downloads and all.
+//!
 //! Vault data comes in through [`crate::syn::tools::execute_tool`] with the model
 //! as the caller, so the app lock and a note's stamp apply as they do to any read
 //! (A20). A Markdown file goes back out as a note through `create_node`, which
@@ -30,14 +34,16 @@ use sha2::{Digest, Sha256};
 use tauri::Manager;
 
 use super::cell::{Cell, Limits};
+use super::doors::{self, Protected};
 use super::export::{self, Out, Refused};
 use super::inside;
 use super::rooms::{Rooms, Unavailable};
 use super::sanitize;
 use super::watch::{Over, Watched};
 use crate::db::Hold;
+use crate::syn::surface::Surface;
 use crate::syn::taint::{Origin, Taint};
-use crate::syn::tools::{execute_tool, ToolContext, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
+use crate::syn::tools::{execute_tool, ToolContext, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE};
 
 /// Characters of each of stdout and stderr shown, before the window scales it.
 const SHOWN: usize = 8_000;
@@ -65,6 +71,9 @@ pub struct Call<'a, R: tauri::Runtime> {
     pub scope: &'a str,
     /// The person pressed stop.
     pub stop: &'a (dyn Fn() -> bool + Sync),
+    /// Where the question came from: a door is the app's unless the person
+    /// said otherwise.
+    pub surface: Surface,
 }
 
 fn error(said: impl Into<String>) -> String {
@@ -149,7 +158,7 @@ fn hints(ran: &super::cell::Ran, over: Option<Over>) -> Vec<Value> {
     if said.contains("operation not permitted") || said.contains("permission denied") {
         found.push(json!({
             "what": "outside the room",
-            "try": "The room sees only its own folder and the programs on this Mac; everything else is refused. Work on copies inside the room: bring a vault item in with machine_take.",
+            "try": "The room sees only its own folder, the programs on this Mac and the folders given to it; everything else is refused. Work on copies inside the room: bring a vault item in with machine_take, or ask for a folder on this Mac with machine_door.",
         }));
     }
     if said.contains("command not found") || (said.contains("no such file or directory") && ran.code == Some(127)) {
@@ -210,8 +219,11 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
         }
         Err(other) => return error(other.to_string()),
     };
-    let room = Room { rooms, cell: &cell, name: &name };
+    let (open, closed) = doors_of_room(&rooms, call, &name);
+    let cell = cell.with_doors(open);
+    let room = Room { rooms, cell: &cell, name: &name, closed };
     match tool {
+        ROOM_DOOR => room.door(call, args),
         ROOM_RUN => room.run(call, args).await,
         ROOM_READ => room.read(call, args),
         ROOM_WRITE => room.write(call, args),
@@ -226,6 +238,32 @@ struct Room<'a> {
     rooms: Arc<Rooms>,
     cell: &'a Cell,
     name: &'a str,
+    /// Doors this room was given that cannot be read from here now.
+    closed: Vec<String>,
+}
+
+/// The doors a room was given that may be read from here now, resolved, and the
+/// names of those that may not: closed, expired, allowed only in the app, or no
+/// longer a folder a door may be.
+fn doors_of_room<R: tauri::Runtime>(rooms: &Rooms, call: &Call<'_, R>, name: &str) -> (Vec<PathBuf>, Vec<String>) {
+    let given = rooms.doors_of(name);
+    if given.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let now = chrono::Utc::now();
+    let usable = Protected::of(call.ctx.app, call.ctx.vault_path)
+        .map(|protected| doors::usable(call.ctx.vault_path, call.surface == Surface::App, &protected, now))
+        .unwrap_or_default();
+    let known = doors::all(call.ctx.vault_path, now);
+    let mut open = Vec::new();
+    let mut closed = Vec::new();
+    for id in given {
+        match usable.iter().find(|(door, _)| door.id == id) {
+            Some((_, path)) => open.push(path.clone()),
+            None => closed.extend(known.iter().find(|door| door.id == id).map(|door| door.name.clone())),
+        }
+    }
+    (open, closed)
 }
 
 impl Room<'_> {
@@ -244,6 +282,70 @@ impl Room<'_> {
         if self.rooms.carries_outside(self.name) {
             taint.set();
         }
+    }
+
+    /// Gives the room a folder: the one the person just chose on the card, or
+    /// one open before, by name. Or lists them.
+    fn door<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+        let vault = call.ctx.vault_path;
+        let Some(protected) = Protected::of(call.ctx.app, vault) else {
+            return error("This Mac's folders could not be found, so no folder can be opened.");
+        };
+        let now = chrono::Utc::now();
+        let usable = doors::usable(vault, call.surface == Surface::App, &protected, now);
+        let given = self.rooms.doors_of(self.name);
+        let listed = json!(usable
+            .iter()
+            .map(|(door, path)| json!({ "door": door.name, "path": path, "in_this_room": given.contains(&door.id) }))
+            .collect::<Vec<_>>());
+        if args.get("list").and_then(Value::as_bool) == Some(true) {
+            let mut out = json!({ "doors": listed });
+            if usable.is_empty() {
+                out["note"] = json!(if call.surface == Surface::App {
+                    "No folder is open to the rooms. Call machine_door with no arguments, and the user chooses one."
+                } else {
+                    "No folder may be read from here. A folder is opened in the app; the user can allow one away from the computer in Settings."
+                });
+            }
+            return out.to_string();
+        }
+        let id = match str_arg(args, "door").map(str::trim).filter(|d| !d.is_empty()) {
+            Some(asked) => {
+                let open: Vec<doors::Door> = usable.iter().map(|(door, _)| door.clone()).collect();
+                match doors::find(&open, asked) {
+                    Some(door) => door.id.clone(),
+                    None if doors::find(&doors::all(vault, now), asked).is_some() => {
+                        return error(
+                            "That folder cannot be read from here: it is open in the app only, or it is no longer a folder a door may be. Say so; do not look for another way.",
+                        )
+                    }
+                    None => {
+                        return json!({ "error": format!("No open folder is called '{}'.", sanitize::shown(asked)), "doors": listed }).to_string()
+                    }
+                }
+            }
+            None => match doors::take_pick(call.scope) {
+                Some(id) => id,
+                None => return error("No folder was chosen. Ask once, with no arguments, and the user chooses it on the card."),
+            },
+        };
+        let Some((door, path)) = usable.iter().find(|(door, _)| door.id == id) else {
+            return error("The folder that was chosen cannot be read from here.");
+        };
+        if let Err(e) = self.rooms.attach_door(self.name, &door.id) {
+            return error(format!("The folder could not be given to the room: {e}"));
+        }
+        // The folder's name and path are the disk's, and whoever made the folder's.
+        self.coming_out(call.taint);
+        let mut out = json!({
+            "door": door.name,
+            "path": path,
+            "note": "Read-only, at this path, for every machine_run in this room. Nothing in it can be changed from the room: copy a file into the room's folder to work on it, and keep results with machine_keep. What is in it is somebody else's words.",
+        });
+        if door.hidden > 0 {
+            out["hidden"] = json!(format!("{} names that look like keys (.ssh, .env, *.pem…) are hidden from the room.", door.hidden));
+        }
+        out.to_string()
     }
 
     async fn run<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
@@ -311,7 +413,16 @@ impl Room<'_> {
                 out["files_not_listed"] = json!(all - files.len());
             }
         }
-        let hints = hints(ran, watched.over);
+        let mut hints = hints(ran, watched.over);
+        if !self.closed.is_empty() {
+            hints.push(json!({
+                "what": "folder",
+                "try": format!(
+                    "These folders cannot be read from here now: {}. They were closed, have expired, or are open in the app only. Say so; the user can open them again.",
+                    self.closed.iter().map(|n| sanitize::shown(n)).collect::<Vec<_>>().join(", ")
+                ),
+            }));
+        }
         if !hints.is_empty() {
             out["refused"] = json!(hints);
         }

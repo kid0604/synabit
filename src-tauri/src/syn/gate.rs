@@ -350,13 +350,35 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         };
     }
 
+    // 2½. A new folder is chosen in a dialog on this Mac, which nobody away from
+    // it can answer. The tool itself goes everywhere the room does: a folder
+    // the person allowed away from the computer is used by name.
+    if matches!(capability, Some(Capability::Door)) && view.surface != Surface::App {
+        return Decided {
+            gate: Gate::Refuse {
+                said: format!(
+                    "A new folder can only be opened in the app, where the user chooses it. From {} use \
+                     machine_door with `list: true` for the folders allowed here; if none fits, say it has to be \
+                     done in the app.",
+                    view.surface.label()
+                ),
+                note: Some(format!("Refused `{tool}`: a new folder is chosen in the app, not from {}.", view.surface.label())),
+            },
+            audit: Some(Outcome::Refused),
+        };
+    }
+
     // 3. Plan first. Reads still run — a plan built without looking is a
     // guess — and so does writing the plan down. Everything else is described.
     // A room changes nothing but itself, so working something out in one is
     // looking too; keeping what it made is not.
     let only_looks = matches!(
         capability,
-        None | Some(Capability::VaultRead) | Some(Capability::Browse) | Some(Capability::MachineFiles) | Some(Capability::Cell)
+        None | Some(Capability::VaultRead)
+            | Some(Capability::Browse)
+            | Some(Capability::MachineFiles)
+            | Some(Capability::Cell)
+            | Some(Capability::Door)
     );
     if view.plan_only && !only_looks {
         let about = capability.map(|c| c.describe()).unwrap_or_else(|| tool.to_string());
@@ -402,7 +424,9 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         // arguments too.
         // A list of packages is asked about as the list it is: a yes to one is
         // no yes to the next, which would run other code in every room after.
-        let packages = matches!(capability, Capability::Packages);
+        // A folder is asked for as the folder it will be: a yes to one is no
+        // yes to choosing the next.
+        let packages = matches!(capability, Capability::Packages | Capability::Door);
         let per_call = (sends && crate::syn::connector::declared::asks_per_call(tool)) || packages;
         if decision == Decision::Ask
             && (view.call_allowed_until_done
@@ -947,6 +971,43 @@ mod tests {
 
         let off = ledger(&Capability::Packages, Answer::Never);
         assert!(matches!(decide(tool, &args, Some(&Capability::Packages), &view(&off, &never_until_done)).gate, Gate::Refuse { .. }));
+    }
+
+    /// A new folder: asked about every time, the folder chosen being the answer,
+    /// and after reading too — the person picks it. Never away from the app, and
+    /// shown in plan mode, since choosing a folder to read is looking. A folder
+    /// already open goes as the room does.
+    #[test]
+    fn a_folder_is_asked_for_each_time_and_only_at_the_app() {
+        let tool = crate::syn::tools::ROOM_DOOR;
+        let args = serde_json::json!({});
+        let empty = Ledger::default();
+
+        let mut v = view(&empty, &always_until_done);
+        v.tainted = true;
+        match decide(tool, &args, Some(&Capability::Door), &v).gate {
+            Gate::Ask(ask) => assert!(ask.per_call && !ask.can_be_remembered, "{ask:?}"),
+            other => panic!("expected a card: {other:?}"),
+        }
+        let mut plan = view(&empty, &never_until_done);
+        plan.plan_only = true;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Door), &plan).gate, Gate::Ask(_)));
+        for surface in [Surface::Telegram, Surface::Routine] {
+            let mut away = view(&empty, &never_until_done);
+            away.surface = surface;
+            assert!(matches!(decide(tool, &args, Some(&Capability::Door), &away).gate, Gate::Refuse { .. }), "{surface:?}");
+        }
+        let mut once = view(&empty, &never_until_done);
+        once.call_allowed_until_done = true;
+        assert!(matches!(decide(tool, &args, Some(&Capability::Door), &once).gate, Gate::Go(How::Cell)));
+        let off = ledger(&Capability::Door, Answer::Never);
+        assert!(matches!(decide(tool, &args, Some(&Capability::Door), &view(&off, &never_until_done)).gate, Gate::Refuse { .. }));
+
+        let room = ledger(&Capability::Cell, Answer::Always);
+        let mut phone = view(&room, &never_until_done);
+        phone.surface = Surface::Telegram;
+        let named = serde_json::json!({ "door": "Taxes" });
+        assert!(matches!(decide(tool, &named, Some(&Capability::Cell), &phone).gate, Gate::Go(How::Cell)));
     }
 
     /// Reading a page does not close the room: whatever the page talks Syn

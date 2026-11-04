@@ -1119,6 +1119,16 @@ pub fn run() {
             commands::machine::syn_machine_check,
             #[cfg(target_os = "macos")]
             commands::machine::syn_machine_stop_all,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_doors,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_add_door,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_pick_door,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_remove_door,
+            #[cfg(target_os = "macos")]
+            commands::machine::syn_door_away,
             // Chat
             chat::get_chat_history,
             chat::mark_chat_read,

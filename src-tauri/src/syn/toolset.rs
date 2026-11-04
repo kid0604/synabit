@@ -162,7 +162,7 @@ impl Group {
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
             Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
             Group::Machine => "this Mac, outside the vault: find a file by name anywhere in the person's folders, and how the battery, disk and memory are doing".into(),
-            Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — convert or compress a video, work through a large CSV, make a file — and keep the result in the vault".into(),
+            Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — convert or compress a video, work through a large CSV, make a file, read a folder on this Mac the user opens to it — and keep the result in the vault".into(),
             Group::Visuals => "draw an interactive visual under the answer: a diagram, a chart of the user's data, an explainer with sliders, a simulation".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
@@ -204,6 +204,7 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "python", "ffmpeg", "sqlite", "nén video", "cắt video", "chuyển định dạng", "đổi định dạng",
             "run a command", "run this", "run a script", "write a script", "command line", "compress",
             "convert", "transcode", "large csv", "csv lớn", "file csv", "phân tích file",
+            "trên máy", "on my mac", "on this mac", "my documents", "downloads", "desktop",
         ],
         Group::Finance => &[
             "tiền", "chi tiêu", "tiêu", "thu nhập", "lương", "giao dịch", "ngân sách", "tài khoản",

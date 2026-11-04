@@ -50,6 +50,8 @@ pub enum Power {
     Cell,
     /// Installs packages for the rooms, from the registry.
     Packages,
+    /// Opens a folder on this Mac to a room, or uses one already open.
+    Door,
 }
 
 /// Which group brings a tool into a run — `toolset::Group` without the
@@ -243,7 +245,8 @@ impl Policy {
 
 use crate::syn::connector::authoring::{DRAFT_TOOL, FIND_TOOL as CONNECTOR_FIND, PROPOSE_TOOL as CONNECTOR_CONNECT, TRY_TOOL};
 use crate::syn::tools::{
-    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
+    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_READ, ROOM_RUN, ROOM_TAKE,
+    ROOM_WRITE,
 };
 
 /// Every built-in tool.
@@ -332,6 +335,14 @@ pub static POLICIES: &[Policy] = &[
         .at_the_computer()
         .no_helper()
         .engine(),
+    // A folder on this Mac for a room to read and never change. A new one is
+    // asked for every time, and only in the app, where the person picks it in
+    // the system's dialog (`Capability::Door`); one already open is the room's
+    // own switch, and goes where the room goes — away from the app only if the
+    // person allowed that folder there (`machine::doors`, A23). After reading
+    // too: what the folder holds reaches nothing but the model, through a
+    // marked room, and the person chooses which folder.
+    Policy { power: Power::Door, ..Policy::read(ROOM_DOOR, Home::Room).room() },
     // Out of the room into the vault: only ever a new file, or a new note made
     // the way `create_node` makes one — which is all a routine may do. Hidden
     // with the Files app.
@@ -460,6 +471,15 @@ pub fn capability(tool: &str, args: &Value) -> Option<Capability> {
         Power::MachineFiles => Capability::MachineFiles,
         Power::Cell => Capability::Cell,
         Power::Packages => Capability::Packages,
+        // A folder already open is the room's to use; a new one is a question.
+        Power::Door => {
+            let named = args.get("door").and_then(Value::as_str).is_some_and(|d| !d.trim().is_empty());
+            if named || args.get("list").and_then(Value::as_bool) == Some(true) {
+                Capability::Cell
+            } else {
+                Capability::Door
+            }
+        }
         Power::DraftFromSpec => match args
             .get("openapi_url")
             .and_then(Value::as_str)
@@ -667,6 +687,21 @@ mod tests {
         }
         assert_eq!(capability(ROOM_KEEP, &serde_json::json!({})), Some(Capability::VaultWrite));
         assert_eq!(lock(ROOM_KEEP), Some("file"));
+    }
+
+    /// A folder: a new one is its own question, one already open is the room's.
+    #[test]
+    fn a_new_folder_is_asked_for_and_an_open_one_is_the_rooms() {
+        assert_eq!(capability(ROOM_DOOR, &serde_json::json!({})), Some(Capability::Door));
+        assert_eq!(capability(ROOM_DOOR, &serde_json::json!({ "door": " " })), Some(Capability::Door));
+        assert_eq!(capability(ROOM_DOOR, &serde_json::json!({ "door": "Taxes" })), Some(Capability::Cell));
+        assert_eq!(capability(ROOM_DOOR, &serde_json::json!({ "list": true })), Some(Capability::Cell));
+        assert!(after_reading(ROOM_DOOR) && engine(ROOM_DOOR) && helper(ROOM_DOOR) == Some(false));
+        // Sent wherever the room goes; asking for a new one away from the app is
+        // the gate's to refuse (`gate::a_folder_is_asked_for_each_time_and_only_at_the_app`).
+        for surface in [Surface::App, Surface::Telegram, Surface::Routine] {
+            assert_eq!(on(ROOM_DOOR, surface), Some(true), "{surface:?}");
+        }
     }
 
     #[test]
