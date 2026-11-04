@@ -180,6 +180,15 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         crate::syn::consent::record(&vault.path, &crate::syn::consent::Capability::Cell, crate::syn::consent::Answer::Always, chrono::Utc::now())
             .expect("the room allowed");
     }
+    #[cfg(target_os = "macos")]
+    let folder = task.room.folder.as_ref().map(|(name, files)| doors::Folder::make(task.id, name, files));
+    #[cfg(target_os = "macos")]
+    if let (Some(folder), Some(away)) = (&folder, task.room.door_open) {
+        let door = folder.open(vault.handle(), &vault.path);
+        if away {
+            crate::syn::machine::doors::set_away(&vault.path, &door, true, chrono::Utc::now()).expect("away");
+        }
+    }
     let nodes_before = grade::nodes(&vault).iter().filter(|(_, ty, _, _, _)| !ty.starts_with("syn_")).count();
 
     let mut answers: Vec<SynMessage> = Vec::new();
@@ -229,12 +238,22 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
             }
             match last.state {
                 RunState::AwaitingConsent => {
-                    let _ = crate::commands::syn::syn_answer_consent(
-                        vault.path.clone(),
-                        last.id.clone(),
-                        crate::syn::consent::Answer::Once,
-                    )
-                    .await;
+                    // A card asking for a folder is answered as the person
+                    // does, by choosing it: the task's folder, or none.
+                    let mut answer = crate::syn::consent::Answer::Once;
+                    let asks_folder = last.pending_consent.as_ref().is_some_and(|a| a.capability == crate::syn::consent::Capability::Door);
+                    #[cfg(target_os = "macos")]
+                    if asks_folder {
+                        match &folder {
+                            Some(folder) => crate::syn::machine::doors::picked_for(&conversation, &folder.open(vault.handle(), &vault.path)),
+                            None => answer = crate::syn::consent::Answer::NotNow,
+                        }
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    if asks_folder {
+                        answer = crate::syn::consent::Answer::NotNow;
+                    }
+                    let _ = crate::commands::syn::syn_answer_consent(vault.path.clone(), last.id.clone(), answer).await;
                     message = String::new();
                     resume = Some(last.id);
                 }
@@ -468,12 +487,55 @@ mod rooms {
             let _ = ROOMS.1.stop_all();
             let _ = std::fs::remove_dir_all(ROOMS.0.join("cells"));
             let _ = std::fs::remove_dir_all(ROOMS.0.join("outside"));
+            let _ = std::fs::remove_dir_all(ROOMS.0.join("doors"));
         }
     }
 
     pub fn lend(app: &tauri::AppHandle<tauri::test::MockRuntime>) -> Lent {
         app.manage(ROOMS.1.clone());
         Lent
+    }
+}
+
+/// A task's folder on the Mac, outside the vault, for a door to open: made
+/// fresh when the task starts and removed when it ends.
+#[cfg(target_os = "macos")]
+mod doors {
+    use std::path::PathBuf;
+
+    use crate::syn::machine::doors::{self, Protected};
+
+    pub struct Folder {
+        at: PathBuf,
+        holder: PathBuf,
+    }
+
+    impl Folder {
+        pub fn make(task: &str, name: &str, files: &[(&'static str, String)]) -> Self {
+            // Not under a hidden folder, which a door may not be.
+            let holder = std::env::temp_dir().join(format!("synabit-eval-folders-{}", std::process::id())).join(task);
+            let _ = std::fs::remove_dir_all(&holder);
+            let at = holder.join(name);
+            for (path, text) in files {
+                let file = at.join(path);
+                std::fs::create_dir_all(file.parent().expect("a folder")).expect("the folder");
+                std::fs::write(&file, text).expect("a file in the folder");
+            }
+            std::fs::create_dir_all(&at).expect("the folder");
+            Self { at, holder }
+        }
+
+        /// What the person's pick does: the folder opened as a door. Its id.
+        pub fn open(&self, app: &tauri::AppHandle<tauri::test::MockRuntime>, vault: &str) -> String {
+            let protected = Protected::of(app, vault).expect("this Mac's folders");
+            doors::open(vault, &self.at, &protected, chrono::Utc::now()).expect("a door").door.id
+        }
+    }
+
+    impl Drop for Folder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.holder);
+        }
     }
 }
 
