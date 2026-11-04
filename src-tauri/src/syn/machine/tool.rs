@@ -385,7 +385,11 @@ impl Room<'_> {
                 "files": r.files,
                 "folders": r.folders,
                 "left_as_they_are": r.left_as_they_are,
-                "note": "A copy of the folder, in the room's folder at `copy`. Change it as the job needs with machine_run: move, rename, delete, make folders and files. The real folder is not touched. Then call machine_propose with this rehearsal; the user sees exactly what would change, and approves it. Links, hidden key files and the like were left out of the copy and stay as they are.",
+                "note": format!(
+                    "A copy of the folder is in the room's folder, as '{}' (machine_run starts in the room's folder). Change it as the job needs: move, rename, delete, make folders and files, all inside '{}'. Quote every path, since names have spaces and accents. Anything moved out of the copy counts as removed. The real folder is not touched. Then call machine_propose; the user sees exactly what would change, and approves it. Links, hidden key files and the like were left out of the copy and stay as they are.",
+                    sanitize::shown(&r.at),
+                    sanitize::shown(&r.at)
+                ),
             })
             .to_string(),
             Ok(Err(e)) => error(format!("The folder could not be copied: {e}")),
@@ -417,11 +421,18 @@ impl Room<'_> {
             .take(40)
             .map(|o| json!({ "what": o.what, "from": shown(&o.from), "to": shown(&o.to), "class": o.class, "why": o.why }))
             .collect();
+        let gone: Vec<String> = proposal
+            .ops
+            .iter()
+            .filter(|o| matches!(o.what, What::Trash | What::RemoveFolder))
+            .take(12)
+            .filter_map(|o| shown(&o.from))
+            .collect();
         if proposal.ops.is_empty() {
             return json!({ "proposed": 0, "note": "The copy is the same as the folder, so there is nothing to propose." }).to_string();
         }
         let _ = tauri::Emitter::emit(call.ctx.app, "syn-rehearsal-needed", json!({ "conversation_id": call.scope, "id": proposal.id }));
-        json!({
+        let mut out = json!({
             "proposed": proposal.ops.len(),
             "moved": count(What::Move) + count(What::Rename),
             "to_the_trash": count(What::Trash) + count(What::RemoveFolder),
@@ -431,8 +442,12 @@ impl Room<'_> {
             "cannot_be_applied": proposal.ops.iter().filter(|o| o.class == Class::Blocked).count(),
             "ops": listed,
             "note": "Nothing has changed yet. When you finish, the user sees these on a card, chooses which to apply, and the app applies them; they can be undone. Files that are not plainly documents are not chosen beforehand. In your answer say what you proposed and why; do not say it is done.",
-        })
-        .to_string()
+        });
+        if !gone.is_empty() {
+            out["going_to_the_trash"] = json!(gone);
+            out["check"] = json!("These are no longer in the copy, so the card offers them to the Trash. If that is not what you meant — a file moved outside the copy, or a mistyped path — put them back inside the copy and call machine_propose again; the card is replaced.");
+        }
+        out.to_string()
     }
 
     async fn run<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {

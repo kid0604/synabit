@@ -292,6 +292,26 @@ async fn what_the_room_never_saw_is_never_thrown_away() {
     assert!(refused.is_err());
 }
 
+/// A file moved out of the copy by mistake is offered to the Trash, said so;
+/// put back and proposed again, the card is replaced. One the person answered
+/// is not proposed again.
+#[tokio::test]
+async fn a_mistake_in_the_copy_is_put_right_before_the_card_is_answered() {
+    let place = place("Again", &[("a.pdf", PDF)]);
+    let (cell, first) = proposed("rh-again", &place, "mkdir ../stray && mv a.pdf ../stray/").await;
+    assert_eq!(op(&first, What::Trash, "a.pdf").what, What::Trash, "what left the copy is offered to the Trash, not lost");
+    run(&cell, "mkdir -p 'Again/Tài liệu' && mv stray/a.pdf 'Again/Tài liệu/'").await;
+    let second = rehearse::propose(&rooms(), &cell, &first.id, "/vault", Some("conv")).unwrap();
+    assert_eq!(second.id, first.id);
+    assert_eq!(op(&second, What::Move, "a.pdf").to.as_deref(), Some("Tài liệu/a.pdf"));
+    assert!(!second.ops.iter().any(|o| o.what == What::Trash));
+    assert_eq!(rehearse::waiting(&rooms(), "/vault").iter().filter(|p| p.id == first.id).count(), 1, "replaced, not added");
+
+    let mut answered = second;
+    rehearse::settle(&rooms(), Some(&cell), &mut answered, rehearse::State::Declined).unwrap();
+    assert!(rehearse::propose(&rooms(), &cell, &first.id, "/vault", Some("conv")).is_err());
+}
+
 /// Only what was approved, and nothing that cannot be.
 #[tokio::test]
 async fn only_the_approved_ops_are_applied() {

@@ -115,7 +115,8 @@ pub fn latest(rooms: &Rooms, room: &str) -> Option<String> {
         .filter_map(|e| {
             let id = e.file_name().to_str()?.to_string();
             let manifest = load(rooms, &id).ok()?;
-            (manifest.room == room && load_proposal(rooms, &id).is_none()).then_some((manifest.made, id))
+            let open = load_proposal(rooms, &id).is_none_or(|p| p.state == State::Waiting);
+            (manifest.room == room && open).then_some((manifest.made, id))
         })
         .max()
         .map(|(_, id)| id)
@@ -494,6 +495,11 @@ fn stage(rooms: &Rooms, id: &str, n: usize, copy: BorrowedFd, path: &str) -> io:
 pub fn propose(rooms: &Rooms, cell: &Cell, id: &str, vault: &str, conversation: Option<&str>) -> Result<Proposal, Refused> {
     let manifest = load(rooms, id)?;
     if manifest.room != cell.room().file_name().and_then(|n| n.to_str()).unwrap_or_default() {
+        return Err(Refused::Unknown(id.to_string()));
+    }
+    // Proposed again while the card still waits: the new one replaces it. One
+    // the person answered is settled.
+    if load_proposal(rooms, id).is_some_and(|p| p.state != State::Waiting) {
         return Err(Refused::Unknown(id.to_string()));
     }
     let _frozen = rooms.freeze(cell)?;
