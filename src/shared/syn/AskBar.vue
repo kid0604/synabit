@@ -42,6 +42,7 @@ import ConsentCard from '../../mini-apps/messages/components/ConsentCard.vue';
 import ChoiceCard from '../../mini-apps/messages/components/ChoiceCard.vue';
 import WritePlanCard from '../../mini-apps/messages/components/WritePlanCard.vue';
 import HeldChangesCard from '../../mini-apps/messages/components/HeldChangesCard.vue';
+import RehearsalCard from '../../mini-apps/messages/components/RehearsalCard.vue';
 import SkillProposalCard from '../../mini-apps/messages/components/SkillProposalCard.vue';
 import RoutineProposalCard from '../../mini-apps/messages/components/RoutineProposalCard.vue';
 import { useSynWrites } from '../../mini-apps/messages/composables/useSynWrites';
@@ -580,6 +581,7 @@ const onKeydown = (event: KeyboardEvent) => {
           <!-- Changes held after reading, waiting once the answer is in. The
                same card Messages shows. See `syn::changes`. -->
           <HeldChangesCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
+          <RehearsalCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
           <SkillProposalCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
           <RoutineProposalCard v-if="!busy" class="mb-3" :vault-path="vaultPath" :conversation-id="conversationId" />
 

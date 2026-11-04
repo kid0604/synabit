@@ -14,6 +14,7 @@ import RunProgress from '../../../shared/syn/RunProgress.vue';
 import ConsentCard from './ConsentCard.vue';
 import WritePlanCard from './WritePlanCard.vue';
 import HeldChangesCard from './HeldChangesCard.vue';
+import RehearsalCard from './RehearsalCard.vue';
 import SkillProposalCard from './SkillProposalCard.vue';
 import RoutineProposalCard from './RoutineProposalCard.vue';
 import ConnectorProposalCard from './ConnectorProposalCard.vue';
@@ -530,6 +531,7 @@ const handleStop = () => {
         </div>
         <div v-if="vaultPath && !isStreaming" class="px-4">
           <HeldChangesCard :vault-path="vaultPath" :conversation-id="conversationId" />
+          <RehearsalCard class="mt-2" :vault-path="vaultPath" :conversation-id="conversationId" />
           <SkillProposalCard class="mt-2" :vault-path="vaultPath" :conversation-id="conversationId" />
           <RoutineProposalCard class="mt-2" :vault-path="vaultPath" :conversation-id="conversationId" />
         </div>

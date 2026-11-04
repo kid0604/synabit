@@ -15,7 +15,7 @@
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { useI18n } from 'vue-i18n';
-import { FolderOpen, Loader2, ShieldCheck, ShieldAlert, Square, X as XIcon } from 'lucide-vue-next';
+import { FolderOpen, Loader2, ShieldCheck, ShieldAlert, Square, Undo2, X as XIcon } from 'lucide-vue-next';
 import { logger } from '../../../utils/logger';
 import { dialogTitle, refusedText, warnAboutHidden, type Door, type Picked } from '../composables/doorPick';
 
@@ -131,6 +131,45 @@ const setAway = async (door: Listed, away: boolean) => {
   await loadDoors();
 };
 
+interface Batch {
+  id: string;
+  door_name: string;
+  root: string;
+  at: string;
+  standing: 'finished' | 'interrupted' | 'undone';
+  moved: number;
+  trashed: number;
+  made: number;
+  can_undo: boolean;
+}
+const batches = ref<Batch[]>([]);
+const undoing = ref<string | null>(null);
+const batchSaid = ref('');
+
+const loadBatches = async () => {
+  try {
+    batches.value = await invoke<Batch[]>('syn_rehearsal_batches');
+  } catch (e) {
+    logger.warn('[Syn] Could not read the applied changes', e);
+  }
+};
+
+const undoBatch = async (batch: Batch) => {
+  undoing.value = batch.id;
+  batchSaid.value = '';
+  try {
+    const undone = await invoke<{ put_back: number; left: string[] }>('syn_undo_rehearsal', { id: batch.id });
+    batchSaid.value = undone.left.length
+      ? t('syn.machine_batch_undo_left', { n: undone.put_back, what: undone.left.join('; ') })
+      : t('syn.machine_batch_undo_result', { n: undone.put_back });
+  } catch (e) {
+    batchSaid.value = String(e);
+  } finally {
+    undoing.value = null;
+    await loadBatches();
+  }
+};
+
 const state = computed(() => {
   const s = status.value;
   if (!s || s.sealed === null) return { tone: 'quiet', text: t('syn.machine_state_unknown') };
@@ -143,6 +182,7 @@ let timer: ReturnType<typeof setInterval> | undefined;
 onMounted(() => {
   void load();
   void loadDoors();
+  void loadBatches();
   timer = setInterval(load, 4000);
 });
 onBeforeUnmount(() => clearInterval(timer));
@@ -255,6 +295,44 @@ onBeforeUnmount(() => clearInterval(timer));
         <span>{{ t('syn.machine_door_add') }}</span>
       </button>
       <p v-if="doorSaid" class="text-xs text-gray-500 dark:text-gray-400" role="status">{{ doorSaid }}</p>
+    </div>
+
+    <div class="pt-3 space-y-2 border-t border-gray-100 dark:border-gray-800" data-test="batches">
+      <h4 class="text-xs font-medium text-text dark:text-text-dark">{{ t('syn.machine_batches_title') }}</h4>
+      <p v-if="!batches.length" class="text-xs text-gray-500 dark:text-gray-400">{{ t('syn.machine_batches_none') }}</p>
+      <ul v-else class="space-y-2">
+        <li
+          v-for="batch in batches"
+          :key="batch.id"
+          class="p-3 rounded-xl border text-xs space-y-1"
+          :class="batch.standing === 'interrupted'
+            ? 'border-amber-300 dark:border-amber-500/40 bg-amber-50/50 dark:bg-amber-500/5'
+            : 'border-gray-200 dark:border-gray-700/50'"
+        >
+          <div class="flex items-start gap-2">
+            <div class="min-w-0 flex-1">
+              <p class="text-text dark:text-text-dark break-words">
+                {{ t('syn.machine_batch_line', { name: batch.door_name, date: day(batch.at), moved: batch.moved, trashed: batch.trashed, made: batch.made }) }}
+              </p>
+              <p class="text-gray-500 dark:text-gray-400 break-all">{{ batch.root }}</p>
+              <p v-if="batch.standing === 'interrupted'" class="text-amber-800 dark:text-amber-200">{{ t('syn.machine_batch_interrupted') }}</p>
+              <p v-if="batch.standing === 'undone'" class="text-gray-500 dark:text-gray-400">{{ t('syn.machine_batch_undone') }}</p>
+            </div>
+            <button
+              v-if="batch.can_undo"
+              type="button"
+              :disabled="undoing !== null"
+              class="flex items-center gap-1 px-2 py-1 rounded-lg text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 cursor-pointer disabled:opacity-50"
+              @click="undoBatch(batch)"
+            >
+              <Loader2 v-if="undoing === batch.id" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+              <Undo2 v-else class="w-3.5 h-3.5" aria-hidden="true" />
+              <span>{{ t('syn.machine_batch_undo') }}</span>
+            </button>
+          </div>
+        </li>
+      </ul>
+      <p v-if="batchSaid" class="text-xs text-gray-500 dark:text-gray-400 break-words" role="status">{{ batchSaid }}</p>
     </div>
   </div>
 </template>
