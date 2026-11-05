@@ -159,6 +159,9 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
         }
         std::fs::write(&at, text).expect("a task's file");
     }
+    for (path, title, body) in &task.notes {
+        vault.node(path, "note", title, serde_json::json!({}), body);
+    }
     for (path, make) in &task.room.made {
         let at = std::path::Path::new(&vault.path).join(path);
         if let Some(dir) = at.parent() {
