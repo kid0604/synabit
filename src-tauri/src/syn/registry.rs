@@ -114,6 +114,8 @@ pub fn reversal_of(capability: &Capability) -> Reversal {
         },
         // Read-only, and closed from Settings → Machine.
         Capability::Door => Reversal::Nothing,
+        // What went out was the goal, to the open web; nothing of the person's.
+        Capability::HelperOut => Reversal::Nothing,
     }
 }
 

@@ -662,6 +662,10 @@ pub struct Run {
     /// piece of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_run_id: Option<String>,
+    /// A helper sent out with `delegate_out`: its tools are the web and a room
+    /// with the network, and nothing of the person's. See `syn::delegate`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sent_out: bool,
     /// The run this one carries on from, after it stopped to ask.
     ///
     /// Carrying on used to be a new run that knew one thing about the old one:
@@ -881,6 +885,7 @@ impl Run {
             plan: Vec::new(),
             ceiling: None,
             parent_run_id: None,
+            sent_out: false,
             resumed_from: None,
             skill_injected: None,
             destinations: Default::default(),

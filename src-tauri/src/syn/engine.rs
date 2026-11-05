@@ -351,6 +351,10 @@ fn audit_detail(tool: &str, args: &serde_json::Value) -> Option<String> {
     if crate::syn::connector::is_connector_tool(tool) {
         return Some(crate::syn::connector::audit_detail(None, tool, args));
     }
+    // What a helper sent out was told: the one thing that left.
+    if tool == crate::syn::delegate::OUT_TOOL {
+        return args.get("goal").and_then(|v| v.as_str()).map(|g| g.trim().to_string());
+    }
     if tool != crate::syn::tools::BROWSE_TOOL {
         return None;
     }
@@ -806,13 +810,26 @@ impl SynEngine {
             .into_iter()
             .filter(|t| crate::syn::tools::offered_at(&t.function.name, room))
             .filter(|t| draws || !crate::syn::visual::tool::TOOLS.contains(&t.function.name.as_str()))
-            .filter(|t| has_rooms || !crate::syn::tools::is_room_tool(&t.function.name))
+            .filter(|t| has_rooms || !crate::syn::tools::needs_rooms(&t.function.name))
             .filter(|t| {
+                if run.sent_out {
+                    return crate::syn::delegate::out_may_use(&t.function.name);
+                }
                 !sub_run
                     || crate::syn::delegate::may_use(
                         &t.function.name,
                         req.registry.capability_of(&t.function.name, &serde_json::Value::Null).as_ref(),
                     )
+            })
+            // A helper sent out reads its room's tools as its room is.
+            .map(|mut t| {
+                if run.sent_out {
+                    if let Some((description, parameters)) = crate::syn::delegate::out_definition(&t.function.name) {
+                        t.function.description = description.to_string();
+                        t.function.parameters = parameters;
+                    }
+                }
+                t
             })
             // Nor one this surface would refuse. Telegram was sent `browse`
             // and then told no, so the model planned around a tool it could
@@ -825,6 +842,8 @@ impl SynEngine {
                 }
             })
             .collect();
+        // Whether `browse` of a file is pointed at a helper. See `delegate::is_a_file`.
+        let sends_out = !sub_run && all_tools.iter().any(|t| t.function.name == crate::syn::delegate::OUT_TOOL);
 
         // Of those, what this turn is sent: the core, and the groups the
         // question's words bring. More arrive when the model asks with
@@ -871,6 +890,10 @@ impl SynEngine {
         // And what the run it carries on from had loaded, so it is not sent
         // fewer tools than the call it is carrying on with needed.
         loaded.extend(run.tool_groups.iter().filter_map(|g| crate::syn::toolset::Group::from_name(g)));
+        // A helper sent out has its room from the start: it is half of what it has.
+        if run.sent_out {
+            loaded.insert(crate::syn::toolset::Group::Room);
+        }
         // And `compute`, once the conversation drew a visual: its numbers are
         // its script's, and only a script works them out again. See
         // `visual::tool::drawn`.
@@ -1114,7 +1137,7 @@ impl SynEngine {
                         if batch.len() >= room || (name != crate::syn::tools::BROWSE_TOOL && name != crate::syn::delegate::TOOL) {
                             break;
                         }
-                        let (capability, decided) = weigh(req, run, next, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run);
+                        let (capability, decided) = weigh(req, run, next, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run, sends_out);
                         match decided.gate {
                             crate::syn::gate::Gate::Go(how @ (crate::syn::gate::How::Browse | crate::syn::gate::How::Delegate)) => {
                                 batch.push((j, capability, how, decided.audit))
@@ -1130,7 +1153,8 @@ impl SynEngine {
                         }
                         let tainted = taint.is_set();
                         let reach = destinations.clone();
-                        let guard = tainted.then_some(&reach);
+                        // A helper sent out holds nothing an address could carry.
+                        let guard = (tainted && !run.sent_out).then_some(&reach);
                         let parent: &Run = run;
                         let fetching = batch.iter().map(|(j, _, how, _)| {
                             let next = &reply.tool_calls[*j];
@@ -1156,7 +1180,7 @@ impl SynEngine {
                 let (capability, gate, mut fetched, took) = match ready.remove(&index) {
                     Some(r) => (r.capability, crate::syn::gate::Gate::Go(r.how), Some(r.fetched), Some(r.took)),
                     None => {
-                        let (capability, decided) = weigh(req, run, tc, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run);
+                        let (capability, decided) = weigh(req, run, tc, &taint, &destinations, &seen, consent_conversation.as_deref(), &earlier_steps, sub_run, sends_out);
                         audit_decided(req, run, &run_id, tc, capability.as_ref(), decided.audit);
                         (capability, decided.gate, None, None)
                     }
@@ -1183,6 +1207,9 @@ impl SynEngine {
                         run.pending_rest = reply.tool_calls[index + 1..].to_vec();
                         ask.detail = if tc.function.name == crate::syn::tools::ROOM_ENV {
                             crate::syn::packages::detail(&tc.function.arguments)
+                        } else if tc.function.name == crate::syn::delegate::OUT_TOOL {
+                            // The one thing that goes out, shown as it will go.
+                            Some(crate::syn::machine::sanitize::shown(&arg_str(tc, "goal")))
                         } else {
                             crate::syn::connector::declared::detail(req.vault_path, &tc.function.name, &tc.function.arguments)
                         };
@@ -1217,7 +1244,7 @@ impl SynEngine {
                         let page = match fetched.take() {
                             Some(Fetched::Browse(page)) => page,
                             _ => {
-                                let guard = taint.is_set().then_some(&destinations);
+                                let guard = (taint.is_set() && !run.sent_out).then_some(&destinations);
                                 browse(req, &arg_str(tc, "what"), &arg_str(tc, "site"), guard).await
                             }
                         };
@@ -1316,6 +1343,26 @@ impl SynEngine {
                                 }
                                 // The links it was shown, not the prose it wrote
                                 // about them: its findings are a model's words.
+                                destinations.adopt_seen(reached.seen());
+                                cited.extend(sources);
+                                Ok(crate::syn::registry::ToolOutcome {
+                                    content,
+                                    reversal: crate::syn::registry::Reversal::Nothing,
+                                })
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    crate::syn::gate::How::DelegateOut => {
+                        let handed = self.delegate_out(run, req, stop, &arg_str(tc, "goal")).await;
+                        run.spent.tokens = run.spent.tokens.saturating_add(handed.tokens);
+                        if let Some(note) = handed.note {
+                            run.note(run.spent.iterations.saturating_sub(1), note);
+                        }
+                        match handed.result {
+                            Ok((content, sources, _, reached)) => {
+                                // The open web, in this run's hands now.
+                                taint.set();
                                 destinations.adopt_seen(reached.seen());
                                 cited.extend(sources);
                                 Ok(crate::syn::registry::ToolOutcome {
@@ -1687,8 +1734,22 @@ impl SynEngine {
                     // holds is its mark, which the tool keeps and puts on the
                     // run. See `syn::machine::tool`.
                     crate::syn::gate::How::Cell => {
+                        // A helper sent out works in its own room, which holds
+                        // the window for the network while it lasts.
                         #[cfg(target_os = "macos")]
-                        let content = {
+                        let content = if run.sent_out {
+                            use tauri::Manager;
+                            match (
+                                crate::syn::machine::outside::errand_of(&run_id),
+                                req.app.try_state::<Arc<crate::syn::machine::rooms::Rooms>>(),
+                            ) {
+                                (Some(errand), Some(rooms)) => {
+                                    crate::syn::machine::outside::call(rooms.inner(), &errand, &tc.function.name, &tc.function.arguments, &stop_check)
+                                        .await
+                                }
+                                _ => serde_json::json!({ "error": "Your room is gone; say what you found so far." }).to_string(),
+                            }
+                        } else {
                             let scope = run
                                 .conversation_id
                                 .clone()
@@ -2145,6 +2206,126 @@ impl SynEngine {
             (content, answer.sources.unwrap_or_default(), child.read_untrusted, child.destinations.clone())
         });
         Handed { tokens: child.spent.tokens, note: Some(note), result }
+    }
+
+    /// Send `goal` out with a helper that has the web, a room with the network,
+    /// and nothing of the person's. See `syn::delegate` and `machine::outside`.
+    ///
+    /// The helper runs inside one window of the network, so no sealed room runs
+    /// until it is done (I8): its parent is waiting for it anyway. What it hands
+    /// up is already in the parent's room, which is marked; what it says comes
+    /// back as findings, and always taints the parent — it read the open web.
+    async fn delegate_out<R: tauri::Runtime>(&self, parent: &Run, req: &DriveRequest<'_, R>, stop: &Arc<AtomicBool>, goal: &str) -> Handed {
+        let failed = |said: String| Handed { tokens: 0, note: None, result: Err(crate::error::AppError::General(said)) };
+        if goal.is_empty() {
+            return failed("Say what the helper should do: `goal` is the whole job, and it sees nothing else.".into());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (parent, req, stop);
+            return failed("A helper is sent out only from a Mac for now.".into());
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use tauri::Manager;
+            let Some(rooms) = req.app.try_state::<Arc<crate::syn::machine::rooms::Rooms>>().map(|r| r.inner().clone()) else {
+                return failed("There are no rooms on this computer, so no helper can be sent out.".into());
+            };
+            let scope = parent
+                .conversation_id
+                .clone()
+                .or_else(|| parent.parent_run_id.clone())
+                .unwrap_or_else(|| parent.id.clone());
+            let parent_room = match crate::syn::machine::tool::name_for(&scope, None) {
+                Ok(name) => name,
+                Err(said) => return failed(said),
+            };
+
+            let mut child = Run::new(goal, None, crate::syn::delegate::budget_out(parent));
+            child.parent_run_id = Some(parent.id.clone());
+            child.sent_out = true;
+            child.surface = parent.surface;
+            child.thread = parent.thread.clone();
+            let today = chrono::Local::now().format("%A, %Y-%m-%d").to_string();
+            let message = |id: &str, role: &str, content: String| SynMessage {
+                id: id.into(),
+                role: role.into(),
+                content,
+                model: None,
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                tokens: None,
+                duration_ms: None,
+                sources: None,
+                footing: None,
+                tool_calls_log: None,
+                images: None,
+                plan: None,
+            };
+            // The goal and the date: nothing of the person, the vault, or the
+            // conversation it came from.
+            let history = vec![
+                message("system", "system", crate::syn::delegate::out_system_prompt(&today)),
+                message("goal", "user", goal.to_string()),
+            ];
+            let message_id = uuid::Uuid::new_v4().to_string();
+            let child_req = DriveRequest {
+                app: req.app,
+                message_id: &message_id,
+                history: &history,
+                model: req.model,
+                temperature: req.temperature,
+                registry: req.registry,
+                db: req.db,
+                vault_path: req.vault_path,
+                num_ctx: req.num_ctx,
+                max_history: req.max_history,
+                browser: req.browser,
+                resume_call: None,
+            };
+
+            let child_id = child.id.clone();
+            let name = crate::syn::machine::outside::name_for(&child_id);
+            let driving = &mut child;
+            let went = crate::syn::machine::outside::go(&rooms, &name, |cell| async move {
+                let errand = crate::syn::machine::outside::Errand { cell, parent_room, handed: std::sync::Mutex::new(Vec::new()) };
+                let _on_errand = crate::syn::machine::outside::send(&child_id, errand);
+                let answer = {
+                    let driving = Box::pin(self.drive(driving, child_req));
+                    let watching = async {
+                        while !stop.load(Ordering::SeqCst) {
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        }
+                        stop_run(&child_id);
+                    };
+                    tokio::pin!(driving);
+                    tokio::select! {
+                        answered = &mut driving => answered,
+                        _ = watching => driving.await,
+                    }
+                };
+                let handed = crate::syn::machine::outside::errand_of(&child_id)
+                    .and_then(|e| e.handed.lock().ok().map(|h| h.clone()))
+                    .unwrap_or_default();
+                (answer, handed)
+            })
+            .await;
+            let (answer, handed) = match went {
+                Ok(went) => went,
+                Err(e) => return failed(format!("The helper could not be sent out: {e}. Say so; there is no other way out to the network.")),
+            };
+            let note = format!(
+                "Sent helper run {} out ({} round(s), {} tool call(s), {} file(s) handed up).",
+                child.id,
+                child.spent.iterations,
+                child.spent.tool_calls,
+                handed.len()
+            );
+            let result = answer.map(|answer| {
+                let content = crate::syn::delegate::out_findings(&child, &answer.content, &handed);
+                (content, answer.sources.unwrap_or_default(), true, child.destinations.clone())
+            });
+            Handed { tokens: child.spent.tokens, note: Some(note), result }
+        }
     }
 
     /// The window the next request has to fit, in tokens.
@@ -2630,6 +2811,7 @@ fn weigh<R: tauri::Runtime>(
     consent_conversation: Option<&str>,
     earlier_steps: &[crate::syn::run::Step],
     sub_run: bool,
+    sends_out: bool,
 ) -> (Option<crate::syn::consent::Capability>, crate::syn::gate::Decided) {
     // What happens to this call, decided before anything runs.
     // The rules and their order live in `syn::gate`; this loop only
@@ -2716,6 +2898,8 @@ fn weigh<R: tauri::Runtime>(
             skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
             plan_only: run.plan_only,
             sub_run,
+            sent_out: run.sent_out,
+            sends_out,
             now: &now,
             safe: &|tool, handle| crate::safe::bridge::may_send(req.vault_path, tool, handle),
         },
@@ -9524,6 +9708,101 @@ mod driving {
         phone.surface = Surface::Telegram;
         drive_script_in(&app, &vault, &mut phone, "dọn", vec![calls(ROOM_REHEARSE, serde_json::json!({ "door": door.name })), text("không")]).await;
         assert!(phone.steps.iter().any(|s| s.preview.contains("Refused `machine_rehearse`")), "{:?}", phone.steps);
+    }
+
+    /// A helper sent out (design §7.2, A33): its prompt is its own and the goal —
+    /// nothing of the parent's, which here carries the person's instructions —
+    /// its tools are the web and its room, and the vault is refused it. What it
+    /// hands up is in the parent's room, which is marked, and the parent is
+    /// tainted by what came back. No real network: the proxy reaches nothing.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_helper_sent_out_knows_nothing_and_hands_its_file_up() {
+        use crate::syn::delegate::{OUT_TOOL, OUT_TOOLS};
+        use crate::syn::tools::{ROOM_KEEP, ROOM_READ, ROOM_RUN};
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+        crate::syn::consent::record(&vault, &crate::syn::consent::Capability::HelperOut, crate::syn::consent::Answer::Always, chrono::Utc::now())
+            .expect("granted");
+        let _nowhere = crate::syn::machine::outside::allow_only(crate::syn::machine::proxy::Allow::Hosts(vec![]));
+
+        let mut run = Run::new("lấy bảng giá", Some("conv-sent-out".into()), budget(8));
+        let provider = std::sync::Arc::new(Scripted::new(
+            &vault,
+            &run.id,
+            vec![
+                calls(OUT_TOOL, serde_json::json!({ "goal": "make a CSV of three fruit prices and hand it back" })),
+                // The helper: a file, handed up; then the vault, refused.
+                calls(ROOM_RUN, serde_json::json!({ "command": "printf 'fruit,price\\napple,3\\n' > prices.csv" })),
+                calls(ROOM_KEEP, serde_json::json!({ "path": "prices.csv" })),
+                calls("get_node", serde_json::json!({ "node_id": "Notes/keep.md" })),
+                text("Made prices.csv; it is at from-helper/prices.csv."),
+                // The parent reads it in its own room.
+                calls(ROOM_READ, serde_json::json!({ "path": "from-helper/prices.csv" })),
+                text("Táo giá 3."),
+            ],
+        ));
+        let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
+        let browser_state = no_browser();
+        let registry = Registry::for_chat();
+        let state = { use tauri::Manager; app.state::<crate::db::DbState>() };
+        let mut asked = history("lấy bảng giá");
+        let mut instructions = asked[0].clone();
+        instructions.role = "system".into();
+        instructions.content = "You are Syn. SYN.md: the person is called Lan and banks at Vietcombank.".into();
+        asked.insert(0, instructions);
+        engine
+            .drive(
+                &mut run,
+                DriveRequest {
+                    app: &app,
+                    message_id: "m1",
+                    history: &asked,
+                    model: "scripted",
+                    temperature: None,
+                    registry: &registry,
+                    db: state.inner(),
+                    vault_path: &vault,
+                    num_ctx: 65_536,
+                    max_history: 50,
+                    browser: &browser_state,
+                    resume_call: None,
+                },
+            )
+            .await
+            .expect("answers");
+
+        let sent = run.steps.iter().find(|s| s.tool.as_deref() == Some(OUT_TOOL)).expect("sent out");
+        assert_eq!(sent.ok, Some(true), "{sent:?}");
+        assert!(sent.preview.contains("from-helper/prices.csv"), "{}", sent.preview);
+        assert!(run.read_untrusted, "the open web, in the parent's hands");
+        let read = run.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_READ)).expect("read");
+        assert!(read.preview.contains("apple,3"), "{}", read.preview);
+        assert!(shared_rooms().carries_outside(&room_of("conv-sent-out")));
+
+        // What the helper was told, and what it was offered.
+        let histories = provider.histories.lock().expect("lock").clone();
+        let offered = provider.offered.lock().expect("lock").clone();
+        let helper: Vec<usize> = (0..histories.len())
+            .filter(|&i| histories[i].first().is_some_and(|(role, c)| role == "system" && c.contains("public Internet")))
+            .collect();
+        assert!(!helper.is_empty(), "the helper was asked");
+        let first = &histories[helper[0]];
+        assert_eq!(first.len(), 2, "its prompt and the goal, nothing else: {first:?}");
+        assert_eq!(first[1].1, "make a CSV of three fruit prices and hand it back");
+        for i in &helper {
+            for (_, content) in &histories[*i] {
+                assert!(!content.contains("Lan") && !content.contains("Vietcombank"), "{content}");
+            }
+            assert!(offered[*i].iter().all(|t| OUT_TOOLS.contains(&t.as_str())), "{:?}", offered[*i]);
+            assert!(offered[*i].iter().any(|t| t == ROOM_RUN));
+        }
+
+        let helper_id = serde_json::from_str::<serde_json::Value>(&sent.preview).expect("json")["helper_run"].as_str().expect("id").to_string();
+        let helper_run = crate::syn::run::get_run(&vault, &helper_id).expect("on disk");
+        assert!(helper_run.sent_out);
+        assert!(helper_run.steps.iter().any(|s| s.preview.starts_with("Refused `get_node`")), "{:?}", helper_run.steps);
     }
 
     /// The stop button stops the room too, not only the run: a long command

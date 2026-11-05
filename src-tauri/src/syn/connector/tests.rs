@@ -256,6 +256,8 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         skills_opened: 0,
         plan_only: false,
         sub_run: false,
+        sent_out: false,
+        sends_out: false,
         untrusted_before: false,
         reach: None,
         rides_prompt: false,

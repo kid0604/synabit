@@ -111,6 +111,13 @@ pub enum Capability {
     /// (`syn::machine::doors`), so this is never remembered itself. A `Never`
     /// turns it off.
     Door,
+    /// Sends a helper out to the open web with a goal (`delegate_out`): a model
+    /// with a shell and the Internet that is told nothing but the goal, which
+    /// the card shows. Asked once and remembered, like the browser: what can
+    /// leave is the goal, and the person sees every one in the conversation.
+    /// Never from a conversation that has read somebody else's words (A12).
+    /// A `Never` turns it off. See `syn::delegate`.
+    HelperOut,
     /// Learns where files are on this machine, by name, outside the vault.
     /// Nothing is opened. Asked once and remembered, like the browser: until now
     /// everything Syn could look at was in the vault, and this is the first thing
@@ -211,6 +218,7 @@ impl Capability {
             Capability::MachineFiles => Some("machine_files".to_string()),
             Capability::Packages => Some("packages".to_string()),
             Capability::Door => Some("doors".to_string()),
+            Capability::HelperOut => Some("helper_out".to_string()),
             Capability::NetRead { domain } => Some(format!("net_read:{}", domain.to_lowercase())),
             Capability::NetWrite { domain, tool } => Some(format!(
                 "net_write:{}:{}",
@@ -245,6 +253,7 @@ impl Capability {
             Capability::MachineFiles => "find files on this computer by name".to_string(),
             Capability::Packages => "install packages from PyPI for the rooms on this computer".to_string(),
             Capability::Door => "read a folder you choose on this computer".to_string(),
+            Capability::HelperOut => "send a helper that knows nothing about you to the web, with a goal you can see".to_string(),
             Capability::UseSecret { item, destination, label, tool, .. } => {
                 let to = if label.is_empty() { destination.trim_start_matches("connector:") } else { label };
                 if tool.is_empty() {
@@ -273,7 +282,13 @@ impl Capability {
     pub fn can_be_remembered(&self) -> bool {
         matches!(
             self,
-            Capability::Browse | Capability::Cell | Capability::MachineFiles | Capability::NetRead { .. } | Capability::NetWrite { .. } | Capability::UseSecret { .. }
+            Capability::Browse
+                | Capability::Cell
+                | Capability::HelperOut
+                | Capability::MachineFiles
+                | Capability::NetRead { .. }
+                | Capability::NetWrite { .. }
+                | Capability::UseSecret { .. }
         )
     }
 }

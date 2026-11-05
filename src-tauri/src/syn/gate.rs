@@ -90,6 +90,12 @@ pub struct View<'a> {
     pub plan_only: bool,
     /// Whether this is a sub-run: reads only, asks nobody. See `syn::delegate`.
     pub sub_run: bool,
+    /// Whether it is a helper sent out (`delegate_out`): the web and its own
+    /// room, and nothing else. Also a sub-run.
+    pub sent_out: bool,
+    /// Whether this run has `delegate_out` among its tools. See
+    /// `delegate::is_a_file`.
+    pub sends_out: bool,
     pub now: &'a str,
     /// Whether the Safe item `handle` may go to the server behind `tool`:
     /// where it would go, or the sentence to tell the model. See
@@ -109,6 +115,10 @@ pub struct View<'a> {
 
 /// `(tool, handle)` → where the item would go, or the sentence to tell the model.
 pub type SafeCheck<'a> = dyn Fn(&str, &str) -> Result<crate::safe::bridge::Route, String> + 'a;
+
+fn what_of(args: &Value) -> String {
+    args.get("what").and_then(Value::as_str).unwrap_or_default().to_string()
+}
 
 /// What to do with the call.
 #[derive(Debug)]
@@ -135,6 +145,8 @@ pub enum How {
     Plan,
     /// Hand the work to a sub-run. See `syn::delegate`.
     Delegate,
+    /// Send a helper out to the web, with a room of its own.
+    DelegateOut,
     /// Load a group of tools. See `syn::toolset`.
     FindTools,
     /// A tool on a connector: a network request or a program's answer,
@@ -190,6 +202,48 @@ impl Decided {
 /// unknown tool with an error the model can read, and that is the better place
 /// for it.
 pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &View<'_>) -> Decided {
+    // 0. A helper sent out has the web and its own room, and nothing else. It
+    // asks nobody: the card for `delegate_out` was the question, and nothing it
+    // can reach holds anything of the person's, so what it has read changes
+    // nothing it may do. See `syn::delegate`.
+    if view.sent_out {
+        if !crate::syn::delegate::out_may_use(tool) {
+            return Decided::quietly(Gate::Refuse {
+                said: crate::syn::delegate::out_refusal(tool),
+                note: Some(format!("Refused `{tool}`: not one of a helper's tools out there.")),
+            });
+        }
+        if tool == crate::syn::tools::BROWSE_TOOL && crate::syn::delegate::is_a_file(&what_of(args)) {
+            return Decided::quietly(Gate::Refuse { said: crate::syn::delegate::fetch_it_in_the_room(), note: None });
+        }
+        let how = if tool == crate::syn::tools::BROWSE_TOOL { How::Browse } else { How::Cell };
+        return Decided::quietly(Gate::Go(how));
+    }
+    // A file is fetched whole by a helper, while the run can still send one:
+    // `browse` would read its start and close `delegate_out` behind it.
+    if tool == crate::syn::tools::BROWSE_TOOL
+        && view.sends_out
+        && !view.tainted
+        && !view.untrusted_before
+        && crate::syn::delegate::is_a_file(&what_of(args))
+    {
+        return Decided::quietly(Gate::Refuse {
+            said: crate::syn::delegate::fetch_it_whole(),
+            note: Some("Pointed `browse` of a file at `delegate_out`.".into()),
+        });
+    }
+    // A12. The goal is what goes out, so it is written only by a run that has
+    // read nothing of anybody else's — in this turn or an earlier one.
+    if tool == crate::syn::delegate::OUT_TOOL && (view.tainted || view.untrusted_before) {
+        return Decided {
+            gate: Gate::Refuse {
+                said: crate::syn::delegate::out_after_reading(),
+                note: Some(format!("Refused `{tool}`: the conversation has read somebody else's words.")),
+            },
+            audit: capability.map(|_| Outcome::Refused),
+        };
+    }
+
     // 1. Taint.
     //
     // Connectors (Phase F): every tool on an outside server is refused once the run
@@ -575,6 +629,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::Plan
     } else if tool == crate::syn::delegate::TOOL {
         How::Delegate
+    } else if tool == crate::syn::delegate::OUT_TOOL {
+        How::DelegateOut
     } else if tool == crate::syn::toolset::FIND_TOOL {
         How::FindTools
     } else if tool == crate::syn::writes::TOOL {
@@ -648,6 +704,8 @@ mod tests {
             skills_opened: 0,
             plan_only: false,
             sub_run: false,
+            sent_out: false,
+            sends_out: false,
             untrusted_before: false,
             reach: None,
             rides_prompt: false,
@@ -894,6 +952,112 @@ mod tests {
             Gate::Refuse { said, .. } => assert!(said.contains("cannot ask"), "{said}"),
             other => panic!("expected a refusal, got {other:?}"),
         }
+    }
+
+    /// A12: the goal is the one thing a helper sent out takes with it, so it is
+    /// written only by a run that has read nothing of anybody else's — in this
+    /// turn, or earlier in the conversation. A clean run is asked once, and an
+    /// "always" stands.
+    #[test]
+    fn a_helper_is_sent_out_only_by_a_run_that_has_read_nothing() {
+        let out = crate::syn::delegate::OUT_TOOL;
+        let goal = serde_json::json!({ "goal": "fetch the 2026 holidays" });
+        let cap = Capability::HelperOut;
+        let allowed = ledger(&cap, Answer::Always);
+
+        let mut v = view(&allowed, &never_until_done);
+        assert!(matches!(decide(out, &goal, Some(&cap), &v).gate, Gate::Go(How::DelegateOut)));
+        v.tainted = true;
+        let read = decide(out, &goal, Some(&cap), &v);
+        match read.gate {
+            Gate::Refuse { said, .. } => assert!(said.contains("somebody else"), "{said}"),
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+        assert_eq!(read.audit, Some(Outcome::Refused));
+        v.tainted = false;
+        v.untrusted_before = true;
+        assert!(matches!(decide(out, &goal, Some(&cap), &v).gate, Gate::Refuse { .. }), "an earlier turn read a page");
+
+        let empty = Ledger::default();
+        match decide(out, &goal, Some(&cap), &view(&empty, &never_until_done)).gate {
+            Gate::Ask(ask) => assert!(ask.can_be_remembered),
+            other => panic!("expected a card, got {other:?}"),
+        }
+        // A helper does not send one of its own.
+        let mut helper = view(&allowed, &never_until_done);
+        helper.sub_run = true;
+        assert!(matches!(decide(out, &goal, Some(&cap), &helper).gate, Gate::Refuse { .. }));
+        // And a plan says it would.
+        let mut plan = view(&allowed, &never_until_done);
+        plan.plan_only = true;
+        assert!(matches!(decide(out, &goal, Some(&cap), &plan).gate, Gate::Go(How::Describe(_))));
+        // A `Never` turns it off.
+        let never = ledger(&cap, Answer::Never);
+        assert!(matches!(decide(out, &goal, Some(&cap), &view(&never, &never_until_done)).gate, Gate::Refuse { .. }));
+    }
+
+    /// Out there, the helper has the web and its own room and nothing else, and
+    /// what it read changes nothing it may do: it holds nothing to lose. It asks
+    /// nobody — not for the room, not for the browser.
+    #[test]
+    fn a_file_on_the_web_is_fetched_by_a_helper_while_one_can_be_sent() {
+        let csv = serde_json::json!({ "what": "https://raw.githubusercontent.com/datasets/population/main/data/population.csv" });
+        let page = serde_json::json!({ "what": "https://github.com/datasets/population" });
+        let empty = Ledger::default();
+        let browse = |args: &serde_json::Value, v: &View<'_>| decide("browse", args, Some(&Capability::Browse), v).gate;
+
+        let mut v = view(&empty, &never_until_done);
+        v.sends_out = true;
+        match browse(&csv, &v) {
+            Gate::Refuse { said, .. } => assert!(said.contains("delegate_out"), "{said}"),
+            other => panic!("expected the helper, got {other:?}"),
+        }
+        assert!(!matches!(browse(&page, &v), Gate::Refuse { .. }), "a page is still read");
+        // Once it has read, no helper can be sent: the file is read as it can be.
+        v.tainted = true;
+        assert!(!matches!(browse(&csv, &v), Gate::Refuse { .. }));
+        v.tainted = false;
+        v.untrusted_before = true;
+        assert!(!matches!(browse(&csv, &v), Gate::Refuse { .. }));
+        // Nor without `delegate_out`.
+        let none = view(&empty, &never_until_done);
+        assert!(!matches!(browse(&csv, &none), Gate::Refuse { .. }));
+        // The helper itself downloads it in its room.
+        let mut helper = view(&empty, &never_until_done);
+        helper.sub_run = true;
+        helper.sent_out = true;
+        match browse(&csv, &helper) {
+            Gate::Refuse { said, .. } => assert!(said.contains("python3"), "{said}"),
+            other => panic!("expected the room, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_helper_sent_out_has_the_web_and_its_room_and_nothing_else() {
+        let empty = Ledger::default();
+        let mut v = view(&empty, &never_until_done);
+        v.sub_run = true;
+        v.sent_out = true;
+        v.tainted = true;
+        let browse = decide("browse", &serde_json::json!({ "what": "x", "site": "https://evil.example/?d=1" }), Some(&Capability::Browse), &v);
+        assert!(matches!(browse.gate, Gate::Go(How::Browse)), "{browse:?}");
+        for tool in [crate::syn::tools::ROOM_RUN, crate::syn::tools::ROOM_WRITE, crate::syn::tools::ROOM_KEEP] {
+            let d = decide(tool, &serde_json::json!({ "command": "ls" }), Some(&Capability::Cell), &v);
+            assert!(matches!(d.gate, Gate::Go(How::Cell)), "{tool}: {d:?}");
+        }
+        for (tool, capability) in [
+            ("get_node", Capability::VaultRead),
+            ("recall", Capability::VaultRead),
+            (crate::syn::tools::ROOM_TAKE, Capability::Cell),
+            ("safe_list", Capability::VaultRead),
+            (crate::syn::delegate::OUT_TOOL, Capability::HelperOut),
+            ("create_node", Capability::VaultWrite),
+        ] {
+            let d = decide(tool, &args(), Some(&capability), &v);
+            assert!(matches!(d.gate, Gate::Refuse { .. }), "{tool}: {d:?}");
+        }
+        let connector = decide("connector__jira__search", &args(), Some(&Capability::NetRead { domain: "jira".into() }), &v);
+        assert!(matches!(connector.gate, Gate::Refuse { .. }));
     }
 
     /// Plan mode looks, and describes every change instead of making it —

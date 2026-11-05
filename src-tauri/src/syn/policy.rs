@@ -52,6 +52,8 @@ pub enum Power {
     Packages,
     /// Opens a folder on this Mac to a room, or uses one already open.
     Door,
+    /// Sends a helper out to the web with a shell. See `syn::delegate`.
+    HelperOut,
 }
 
 /// Which group brings a tool into a run — `toolset::Group` without the
@@ -350,6 +352,20 @@ pub static POLICIES: &[Policy] = &[
     // what was read is in the room, and the card says so.
     Policy::read(ROOM_REHEARSE, Home::Room).room().at_the_computer(),
     Policy::read(ROOM_PROPOSE, Home::Room).room().at_the_computer(),
+    // A helper sent out to the web with a room of its own (design §7.2): asked
+    // once, like the browser, and from the phone and a routine once the person
+    // said always. Never after reading: its goal is the one thing that goes
+    // out, and a page would be writing it (A12; the gate says so in words,
+    // with the conversation's earlier turns too). Not from a helper. The
+    // engine drives it, as it does `delegate`.
+    Policy {
+        power: Power::HelperOut,
+        after_reading: AfterReading::Refuse,
+        telegram: false,
+        ..Policy::read(crate::syn::delegate::OUT_TOOL, Home::Room)
+    }
+        .no_helper()
+        .engine(),
     // Out of the room into the vault: only ever a new file, or a new note made
     // the way `create_node` makes one — which is all a routine may do. Hidden
     // with the Files app.
@@ -478,6 +494,7 @@ pub fn capability(tool: &str, args: &Value) -> Option<Capability> {
         Power::MachineFiles => Capability::MachineFiles,
         Power::Cell => Capability::Cell,
         Power::Packages => Capability::Packages,
+        Power::HelperOut => Capability::HelperOut,
         // A folder already open is the room's to use; a new one is a question.
         Power::Door => {
             let named = args.get("door").and_then(Value::as_str).is_some_and(|d| !d.trim().is_empty());
