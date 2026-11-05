@@ -1065,6 +1065,34 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
         ToolDefinition {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
+                name: "machine_reveal".to_string(),
+                description: "Show a file or folder in a Finder window on this Mac, selected, so the person can open it themselves. It opens nothing. Use it when they want to see where something is, or for anything machine_open will not open.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "A path on this Mac (absolute, or starting with ~/), or a file's path in the vault." }
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "machine_open".to_string(),
+                description: "Open a document on this Mac in the app it opens with: a PDF in Preview, a picture, a video, text, an Office file. Documents only, checked by their content: never an app, a script, a folder or a web address — show those with machine_reveal instead. A file in a room is kept in the vault with machine_keep first.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "A path on this Mac (absolute, or starting with ~/), or a file's path in the vault." }
+                    },
+                    "required": ["path"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
                 name: ROOM_RUN.to_string(),
                 description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed from inside the room: for Python packages (python-docx, openpyxl, reportlab, pandas…) ask machine_env for an environment, then pass its id as `env`. Anything left running when the command ends is stopped.".to_string(),
                 parameters: serde_json::json!({
@@ -2053,8 +2081,20 @@ pub fn execute_tool<R: tauri::Runtime>(
         "machine_find" => Ok(crate::syn::machine::find::run(args, ctx.vault_path).to_string()),
         #[cfg(target_os = "macos")]
         "machine_status" => Ok(crate::syn::machine::status::run().to_string()),
+        #[cfg(target_os = "macos")]
+        "machine_reveal" => Ok(crate::syn::machine::show::reveal(args, ctx.vault_path).to_string()),
+        #[cfg(target_os = "macos")]
+        "machine_open" => {
+            use tauri::Manager;
+            let rooms = ctx
+                .app
+                .try_state::<std::sync::Arc<crate::syn::machine::rooms::Rooms>>()
+                .map(|rooms| rooms.writable_places())
+                .unwrap_or_default();
+            Ok(crate::syn::machine::show::open(args, ctx.vault_path, &rooms).to_string())
+        }
         #[cfg(not(target_os = "macos"))]
-        "machine_find" | "machine_status" => {
+        "machine_find" | "machine_status" | "machine_reveal" | "machine_open" => {
             Ok(serde_json::json!({ "error": "this only works on a Mac for now" }).to_string())
         }
         "safe_list" => tool_safe_list(ctx),
@@ -7311,7 +7351,7 @@ mod tests {
             .chain(visuals)
             .chain(room)
             // And the helper sent out, whose room is a room with the network.
-            .chain([ROOM_ENV, ROOM_DOOR, ROOM_REHEARSE, ROOM_PROPOSE, "machine_find", "machine_status", crate::syn::delegate::OUT_TOOL])
+            .chain([ROOM_ENV, ROOM_DOOR, ROOM_REHEARSE, ROOM_PROPOSE, "machine_find", "machine_status", "machine_reveal", "machine_open", crate::syn::delegate::OUT_TOOL])
             .collect();
         for name in &names {
             assert!(

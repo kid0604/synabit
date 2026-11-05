@@ -4353,6 +4353,8 @@
     "doing_trash_node": "Đang đưa một ghi chú vào thùng rác",
     "doing_restore_node": "Đang khôi phục từ thùng rác",
     "doing_list_trash": "Đang xem thùng rác",
+    "doing_machine_reveal": "Đang hiện file trong Finder",
+    "doing_machine_open": "Đang mở tài liệu",
     "doing_machine_find": "Đang tìm file trên máy",
     "doing_machine_status": "Đang xem tình trạng máy",
     "doing_machine_run": "Đang chạy lệnh trên máy",

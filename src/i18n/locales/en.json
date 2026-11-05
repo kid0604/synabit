@@ -4353,6 +4353,8 @@
     "doing_trash_node": "Moving a note to the trash",
     "doing_restore_node": "Restoring from the trash",
     "doing_list_trash": "Looking in the trash",
+    "doing_machine_reveal": "Showing a file in Finder",
+    "doing_machine_open": "Opening a document",
     "doing_machine_find": "Looking for a file on this computer",
     "doing_machine_status": "Checking this computer",
     "doing_machine_run": "Running a command on this computer",

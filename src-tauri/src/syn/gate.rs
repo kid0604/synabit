@@ -747,6 +747,37 @@ mod tests {
         serde_json::json!({ "node_id": "Notes/a.md" })
     }
 
+    /// A23: what puts something on this Mac's screen is for the person at it.
+    /// Not from the phone or a routine, and not by an approved plan, which
+    /// carries sends and nothing else.
+    #[test]
+    fn a_file_is_shown_or_opened_only_at_this_mac() {
+        let cap = Capability::MachineFiles;
+        let allowed = ledger(&cap, Answer::Always);
+        let path = serde_json::json!({ "path": "Files/hop-dong.pdf" });
+        for tool in ["machine_reveal", "machine_open"] {
+            let hash = crate::syn::writes::hash(tool, &path);
+            let approved = [hash];
+            let at_the_mac = view(&allowed, &never_until_done);
+            assert!(matches!(decide(tool, &path, Some(&cap), &at_the_mac).gate, Gate::Go(How::Execute)), "{tool}");
+            for surface in [Surface::Telegram, Surface::Routine] {
+                let mut away = view(&allowed, &never_until_done);
+                away.surface = surface;
+                away.approved_writes = &approved;
+                assert!(matches!(decide(tool, &path, Some(&cap), &away).gate, Gate::Refuse { .. }), "{tool} from {surface:?}");
+                away.tainted = true;
+                assert!(matches!(decide(tool, &path, Some(&cap), &away).gate, Gate::Refuse { .. }), "{tool} from {surface:?}, after reading");
+            }
+            let mut helper = view(&allowed, &never_until_done);
+            helper.sub_run = true;
+            assert!(matches!(decide(tool, &path, Some(&cap), &helper).gate, Gate::Refuse { .. }), "{tool} in a helper");
+            // A page that has a document opened has a document opened.
+            let mut read = view(&allowed, &never_until_done);
+            read.tainted = true;
+            assert!(matches!(decide(tool, &path, Some(&cap), &read).gate, Gate::Go(How::Execute)), "{tool} after reading");
+        }
+    }
+
     /// A7: a yes to one command is a yes to one run of it, said in the
     /// system's dialog. Nothing else lets one through.
     #[test]

@@ -310,6 +310,17 @@ pub static POLICIES: &[Policy] = &[
         .no_helper(),
     // Battery, disk, memory, load. Says nothing about what is in anything.
     Policy::read("machine_status", Home::Machine),
+    // A file shown in Finder, or a document opened in its app (design §10.4):
+    // on this Mac's screen, so only with the person at it. Asked once, as
+    // finding a file is. Revealing opens nothing; opening takes documents only,
+    // never an app, a script or an address (A5, A6), so both go on after
+    // reading — a page that has a PDF opened has a PDF opened. Not a helper.
+    Policy { power: Power::MachineFiles, ..Policy::read("machine_reveal", Home::Machine) }
+        .at_the_computer()
+        .no_helper(),
+    Policy { power: Power::MachineFiles, ..Policy::read("machine_open", Home::Machine) }
+        .at_the_computer()
+        .no_helper(),
 
     // ── A room on the machine ──────────────────────────────────────
     // Real programs in a sealed room: no network, nothing outside its folder.
@@ -690,6 +701,17 @@ mod tests {
         assert!(!outside_words("machine_status"));
         assert_eq!(capability("machine_status", &serde_json::json!({})), Some(Capability::VaultRead));
         assert_eq!(lock("machine_find"), None);
+        // On this Mac's screen, so only at it: not from the phone, a routine or
+        // a helper. Asked once, as finding is, and on after reading.
+        for tool in ["machine_reveal", "machine_open"] {
+            assert_eq!(on(tool, Surface::App), Some(true), "{tool}");
+            assert_eq!(on(tool, Surface::Telegram), Some(false), "{tool}");
+            assert_eq!(on(tool, Surface::Routine), Some(false), "{tool}");
+            assert_eq!(helper(tool), Some(false), "{tool}");
+            assert!(after_reading(tool), "{tool}");
+            assert!(!outside_words(tool), "{tool}");
+            assert_eq!(capability(tool, &serde_json::json!({ "path": "x" })), Some(Capability::MachineFiles), "{tool}");
+        }
     }
 
     /// The room: wherever the person is, the phone and their routines

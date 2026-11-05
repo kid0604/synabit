@@ -46,6 +46,7 @@ mod rehearse_tests;
 pub mod rooms;
 pub mod sanitize;
 pub mod selftest;
+pub mod show;
 pub mod status;
 pub mod tool;
 pub mod watch;

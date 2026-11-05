@@ -197,7 +197,8 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "trên máy", "máy tính", "máy mình", "máy tôi", "máy tao", "máy tớ", "macbook", "my mac",
             "this mac", "my computer", "this computer", "my laptop", "downloads", "thư mục tải",
             "battery", "còn pin", "hết pin", "bao nhiêu pin", "pin yếu", "disk space", "free space",
-            "dung lượng", "ổ đĩa", "ổ cứng", "ram",
+            "dung lượng", "ổ đĩa", "ổ cứng", "ram", "finder", "mở file", "mở giúp", "mở tài liệu", "open the file",
+            "open it", "show me where", "show it in", "hiện ra", "nằm ở đâu",
         ],
         Group::Room => &[
             "chạy lệnh", "chạy thử", "chạy script", "viết script", "dòng lệnh", "terminal", "shell",

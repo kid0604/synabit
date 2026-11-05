@@ -326,6 +326,12 @@ impl Rooms {
         &self.root
     }
 
+    /// Every folder a room can write in: what `machine_open` never opens from,
+    /// since a room could swap a file there between the check and the open.
+    pub fn writable_places(&self) -> Vec<PathBuf> {
+        std::iter::once(self.root.clone()).chain(self.outside.clone()).collect()
+    }
+
     /// Where a room with a network keeps what it made, for the caller to take.
     pub fn prep_place(&self, name: &str) -> PathBuf {
         self.root.join("prep").join(name)
