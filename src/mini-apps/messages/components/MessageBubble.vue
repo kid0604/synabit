@@ -110,6 +110,22 @@ const outputOf = (preview: string | undefined): string => {
   }
 };
 
+/** What a helper sent out was told, and what it brought back. The goal is the
+ *  one thing that went out, so it is shown whole. */
+const goalOf = (args: Record<string, unknown> | undefined): string =>
+  typeof args?.goal === 'string' ? args.goal : '';
+const findingsOf = (preview: string | undefined): string => {
+  if (!preview) return '';
+  try {
+    const got = JSON.parse(preview) as { findings?: unknown; files?: unknown; error?: unknown };
+    const files = Array.isArray(got.files) ? got.files.filter((f): f is string => typeof f === 'string') : [];
+    const said = [got.findings, got.error, files.join('\n')].filter((x): x is string => typeof x === 'string' && x.length > 0);
+    return said.join('\n');
+  } catch {
+    return preview;
+  }
+};
+
 const debouncedContent = ref(props.message.content);
 
 const updateContent = useDebounceFn((content: string) => {
@@ -865,6 +881,18 @@ const copyContent = async () => {
                   <template v-if="outputOf(tc.result_preview)">
                     <p class="mt-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ $t('syn.machine_output') }}</p>
                     <pre class="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-[11px] text-gray-700 dark:text-gray-300">{{ outputOf(tc.result_preview) }}</pre>
+                  </template>
+                </details>
+                <details v-else-if="tc.tool_name === 'delegate_out' && goalOf(tc.tool_args)" class="min-w-0 flex-1" data-test="helper-out">
+                  <summary class="cursor-pointer text-text dark:text-text-dark truncate">
+                    {{ toolLabel(t, tc.tool_name) }}
+                    <span class="ml-1.5 text-gray-500 dark:text-gray-400">{{ firstLine(goalOf(tc.tool_args)) }}</span>
+                  </summary>
+                  <p class="mt-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ $t('syn.helper_goal') }}</p>
+                  <p class="mt-0.5 whitespace-pre-wrap break-words text-[11px] text-gray-700 dark:text-gray-300">{{ goalOf(tc.tool_args) }}</p>
+                  <template v-if="findingsOf(tc.result_preview)">
+                    <p class="mt-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400">{{ $t('syn.helper_found') }}</p>
+                    <p class="mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[11px] text-gray-700 dark:text-gray-300">{{ findingsOf(tc.result_preview) }}</p>
                   </template>
                 </details>
                 <span v-else class="text-text dark:text-text-dark">{{ toolLabel(t, tc.tool_name) }}</span>

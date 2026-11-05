@@ -18,7 +18,7 @@ export const LABELLED_TOOLS = [
   'create_transaction', 'update_transaction', 'delete_transaction', 'read_spreadsheet',
   'write_spreadsheet', 'remember', 'recall', 'load_skill', 'run_recipe', 'look_back', 'browse',
   'timeline', 'read_board', 'draw_board', 'edit_board', 'capture', 'update_plan', 'rename_field',
-  'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'find_tools', 'table_rows',
+  'delete_field', 'rename_kind', 'delete_kind', 'delegate', 'delegate_out', 'find_tools', 'table_rows',
   'crunch', 'propose_writes', 'connector_draft', 'connector_connect', 'connector_find',
   'connector_try', 'stage_transactions', 'skill_draft', 'routine_draft', 'compute',
   'visual_guide', 'show_visual',

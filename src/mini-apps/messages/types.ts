@@ -528,6 +528,9 @@ export type Capability =
   // A folder on this Mac for the rooms to read. Answered by choosing it in the
   // system's dialog (`syn_pick_door`), not with a yes.
   | 'Door'
+  // A helper sent out to the web with a room of its own. The goal is the
+  // card's detail: the one thing that goes out.
+  | 'HelperOut'
   // A value from Safe, to one server. `label` is the server's name, for the
   // card; the scope is the item and `destination`.
   | { UseSecret: { item: string; destination: string; label: string } };
