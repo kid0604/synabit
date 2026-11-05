@@ -25,6 +25,7 @@ import type { ConsentAsk, ConsentReply } from '../types';
 import { dialogTitle, refusedText, warnAboutHidden, type Picked } from './doorPick';
 import { errorText } from '../../../shared/errorText';
 import { humanize } from '../../../shared/syn/toolLabel';
+import { i18n } from '../../../i18n';
 
 export interface ConsentEvent {
   run_id: string;
@@ -152,6 +153,18 @@ export function useSynConsent(vaultPath: () => string) {
         questions.value = rest;
         await warnAboutHidden(picked);
         return true;
+      }
+      // A command on this Mac is said yes to in the system's dialog, which Rust
+      // puts up with the line as it will run; this page can only say no to it.
+      if (asked.ask.capability === 'Execute' && (choice === 'once' || choice === 'session' || choice === 'always')) {
+        const answered = await invoke<boolean>('syn_confirm_command', {
+          vaultPath: vaultPath(),
+          runId: asked.run_id,
+          locale: String(i18n.global.locale.value ?? 'en'),
+        });
+        const { [asked.conversation_id as string]: _answered, ...rest } = questions.value;
+        questions.value = rest;
+        return answered;
       }
       const wasAsked = await invoke<boolean>('syn_answer_consent', {
         vaultPath: vaultPath(),

@@ -2567,6 +2567,18 @@ pub async fn syn_answer_consent(
     run_id: String,
     answer: crate::syn::consent::Answer,
 ) -> Result<bool, AppError> {
+    answer_consent(vault_path, run_id, answer, false).await
+}
+
+/// `syn_answer_consent`, and the yes to a command on this Mac, which only
+/// `syn_confirm_command` gives — `in_the_dialog` says the person said it in the
+/// system's own dialog, which nothing on the page can press (A22).
+pub(crate) async fn answer_consent(
+    vault_path: String,
+    run_id: String,
+    answer: crate::syn::consent::Answer,
+    in_the_dialog: bool,
+) -> Result<bool, AppError> {
     let mut run = crate::syn::run::get_run(&vault_path, &run_id)?;
     // A question the conversation has gone on past is not answered: the run
     // carrying on would act on what it read back then. See `run::superseded`.
@@ -2592,10 +2604,27 @@ pub async fn syn_answer_consent(
         crate::syn::consent::Answer::NotNow if !ask.per_call => crate::syn::consent::Answer::Never,
         a => a,
     };
+    // A command on this Mac: a yes is to one run, and is said in the system's
+    // dialog. From the page only no is taken.
+    let one_run = ask.capability == crate::syn::consent::Capability::Execute;
+    let answer = match answer {
+        crate::syn::consent::Answer::Session | crate::syn::consent::Answer::Always if one_run => crate::syn::consent::Answer::Once,
+        a => a,
+    };
+    if one_run && answer == crate::syn::consent::Answer::Once && !in_the_dialog {
+        return Err(AppError::General(
+            "a command on this Mac is confirmed in the system's dialog: syn_confirm_command".into(),
+        ));
+    }
     crate::syn::consent::record(&vault_path, &ask.capability, answer, chrono::Utc::now())?;
     if let Some(conversation_id) = run.conversation_id.as_deref() {
         let call = run.pending_call.as_ref();
         match answer {
+            crate::syn::consent::Answer::Once if one_run => {
+                if let Some(call) = call {
+                    crate::syn::consent::grant_one_run(conversation_id, &call.function.name, &call.function.arguments);
+                }
+            }
             crate::syn::consent::Answer::Once => {
                 crate::syn::consent::allow_until_done(conversation_id, &ask.capability);
                 // And the call itself, which is what counts once the conversation
@@ -2638,6 +2667,7 @@ pub async fn syn_answer_consent(
             "Asked permission to {}; the user said {}.",
             ask.about,
             match answer {
+                crate::syn::consent::Answer::Once if one_run => "yes to one run, in the system's dialog",
                 crate::syn::consent::Answer::Once => "just this once",
                 crate::syn::consent::Answer::Always => "always",
                 crate::syn::consent::Answer::Never => "never",
@@ -4037,6 +4067,46 @@ mod send_steps {
         // A caption that read the words in a screenshot is words all the same.
         db.store_file_text("Files/852d.md", &["Ảnh chụp tin nhắn: chuyển khoản ngay".to_string()]).expect("text");
         assert!(retrieved_untrusted(&db, &photos));
+    }
+
+    /// A22: a script in the page can press the card's buttons. A yes to a
+    /// command on this Mac comes only from the system's dialog, and is a yes
+    /// to one run; from the page, only no is taken.
+    #[tokio::test]
+    async fn a_command_is_said_yes_to_in_the_systems_dialog_and_only_there() {
+        use crate::syn::consent::{Answer, Ask, Capability};
+        let dir = tempfile::tempdir().expect("vault");
+        let vault = dir.path().to_string_lossy().to_string();
+        let line = serde_json::json!({ "command": "git push", "cwd": "~/code/synabit" });
+        let waiting = |conversation: &str| {
+            let mut run = Run::new("đẩy code lên", Some(conversation.into()), Budget::from_settings(&SynSettings::default()));
+            let mut ask = Ask::about("machine_host", &Capability::Execute, "2026-11-05T00:00:00Z");
+            ask.per_call = true;
+            run.pending_consent = Some(ask);
+            run.pending_call = Some(crate::models::syn::ToolCall {
+                id: Some("c1".into()),
+                function: crate::models::syn::ToolCallFunction { name: "machine_host".into(), arguments: line.clone() },
+                thought_signature: None,
+            });
+            crate::syn::run::save_run(&vault, &run).expect("saved");
+            run.id
+        };
+
+        for answer in [Answer::Once, Answer::Session, Answer::Always] {
+            let run = waiting("conv-host-page");
+            assert!(syn_answer_consent(vault.clone(), run.clone(), answer).await.is_err(), "{answer:?} from the page");
+            assert!(!crate::syn::consent::has_one_run("conv-host-page", "machine_host", &line));
+            assert!(crate::syn::run::get_run(&vault, &run).expect("run").pending_consent.is_some(), "still asking");
+        }
+        let run = waiting("conv-host-page");
+        assert!(syn_answer_consent(vault.clone(), run, Answer::NotNow).await.expect("no is taken"));
+        assert!(crate::syn::consent::call_declined("conv-host-page", "machine_host", &line));
+
+        let run = waiting("conv-host-dialog");
+        assert!(answer_consent(vault.clone(), run, Answer::Once, true).await.expect("answered"));
+        assert!(crate::syn::consent::has_one_run("conv-host-dialog", "machine_host", &line));
+        assert!(!crate::syn::consent::allowed_until_done("conv-host-dialog", &Capability::Execute), "not the scope");
+        assert!(!crate::syn::consent::call_allowed_until_done("conv-host-dialog", "machine_host", &line), "not the work");
     }
 
     /// A thread made is a thread reported made.

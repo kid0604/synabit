@@ -1218,6 +1218,30 @@ impl SynEngine {
                     crate::syn::gate::Gate::Go(how) => how,
                 };
 
+                // A command on this Mac runs once for the one yes it went by:
+                // spent here, before it runs, so the same line again is asked
+                // about again (A7). Not when only described or held.
+                let runs_now = !matches!(
+                    how,
+                    crate::syn::gate::How::Describe(_) | crate::syn::gate::How::Stage | crate::syn::gate::How::OverSkillBudget(_)
+                );
+                if runs_now
+                    && capability == Some(crate::syn::consent::Capability::Execute)
+                    && !consent_conversation.as_deref().is_some_and(|conv| {
+                        crate::syn::consent::spend_one_run(conv, &tc.function.name, &tc.function.arguments)
+                    })
+                {
+                    run.note(iteration, format!("Refused `{}`: no yes to this run was left.", tc.function.name));
+                    working.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: serde_json::json!({ "refused": "This command was not confirmed for this run, so it did not run." }).to_string(),
+                        tool_calls: None,
+                        tool_call_id: tc.id.clone(),
+                        images: None,
+                    });
+                    continue;
+                }
+
                 // Whatever it writes into the call is its own, and stays its own
                 // however the result echoes it. See `taint::Destinations`. Not
                 // a visual's HTML: it goes into a frame with no network, never
@@ -2894,6 +2918,9 @@ fn weigh<R: tauri::Runtime>(
             }),
             call_declined: consent_conversation.is_some_and(|conv| {
                 crate::syn::consent::call_declined(conv, &tc.function.name, &tc.function.arguments)
+            }),
+            one_run_granted: consent_conversation.is_some_and(|conv| {
+                crate::syn::consent::has_one_run(conv, &tc.function.name, &tc.function.arguments)
             }),
             skills_opened: run.successful_calls_of(crate::syn::skill::LOAD_TOOL),
             plan_only: run.plan_only,

@@ -4111,6 +4111,8 @@
     "consent_always": "Luôn cho phép",
     "consent_never": "Không bao giờ",
     "consent_not_now": "Để sau",
+    "consent_run": "Chạy…",
+    "consent_run_note": "Dòng lệnh này chạy với quyền của bạn, ngoài phòng kín. Bấm Chạy thì máy hiện một hộp thoại của chính macOS để bạn xác nhận; lệnh chỉ chạy một lần, lần sau phải đồng ý lại.",
     "consent_this_time": "Cho phép lần này",
     "consent_session": "Luôn cho phép trong phiên này",
     "consent_explainer_per_call": "Chỉ áp dụng cho đúng lệnh này. “Để sau” bỏ qua lệnh này, không chặn gì khác. “Trong phiên này” cho lệnh y hệt chạy lại trong cuộc trò chuyện này mà không hỏi, đến khi bạn tắt app.",

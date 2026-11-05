@@ -85,6 +85,10 @@ pub struct View<'a> {
     /// Whether "not now" was said about this exact call earlier in the same
     /// work. See `consent::decline_call_until_done`.
     pub call_declined: bool,
+    /// Whether a yes to one run of this exact call was said in the system's
+    /// dialog and not spent yet. The only yes a command on this Mac goes by.
+    /// See `consent::grant_one_run`.
+    pub one_run_granted: bool,
     /// Skill bodies this run has already opened.
     pub skills_opened: usize,
     pub plan_only: bool,
@@ -481,8 +485,20 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         // A folder is asked for as the folder it will be: a yes to one is no
         // yes to choosing the next.
         let packages = matches!(capability, Capability::Packages | Capability::Door);
-        let per_call = (sends && crate::syn::connector::declared::asks_per_call(tool)) || packages;
-        if decision == Decision::Ask
+        // A command on this Mac goes by one yes to one run, and by nothing
+        // else: not a yes to its scope, not one to the call for the rest of
+        // the work or the session, not an "always" however it got into the
+        // ledger (A7). Only "never" is taken from it.
+        let one_run = matches!(capability, Capability::Execute);
+        let per_call = (sends && crate::syn::connector::declared::asks_per_call(tool)) || packages || one_run;
+        if one_run {
+            if decision == Decision::Allow {
+                decision = Decision::Ask;
+            }
+            if decision == Decision::Ask && view.one_run_granted {
+                decision = Decision::Allow;
+            }
+        } else if decision == Decision::Ask
             && (view.call_allowed_until_done
                 || ((view.allowed_until_done)(capability) && !packages && !(sends && (view.untrusted_before || per_call))))
         {
@@ -706,6 +722,7 @@ mod tests {
             sub_run: false,
             sent_out: false,
             sends_out: false,
+            one_run_granted: false,
             untrusted_before: false,
             reach: None,
             rides_prompt: false,
@@ -728,6 +745,54 @@ mod tests {
 
     fn args() -> Value {
         serde_json::json!({ "node_id": "Notes/a.md" })
+    }
+
+    /// A7: a yes to one command is a yes to one run of it, said in the
+    /// system's dialog. Nothing else lets one through.
+    #[test]
+    fn a_command_on_this_mac_goes_by_one_yes_to_one_run() {
+        let cap = Capability::Execute;
+        let line = serde_json::json!({ "command": "git push", "cwd": "~/code/synabit" });
+        let run = |v: &View<'_>| decide("machine_host", &line, Some(&cap), v).gate;
+        let empty = Ledger::default();
+        // Running code has no scope of its own: the ledger files it as "execute".
+        let said = |answer| Ledger {
+            grants: vec![Grant {
+                scope: "execute".into(),
+                about: cap.describe(),
+                answer,
+                granted_at: "2026-09-01T00:00:00+00:00".into(),
+                expires_at: None,
+            }],
+        };
+
+        match run(&view(&empty, &never_until_done)) {
+            Gate::Ask(ask) => assert!(ask.per_call && !ask.can_be_remembered, "{ask:?}"),
+            other => panic!("expected a card, got {other:?}"),
+        }
+        // A yes to the scope earlier in the work is not a yes to this run.
+        assert!(matches!(run(&view(&empty, &always_until_done)), Gate::Ask(_)));
+        // Nor a yes to this very call for the work, or for the session.
+        let mut said_for_the_work = view(&empty, &never_until_done);
+        said_for_the_work.call_allowed_until_done = true;
+        assert!(matches!(run(&said_for_the_work), Gate::Ask(_)));
+        // Nor an "always", however it got into the ledger.
+        let always = said(Answer::Always);
+        assert!(matches!(run(&view(&always, &never_until_done)), Gate::Ask(_)));
+
+        // The one thing that does.
+        let mut granted = view(&empty, &never_until_done);
+        granted.one_run_granted = true;
+        assert!(!matches!(run(&granted), Gate::Ask(_) | Gate::Refuse { .. }), "{:?}", run(&granted));
+        // And "never" still wins over it.
+        let never = said(Answer::Never);
+        let mut refused = view(&never, &never_until_done);
+        refused.one_run_granted = true;
+        assert!(matches!(run(&refused), Gate::Refuse { .. }));
+        // "Not now" to this line holds for the work.
+        let mut declined = view(&empty, &never_until_done);
+        declined.call_declined = true;
+        assert!(matches!(run(&declined), Gate::Refuse { .. }));
     }
 
     #[test]

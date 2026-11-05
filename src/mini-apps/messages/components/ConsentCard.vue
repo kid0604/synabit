@@ -43,8 +43,12 @@ const sentence = computed(() => {
 });
 
 const asksForFolder = computed(() => props.ask.capability === 'Door');
+// A command on this Mac: one run, confirmed in the system's dialog. No "this
+// session", which would be every run of it.
+const asksToRun = computed(() => props.ask.capability === 'Execute');
 const note = computed(() => {
   if (asksForFolder.value) return t('syn.consent_door_note');
+  if (asksToRun.value) return t('syn.consent_run_note');
   return props.ask.per_call ? t('syn.consent_explainer_per_call') : t('syn.consent_explainer');
 });
 </script>
@@ -80,6 +84,21 @@ const note = computed(() => {
       </button>
       <button class="btn-primary inline-flex items-center gap-1.5" :disabled="busy" data-test="consent-pick-folder" @click="emit('answer', 'pick_folder')">
         <FolderOpen class="w-3.5 h-3.5" /> {{ t('syn.consent_pick_folder') }}
+      </button>
+    </template>
+    <template v-else-if="asksToRun" #actions>
+      <button
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-gray-600 dark:text-gray-300
+               hover:bg-gray-50 dark:hover:bg-white/5
+               disabled:opacity-50 disabled:cursor-default"
+        :disabled="busy"
+        data-test="consent-not-now"
+        @click="emit('answer', 'not_now')"
+      >
+        <XIcon class="w-3.5 h-3.5" /> {{ t('syn.consent_not_now') }}
+      </button>
+      <button class="btn-primary inline-flex items-center gap-1.5" :disabled="busy" data-test="consent-run" @click="emit('answer', 'once')">
+        <Clock class="w-3.5 h-3.5" /> {{ t('syn.consent_run') }}
       </button>
     </template>
     <!-- One exact call — an ssh command line. "Never" would switch off every

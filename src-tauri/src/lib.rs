@@ -1126,6 +1126,8 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             commands::machine::syn_pick_door,
             #[cfg(target_os = "macos")]
+            commands::machine::syn_confirm_command,
+            #[cfg(target_os = "macos")]
             commands::machine::syn_remove_door,
             #[cfg(target_os = "macos")]
             commands::machine::syn_door_away,

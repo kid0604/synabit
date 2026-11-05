@@ -164,6 +164,74 @@ pub async fn syn_pick_door(app: AppHandle, vault_path: String, run_id: String, t
     Ok(picked)
 }
 
+/// Answers a card asking to run a command on this Mac, in the system's own
+/// dialog: the one yes a command goes by, spent by the one run it allows
+/// (A7, A22). The words are Rust's, in the app's two languages, and the line is
+/// the call's own, shown as it will run; the page only says which language.
+/// Cancel is not now. Either way the work carries on, as after any answer.
+#[tauri::command]
+pub async fn syn_confirm_command(app: AppHandle, vault_path: String, run_id: String, locale: String) -> Result<bool, String> {
+    let run = crate::syn::run::get_run(&vault_path, &run_id).map_err(|e| e.to_string())?;
+    let asking = run.pending_consent.as_ref().is_some_and(|ask| ask.capability == crate::syn::consent::Capability::Execute);
+    let (true, Some(call)) = (asking, run.pending_call.clone()) else {
+        return Err("nothing is asking to run a command".into());
+    };
+    let arg = |key: &str| call.function.arguments.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+    let yes = confirm_command(&app, &locale, &arg("command"), &arg("cwd")).await;
+    let answer = if yes { crate::syn::consent::Answer::Once } else { crate::syn::consent::Answer::NotNow };
+    crate::commands::syn::answer_consent(vault_path, run_id, answer, yes).await.map_err(|e| e.to_string())
+}
+
+/// The system's dialog for one command, with the line as it will run.
+async fn confirm_command(app: &AppHandle, locale: &str, command: &str, cwd: &str) -> bool {
+    use crate::syn::machine::sanitize::shown;
+    let line = shown(command);
+    let vi = locale.starts_with("vi");
+    let place = match cwd.trim() {
+        "" | "~" => (if vi { "thư mục nhà của bạn" } else { "your home folder" }).to_string(),
+        other => shown(other),
+    };
+    let (title, body, ok, cancel) = if vi {
+        (
+            "Chạy lệnh này trên máy của bạn?",
+            format!(
+                "Syn muốn chạy dòng lệnh này với quyền của bạn, ngoài phòng kín:\n\n{line}\n\nTrong: {place}\n\nNó đọc, đổi và gửi đi được mọi thứ bạn làm được. Chỉ chọn Chạy nếu bạn hiểu dòng lệnh này. Chạy lần nữa sẽ hỏi lại."
+            ),
+            "Chạy",
+            "Huỷ",
+        )
+    } else {
+        (
+            "Run this command on your Mac?",
+            format!(
+                "Syn wants to run this line with your rights, outside the sealed room:\n\n{line}\n\nIn: {place}\n\nIt can read, change and send anything you can. Choose Run only if you understand this line. Running it again asks again."
+            ),
+            "Run",
+            "Cancel",
+        )
+    };
+    ask(app, title, body, ok, cancel).await
+}
+
+/// One question in the system's dialog: true only for the first button.
+async fn ask(app: &AppHandle, title: &str, body: String, ok: &str, cancel: &str) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .message(body)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), cancel.into()));
+    if let Some(window) = crate::app_shell::app_window(app) {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |yes| {
+        let _ = tx.send(yes);
+    });
+    rx.await.unwrap_or(false)
+}
+
 /// Closes a door. A room reading it reads it no more from its next command.
 #[tauri::command]
 pub async fn syn_remove_door(vault_path: String, id: String) -> Result<bool, String> {
@@ -241,7 +309,6 @@ pub async fn syn_waiting_rehearsals(app: AppHandle, vault_path: String, conversa
 /// can press the card's button; it cannot press this one (A22). In the app's two
 /// languages, from here: the words are not the page's to choose.
 async fn confirm_unknown(app: &AppHandle, locale: &str, names: &[String]) -> bool {
-    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let listed: String = names.iter().take(12).map(|n| format!("• {n}\n")).collect();
     let more = names.len().saturating_sub(12);
     let (title, body, ok, cancel) = if locale.starts_with("vi") {
@@ -265,20 +332,7 @@ async fn confirm_unknown(app: &AppHandle, locale: &str, names: &[String]) -> boo
             "Cancel",
         )
     };
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let mut dialog = app
-        .dialog()
-        .message(body)
-        .title(title)
-        .kind(MessageDialogKind::Warning)
-        .buttons(MessageDialogButtons::OkCancelCustom(ok.into(), cancel.into()));
-    if let Some(window) = crate::app_shell::app_window(app) {
-        dialog = dialog.parent(&window);
-    }
-    dialog.show(move |yes| {
-        let _ = tx.send(yes);
-    });
-    rx.await.unwrap_or(false)
+    ask(app, title, body, ok, cancel).await
 }
 
 #[derive(serde::Serialize)]

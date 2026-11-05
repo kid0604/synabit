@@ -258,6 +258,7 @@ fn view<'a>(ledger: &'a crate::syn::consent::Ledger, until_done: &'a dyn Fn(&Cap
         sub_run: false,
         sent_out: false,
         sends_out: false,
+        one_run_granted: false,
         untrusted_before: false,
         reach: None,
         rides_prompt: false,

@@ -74,6 +74,29 @@ describe('the permission card', () => {
     }
   });
 
+  // A command on this Mac: one run, said yes to in the system's dialog. No
+  // "this session" and no "always", and the line is on the card as it runs.
+  it('asks to run a command once, with the line shown', async () => {
+    const wrapper = mount(ConsentCard, {
+      props: {
+        ask: { ...ask, capability: 'Execute', tool: 'machine_host', can_be_remembered: false, per_call: true, detail: 'git push' },
+      },
+      global: { plugins: [i18n] },
+    });
+    mounted.push(wrapper);
+    expect(wrapper.find('[data-test="consent-detail"]').text()).toBe('git push');
+    expect(wrapper.find('[data-test="consent-session"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="consent-this-time"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain(en.syn.consent_always);
+    await wrapper.find('[data-test="consent-run"]').trigger('click');
+    await wrapper.find('[data-test="consent-not-now"]').trigger('click');
+    expect(wrapper.emitted('answer')).toEqual([['once'], ['not_now']]);
+    for (const lang of [en, vi]) {
+      expect(lang.syn.consent_run).toBeTruthy();
+      expect(lang.syn.consent_run_note).toBeTruthy();
+    }
+  });
+
   it('says it in both languages, with the reason', () => {
     expect(en.syn.consent_failed).toContain('{reason}');
     expect(vi.syn.consent_failed).toContain('{reason}');

@@ -4111,6 +4111,8 @@
     "consent_always": "Always allow this",
     "consent_never": "Never",
     "consent_not_now": "Not now",
+    "consent_run": "Run…",
+    "consent_run_note": "This line runs with your rights, outside the sealed room. Pressing Run puts it in a window of your Mac's own, where you confirm it; it runs once, and again only if you say yes again.",
     "consent_this_time": "Allow this time",
     "consent_session": "Always allow in this session",
     "consent_explainer_per_call": "About this exact command only. “Not now” skips it and blocks nothing else. “In this session” lets this same command run again in this conversation without asking, until you close the app.",

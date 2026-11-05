@@ -593,6 +593,38 @@ pub fn call_allowed_until_done(conversation_id: &str, tool: &str, args: &serde_j
     IN_FORCE.lock().is_ok_and(|held| held.contains(&key)) || SESSION.lock().is_ok_and(|held| held.contains(&key))
 }
 
+fn one_run_key(conversation_id: &str, tool: &str, args: &serde_json::Value) -> String {
+    format!("{conversation_id}\u{1f}once:{}", crate::syn::writes::hash(tool, args))
+}
+
+/// Yes to one run of one exact command, said in the system's dialog.
+///
+/// # Why not `allow_call_until_done`
+///
+/// A command on this Mac runs with the person's own rights (design §10.1), and
+/// a yes to it is a yes to that one run. Standing until the work is done, a yes
+/// to `git push` would push again every time the run tried, and a yes to the
+/// scope would carry every command after it (A7). So it is spent when the
+/// command runs, and the same line again is asked about again. The hash covers
+/// the line and its folder; what else the command runs with is the app's, the
+/// same every time. Cleared with the rest when the work is done.
+pub fn grant_one_run(conversation_id: &str, tool: &str, args: &serde_json::Value) {
+    if let Ok(mut held) = IN_FORCE.lock() {
+        held.insert(one_run_key(conversation_id, tool, args));
+    }
+}
+
+/// Whether a yes to one run of exactly this call is waiting to be spent.
+pub fn has_one_run(conversation_id: &str, tool: &str, args: &serde_json::Value) -> bool {
+    IN_FORCE.lock().is_ok_and(|held| held.contains(&one_run_key(conversation_id, tool, args)))
+}
+
+/// Spend the yes, as the command is about to run. False when there was none:
+/// it was spent already, and the command does not run.
+pub fn spend_one_run(conversation_id: &str, tool: &str, args: &serde_json::Value) -> bool {
+    IN_FORCE.lock().is_ok_and(|mut held| held.remove(&one_run_key(conversation_id, tool, args)))
+}
+
 /// Calls said yes to for the rest of their conversation: `Answer::Session`.
 /// Not cleared when the work is done, and gone when the app closes.
 static SESSION: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
@@ -638,6 +670,28 @@ pub fn work_is_done(conversation_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_yes_to_one_run_is_spent_by_that_run_and_by_nothing_else() {
+        let line = serde_json::json!({ "command": "brew install ffmpeg", "cwd": "~" });
+        let other = serde_json::json!({ "command": "brew install ffmpeg", "cwd": "~/code" });
+        grant_one_run("conv-run", "machine_host", &line);
+        assert!(has_one_run("conv-run", "machine_host", &line));
+        assert!(!has_one_run("conv-run", "machine_host", &other), "another folder is another call");
+        assert!(!has_one_run("conv-other", "machine_host", &line), "another conversation");
+        // Neither the work's yes nor the session's stands in for it.
+        allow_call_until_done("conv-run", "machine_host", &other);
+        allow_call_in_session("conv-run", "machine_host", &other);
+        assert!(!has_one_run("conv-run", "machine_host", &other));
+
+        assert!(spend_one_run("conv-run", "machine_host", &line));
+        assert!(!spend_one_run("conv-run", "machine_host", &line), "spent once");
+        assert!(!has_one_run("conv-run", "machine_host", &line));
+
+        grant_one_run("conv-run", "machine_host", &line);
+        work_is_done("conv-run");
+        assert!(!has_one_run("conv-run", "machine_host", &line), "gone with the work");
+    }
 
     const NOW: &str = "2026-09-05T00:00:00Z";
 

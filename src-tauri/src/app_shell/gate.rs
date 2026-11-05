@@ -326,6 +326,7 @@ mod tests {
             "syn_doors",
             "syn_add_door",
             "syn_pick_door",
+            "syn_confirm_command",
             "syn_remove_door",
             "syn_door_away",
             "syn_waiting_rehearsals",
