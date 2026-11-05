@@ -19,6 +19,9 @@
 //! [`tool`] is the model's way in, from the app only so far: a command, a file
 //! in or out, each weighed by the gate like any tool and run by the engine.
 //!
+//! [`outside`] is the other kind of room: the helper's, with the network and
+//! nothing of the person's in it.
+//!
 //! [`find`] and [`status`] run no command the model wrote, so they need no room.
 //! They look at the machine, and that is all they do.
 //!
@@ -34,6 +37,7 @@ pub mod export;
 pub mod fd;
 pub mod find;
 pub mod inside;
+pub mod outside;
 pub mod profile;
 pub mod proxy;
 pub mod rehearse;

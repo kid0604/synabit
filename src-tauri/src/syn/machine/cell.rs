@@ -71,6 +71,9 @@ impl Ran {
 #[derive(Clone, Debug)]
 pub struct Cell {
     pub profile: Profile,
+    /// Added to the blank environment of every command, before what a caller
+    /// adds: where a room with a network finds its proxy and its certificates.
+    pub env: Vec<(String, OsString)>,
 }
 
 impl Cell {
@@ -93,6 +96,7 @@ impl Cell {
         }
         let cell = Self {
             profile: Profile::new(room, tools, reach),
+            env: Vec::new(),
         };
         cell.restore()?;
         Ok(cell)
@@ -140,9 +144,17 @@ impl Cell {
         Ok(())
     }
 
-    /// Runs `/bin/sh -c script` in the room's `work` folder.
+    /// Runs `/bin/sh -c script` in the room's `work` folder. A room with a
+    /// network gets `/bin/bash` instead: `/bin/sh` first reads
+    /// `/private/var/select/sh` to choose a shell, a file on the data volume a
+    /// sealed room reads too (design §5.8); bash reads nothing there (measured
+    /// 2026-11-05).
     pub async fn run(&self, script: &str, limits: Limits) -> io::Result<Ran> {
-        self.exec(Path::new("/bin/sh"), &["-c".into(), script.into()], &[], limits).await
+        let shell = match self.profile.sight {
+            super::profile::Sight::Machine => "/bin/sh",
+            super::profile::Sight::Bare => "/bin/bash",
+        };
+        self.exec(Path::new(shell), &["-c".into(), script.into()], &[], limits).await
     }
 
     /// Runs one program, with no shell between: a room that cannot read what
@@ -177,6 +189,7 @@ impl Cell {
             .env("PATH", path)
             .env("HOME", self.work())
             .env("TMPDIR", room.join("tmp"))
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v)))
             .envs(env.iter().map(|(k, v)| (*k, v)))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

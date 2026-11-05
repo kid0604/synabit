@@ -160,7 +160,7 @@ fn tail(text: &str) -> String {
 
 /// The Python `uv python install` left in `folder`: the folder itself, not the
 /// link uv puts beside it under the shorter name.
-fn python_in(folder: &Path) -> Option<String> {
+pub(super) fn python_in(folder: &Path) -> Option<String> {
     std::fs::read_dir(folder)
         .ok()?
         .flatten()

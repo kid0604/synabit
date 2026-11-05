@@ -49,21 +49,21 @@ use crate::syn::tools::{
 };
 
 /// Characters of each of stdout and stderr shown, before the window scales it.
-const SHOWN: usize = 8_000;
+pub(super) const SHOWN: usize = 8_000;
 /// Default and longest wait for one command. Longer work is for `machine_start`.
-const WAIT: u64 = 120;
-const LONGEST_WAIT: u64 = 600;
+pub(super) const WAIT: u64 = 120;
+pub(super) const LONGEST_WAIT: u64 = 600;
 /// What `machine_read` shows at most, in bytes.
 const READ_MOST: u64 = 200_000;
 /// The most the model may write in one call, and what `machine_edit` will edit.
 const WRITE_MOST: usize = 4 << 20;
 /// What may come in from the vault, and go back out to it, in one file.
 const TAKE_MOST: u64 = 2 << 30;
-const KEEP_MOST: u64 = 1 << 30;
+pub(super) const KEEP_MOST: u64 = 1 << 30;
 /// Entries of `work` listed after a command.
-const LISTED: usize = 40;
+pub(super) const LISTED: usize = 40;
 /// How often a waiting command looks at the stop button.
-const STOP_POLL: Duration = Duration::from_millis(250);
+pub(super) const STOP_POLL: Duration = Duration::from_millis(250);
 
 /// One call, with what it needs of the run.
 pub struct Call<'a, R: tauri::Runtime> {
@@ -79,11 +79,11 @@ pub struct Call<'a, R: tauri::Runtime> {
     pub surface: Surface,
 }
 
-fn error(said: impl Into<String>) -> String {
+pub(super) fn error(said: impl Into<String>) -> String {
     json!({ "error": said.into() }).to_string()
 }
 
-fn refused(error: &Refused, path: &str) -> String {
+pub(super) fn refused(error: &Refused, path: &str) -> String {
     let shown = sanitize::shown(path);
     let said = match error {
         Refused::NotInside => format!("'{shown}' is not a path inside the room. Paths are relative to its folder, like 'out/report.csv'."),
@@ -109,14 +109,14 @@ pub fn name_for(scope: &str, cell: Option<&str>) -> Result<String, String> {
     }
 }
 
-fn str_arg<'v>(args: &'v Value, key: &str) -> Option<&'v str> {
+pub(super) fn str_arg<'v>(args: &'v Value, key: &str) -> Option<&'v str> {
     args.get(key).and_then(Value::as_str)
 }
 
 /// The room's answer, whole, or cut in the middle with how much was cut said.
 /// Bytes that are not text are not shown at all: they are no use to a model and
 /// the most room for something to hide in.
-fn shown_stream(text: &str, budget: usize) -> Value {
+pub(super) fn shown_stream(text: &str, budget: usize) -> Value {
     if text.is_empty() {
         return Value::Null;
     }
@@ -535,74 +535,15 @@ impl Room<'_> {
     }
 
     fn read<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
-        let Some(path) = str_arg(args, "path") else {
-            return error("`path` is the file to read, inside the room.");
-        };
-        let (bytes, more) = match inside::read(self.cell, Path::new(path), READ_MOST) {
-            Ok(read) => read,
-            Err(e) => return refused(&e, path),
-        };
-        self.coming_out(call.taint);
-        let Ok(text) = String::from_utf8(bytes) else {
-            return error(format!("'{}' is not text. Look at it with a command, like `file` or `head -c`.", sanitize::shown(path)));
-        };
-        let lines: Vec<&str> = text.lines().collect();
-        let (from, to) = match args.get("lines").and_then(Value::as_str).map(|l| l.split_once('-')) {
-            Some(Some((a, b))) => (a.trim().parse::<usize>().unwrap_or(1).max(1), b.trim().parse::<usize>().unwrap_or(lines.len())),
-            _ => (1, lines.len()),
-        };
-        let picked = lines.iter().skip(from - 1).take(to.saturating_sub(from - 1)).copied().collect::<Vec<_>>().join("\n");
-        json!({
-            "path": path,
-            "text": shown_stream(&picked, crate::syn::room::scaled(SHOWN * 4)),
-            "lines": lines.len(),
-            "cut": more,
-        })
-        .to_string()
+        read_file(self.cell, args, || self.coming_out(call.taint))
     }
 
     fn write<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
-        let (Some(path), Some(content)) = (str_arg(args, "path"), str_arg(args, "content")) else {
-            return error("`path` inside the room and the file's whole `content`.");
-        };
-        if content.len() > WRITE_MOST {
-            return error("That is too much for one call. Write it in parts with a command, or make it with a script.");
-        }
-        if let Err(said) = self.going_in(call.taint) {
-            return error(said);
-        }
-        match inside::write(self.cell, Path::new(path), content.as_bytes()) {
-            Ok(()) => json!({ "written": path, "bytes": content.len() }).to_string(),
-            Err(e) => refused(&e, path),
-        }
+        write_file(self.cell, args, || self.going_in(call.taint))
     }
 
     fn edit<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
-        let (Some(path), Some(old), Some(new)) = (str_arg(args, "path"), str_arg(args, "old"), str_arg(args, "new")) else {
-            return error("`path` inside the room, the `old` text exactly as it is, and the `new` text to put there.");
-        };
-        if old.is_empty() {
-            return error("`old` cannot be empty; to write a whole file use machine_write.");
-        }
-        let (bytes, more) = match inside::read(self.cell, Path::new(path), WRITE_MOST as u64) {
-            Ok(read) => read,
-            Err(e) => return refused(&e, path),
-        };
-        let Ok(text) = String::from_utf8(bytes).map_err(|_| ()).and_then(|t| if more { Err(()) } else { Ok(t) }) else {
-            return error("That file is not text, or is too large to edit this way. Use a command.");
-        };
-        match text.matches(old).count() {
-            1 => {}
-            0 => return error("`old` is not in the file. Read it again with machine_read and copy the text exactly."),
-            n => return error(format!("`old` is in the file {n} times. Give more of the text around it, so it is in there once.")),
-        }
-        if let Err(said) = self.going_in(call.taint) {
-            return error(said);
-        }
-        match inside::write(self.cell, Path::new(path), text.replacen(old, new, 1).as_bytes()) {
-            Ok(()) => json!({ "edited": path }).to_string(),
-            Err(e) => refused(&e, path),
-        }
+        edit_file(self.cell, args, || self.going_in(call.taint))
     }
 
     /// A vault item, copied in. Read as the model, so whatever the lock hides is
@@ -655,6 +596,80 @@ impl Room<'_> {
         // Before anything is written: a stamp is what a tainted run's notes carry.
         self.coming_out(call.taint);
         keep_in_vault(call, args, out)
+    }
+}
+
+/// `machine_read` on a room's file. `read` is told once something was read.
+pub(super) fn read_file(cell: &Cell, args: &Value, read: impl FnOnce()) -> String {
+    let Some(path) = str_arg(args, "path") else {
+        return error("`path` is the file to read, inside the room.");
+    };
+    let (bytes, more) = match inside::read(cell, Path::new(path), READ_MOST) {
+        Ok(read) => read,
+        Err(e) => return refused(&e, path),
+    };
+    read();
+    let Ok(text) = String::from_utf8(bytes) else {
+        return error(format!("'{}' is not text. Look at it with a command, like `file` or `head -c`.", sanitize::shown(path)));
+    };
+    let lines: Vec<&str> = text.lines().collect();
+    let (from, to) = match args.get("lines").and_then(Value::as_str).map(|l| l.split_once('-')) {
+        Some(Some((a, b))) => (a.trim().parse::<usize>().unwrap_or(1).max(1), b.trim().parse::<usize>().unwrap_or(lines.len())),
+        _ => (1, lines.len()),
+    };
+    let picked = lines.iter().skip(from - 1).take(to.saturating_sub(from - 1)).copied().collect::<Vec<_>>().join("\n");
+    json!({
+        "path": path,
+        "text": shown_stream(&picked, crate::syn::room::scaled(SHOWN * 4)),
+        "lines": lines.len(),
+        "cut": more,
+    })
+    .to_string()
+}
+
+/// `machine_write`. `going_in` runs before anything is written, and may stop it.
+pub(super) fn write_file(cell: &Cell, args: &Value, going_in: impl FnOnce() -> Result<(), String>) -> String {
+    let (Some(path), Some(content)) = (str_arg(args, "path"), str_arg(args, "content")) else {
+        return error("`path` inside the room and the file's whole `content`.");
+    };
+    if content.len() > WRITE_MOST {
+        return error("That is too much for one call. Write it in parts with a command, or make it with a script.");
+    }
+    if let Err(said) = going_in() {
+        return error(said);
+    }
+    match inside::write(cell, Path::new(path), content.as_bytes()) {
+        Ok(()) => json!({ "written": path, "bytes": content.len() }).to_string(),
+        Err(e) => refused(&e, path),
+    }
+}
+
+/// `machine_edit`, the same way.
+pub(super) fn edit_file(cell: &Cell, args: &Value, going_in: impl FnOnce() -> Result<(), String>) -> String {
+    let (Some(path), Some(old), Some(new)) = (str_arg(args, "path"), str_arg(args, "old"), str_arg(args, "new")) else {
+        return error("`path` inside the room, the `old` text exactly as it is, and the `new` text to put there.");
+    };
+    if old.is_empty() {
+        return error("`old` cannot be empty; to write a whole file use machine_write.");
+    }
+    let (bytes, more) = match inside::read(cell, Path::new(path), WRITE_MOST as u64) {
+        Ok(read) => read,
+        Err(e) => return refused(&e, path),
+    };
+    let Ok(text) = String::from_utf8(bytes).map_err(|_| ()).and_then(|t| if more { Err(()) } else { Ok(t) }) else {
+        return error("That file is not text, or is too large to edit this way. Use a command.");
+    };
+    match text.matches(old).count() {
+        1 => {}
+        0 => return error("`old` is not in the file. Read it again with machine_read and copy the text exactly."),
+        n => return error(format!("`old` is in the file {n} times. Give more of the text around it, so it is in there once.")),
+    }
+    if let Err(said) = going_in() {
+        return error(said);
+    }
+    match inside::write(cell, Path::new(path), text.replacen(old, new, 1).as_bytes()) {
+        Ok(()) => json!({ "edited": path }).to_string(),
+        Err(e) => refused(&e, path),
     }
 }
 

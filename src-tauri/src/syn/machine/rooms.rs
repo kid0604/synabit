@@ -49,6 +49,10 @@ pub struct Status {
 
 pub struct Rooms {
     root: PathBuf,
+    /// Where the helper's rooms go (`super::outside`): a folder whose path
+    /// does not hold the person's name. `None` when no such folder was found,
+    /// and then there is no helper.
+    outside: Option<PathBuf>,
     tools: PathBuf,
     bait: PathBuf,
     ceiling: Ceiling,
@@ -109,8 +113,10 @@ impl Rooms {
         let root = root.canonicalize()?;
         let bait = root.join("bait");
         std::fs::write(&bait, "outside every room")?;
+        let outside = super::outside::place_for(&root);
         Ok(Self {
             tools: root.join("tools"),
+            outside,
             bait,
             ceiling: Ceiling::default(),
             known: Mutex::new(None),
@@ -225,6 +231,51 @@ impl Rooms {
         if !usable_name(name) {
             return Err(Unavailable::BadName);
         }
+        let place = self.root.join("prep").join(name);
+        self.open_window(name, allow, &place, work).await
+    }
+
+    /// The helper's room (`super::outside`): the same window, to any public
+    /// host, in a folder whose path does not name the person. The folder goes
+    /// when the window closes; whatever was to leave it left during `work`.
+    pub async fn with_outside<T, F, Fut>(&self, name: &str, work: F) -> Result<T, Unavailable>
+    where
+        F: FnOnce(Cell) -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
+        if !usable_name(name) {
+            return Err(Unavailable::BadName);
+        }
+        let Some(outside) = &self.outside else {
+            return Err(Unavailable::Setup(
+                "no folder was found for the helper's room whose path does not hold the person's name".into(),
+            ));
+        };
+        let place = outside.join(name);
+        let nameless = |mut cell: Cell| {
+            cell.profile.nameless = true;
+            work(cell)
+        };
+        let out = self.open_window(name, super::outside::allow(), &place, nameless).await;
+        let _ = std::fs::remove_dir_all(&place);
+        out
+    }
+
+    /// Runs a command in the room [`Self::with_outside`] handed to its `work`,
+    /// which holds the window: so not through [`Self::run`], which would wait
+    /// for the window it is inside. Refused for a sealed room.
+    pub async fn run_outside(&self, cell: &Cell, script: &str, limits: Limits) -> io::Result<Watched> {
+        if !matches!(cell.profile.reach, Reach::Proxy(_)) || cell.profile.sight != super::profile::Sight::Bare {
+            return Err(io::Error::other("not a room with a network"));
+        }
+        watch::run_watched(cell, &self.bait, script, limits, self.ceiling).await
+    }
+
+    async fn open_window<T, F, Fut>(&self, name: &str, allow: Allow, place: &Path, work: F) -> Result<T, Unavailable>
+    where
+        F: FnOnce(Cell) -> Fut,
+        Fut: std::future::Future<Output = T>,
+    {
         self.ready().await?;
         let _all = self.window.write().await;
 
@@ -246,8 +297,7 @@ impl Rooms {
         let proxy = Proxy::open(name, allow, &proxy::audit_file(&self.root))
             .await
             .map_err(|e| Unavailable::Setup(e.to_string()))?;
-        let place = self.root.join("prep").join(name);
-        let _ = std::fs::remove_dir_all(&place);
+        let _ = std::fs::remove_dir_all(place);
         let cell = Cell::make_bare(&place.join("room"), &place.join("tools"), proxy.port)
             .map_err(|e| Unavailable::Setup(e.to_string()))?;
         let out = work(cell.clone()).await;
@@ -361,11 +411,13 @@ impl Rooms {
             }
         }
         // Rooms with a network, one a crash may have left: ended the same way.
-        if let Ok(entries) = std::fs::read_dir(self.root.join("prep")) {
-            for entry in entries.flatten() {
-                let name = entry.file_name();
-                if name.to_str().is_some_and(usable_name) {
-                    cells.push(Cell::make(&entry.path().join("room"), &entry.path().join("tools"), Reach::Closed)?);
+        for folder in [Some(self.root.join("prep")), self.outside.clone()].into_iter().flatten() {
+            if let Ok(entries) = std::fs::read_dir(folder) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    if name.to_str().is_some_and(usable_name) {
+                        cells.push(Cell::make(&entry.path().join("room"), &entry.path().join("tools"), Reach::Closed)?);
+                    }
                 }
             }
         }

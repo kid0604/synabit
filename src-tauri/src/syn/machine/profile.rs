@@ -65,6 +65,11 @@ pub struct Profile {
     /// Folders the person opened (`super::doors`), read-only. Only a room that
     /// sees the machine gets them; a room with a network never does.
     pub doors: Vec<PathBuf>,
+    /// Refuses the computer's name, which usually holds the person's (design
+    /// §7.2, A33). Only for the helper's room: `os.uname()` fails whole without
+    /// it, and `uv` with it, so the room that installs packages, which holds no
+    /// model, keeps it (measured 2026-11-05). See `super::outside`.
+    pub nameless: bool,
     /// Replaces the rules, so a test can prove a broken profile is noticed.
     #[cfg(test)]
     pub rules: Option<String>,
@@ -79,6 +84,7 @@ impl Profile {
             reach,
             sight: Sight::Machine,
             doors: Vec::new(),
+            nameless: false,
             #[cfg(test)]
             rules: None,
         }
@@ -155,6 +161,9 @@ impl Profile {
         if matches!(self.reach, Reach::Proxy(_)) {
             text.push_str(NET);
         }
+        if self.nameless {
+            text.push_str("(deny sysctl-read (sysctl-name \"kern.hostname\"))\n");
+        }
         let (doors, steps) = self.doors();
         if !doors.is_empty() {
             let each = |name: &str, count: usize, rule: &str| -> String {
@@ -227,6 +236,14 @@ mod tests {
                 .unwrap()
                 .contains(&format!("(param \"{name}\")")));
         }
+    }
+
+    #[test]
+    fn only_the_helpers_room_is_refused_the_computers_name() {
+        let mut room = profile("/a/room");
+        assert!(!room.args()[1].to_str().unwrap().contains("kern.hostname"));
+        room.nameless = true;
+        assert!(room.args()[1].to_str().unwrap().contains("(deny sysctl-read (sysctl-name \"kern.hostname\"))"));
     }
 
     #[test]
