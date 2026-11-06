@@ -588,10 +588,11 @@ pub async fn send_message_inner<R: tauri::Runtime>(
     if gathered.read_untrusted {
         run.read_untrusted = true;
     }
-    // Nothing, when the count is already in the prompt. A turn with tools would
-    // spend a round deciding not to use them, which is the cost this tempo
-    // exists to remove — see `syn::tempo`.
-    let registry = if gathered.counted.is_some() { Registry::none() } else { Registry::for_chat() };
+    // Every tool, even when the count is already in the prompt. A count that
+    // answers is said in the first round anyway; one that does not is a
+    // question the model has to go and look at, and taking the tools away
+    // left it saying "ask me again" (2026-11-06). See `syn::tempo`.
+    let registry = Registry::for_chat();
     // Use settings temperature as default, allow per-request override
     let temperature = request.temperature.or(Some(settings.temperature));
 
@@ -950,9 +951,9 @@ fn gather<R: tauri::Runtime>(
 
     // The one skill whose own description clearly fits the question, its steps
     // put in front of the model instead of waiting for it to call `load_skill`
-    // — which it did in none of seventeen runs. Not for a counted turn: that
-    // turn has no tools and its answer is already in the prompt. See
-    // `skill::chosen_for`.
+    // — which it did in none of seventeen runs. Not for a counted turn: its
+    // answer is already in the prompt, and steps for something else would
+    // argue with it. See `skill::chosen_for`.
     let chosen_skill = match counted {
         Some(_) => None,
         None => crate::syn::skill::chosen_for(&skills, question).map(crate::syn::skill::chosen_block),
@@ -1104,11 +1105,9 @@ fn start_run<R: tauri::Runtime>(
     carried: crate::syn::stats::Carried,
     stopped: Option<Run>,
 ) -> (Run, Option<crate::models::syn::ToolCall>) {
-    let mut budget = Budget::from_settings(settings);
-    if instant {
-        // One round. There is nothing to come back for.
-        budget.iterations = Some(1);
-    }
+    // The whole budget, instant or not: a count that was not the answer goes
+    // on looking, and it needs the rounds to. See `syn::tempo`.
+    let budget = Budget::from_settings(settings);
 
     // What the stopped run was about to do, which is the thing the user just
     // gave permission for. Read off that run rather than worked out again — see

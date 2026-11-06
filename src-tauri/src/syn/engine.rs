@@ -980,7 +980,7 @@ impl SynEngine {
                 num_ctx: req.num_ctx,
                 json_schema: None,
                 // `None` rather than an empty array when there are no tools.
-                // An instant turn runs against `Registry::none()`, and several
+                // A run against `Registry::none()` has none, and several
                 // servers speaking this API reject `tools: []` outright rather
                 // than reading it as "no tools".
                 tools: (!tools.is_empty()).then_some(&tools),
@@ -1104,6 +1104,21 @@ impl SynEngine {
                 tool_call_id: None,
                 images: None,
             });
+
+            // A count that was not the answer. The model reached for a tool, so
+            // the question needed more than the index held, and from here the
+            // run is ordinary work — on the record, on the footing, and on the
+            // screen, which was told this would be instant. See `syn::tempo`.
+            if run.tempo == crate::syn::tempo::Tempo::Instant {
+                run.tempo = crate::syn::tempo::Tempo::Working;
+                run.note(iteration, "The count was not the answer; went to look.");
+                if let Some(conversation_id) = &conversation_id {
+                    let _ = req.app.emit(
+                        "syn-tempo",
+                        serde_json::json!({ "conversation_id": conversation_id, "tempo": run.tempo }),
+                    );
+                }
+            }
 
             let mut ready: std::collections::HashMap<usize, Ready> = std::collections::HashMap::new();
             for (index, tc) in reply.tool_calls.iter().enumerate() {
@@ -6429,6 +6444,36 @@ mod driving {
             )
             .await
             .expect("finishes");
+    }
+
+    /// A count that was not the answer goes and looks, in the same turn, and
+    /// the run says it was work. "list cho tao danh sách files trong folder
+    /// Downloads" read as a count of the vault's files on 2026-11-06, had no
+    /// tools, and was answered "ask me again".
+    #[tokio::test]
+    async fn a_count_that_is_not_the_answer_goes_on_to_look() {
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let db = a_vault_worth_attacking(dir.path());
+
+        let mut run = Run::new("list files trong folder Downloads", Some("conv-count".into()), budget(6));
+        run.tempo = crate::syn::tempo::Tempo::Instant;
+        drive_script(&vault, &db, &mut run, "list files trong folder Downloads", vec![
+            calls("query_nodes", serde_json::json!({ "query": "type:note" })),
+            text("Đây là những gì tao thấy."),
+        ])
+        .await;
+        assert_eq!(run.state, RunState::Done, "{:?}", run.steps);
+        assert!(run.steps.iter().any(|s| s.tool.as_deref() == Some("query_nodes")), "it looked: {:?}", run.steps);
+        // And so the footing is read off what it did, not granted for a count.
+        assert_eq!(run.tempo, crate::syn::tempo::Tempo::Working, "it was work, and the record says so");
+
+        // A count that is the answer is still said in one round, and stays one.
+        let mut counted = Run::new("bao nhiêu note", Some("conv-count".into()), budget(6));
+        counted.tempo = crate::syn::tempo::Tempo::Instant;
+        drive_script(&vault, &db, &mut counted, "bao nhiêu note", vec![text("Có 1 note.")]).await;
+        assert_eq!(counted.spent.iterations, 1);
+        assert_eq!(counted.tempo, crate::syn::tempo::Tempo::Instant);
     }
 
     // ── Declared connectors (Lát 1): a declaration, approved, carried out ──

@@ -36,11 +36,19 @@
 //! # Why being wrong here is cheap
 //!
 //! Because the fast path is not a different answer, it is a different amount of
-//! work. Misjudging a question as instant costs one round with no tools, after
-//! which the ordinary loop runs anyway — the model simply says it needs to look.
-//! Misjudging one as ordinary costs what everything costs today. Neither
-//! produces a wrong answer, which is why this may be arithmetic rather than a
-//! model call.
+//! work. An instant turn is an ordinary one with the count already in the
+//! prompt: every tool, every round. A count that answers is said in the first
+//! round, with nothing to fetch. A question misjudged as a count — *"list cho
+//! tao danh sách files trong folder Downloads"* reads as one, being about files
+//! and asking for a list — reaches for a tool instead, and the run carries on
+//! as ordinary work from there. Misjudging one as ordinary costs what
+//! everything costs today. Neither produces a wrong answer, which is why this
+//! may be arithmetic rather than a model call.
+//!
+//! It was not always so. Until 2026-11-06 an instant turn had no tools and one
+//! round, and this paragraph said the loop would run anyway afterwards. Nothing
+//! made it: the Downloads question above was answered "ask me again", in a
+//! vault whose Mac could have listed the folder.
 //!
 //! A model call would also be self-defeating: spending an inference round to
 //! decide whether to spend inference rounds turns every instant question into an
@@ -58,7 +66,8 @@ use crate::query::{Expr, Field, Query, Term};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Tempo {
-    /// The index already holds the answer. One round, no tools.
+    /// The index probably holds the answer, and it is in the prompt. Becomes
+    /// `Working` at the first tool the model reaches for.
     Instant,
     /// Everything else: the loop, with tools, for as long as the budget allows.
     Working,
@@ -299,9 +308,10 @@ pub fn block(instant: &Instant, total: usize, sample: &str) -> String {
          were asked. There are **{total}** {scope} in the vault. That number is the \
          database's own total, not the length of a list — use it exactly as it is.\n\
          {sample}\n\
-         Answer from this. You have no tools on this turn; if the question needs \
-         something this does not cover, say what you would have to look up and the \
-         user will ask again.\n\
+         If this answers the question, answer from it without calling a tool. If \
+         the question is about something this does not cover — files on the \
+         computer rather than in the vault, a detail of the items themselves — use \
+         your tools as you would for any question.\n\
          === END COUNT ===\n\n"
     )
 }
@@ -455,19 +465,13 @@ mod tests {
         assert_eq!(q.filter, Expr::And(vec![Expr::Term(Term::text(Field::Kind, "note"))]));
     }
 
-    /// The saving, stated as the property that produces it.
-    ///
-    /// An instant turn runs against a registry with nothing in it and a budget
-    /// of one round. Both halves matter: tools alone would let the model spend a
-    /// round reaching for one, and rounds alone would let it ask for a tool that
-    /// does not exist. The pair is what makes it one round trip instead of two.
+    /// A count that is not the answer can still go and look: the instant turn
+    /// keeps every tool and every round. Taking them away is what answered a
+    /// question about the Downloads folder with "ask me again".
     #[test]
-    fn an_instant_turn_has_no_tools_and_one_round() {
+    fn an_instant_turn_keeps_its_tools_and_its_rounds() {
         let source = include_str!("../commands/syn.rs");
-        assert!(
-            source.contains("if gathered.counted.is_some() { Registry::none() }"),
-            "an instant turn is offered no tools"
-        );
+        assert!(!source.contains("Registry::none()"), "an instant turn is offered the tools");
         let start_run = source
             .split("fn start_run<")
             .nth(1)
@@ -475,7 +479,15 @@ mod tests {
             .split("\n}\n")
             .next()
             .expect("a body");
-        assert!(start_run.contains("if instant {") && start_run.contains("iterations = Some(1)"), "one round:\n{start_run}");
+        assert!(!start_run.contains("iterations = Some(1)"), "the whole budget:\n{start_run}");
+    }
+
+    /// The question of 2026-11-06 is still read as a count. That is the point:
+    /// the reading is cheap to get wrong, and the turn recovers from it.
+    #[test]
+    fn a_list_of_files_in_a_folder_still_reads_as_a_count() {
+        let types = vec!["file".to_string(), "task".to_string()];
+        assert!(of("list cho tao danh sách files trong folder Downloads", &types).is_some());
     }
 
     /// A count that reaches the model must not also be droppable, or a tight
@@ -537,12 +549,13 @@ mod tests {
         );
     }
 
-    /// An instant turn has no tools, so the model needs a way out that is not
-    /// making something up.
+    /// The way out of a count that is not the answer is the tools, and the
+    /// block says so rather than telling the person to ask again.
     #[test]
     fn the_block_gives_a_way_out_when_the_count_is_not_the_answer() {
         let block = block(&Instant { node_type: "note".into(), unfinished: false }, 12, "");
-        assert!(block.contains("no tools on this turn"), "{block}");
-        assert!(block.contains("say what you would have to look up"), "{block}");
+        assert!(block.contains("use your tools"), "{block}");
+        assert!(block.contains("files on the computer"), "{block}");
+        assert!(!block.contains("ask again"), "{block}");
     }
 }
