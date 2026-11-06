@@ -475,7 +475,7 @@ giờ sửa được nữa; với changeset thì không.
 
 Agent mạnh nhất bây giờ mạnh vì *viết code*. Syn không có shell, và không nên có — đó chính là chỗ OpenClaw hỏng.
 
-> **Đã đổi (2026-11-01).** Trên desktop, Syn sẽ có shell trong một phòng do kernel giữ: không mạng, không file ngoài phòng, không tiến trình khác. OpenClaw hỏng vì shell chạy trần, không phải vì có shell. Trên Android vẫn không có shell. `script` bên dưới vẫn giữ nguyên, cho mọi nền tảng. Phần lõi là `src-tauri/src/syn/machine/`, chưa nối với model.
+> **Đã đổi (2026-11-01).** Trên desktop, Syn sẽ có shell trong một phòng do kernel giữ: không mạng, không file ngoài phòng, không tiến trình khác. OpenClaw hỏng vì shell chạy trần, không phải vì có shell. Trên Android vẫn không có shell. `script` bên dưới vẫn giữ nguyên, cho mọi nền tảng. Phần đó là `src-tauri/src/syn/machine/`, đã nối với model từ M2 (2026-11-03), xem `docs/syn-at-the-machine-plan-2026-11-01.md`.
 Lời giải: một ngôn ngữ **không có I/O**.
 
 - **Starlark** (crate `starlark`, Rust thuần, chạy được trên Android): cú pháp Python mà model viết tốt, tất
