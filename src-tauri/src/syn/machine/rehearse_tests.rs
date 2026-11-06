@@ -459,3 +459,52 @@ async fn a_folder_on_another_drive_is_tidied_and_put_back() {
         assert_eq!(snapshot(&folder), before, "{fs}");
     }
 }
+
+/// The gate of plan M5 that waited for a machine of its own: the real
+/// `~/Downloads` of a macOS VM, tidied by type the way a room would, applied
+/// whole with the system's Trash, then undone, to the byte and to the name.
+/// Never on the person's own Mac: it runs only with `SYN_REAL_DOWNLOADS=1`,
+/// set in the VM. Prints what it did.
+#[tokio::test]
+#[ignore = "tidies the real Downloads folder; only in a VM, with SYN_REAL_DOWNLOADS=1"]
+async fn the_real_downloads_is_tidied_and_put_back() {
+    assert_eq!(std::env::var("SYN_REAL_DOWNLOADS").as_deref(), Ok("1"), "only in a VM made for it");
+    let home = PathBuf::from(std::env::var("HOME").unwrap());
+    let folder = home.join("Downloads").canonicalize().unwrap();
+    let before = snapshot(&folder);
+    let trashed_before = names_in(&home.join(".Trash")).len();
+    println!("Downloads before: {} entries", before.len());
+    let place = Place { _dir: tempfile::tempdir().unwrap(), folder: folder.clone(), trash: PathBuf::new(), elsewhere: PathBuf::new() };
+    let tidy = r#"for f in *; do
+        [ -f "$f" ] || continue
+        case "$f" in *.crdownload|*.part) rm -f -- "$f"; continue;; esac
+        ext=$(printf '%s' "${f##*.}" | tr 'A-Z' 'a-z'); [ "$ext" = "$f" ] && ext=other
+        mkdir -p "By type/$ext" && mv -- "$f" "By type/$ext/"
+    done"#;
+    let (_cell, proposal) = proposed("rh-real", &place, tidy).await;
+    let count = |what: What| proposal.ops.iter().filter(|o| o.what == what).count();
+    println!(
+        "proposed {} ops: {} moved, {} to the Trash, {} new folders, {} not chosen beforehand",
+        proposal.ops.len(),
+        count(What::Move),
+        count(What::Trash),
+        count(What::NewFolder),
+        proposal.ops.iter().filter(|o| o.class == Class::Unknown).count()
+    );
+    assert!(count(What::Move) > 0, "{:#?}", proposal.ops);
+
+    let rooms = rooms();
+    let system = Trash::System { home: home.clone() };
+    let outcome = apply::apply(rooms.root(), &proposal, |n| rehearse::staged_file(&rooms, &proposal.id, n), &every(&proposal), &system).unwrap();
+    println!("applied; skipped {:?}", outcome.skipped);
+    assert!(outcome.skipped.is_empty(), "{:?}", outcome.skipped);
+    assert!(folder.join("By type").is_dir());
+    assert_eq!(names_in(&home.join(".Trash")).len(), trashed_before + count(What::Trash), "the system's Trash, not deleted");
+
+    let undone = apply::undo(rooms.root(), &proposal.id, &system).unwrap();
+    println!("undone; left {:?}", undone.left);
+    assert!(undone.left.is_empty(), "{:?}", undone.left);
+    let after = snapshot(&folder);
+    assert_eq!(after, before, "every file back, byte for byte and name for name");
+    println!("Downloads after undo: {} entries, every hash the same", after.len());
+}
