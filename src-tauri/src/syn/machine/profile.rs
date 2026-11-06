@@ -163,6 +163,10 @@ impl Profile {
         }
         if self.nameless {
             text.push_str("(deny sysctl-read (sysctl-name \"kern.hostname\"))\n");
+            // The login name, which the kernel keeps for the session the app was
+            // opened in: `logname` says it whatever the directory service
+            // refuses. A test run from a session without one never sees it.
+            text.push_str("(deny syscall-unix (syscall-number SYS_getlogin))\n");
         }
         let (doors, steps) = self.doors();
         if !doors.is_empty() {
@@ -242,8 +246,10 @@ mod tests {
     fn only_the_helpers_room_is_refused_the_computers_name() {
         let mut room = profile("/a/room");
         assert!(!room.args()[1].to_str().unwrap().contains("kern.hostname"));
+        assert!(!room.args()[1].to_str().unwrap().contains("SYS_getlogin"));
         room.nameless = true;
         assert!(room.args()[1].to_str().unwrap().contains("(deny sysctl-read (sysctl-name \"kern.hostname\"))"));
+        assert!(room.args()[1].to_str().unwrap().contains("(deny syscall-unix (syscall-number SYS_getlogin))"));
     }
 
     #[test]
