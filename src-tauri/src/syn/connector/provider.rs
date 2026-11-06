@@ -313,10 +313,14 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
         "connector"
     }
 
-    /// The tools of every connected server, for a run asked in the app.
+    /// The tools of every connected server, for a run asked in the app or from
+    /// Telegram, which is the person at the computer.
     ///
-    /// Nothing for a run asked from Telegram or by a routine: a server's tool
-    /// asks permission, and there is nobody at either to ask. Nothing a person
+    /// For a routine, which has nobody to ask, only a read the person said
+    /// always to (`Surface::offers`): "every morning, pull my Todoist and sum
+    /// it up". Until 2026-11-06 a routine was given none at all, a rule older
+    /// than the one that let it read, so connector and routine (design §12.1)
+    /// never ran together; the plan M8 PubMed try found it. Nothing a person
     /// has switched off. And for a run that has already read something from
     /// outside, nothing — except, when all it read was one connector's answer,
     /// that connector's read tools and every tool that sends: the gate lets the
@@ -324,9 +328,14 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
     /// step 1, `syn::writes`). A send not in view could be neither proposed
     /// nor, once approved, called — the 2026-10-11 eval found exactly that.
     fn definitions(&self, ctx: &RunContext<R>) -> Vec<ToolDefinition> {
-        if !ctx.surface.someone_answers() {
-            return Vec::new();
-        }
+        let ledger = crate::syn::consent::load(ctx.vault_path);
+        let now = chrono::Utc::now().to_rfc3339();
+        let routine = !ctx.surface.someone_answers();
+        let for_this_surface = |capability: &Capability| {
+            !routine
+                || (matches!(capability, Capability::NetRead { .. })
+                    && crate::syn::consent::decide(capability, &ledger, &now) == crate::syn::consent::Decision::Allow)
+        };
         // After reading anything: every send stays in view — the gate lets one
         // through only as an approved plan's request (`syn::writes`), and one
         // out of view can be neither proposed nor, once approved, called; the
@@ -343,14 +352,13 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
         super::declared::know_app(app.clone());
         super::start_if_needed(ctx.vault_path, app);
 
-        let ledger = crate::syn::consent::load(ctx.vault_path);
-        let now = chrono::Utc::now().to_rfc3339();
         let catalog = catalog_of(ctx.vault_path);
         let mut offered: Vec<ToolDefinition> = catalog
             .iter()
             .filter(|s| s.status == Status::Connected)
             .flat_map(|s| s.tools.iter())
             .filter(|t| !crate::syn::registry::is_switched_off(&capability_for(t), &ledger, &now))
+            .filter(|t| for_this_surface(&capability_for(t)))
             .filter(|t| {
                 // After reading one connector: its reads, and every tool that
                 // sends — which goes only through a plan the person approved
@@ -376,7 +384,7 @@ impl<R: tauri::Runtime> ToolProvider<R> for ConnectorTools {
         for d in &declared {
             for op in &super::declared::operations(d) {
                 let capability = super::declared::capability(d, op, &Value::Null);
-                if crate::syn::registry::is_switched_off(&capability, &ledger, &now) {
+                if crate::syn::registry::is_switched_off(&capability, &ledger, &now) || !for_this_surface(&capability) {
                     continue;
                 }
                 // As above: the same connector's reads, and sends (by plan only).

@@ -535,6 +535,13 @@ async fn the_registry_offers_connected_tools_where_someone_answers() {
     let clean = crate::syn::taint::Taint::new();
     assert_eq!(offered(Surface::App, &clean).len(), 3);
     assert_eq!(offered(Surface::Telegram, &clean).len(), 3, "the phone is the person at the computer");
+    // A routine has nobody to ask: a read only, and only once the person said
+    // always to it; never a send.
+    assert!(offered(Surface::Routine, &clean).is_empty());
+    let search = Capability::NetRead { domain: "Jira Reg".into() };
+    crate::syn::consent::record(vault, &search, crate::syn::consent::Answer::Always, chrono::Utc::now()).expect("always");
+    assert_eq!(offered(Surface::Routine, &clean), ["connector__jira_reg__search"]);
+    crate::syn::consent::revoke(vault, &search.scope_key().expect("a scope")).expect("revoked");
     assert!(offered(Surface::Routine, &clean).is_empty());
     // After reading a page: no read, and only the sends — which go only by an
     // approved plan (`syn::writes`). Before step 2 this was nothing at all.
