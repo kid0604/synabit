@@ -9880,25 +9880,24 @@ mod driving {
         shared_rooms().ready().await.expect("sealed");
 
         let mut first = Run::new("nén video", Some("conv-room-job".into()), budget(8));
-        let started = std::time::Instant::now();
         drive_script_in(
             &app,
             &vault,
             &mut first,
             "nén video",
             vec![
-                calls(ROOM_START, serde_json::json!({ "command": "sleep 8; echo made > out.txt; echo 'time=00:00:02.00'; echo done" })),
+                calls(ROOM_START, serde_json::json!({ "command": "sleep 20; echo made > out.txt; echo 'time=00:00:02.00'; echo done" })),
                 calls(ROOM_RUN, serde_json::json!({ "command": "ls" })),
                 text("đang chạy"),
             ],
         )
         .await;
-        // Well short of the job's eight seconds, under a full test suite's load.
-        assert!(started.elapsed() < std::time::Duration::from_secs(6), "the run waited: {:?}", started.elapsed());
         assert_eq!(first.state, RunState::Done);
         let start = first.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_START)).expect("started");
         let said: serde_json::Value = serde_json::from_str(&start.preview).expect("json");
         let id = said["job"].as_str().expect("an id").to_string();
+        // The run is over and the job is not: it did not wait.
+        assert!(shared_rooms().jobs().find(&id).is_some_and(|job| job.running()), "the run waited for the job");
         let ran = first.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_RUN)).expect("ran");
         assert!(ran.preview.contains("still running"), "{}", ran.preview);
 
@@ -9908,7 +9907,7 @@ mod driving {
         assert!(looked.preview.contains("There is no job"), "{}", looked.preview);
 
         let mut later = Run::new("xong chưa", Some("conv-room-job".into()), budget(4));
-        drive_script_in(&app, &vault, &mut later, "xong chưa", vec![calls(ROOM_POLL, serde_json::json!({ "job": id, "wait_s": 20 })), text("xong")]).await;
+        drive_script_in(&app, &vault, &mut later, "xong chưa", vec![calls(ROOM_POLL, serde_json::json!({ "job": id, "wait_s": 60 })), text("xong")]).await;
         let polled = later.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_POLL)).expect("polled");
         let said: serde_json::Value = serde_json::from_str(&polled.preview).expect("json");
         assert_eq!(said["state"], "ended", "{said}");

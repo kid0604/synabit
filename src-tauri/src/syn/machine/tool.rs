@@ -198,7 +198,7 @@ fn hints(ran: &super::cell::Ran, over: Option<Over>) -> Vec<Value> {
     if ran.timed_out {
         found.push(json!({
             "what": "time",
-            "try": "It ran out of time and was stopped. Give a longer timeout_s, up to 600, or do less in one command.",
+            "try": "It ran out of time and was stopped. Run long work with machine_start, which goes on past this turn, or do less in one command.",
         }));
     }
     found
