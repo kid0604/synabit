@@ -18,6 +18,7 @@
 //!
 //! [`tool`] is the model's way in, from the app only so far: a command, a file
 //! in or out, each weighed by the gate like any tool and run by the engine.
+//! [`jobs`] is a command that outlives the call that started it.
 //!
 //! [`outside`] is the other kind of room: the helper's, with the network and
 //! nothing of the person's in it.
@@ -37,6 +38,7 @@ pub mod export;
 pub mod fd;
 pub mod find;
 pub mod inside;
+pub mod jobs;
 pub mod outside;
 pub mod profile;
 pub mod proxy;

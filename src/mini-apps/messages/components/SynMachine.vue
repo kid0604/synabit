@@ -8,6 +8,9 @@
  * Stopping is here, and in the tray, because it must not depend on anything
  * the model could be talked out of: it goes straight to `syn_machine_stop_all`.
  *
+ * Long work (`machine_start`) is listed while it runs, with how long it has
+ * run, how far its own output says it has got, and a stop button of its own.
+ *
  * The folders open to the rooms are here too: each can be closed, allowed away
  * from the computer, or opened from here in the system's dialog. A folder is
  * the app's alone until the switch says otherwise (design §8, A23).
@@ -21,10 +24,19 @@ import { dialogTitle, refusedText, warnAboutHidden, type Door, type Picked } fro
 
 const props = defineProps<{ vaultPath: string }>();
 
+interface Job {
+  id: string;
+  command: string;
+  seconds: number;
+  paused: boolean;
+  progress: { percent?: number; time?: string } | null;
+}
+
 interface Status {
   sealed: boolean | null;
   broken: string | null;
   running: number;
+  jobs: Job[];
 }
 
 interface Report {
@@ -77,6 +89,28 @@ const stopAll = async () => {
     said.value = String(e);
   } finally {
     stopping.value = false;
+    await load();
+  }
+};
+
+const stoppingJob = ref<string | null>(null);
+
+/** "4:05", or "1:02:05" past an hour. */
+const elapsed = (seconds: number) => {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = String(seconds % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
+};
+
+const stopJob = async (job: Job) => {
+  stoppingJob.value = job.id;
+  try {
+    await invoke<boolean>('syn_machine_stop_job', { id: job.id });
+  } catch (e) {
+    said.value = String(e);
+  } finally {
+    stoppingJob.value = null;
     await load();
   }
 };
@@ -206,6 +240,37 @@ onBeforeUnmount(() => clearInterval(timer));
     <p v-if="status" class="text-xs text-gray-600 dark:text-gray-300">
       {{ t('syn.machine_running', { n: status.running }, status.running) }}
     </p>
+
+    <ul v-if="status?.jobs?.length" class="space-y-2" data-test="jobs">
+      <li
+        v-for="job in status.jobs"
+        :key="job.id"
+        class="p-3 rounded-xl border border-gray-200 dark:border-gray-700/50 text-xs space-y-1"
+      >
+        <div class="flex items-start gap-2">
+          <div class="min-w-0 flex-1">
+            <p class="font-mono text-text dark:text-text-dark break-all">{{ job.command }}</p>
+            <p class="text-gray-500 dark:text-gray-400">
+              {{ t('syn.machine_job_line', { time: elapsed(job.seconds) }) }}
+              <template v-if="job.progress?.percent !== undefined"> · {{ t('syn.machine_job_progress', { percent: job.progress.percent }) }}</template>
+              <template v-else-if="job.progress?.time"> · {{ job.progress.time }}</template>
+            </p>
+            <p v-if="job.paused" class="text-amber-800 dark:text-amber-200">{{ t('syn.machine_job_paused') }}</p>
+          </div>
+          <button
+            type="button"
+            :disabled="stoppingJob !== null"
+            class="flex items-center gap-1 px-2 py-1 rounded-lg text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-500/10 hover:bg-red-100 dark:hover:bg-red-500/20 cursor-pointer disabled:opacity-50"
+            :data-test="`job-stop-${job.id}`"
+            @click="stopJob(job)"
+          >
+            <Loader2 v-if="stoppingJob === job.id" class="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
+            <Square v-else class="w-3.5 h-3.5" aria-hidden="true" />
+            <span>{{ t('syn.machine_job_stop') }}</span>
+          </button>
+        </div>
+      </li>
+    </ul>
 
     <div class="flex flex-wrap items-center gap-2">
       <button

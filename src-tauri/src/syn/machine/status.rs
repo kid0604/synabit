@@ -113,6 +113,53 @@ fn load() -> Option<Value> {
     (got == 3).then(|| json!({ "one_minute": (loads[0] * 100.0).round() / 100.0 }))
 }
 
+/// Why a routine's work in a room should not start now: the Mac is on its
+/// battery, or busy with something else (plan M7). A desktop Mac is always on
+/// power. Busy is the last minute's load past one per core *provisional*: work
+/// at background priority does not slow the person, but it does stretch out
+/// under their load and keep the Mac awake. None when it may start.
+pub fn not_quiet() -> Option<&'static str> {
+    #[cfg(test)]
+    {
+        NOT_QUIET.with(|said| said.get())
+    }
+    // The eval measures the model, not the machine it happens to run on.
+    #[cfg(all(feature = "eval", not(test)))]
+    {
+        None
+    }
+    #[cfg(not(any(test, feature = "eval")))]
+    {
+        measured_not_quiet()
+    }
+}
+
+#[cfg_attr(any(test, feature = "eval"), allow(dead_code))]
+fn measured_not_quiet() -> Option<&'static str> {
+    let battery = output("/usr/bin/pmset", &["-g", "batt"]);
+    let Some(battery) = battery else {
+        return Some("whether the Mac is on power could not be told");
+    };
+    if parse_battery(&battery).is_some_and(|b| b["on_power"] == json!(false)) {
+        return Some("the Mac is on its battery");
+    }
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
+    let mut loads = [0f64; 3];
+    // SAFETY: `loads` holds the three values asked for.
+    let got = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+    if got == 3 && loads[0] > cores {
+        return Some("the Mac is busy with other work");
+    }
+    None
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What [`not_quiet`] says in a test on this thread: a test runs on its own,
+    /// and a routine elsewhere must not be told the Mac is on its battery.
+    pub static NOT_QUIET: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
+}
+
 /// What the eval has this Mac say, so that a real machine's battery and process
 /// names are not sent to a model to grade an answer, and the answer can be checked.
 #[cfg(any(test, feature = "eval"))]

@@ -31,6 +31,10 @@ pub struct Limits {
     /// The largest one file may get, held by the kernel. [`watch`] measures the
     /// whole folder, but only once a second, and a disk fills faster than that.
     pub file: u64,
+    /// At `background` priority rather than `utility`: for work nobody is
+    /// waiting on, a routine's. Measured 4.4 times slower on a busy loop, and the
+    /// person at the Mac does not feel it.
+    pub background: bool,
 }
 
 impl Default for Limits {
@@ -40,6 +44,7 @@ impl Default for Limits {
             cpu: 600,
             output: 1 << 20,
             file: 20 << 30,
+            background: false,
         }
     }
 }
@@ -167,6 +172,48 @@ impl Cell {
         env: &[(&str, OsString)],
         limits: Limits,
     ) -> io::Result<Ran> {
+        let mut child = self.spawn(program, args, env, limits)?;
+        let group = child.id().map(|pid| pid as libc::pid_t);
+        let out = keep(child.stdout.take(), limits.output);
+        let err = keep(child.stderr.take(), limits.output);
+
+        let waited = tokio::time::timeout(limits.wall, child.wait()).await;
+        let (code, timed_out) = match waited {
+            Ok(status) => (status?.code(), false),
+            Err(_) => (None, true),
+        };
+        // What is left of the group goes too. What left the group is for
+        // `watch` to find; holding the kernel's rules does not depend on it.
+        if let Some(group) = group {
+            // SAFETY: a plain signal to a group this function started.
+            unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
+        if timed_out {
+            let _ = child.wait().await;
+        }
+        tokio::time::sleep(DRAIN).await;
+        Ok(Ran {
+            code,
+            stdout: out.take(),
+            stderr: err.take(),
+            timed_out,
+        })
+    }
+
+    /// `/bin/sh -c script` started and not waited for: a job's ([`super::jobs`]).
+    /// stdout and stderr are pipes for the caller to read; the child leads its
+    /// own process group.
+    pub(super) fn start(&self, script: &str, limits: Limits) -> io::Result<tokio::process::Child> {
+        self.spawn(Path::new("/bin/sh"), &["-c".into(), script.into()], &[], limits)
+    }
+
+    fn spawn(
+        &self,
+        program: &Path,
+        args: &[OsString],
+        env: &[(&str, OsString)],
+        limits: Limits,
+    ) -> io::Result<tokio::process::Child> {
         self.restore()?;
         let room = self.room();
         let path = format!(
@@ -178,9 +225,10 @@ impl Cell {
         let cpu = limits.cpu;
         let file = limits.file;
 
+        let clamp = if limits.background { "background" } else { "utility" };
         let mut command = tokio::process::Command::new("/usr/sbin/taskpolicy");
         command
-            .args(["-c", "utility", "/usr/bin/sandbox-exec"])
+            .args(["-c", clamp, "/usr/bin/sandbox-exec"])
             .args(self.profile.args())
             .arg(program)
             .args(args)
@@ -208,33 +256,7 @@ impl Cell {
                 Ok(())
             });
         }
-
-        let mut child = command.spawn()?;
-        let group = child.id().map(|pid| pid as libc::pid_t);
-        let out = keep(child.stdout.take(), limits.output);
-        let err = keep(child.stderr.take(), limits.output);
-
-        let waited = tokio::time::timeout(limits.wall, child.wait()).await;
-        let (code, timed_out) = match waited {
-            Ok(status) => (status?.code(), false),
-            Err(_) => (None, true),
-        };
-        // What is left of the group goes too. What left the group is for
-        // `watch` to find; holding the kernel's rules does not depend on it.
-        if let Some(group) = group {
-            // SAFETY: a plain signal to a group this function started.
-            unsafe { libc::killpg(group, libc::SIGKILL) };
-        }
-        if timed_out {
-            let _ = child.wait().await;
-        }
-        tokio::time::sleep(DRAIN).await;
-        Ok(Ran {
-            code,
-            stdout: out.take(),
-            stderr: err.take(),
-            timed_out,
-        })
+        command.spawn()
     }
 }
 

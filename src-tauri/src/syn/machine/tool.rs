@@ -44,8 +44,8 @@ use crate::db::Hold;
 use crate::syn::surface::Surface;
 use crate::syn::taint::{Origin, Taint};
 use crate::syn::tools::{
-    execute_tool, ToolContext, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_PROPOSE, ROOM_READ, ROOM_REHEARSE, ROOM_RUN, ROOM_TAKE,
-    ROOM_WRITE,
+    execute_tool, ToolContext, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_POLL, ROOM_PROPOSE, ROOM_READ, ROOM_REHEARSE, ROOM_RUN,
+    ROOM_START, ROOM_STOP, ROOM_TAKE, ROOM_WRITE,
 };
 
 /// Characters of each of stdout and stderr shown, before the window scales it.
@@ -53,6 +53,12 @@ pub(super) const SHOWN: usize = 8_000;
 /// Default and longest wait for one command. Longer work is for `machine_start`.
 pub(super) const WAIT: u64 = 120;
 pub(super) const LONGEST_WAIT: u64 = 600;
+/// Default and longest a job may run, and the longest one poll waits on it.
+const JOB_TIME: u64 = 3600;
+const JOB_LONGEST: u64 = 4 * 3600;
+const POLL_LONGEST: u64 = 300;
+/// Lines of a job's output shown.
+const JOB_LINES: usize = 30;
 /// What `machine_read` shows at most, in bytes.
 const READ_MOST: u64 = 200_000;
 /// The most the model may write in one call, and what `machine_edit` will edit.
@@ -206,6 +212,9 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
     if tool == ROOM_ENV {
         return make_env(&rooms, call, args).await;
     }
+    if tool == ROOM_POLL || tool == ROOM_STOP {
+        return job_call(&rooms, call, tool, args).await;
+    }
     let name = match name_for(call.scope, str_arg(args, "cell")) {
         Ok(name) => name,
         Err(said) => return error(said),
@@ -225,7 +234,19 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
     let (open, closed) = doors_of_room(&rooms, call, &name);
     let cell = cell.with_doors(open);
     let room = Room { rooms, cell: &cell, name: &name, closed };
+    // A command ends by clearing its room, and a file kept is read with the room
+    // stopped: either would end the job.
+    if [ROOM_RUN, ROOM_START, ROOM_KEEP, ROOM_REHEARSE, ROOM_PROPOSE].contains(&tool) {
+        if let Some(job) = room.rooms.jobs().running_in(&name) {
+            return json!({
+                "error": format!("Job {} is still running in this room, and nothing else runs there until it ends.", job.id),
+                "try": "machine_poll it (with wait_s to wait), machine_stop it, or give `cell` for a second room. machine_read works meanwhile.",
+            })
+            .to_string();
+        }
+    }
     match tool {
+        ROOM_START => room.start(call, args).await,
         ROOM_DOOR => room.door(call, args),
         ROOM_REHEARSE => room.rehearse(call, args).await,
         ROOM_PROPOSE => room.propose(call, args).await,
@@ -237,6 +258,83 @@ pub async fn call<R: tauri::Runtime>(call: &Call<'_, R>, tool: &str, args: &Valu
         ROOM_KEEP => room.keep(call, args).await,
         other => error(format!("{other} is not a room tool")),
     }
+}
+
+/// `machine_poll` and `machine_stop`: a job of this conversation's, by its id.
+async fn job_call<R: tauri::Runtime>(rooms: &Arc<Rooms>, call: &Call<'_, R>, tool: &str, args: &Value) -> String {
+    let Some(id) = str_arg(args, "job").map(str::trim).filter(|j| !j.is_empty()) else {
+        return error("`job` is the id machine_start returned.");
+    };
+    // Another conversation's job is not this one's to read or stop, so it is
+    // not there at all.
+    let ours = name_for(call.scope, None).unwrap_or_default();
+    let Some(job) = rooms.jobs().find(id).filter(|job| job.room == ours || job.room.starts_with(&format!("{ours}-"))) else {
+        return error(format!("There is no job '{}' in this conversation. It may have ended before the app last started.", sanitize::shown(id)));
+    };
+    if tool == ROOM_STOP {
+        if job.running() {
+            if let Err(e) = rooms.stop_job(&job).await {
+                return error(format!("It could not be stopped: {e}"));
+            }
+        }
+    } else {
+        let wait = args.get("wait_s").and_then(Value::as_u64).unwrap_or(0).min(POLL_LONGEST);
+        if wait > 0 && !job.wait(Duration::from_secs(wait), call.stop).await && (call.stop)() {
+            // The stop button stops the room too (design §13).
+            let _ = rooms.stop_job(&job).await;
+        }
+    }
+    if rooms.carries_outside(&job.room) {
+        call.taint.set();
+    }
+    job_view(&job)
+}
+
+/// A job as the model reads it.
+fn job_view(job: &super::jobs::Job) -> String {
+    use super::jobs::Ended;
+    let budget = crate::syn::room::scaled(SHOWN);
+    let mut out = json!({
+        "job": job.id,
+        "seconds": job.seconds(),
+        "output": shown_stream(&job.last_lines(JOB_LINES), budget),
+    });
+    if let Some(progress) = job.progress().filter(|_| job.running()) {
+        out["progress"] = progress;
+    }
+    match job.ended() {
+        None if job.paused() => {
+            out["state"] = json!("paused");
+            out["note"] = json!("Paused while a helper or an install has the network open; it goes on by itself when that ends.");
+        }
+        None => out["state"] = json!("running"),
+        Some(ended) => {
+            out["state"] = json!("ended");
+            match ended {
+                Ended::Exited { code } => {
+                    out["exit"] = json!(code);
+                    if code.is_none() {
+                        out["note"] = json!("It was ended by a signal.");
+                    }
+                }
+                Ended::TimedOut => {
+                    out["refused"] = json!([{ "what": "time", "try": "It ran out of time and was stopped. Start it again with a longer timeout_s, up to 14400, or do less at once." }]);
+                }
+                Ended::Over { over } => {
+                    out["refused"] = json!(hints(&super::cell::Ran { code: None, stdout: String::new(), stderr: String::new(), timed_out: false }, Some(over)));
+                }
+                Ended::Stopped => out["stopped"] = json!(true),
+                Ended::Failed { why } => out["error"] = json!(why),
+            }
+            if let Ok((files, all)) = inside::list(&job.cell, LISTED) {
+                out["files"] = json!(files);
+                if all > files.len() {
+                    out["files_not_listed"] = json!(all - files.len());
+                }
+            }
+        }
+    }
+    out.to_string()
 }
 
 struct Room<'a> {
@@ -450,12 +548,25 @@ impl Room<'_> {
         out.to_string()
     }
 
-    async fn run<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+    /// The command as it will run, and how far it may go: what `machine_run` and
+    /// `machine_start` share. A routine's runs at background priority, and only
+    /// on a Mac that is on power and not busy (plan M7).
+    fn prepared<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value, wait: (u64, u64)) -> Result<(String, Limits), String> {
         let Some(command) = str_arg(args, "command").filter(|c| !c.trim().is_empty()) else {
-            return error("`command` is the shell command to run.");
+            return Err(error("`command` is the shell command to run."));
         };
         if command.contains('\0') {
-            return error("A command cannot hold a NUL character.");
+            return Err(error("A command cannot hold a NUL character."));
+        }
+        let background = call.surface == Surface::Routine;
+        if background {
+            if let Some(why) = super::status::not_quiet() {
+                return Err(json!({
+                    "error": format!("Not now: {why}. A routine's work in the room waits for a Mac on power and not busy."),
+                    "refused": [{ "what": "not quiet", "try": "Do not retry. Say that this part was skipped this time, and why; it runs at the routine's next time." }],
+                })
+                .to_string());
+            }
         }
         // An environment first on the PATH. Its id is sixteen hex digits, checked,
         // so it cannot close the quotes it is put in.
@@ -463,22 +574,47 @@ impl Room<'_> {
             None => command.to_string(),
             Some(id) => match super::env::bin_of(self.rooms.root(), id) {
                 Some(bin) => format!("PATH='{}':\"$PATH\"; export PATH PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1\n{command}", bin.display()),
-                None => return error(format!("There is no environment '{}'. Make one with machine_env, and use the id it returns.", sanitize::shown(id))),
+                None => return Err(error(format!("There is no environment '{}'. Make one with machine_env, and use the id it returns.", sanitize::shown(id)))),
             },
         };
-        let command = script.as_str();
-        let wait = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(WAIT).clamp(1, LONGEST_WAIT);
+        let (default, longest) = wait;
+        let wait = args.get("timeout_s").and_then(Value::as_u64).unwrap_or(default).clamp(1, longest);
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as u64;
         let limits = Limits {
             wall: Duration::from_secs(wait),
             // Per process and counted over every thread, so ffmpeg on every core
             // would spend a single core's allowance in a tenth of the time.
             cpu: wait * cores + 60,
+            background,
             ..Limits::default()
         };
-        if let Err(said) = self.going_in(call.taint) {
-            return error(said);
+        self.going_in(call.taint).map_err(error)?;
+        Ok((script, limits))
+    }
+
+    /// A long command, started and left running ([`super::jobs`]).
+    async fn start<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+        let (script, limits) = match self.prepared(call, args, (JOB_TIME, JOB_LONGEST)) {
+            Ok(prepared) => prepared,
+            Err(said) => return said,
+        };
+        match self.rooms.start_job(self.cell.clone(), self.name, call.scope, &script, limits).await {
+            Ok(job) => json!({
+                "job": job.id,
+                "running": true,
+                "note": "It runs on its own now, past the end of this turn, and the user is told when it ends. Check it with machine_poll; to wait for it, give wait_s. Tell the user it is running rather than waiting in silence.",
+            })
+            .to_string(),
+            Err(said) => error(format!("Not started: {said}.")),
         }
+    }
+
+    async fn run<R: tauri::Runtime>(&self, call: &Call<'_, R>, args: &Value) -> String {
+        let (script, limits) = match self.prepared(call, args, (WAIT, LONGEST_WAIT)) {
+            Ok(prepared) => prepared,
+            Err(said) => return said,
+        };
+        let command = script.as_str();
 
         let running = self.rooms.run(self.cell, command, limits);
         tokio::pin!(running);

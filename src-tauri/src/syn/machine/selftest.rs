@@ -100,6 +100,7 @@ const QUICK: Limits = Limits {
     cpu: 30,
     output: 1 << 16,
     file: 1 << 30,
+    background: false,
 };
 
 fn quote(path: &Path) -> String {

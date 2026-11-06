@@ -16,11 +16,13 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tokio::sync::{Mutex, RwLock};
 
 use super::cell::{Cell, Limits};
+use super::jobs::{self, Ended, Job, JobView, Jobs};
 use super::profile::Reach;
 use super::proxy::{self, Allow, Proxy};
 use super::selftest::{self, Report, Verdict};
@@ -45,7 +47,12 @@ pub struct Status {
     pub broken: Option<String>,
     /// Processes in rooms right now, wherever they have got to.
     pub running: usize,
+    /// Long work, running or paused.
+    pub jobs: Vec<JobView>,
 }
+
+/// What is told about a job that ended: the person, when nobody was waiting.
+pub type OnJobEnd = Box<dyn Fn(&Job) + Send + Sync>;
 
 pub struct Rooms {
     root: PathBuf,
@@ -63,6 +70,10 @@ pub struct Rooms {
     /// with a network holds it to write for all of its time. So the two never run
     /// at once (I8): a channel they could share needs both ends running.
     window: RwLock<()>,
+    /// Long work ([`jobs`]). A job holds no part of `window`: it is paused while
+    /// a room with a network is open, rather than waited for.
+    jobs: Jobs,
+    on_job_end: std::sync::OnceLock<OnJobEnd>,
     /// Replaces the rules, so a test can prove a broken profile closes the door.
     #[cfg(test)]
     rules: Option<String>,
@@ -121,6 +132,8 @@ impl Rooms {
             ceiling: Ceiling::default(),
             known: Mutex::new(None),
             window: RwLock::new(()),
+            jobs: Jobs::default(),
+            on_job_end: std::sync::OnceLock::new(),
             #[cfg(test)]
             rules: None,
             root,
@@ -279,30 +292,55 @@ impl Rooms {
         self.ready().await?;
         let _all = self.window.write().await;
 
+        // A job's room is paused, every other room is ended. Either way nothing
+        // in any of them runs until the port has closed.
         let cells = self.every_cell().map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let held: Vec<Arc<Job>> = self.jobs.running();
+        for job in &held {
+            job.set_paused(true);
+        }
+        let paused: Vec<Cell> = held.iter().map(|job| job.cell.clone()).collect();
         let bait = self.bait.clone();
+        let (paused_for, bait_for) = (paused.clone(), bait.clone());
         let cleared = tokio::task::spawn_blocking(move || -> io::Result<()> {
             for cell in &cells {
-                watch::clear_room(cell, &bait)?;
-                if !watch::room_processes(cell, &bait)?.is_empty() {
-                    return Err(io::Error::other("a sealed room still has something running"));
+                if paused_for.iter().any(|p| p.room() == cell.room()) {
+                    watch::pause_room(cell, &bait_for)?;
+                } else {
+                    watch::clear_room(cell, &bait_for)?;
+                    if !watch::room_processes(cell, &bait_for)?.is_empty() {
+                        return Err(io::Error::other("a sealed room still has something running"));
+                    }
                 }
             }
             Ok(())
         })
         .await
-        .map_err(|e| Unavailable::Setup(e.to_string()))?;
-        cleared.map_err(|e| Unavailable::Setup(format!("the sealed rooms could not be stopped, so no network was opened: {e}")))?;
+        .map_err(|e| io::Error::other(e.to_string()))
+        .and_then(|cleared| cleared);
+        if let Err(e) = cleared {
+            self.resume(&held, &paused).await;
+            return Err(Unavailable::Setup(format!("the sealed rooms could not be stopped, so no network was opened: {e}")));
+        }
 
-        let proxy = Proxy::open(name, allow, &proxy::audit_file(&self.root))
-            .await
-            .map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let proxy = match Proxy::open(name, allow, &proxy::audit_file(&self.root)).await {
+            Ok(proxy) => proxy,
+            Err(e) => {
+                self.resume(&held, &paused).await;
+                return Err(Unavailable::Setup(e.to_string()));
+            }
+        };
         let _ = std::fs::remove_dir_all(place);
-        let cell = Cell::make_bare(&place.join("room"), &place.join("tools"), proxy.port)
-            .map_err(|e| Unavailable::Setup(e.to_string()))?;
+        let cell = match Cell::make_bare(&place.join("room"), &place.join("tools"), proxy.port) {
+            Ok(cell) => cell,
+            Err(e) => {
+                drop(proxy);
+                self.resume(&held, &paused).await;
+                return Err(Unavailable::Setup(e.to_string()));
+            }
+        };
         let out = work(cell.clone()).await;
 
-        let bait = self.bait.clone();
         let ended = tokio::task::spawn_blocking(move || -> io::Result<()> {
             watch::clear_room(&cell, &bait)?;
             if !watch::room_processes(&cell, &bait)?.is_empty() {
@@ -314,11 +352,149 @@ impl Rooms {
         drop(proxy);
         // The port is closed either way. A room that would not end is reported,
         // and the sealed rooms wait for nothing more: nothing can reach out now.
+        self.resume(&held, &paused).await;
         match ended {
             Ok(Ok(())) => Ok(out),
             Ok(Err(e)) => Err(Unavailable::Setup(e.to_string())),
             Err(e) => Err(Unavailable::Setup(e.to_string())),
         }
+    }
+
+    /// Lets the paused jobs go on. A room that cannot be found to resume has its
+    /// job stopped: a job paused for ever looks like one still running.
+    async fn resume(&self, held: &[Arc<Job>], paused: &[Cell]) {
+        if held.is_empty() {
+            return;
+        }
+        let (cells, bait) = (paused.to_vec(), self.bait.clone());
+        let resumed = tokio::task::spawn_blocking(move || cells.iter().map(|cell| watch::resume_room(cell, &bait).is_ok()).collect::<Vec<_>>())
+            .await
+            .unwrap_or_default();
+        for (at, job) in held.iter().enumerate() {
+            job.set_paused(false);
+            if !resumed.get(at).copied().unwrap_or(false) {
+                let _ = self.stop_job(job).await;
+            }
+        }
+    }
+
+    /// Long work, running and lately ended.
+    pub fn jobs(&self) -> &Jobs {
+        &self.jobs
+    }
+
+    /// Who is told when a job ends with nobody waiting on it. Set once, by the
+    /// app at startup; a test leaves it unset.
+    pub fn on_job_end(&self, tell: OnJobEnd) {
+        let _ = self.on_job_end.set(tell);
+    }
+
+    /// Starts `script` in `cell` as a job and returns at once. `room` is the
+    /// cell's name; one job a room, and [`jobs::MOST_AT_ONCE`] on the Mac.
+    ///
+    /// The job is not handed back until the kernel has it under the room's
+    /// profile, holding the window to read meanwhile: before that no scan finds
+    /// it, so a room with a network opening then could not pause it.
+    pub async fn start_job(self: &Arc<Self>, cell: Cell, room: &str, scope: &str, script: &str, limits: Limits) -> Result<Arc<Job>, String> {
+        let sealed = self.window.read().await;
+        if let Some(job) = self.jobs.running_in(room) {
+            return Err(format!("job {} is still running in this room", job.id));
+        }
+        if self.jobs.running().len() >= jobs::MOST_AT_ONCE {
+            return Err(format!("{} jobs are already running on this Mac, which is the most at once", jobs::MOST_AT_ONCE));
+        }
+        let mut child = cell.start(script, limits).map_err(|e| format!("it could not be started: {e}"))?;
+        let job = Arc::new(Job::new(room, scope, script, cell.clone()));
+        let pid = child.id().map(|pid| pid as libc::pid_t);
+        let (scanned, bait) = (cell.clone(), self.bait.clone());
+        let mut under = false;
+        for _ in 0..150 {
+            if let Some(pid) = pid {
+                let (scanned, bait) = (scanned.clone(), bait.clone());
+                let found = tokio::task::spawn_blocking(move || watch::room_processes(&scanned, &bait).map(|p| p.contains(&pid)))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                if found.unwrap_or(false) {
+                    under = true;
+                    break;
+                }
+            }
+            if child.try_wait().ok().flatten().is_some() {
+                // Gone before it could be seen: it ran, briefly, and its output
+                // is still in the pipes.
+                under = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        if !under {
+            let _ = child.start_kill();
+            let _ = self.clear(&cell);
+            return Err("the room did not take it up".into());
+        }
+        self.jobs.add(job.clone());
+        drop(sealed);
+        tokio::spawn(self.clone().drive(job.clone(), child, limits));
+        Ok(job)
+    }
+
+    /// Runs a started job to its end, watched against the ceilings as any command
+    /// is, and clears its room afterwards.
+    async fn drive(self: Arc<Self>, job: Arc<Job>, mut child: tokio::process::Child, limits: Limits) {
+        let group = child.id().map(|pid| pid as libc::pid_t);
+        let readers = [jobs::read_into(child.stdout.take(), job.clone()), jobs::read_into(child.stderr.take(), job.clone())];
+        let deadline = tokio::time::Instant::now() + limits.wall;
+        let ceiling = self.ceiling;
+        let ended = loop {
+            tokio::select! {
+                status = child.wait() => break match status {
+                    Ok(status) => Ended::Exited { code: status.code() },
+                    Err(e) => Ended::Failed { why: e.to_string() },
+                },
+                () = tokio::time::sleep_until(deadline) => break Ended::TimedOut,
+                () = tokio::time::sleep(ceiling.poll) => {
+                    let (cell, bait) = (job.cell.clone(), self.bait.clone());
+                    match tokio::task::spawn_blocking(move || watch::over(&cell, &bait, ceiling)).await {
+                        Ok(Ok(None)) => {}
+                        Ok(Ok(Some(over))) => break Ended::Over { over },
+                        Ok(Err(e)) => break Ended::Failed { why: format!("it could not be watched: {e}") },
+                        Err(e) => break Ended::Failed { why: e.to_string() },
+                    }
+                }
+            }
+        };
+        if let Some(group) = group {
+            // SAFETY: a plain signal to a group this app started.
+            unsafe { libc::killpg(group, libc::SIGKILL) };
+        }
+        let (cell, bait) = (job.cell.clone(), self.bait.clone());
+        let cleared = tokio::task::spawn_blocking(move || watch::clear_room(&cell, &bait)).await;
+        let _ = child.wait().await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        for reader in readers {
+            reader.abort();
+        }
+        let ended = match (job.stopping.load(std::sync::atomic::Ordering::SeqCst), cleared) {
+            (true, _) => Ended::Stopped,
+            (false, Ok(Ok(_))) => ended,
+            (false, Ok(Err(e))) => Ended::Failed { why: format!("its room could not be cleared: {e}") },
+            (false, Err(e)) => Ended::Failed { why: e.to_string() },
+        };
+        job.finish(ended);
+        if !job.watched() {
+            if let Some(tell) = self.on_job_end.get() {
+                tell(&job);
+            }
+        }
+    }
+
+    /// Ends a job and everything in its room, and waits for it to be over.
+    pub async fn stop_job(&self, job: &Job) -> io::Result<()> {
+        job.stopping.store(true, std::sync::atomic::Ordering::SeqCst);
+        let (cell, bait) = (job.cell.clone(), self.bait.clone());
+        tokio::task::spawn_blocking(move || watch::clear_room(&cell, &bait)).await.map_err(io::Error::other)??;
+        job.wait(std::time::Duration::from_secs(10), &|| false).await;
+        Ok(())
     }
 
     /// The folder everything is kept under.
@@ -434,6 +610,9 @@ impl Rooms {
     /// past a room it cannot clear, and reports the first such failure afterwards.
     /// Blocks for as long as the kernel takes, so not for an async thread.
     pub fn stop_all(&self) -> io::Result<usize> {
+        for job in self.jobs.running() {
+            job.stopping.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
         let mut stopped = 0;
         let mut failed = None;
         for cell in self.every_cell()? {
@@ -461,6 +640,7 @@ impl Rooms {
             sealed: known.as_ref().map(Result::is_ok),
             broken: known.and_then(Result::err),
             running,
+            jobs: self.jobs.running().iter().map(|job| JobView::from(job.as_ref())).collect(),
         }
     }
 }
@@ -805,6 +985,174 @@ mod tests {
         assert_eq!(next_launch.doors_of("a"), ["0123456789abcdef"]);
         assert!(next_launch.carries_outside("a"), "a door is somebody else's words");
         assert!(next_launch.doors_of("b").is_empty());
+    }
+
+    fn arc_rooms() -> (tempfile::TempDir, Arc<Rooms>) {
+        let (dir, rooms) = rooms();
+        (dir, Arc::new(rooms))
+    }
+
+    /// A job outlives the call that started it, and is read when it is done.
+    #[tokio::test]
+    async fn a_job_returns_at_once_and_is_read_when_it_ends() {
+        let (_dir, rooms) = arc_rooms();
+        let a = rooms.cell_at("a").unwrap();
+        let started = std::time::Instant::now();
+        let job = rooms.start_job(a.clone(), "a", "conv", "sleep 1; printf 'frame=1 time=00:00:01.50\\r'; echo done > out.txt; echo finished", Limits::default()).await.unwrap();
+        assert!(started.elapsed() < std::time::Duration::from_millis(900), "{:?}", started.elapsed());
+        assert!(job.running());
+        let again = rooms.start_job(a.clone(), "a", "conv", "true", Limits::default()).await;
+        assert!(again.err().is_some_and(|e| e.contains("still running")), "one job a room");
+
+        assert!(job.wait(std::time::Duration::from_secs(10), &|| false).await);
+        assert_eq!(job.ended(), Some(Ended::Exited { code: Some(0) }));
+        assert!(job.last_lines(5).ends_with("finished"), "{}", job.tail_text());
+        assert_eq!(job.progress().unwrap()["seconds_done"], 1.5);
+        assert_eq!(std::fs::read_to_string(a.work().join("out.txt")).unwrap(), "done\n");
+        assert!(rooms.jobs().running_in("a").is_none());
+        assert!(rooms.status().await.jobs.is_empty());
+    }
+
+    /// Stopping a job ends what it left the group to do as well: nothing of the
+    /// room is running afterwards (plan M7).
+    #[tokio::test]
+    async fn a_stopped_job_leaves_nothing_running() {
+        let (_dir, rooms) = arc_rooms();
+        let a = rooms.cell_at("a").unwrap();
+        let script = format!("{}; while :; do sleep 1; done", a_daemon());
+        let job = rooms.start_job(a.clone(), "a", "conv", &script, Limits::default()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(watch::room_processes(&a, &rooms.bait).unwrap().len() >= 2, "the control: the job and its daemon run");
+        assert_eq!(rooms.status().await.jobs.len(), 1);
+
+        rooms.stop_job(&job).await.unwrap();
+
+        assert_eq!(job.ended(), Some(Ended::Stopped));
+        assert!(watch::room_processes(&a, &rooms.bait).unwrap().is_empty());
+    }
+
+    /// A job past its time is stopped, and says so.
+    #[tokio::test]
+    async fn a_job_past_its_time_is_stopped() {
+        let (_dir, rooms) = arc_rooms();
+        let a = rooms.cell_at("a").unwrap();
+        let limits = Limits { wall: std::time::Duration::from_millis(500), ..Limits::default() };
+        let job = rooms.start_job(a.clone(), "a", "conv", "sleep 30", limits).await.unwrap();
+        assert!(job.wait(std::time::Duration::from_secs(10), &|| false).await);
+        assert_eq!(job.ended(), Some(Ended::TimedOut));
+        assert!(watch::room_processes(&a, &rooms.bait).unwrap().is_empty());
+    }
+
+    /// I8 with a job: while a room has a network, the job's room beats out
+    /// nothing, and afterwards it goes on where it was, neither ended nor waited
+    /// for. Stop all ends it as stop all ends everything.
+    #[tokio::test]
+    async fn a_job_is_paused_while_a_room_has_a_network() {
+        let (_dir, rooms) = arc_rooms();
+        let a = rooms.cell_at("a").unwrap();
+        let beat = a.work().join("beat");
+        let script = format!("while :; do printf x >> '{}'; sleep 0.05; done", beat.display());
+        let job = rooms.start_job(a.clone(), "a", "conv", &script, Limits::default()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(std::fs::metadata(&beat).unwrap().len() > 0, "the control: it beats");
+
+        let (paused, silent) = rooms
+            .with_network("n5", Allow::Hosts(vec![]), |_cell| async {
+                let before = std::fs::metadata(&beat).map(|m| m.len()).unwrap_or(0);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let after = std::fs::metadata(&beat).map(|m| m.len()).unwrap_or(0);
+                (job.paused(), before == after)
+            })
+            .await
+            .unwrap();
+        assert!(paused, "the job did not say it was paused");
+        assert!(silent, "the job's room ran while the port was open");
+        assert!(!job.paused() && job.running(), "the job was not let go on");
+        let before = std::fs::metadata(&beat).unwrap().len();
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        assert!(std::fs::metadata(&beat).unwrap().len() > before, "it did not go on");
+
+        let rooms_for_stop = rooms.clone();
+        tokio::task::spawn_blocking(move || rooms_for_stop.stop_all()).await.unwrap().unwrap();
+        assert!(job.wait(std::time::Duration::from_secs(10), &|| false).await);
+        assert_eq!(job.ended(), Some(Ended::Stopped));
+    }
+
+    /// The gate of plan M7, by hand: a twenty-minute video transcoded as a job.
+    /// The start returns at once; while it runs, a fixed piece of work outside
+    /// the room is timed against the same work before it started (the Mac stays
+    /// usable); it ends with the file; and a second one stopped half-way leaves
+    /// nothing running. Prints what it measured.
+    #[tokio::test]
+    #[ignore = "transcodes twenty minutes of video with ffmpeg; run by hand"]
+    async fn a_twenty_minute_video_runs_as_a_job_and_the_mac_stays_usable() {
+        use std::time::{Duration, Instant};
+        let (_dir, rooms) = arc_rooms();
+        rooms.ready().await.unwrap();
+        let a = rooms.cell_at("a").unwrap();
+        let made = rooms
+            .run(&a, "ffmpeg -v error -f lavfi -i testsrc2=size=1280x720:rate=30 -t 1200 -c:v libx264 -preset ultrafast -y source.mp4", Limits { wall: Duration::from_secs(1800), cpu: 1 << 20, ..Limits::default() })
+            .await
+            .unwrap();
+        assert!(made.ran.ok(), "{:?}", made.ran);
+
+        // The person's work: hashing 64 MB, at the app's own priority.
+        let work = || {
+            let data = vec![7u8; 64 << 20];
+            let started = Instant::now();
+            for _ in 0..3 {
+                use sha2::Digest;
+                std::hint::black_box(sha2::Sha256::digest(&data));
+            }
+            started.elapsed().as_secs_f64()
+        };
+        let median = |mut times: Vec<f64>| {
+            times.sort_by(f64::total_cmp);
+            times[times.len() / 2]
+        };
+        let before = median((0..5).map(|_| work()).collect());
+
+        let limits = Limits { wall: Duration::from_secs(3 * 3600), cpu: 1 << 24, ..Limits::default() };
+        let started = Instant::now();
+        let job = rooms
+            .start_job(a.clone(), "a", "conv", "ffmpeg -nostdin -i source.mp4 -c:v libx264 -preset medium -crf 23 -y out.mp4", limits)
+            .await
+            .unwrap();
+        let returned = started.elapsed();
+        let mut during = Vec::new();
+        let mut seen_progress = None;
+        while job.running() {
+            during.push(tokio::task::spawn_blocking(work).await.unwrap());
+            seen_progress = job.progress().or(seen_progress);
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+        let took = started.elapsed();
+        let size = std::fs::metadata(a.work().join("out.mp4")).map(|m| m.len()).unwrap_or(0);
+        println!(
+            "start returned in {returned:?}; job took {took:?}; ended {:?}; out.mp4 {} MB; progress seen {seen_progress:?}",
+            job.ended(),
+            size >> 20
+        );
+        println!(
+            "hashing 192 MB: {before:.3}s before, median {:.3}s during ({} samples, worst {:.3}s)",
+            median(during.clone()),
+            during.len(),
+            during.iter().copied().fold(0.0, f64::max)
+        );
+        assert!(returned < Duration::from_secs(3), "{returned:?}");
+        assert_eq!(job.ended(), Some(Ended::Exited { code: Some(0) }));
+        assert!(size > 0);
+
+        let second = rooms
+            .start_job(a.clone(), "a", "conv", "ffmpeg -nostdin -i source.mp4 -c:v libx264 -preset slow -y half.mp4", limits)
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_secs(20)).await;
+        let stopping = Instant::now();
+        rooms.stop_job(&second).await.unwrap();
+        println!("stopped half-way in {:?}", stopping.elapsed());
+        assert_eq!(second.ended(), Some(Ended::Stopped));
+        assert!(watch::room_processes(&a, &rooms.bait).unwrap().is_empty());
     }
 
     /// Nothing has ever needed a room: finding that out costs no attack.

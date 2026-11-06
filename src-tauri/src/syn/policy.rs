@@ -247,8 +247,8 @@ impl Policy {
 
 use crate::syn::connector::authoring::{DRAFT_TOOL, FIND_TOOL as CONNECTOR_FIND, PROPOSE_TOOL as CONNECTOR_CONNECT, TRY_TOOL};
 use crate::syn::tools::{
-    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_PROPOSE, ROOM_READ,
-    ROOM_REHEARSE, ROOM_RUN, ROOM_TAKE, ROOM_WRITE,
+    BROWSE_TOOL, CAPTURE_TOOL, LOOK_BACK_TOOL, PLAN_TOOL, ROOM_DOOR, ROOM_EDIT, ROOM_ENV, ROOM_KEEP, ROOM_POLL, ROOM_PROPOSE,
+    ROOM_READ, ROOM_REHEARSE, ROOM_RUN, ROOM_START, ROOM_STOP, ROOM_TAKE, ROOM_WRITE,
 };
 
 /// Every built-in tool.
@@ -339,6 +339,12 @@ pub static POLICIES: &[Policy] = &[
     // Through the table every model read goes through, so the lock and a
     // note's stamp apply to what goes into the room.
     Policy::read(ROOM_TAKE, Home::Room).room(),
+    // Long work in the room: the same room, so the same rows. A routine's runs
+    // at background priority, on power and with the Mac not busy
+    // (`machine::tool`).
+    Policy::read(ROOM_START, Home::Room).room(),
+    Policy::read(ROOM_POLL, Home::Room).room(),
+    Policy::read(ROOM_STOP, Home::Room).room(),
     // Packages for the rooms: code that will run in every room that uses it.
     // The app only, where the list is shown on a card and asked every time, and
     // never after reading — a page that talks Syn into a package would be
@@ -728,7 +734,7 @@ mod tests {
             assert!(engine(tool), "{tool}");
             assert!(!outside_words(tool), "{tool}: its taint is the room's mark, not the row's");
         }
-        for tool in [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE] {
+        for tool in [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE, ROOM_START, ROOM_POLL, ROOM_STOP] {
             assert_eq!(capability(tool, &serde_json::json!({})), Some(Capability::Cell), "{tool}");
         }
         assert_eq!(capability(ROOM_KEEP, &serde_json::json!({})), Some(Capability::VaultWrite));

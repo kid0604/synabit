@@ -37,6 +37,8 @@ pub fn setup(app: &AppHandle) {
         }
     };
     app.manage(rooms.clone());
+    let told = app.clone();
+    rooms.on_job_end(Box::new(move |job| tell_about_job(&told, job)));
     // A batch the last run did not finish: said in the log, and on the screen,
     // where undo puts it back.
     for batch in crate::syn::machine::apply::batches(rooms.root()) {
@@ -45,6 +47,74 @@ pub fn setup(app: &AppHandle) {
         }
     }
     std::thread::spawn(move || log_stopped("left by the last run", rooms.stop_all()));
+}
+
+/// A job ended with nobody waiting on it: said in the conversation it was
+/// started in, and by the operating system, the way a routine's outcome is.
+/// The words are the app's, never the job's output (I7): what ran, as it was
+/// shown on the screen, and how it ended.
+fn tell_about_job(app: &AppHandle, job: &crate::syn::machine::jobs::Job) {
+    use crate::syn::machine::jobs::{Ended, JobView};
+    let vault = app
+        .try_state::<crate::chat_engine::ChatEngineState>()
+        .and_then(|state| state.active_vault_path.lock().ok().and_then(|v| v.clone()));
+    let Some(vault) = vault else { return };
+    let shown = JobView::from(job);
+    let minutes = job.seconds().div_euclid(60);
+    let how = match job.ended() {
+        Some(Ended::Exited { code: Some(0) }) => format!("finished after {minutes} min"),
+        Some(Ended::Exited { code: Some(code) }) => format!("ended with exit code {code} after {minutes} min"),
+        Some(Ended::Exited { code: None }) => format!("was ended by a signal after {minutes} min"),
+        Some(Ended::TimedOut) => format!("ran out of time after {minutes} min and was stopped"),
+        Some(Ended::Over { .. }) => "went past the room's memory or disk ceiling and was stopped".to_string(),
+        // Somebody stopped it, and knows.
+        Some(Ended::Stopped) => return,
+        Some(Ended::Failed { why }) => format!("failed: {why}"),
+        None => return,
+    };
+    let title = "Syn: a job in the room".to_string();
+    let text = format!("`{}` {how}. Ask Syn about it in this conversation.", shown.command);
+    crate::chat_engine::post(
+        app,
+        &vault,
+        crate::models::chat::ChatMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            message_type: "system".to_string(),
+            subtype: "syn_job".to_string(),
+            timestamp: chrono::Local::now().to_rfc3339(),
+            sender: crate::models::chat::ChatSender {
+                id: "syn".to_string(),
+                name: "Syn".to_string(),
+                role: "bot".to_string(),
+            },
+            content: crate::models::chat::ChatContent {
+                title: title.clone(),
+                text: text.clone(),
+                metadata: serde_json::json!({
+                    "target_id": job.scope,
+                    "target_type": "syn_conversation",
+                    "job": shown.id,
+                }),
+            },
+            read_receipt: false,
+        },
+    );
+    use tauri_plugin_notification::NotificationExt;
+    let body: String = text.chars().take(160).collect();
+    if let Err(e) = app.notification().builder().title(title).body(body).show() {
+        log::warn!("machine: could not show a job's notification: {e}");
+    }
+}
+
+/// Stops one job from the screen, and everything in its room.
+#[tauri::command]
+pub async fn syn_machine_stop_job(app: AppHandle, id: String) -> Result<bool, String> {
+    let rooms = rooms(&app)?;
+    let Some(job) = rooms.jobs().find(&id).filter(|job| job.running()) else {
+        return Ok(false);
+    };
+    rooms.stop_job(&job).await.map_err(|error| error.to_string())?;
+    Ok(true)
 }
 
 fn log_stopped(which: &str, stopped: std::io::Result<usize>) {

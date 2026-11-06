@@ -44,6 +44,7 @@ const STEP: Limits = Limits {
     cpu: 3600,
     output: 1 << 20,
     file: 4 << 30,
+    background: false,
 };
 
 /// An environment, made.

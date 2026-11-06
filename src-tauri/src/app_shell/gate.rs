@@ -323,6 +323,7 @@ mod tests {
             "syn_machine_status",
             "syn_machine_check",
             "syn_machine_stop_all",
+            "syn_machine_stop_job",
             "syn_doors",
             "syn_add_door",
             "syn_pick_door",

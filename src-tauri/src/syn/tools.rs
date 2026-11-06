@@ -388,7 +388,12 @@ pub const ROOM_WRITE: &str = "machine_write";
 pub const ROOM_EDIT: &str = "machine_edit";
 pub const ROOM_TAKE: &str = "machine_take";
 pub const ROOM_KEEP: &str = "machine_keep";
-pub const ROOM_TOOLS: [&str; 6] = [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE, ROOM_KEEP];
+/// Long work in the room, which outlives the call and the run. See
+/// `syn::machine::jobs`.
+pub const ROOM_START: &str = "machine_start";
+pub const ROOM_POLL: &str = "machine_poll";
+pub const ROOM_STOP: &str = "machine_stop";
+pub const ROOM_TOOLS: [&str; 9] = [ROOM_RUN, ROOM_READ, ROOM_WRITE, ROOM_EDIT, ROOM_TAKE, ROOM_KEEP, ROOM_START, ROOM_POLL, ROOM_STOP];
 /// Packages for the rooms, installed by Rust in a room that reaches only the
 /// registry. Not one of `ROOM_TOOLS`: it is the app's alone, and never after
 /// reading. See `syn::machine::env`.
@@ -1094,7 +1099,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: ROOM_RUN.to_string(),
-                description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed from inside the room: for Python packages (python-docx, openpyxl, reportlab, pandas…) ask machine_env for an environment, then pass its id as `env`. Anything left running when the command ends is stopped.".to_string(),
+                description: "Run a shell command (/bin/sh) in a sealed room on this Mac: real programs — python3, ffmpeg, sqlite3, git, whatever Homebrew has — on every core, with NO network, seeing only the room's own folder. One room per conversation; its files stay between calls. Bring a vault note or file in with machine_take first; keep a result in the vault with machine_keep. Returns the exit code, stdout and stderr (long output is cut: send it to a file and read it with machine_read), the files in the room, and `refused` naming any limit that was hit — do not retry around one. Nothing can be installed from inside the room: for Python packages (python-docx, openpyxl, reportlab, pandas…) ask machine_env for an environment, then pass its id as `env`. Anything left running when the command ends is stopped. Work past a few minutes goes to machine_start.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -1104,6 +1109,52 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "cell": { "type": "string", "description": "Leave out to use this conversation's room. A short name (\"try-2\") for a second, separate one." }
                     },
                     "required": ["command"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_START.to_string(),
+                description: "Start a long command in the room — a video transcode, a big conversion, anything past a few minutes — and return at once with a job id. It keeps running after this conversation turn ends; the user is told when it finishes. Same room, rules and `env` as machine_run. While it runs, nothing else runs in that room (machine_read still works); use `cell` for other work. Then machine_poll.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "The command, run in the room's folder. For ffmpeg, its progress shows on its own." },
+                        "timeout_s": { "type": "integer", "description": "Seconds before it is stopped. Default 3600, at most 14400." },
+                        "env": { "type": "string", "description": "As for machine_run." },
+                        "cell": { "type": "string", "description": "As for machine_run." }
+                    },
+                    "required": ["command"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_POLL.to_string(),
+                description: "Where a job from machine_start has got to: running, paused or ended, exit code, time so far, progress as its output gives it, and the last lines it printed. `wait_s` waits up to that long for it to end first. Once it has ended, keep the result with machine_keep.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "job": { "type": "string", "description": "The id machine_start returned." },
+                        "wait_s": { "type": "integer", "description": "Seconds to wait for it to end. Default 0, at most 300." }
+                    },
+                    "required": ["job"]
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: ROOM_STOP.to_string(),
+                description: "Stop a job from machine_start, and everything it started. Its files so far stay in the room.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "job": { "type": "string", "description": "The id machine_start returned." }
+                    },
+                    "required": ["job"]
                 }),
             },
         },

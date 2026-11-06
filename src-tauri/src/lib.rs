@@ -1119,6 +1119,7 @@ pub fn run() {
             commands::machine::syn_machine_check,
             #[cfg(target_os = "macos")]
             commands::machine::syn_machine_stop_all,
+            commands::machine::syn_machine_stop_job,
             #[cfg(target_os = "macos")]
             commands::machine::syn_doors,
             #[cfg(target_os = "macos")]

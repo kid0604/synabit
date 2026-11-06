@@ -9867,6 +9867,90 @@ mod driving {
         assert_eq!(run.state, RunState::Cancelled);
     }
 
+    /// Long work (plan M7): a job starts and the call returns; nothing else runs
+    /// in its room meanwhile; a later run of the same conversation waits on it
+    /// and reads how it ended, and another conversation cannot see it at all.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_job_runs_past_its_call_and_is_read_by_a_later_run() {
+        use crate::syn::tools::{ROOM_POLL, ROOM_RUN, ROOM_START};
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+        shared_rooms().ready().await.expect("sealed");
+
+        let mut first = Run::new("nén video", Some("conv-room-job".into()), budget(8));
+        let started = std::time::Instant::now();
+        drive_script_in(
+            &app,
+            &vault,
+            &mut first,
+            "nén video",
+            vec![
+                calls(ROOM_START, serde_json::json!({ "command": "sleep 8; echo made > out.txt; echo 'time=00:00:02.00'; echo done" })),
+                calls(ROOM_RUN, serde_json::json!({ "command": "ls" })),
+                text("đang chạy"),
+            ],
+        )
+        .await;
+        // Well short of the job's eight seconds, under a full test suite's load.
+        assert!(started.elapsed() < std::time::Duration::from_secs(6), "the run waited: {:?}", started.elapsed());
+        assert_eq!(first.state, RunState::Done);
+        let start = first.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_START)).expect("started");
+        let said: serde_json::Value = serde_json::from_str(&start.preview).expect("json");
+        let id = said["job"].as_str().expect("an id").to_string();
+        let ran = first.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_RUN)).expect("ran");
+        assert!(ran.preview.contains("still running"), "{}", ran.preview);
+
+        let mut stranger = Run::new("xem", Some("conv-room-job-other".into()), budget(4));
+        drive_script_in(&app, &vault, &mut stranger, "xem", vec![calls(ROOM_POLL, serde_json::json!({ "job": id })), text("?")]).await;
+        let looked = stranger.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_POLL)).expect("polled");
+        assert!(looked.preview.contains("There is no job"), "{}", looked.preview);
+
+        let mut later = Run::new("xong chưa", Some("conv-room-job".into()), budget(4));
+        drive_script_in(&app, &vault, &mut later, "xong chưa", vec![calls(ROOM_POLL, serde_json::json!({ "job": id, "wait_s": 20 })), text("xong")]).await;
+        let polled = later.steps.iter().find(|s| s.tool.as_deref() == Some(ROOM_POLL)).expect("polled");
+        let said: serde_json::Value = serde_json::from_str(&polled.preview).expect("json");
+        assert_eq!(said["state"], "ended", "{said}");
+        assert_eq!(said["exit"], 0, "{said}");
+        assert!(said["output"].as_str().is_some_and(|o| o.ends_with("done")), "{said}");
+        assert!(said.get("progress").is_none(), "an ended job has no progress: {said}");
+        assert!(said["files"].to_string().contains("out.txt"), "{said}");
+    }
+
+    /// A routine's work in a room waits for a Mac on power and not busy, and
+    /// says why rather than running (plan M7).
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn a_routine_does_not_start_room_work_on_battery() {
+        use crate::syn::surface::Surface;
+        use crate::syn::tools::{ROOM_RUN, ROOM_START};
+        let dir = tempfile::tempdir().expect("temp");
+        let vault = dir.path().to_str().expect("utf8").to_string();
+        let app = app_with_rooms(&vault, a_vault_worth_attacking(dir.path()));
+        crate::syn::machine::status::NOT_QUIET.with(|said| said.set(Some("the Mac is on its battery")));
+        let mut run = Run::new("tính", Some("conv-room-routine-battery".into()), budget(6));
+        run.surface = Surface::Routine;
+        drive_script_in(
+            &app,
+            &vault,
+            &mut run,
+            "tính",
+            vec![
+                calls(ROOM_RUN, serde_json::json!({ "command": "echo $((6 * 7))" })),
+                calls(ROOM_START, serde_json::json!({ "command": "echo $((6 * 7))" })),
+                text("bỏ qua"),
+            ],
+        )
+        .await;
+        crate::syn::machine::status::NOT_QUIET.with(|said| said.set(None));
+        for tool in [ROOM_RUN, ROOM_START] {
+            let step = run.steps.iter().find(|s| s.tool.as_deref() == Some(tool)).expect("asked");
+            assert!(step.preview.contains("on its battery") && !step.preview.contains("42"), "{tool}: {}", step.preview);
+        }
+        assert!(shared_rooms().jobs().running_in(&room_of("conv-room-routine-battery")).is_none());
+    }
+
     /// The control for the one above, and the other half of the rule: unlocked,
     /// the note goes in whole, and a file kept is a new one in the vault.
     #[cfg(target_os = "macos")]

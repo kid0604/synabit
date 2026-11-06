@@ -153,6 +153,56 @@ pub fn clear_room(cell: &Cell, bait: &Path) -> io::Result<usize> {
     Err(io::Error::other("a process in the room would not die"))
 }
 
+/// Whether the kernel has a process held by a stop, or done with it. From
+/// `<sys/proc.h>`: `SSTOP` is 4 and `SZOMB` 5.
+fn held(pid: libc::pid_t) -> bool {
+    // SAFETY: `info` is a plain struct of integers, zero is valid for all of them,
+    // and the size passed is its own.
+    unsafe {
+        let mut info: libc::proc_bsdinfo = std::mem::zeroed();
+        let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        let got = libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size);
+        // No answer is a process that has gone, which holds nothing either.
+        got != size || matches!(info.pbi_status, 4 | 5)
+    }
+}
+
+/// Holds everything in the room where it is, without ending it: a job's room
+/// while a room with a network is open (design §5.8, I8 rule 1). A stopped
+/// process runs nothing, so it beats out no signal. Scanned until no new process
+/// turns up, as [`clear_room`] is, and then until the kernel says every one is
+/// held. An error means something may still be running, and the port must not
+/// open. Nothing in a room can undo it: a signal to another room is refused.
+pub fn pause_room(cell: &Cell, bait: &Path) -> io::Result<usize> {
+    let mut stopped = BTreeSet::new();
+    for _ in 0..STOP_ROUNDS {
+        let new: Vec<_> = room_processes(cell, bait)?.into_iter().filter(|p| !stopped.contains(p)).collect();
+        if new.is_empty() {
+            for _ in 0..KILL_POLLS {
+                let running: Vec<_> = room_processes(cell, bait)?.into_iter().filter(|&pid| !held(pid)).collect();
+                if running.is_empty() {
+                    return Ok(stopped.len());
+                }
+                signal(running.iter().copied(), libc::SIGSTOP);
+                stopped.extend(running);
+                std::thread::sleep(KILL_POLL);
+            }
+            return Err(io::Error::other("a process in the room would not stop"));
+        }
+        signal(new.iter().copied(), libc::SIGSTOP);
+        stopped.extend(new);
+    }
+    Err(io::Error::other("the room starts processes faster than they stop"))
+}
+
+/// Lets a paused room go on.
+pub fn resume_room(cell: &Cell, bait: &Path) -> io::Result<usize> {
+    let found = room_processes(cell, bait)?;
+    let count = found.len();
+    signal(found, libc::SIGCONT);
+    Ok(count)
+}
+
 /// How much of the machine a room may hold. Both are measured from outside, since
 /// macOS has nothing like a cgroup and `ulimit -v` was measured to do nothing:
 /// 800 MB was granted under a limit of 200.
@@ -250,7 +300,7 @@ fn disk_of(folder: &Path, enough: u64) -> u64 {
     used
 }
 
-fn over(cell: &Cell, bait: &Path, ceiling: Ceiling) -> io::Result<Option<Over>> {
+pub(super) fn over(cell: &Cell, bait: &Path, ceiling: Ceiling) -> io::Result<Option<Over>> {
     let bytes = memory_of(&room_processes(cell, bait)?);
     if bytes > ceiling.memory {
         return Ok(Some(Over::Memory { bytes }));
