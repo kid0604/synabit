@@ -274,8 +274,14 @@ async fn keep(root: &Path, made: &Path, lock: &str) -> Result<Made, Failed> {
     // The lockfile beside it, for whoever looks: what is in there, exactly.
     let _ = tokio::process::Command::new("/bin/chmod").args(["u+w"]).arg(&partial).status().await;
     let _ = std::fs::write(partial.join("synabit.lock"), lock);
-    let _ = tokio::process::Command::new("/bin/chmod").args(["a-w"]).arg(&partial).status().await;
-    std::fs::rename(&partial, &target).map_err(|e| Failed::Other(e.to_string()))?;
+    // Sealed only once it has its name: macOS 15 refuses to rename a folder
+    // that cannot be written, and 26 does not, so the order is the only one
+    // that works on both.
+    if let Err(e) = std::fs::rename(&partial, &target) {
+        let _ = make_writable_and_remove(&partial).await;
+        return Err(Failed::Other(e.to_string()));
+    }
+    let _ = tokio::process::Command::new("/bin/chmod").args(["a-w"]).arg(&target).status().await;
     Ok(out)
 }
 
