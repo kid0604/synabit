@@ -738,6 +738,24 @@ mod tests {
         );
     }
 
+    /// Everything of Syn at the machine is off until the person says so (plan
+    /// §5, "behind a switch, off by default"): on a fresh vault each asks, and
+    /// nothing turns one on but an answer.
+    #[test]
+    fn the_machine_is_off_until_the_person_turns_it_on() {
+        let ledger = Ledger::default();
+        for capability in [
+            Capability::Cell,
+            Capability::Packages,
+            Capability::Door,
+            Capability::HelperOut,
+            Capability::MachineFiles,
+            Capability::Execute,
+        ] {
+            assert_eq!(decide(&capability, &ledger, NOW), Decision::Ask, "{capability:?}");
+        }
+    }
+
     /// The vault capabilities never ask, which is today's behaviour written down.
     #[test]
     fn touching_the_vault_does_not_ask() {
