@@ -629,6 +629,8 @@ fn json_placeholders(v: &serde_json::Value, out: &mut Vec<String>) {
 }
 
 /// A path into an answer: `$`, `$.a.b`, `$.issues[*]`, `fields.assignee.displayName`, `items[0].id`.
+/// And `#text`, where the XML decoder puts the words of an element that also
+/// has attributes: `<PMID Version="1">41203311</PMID>` is `PMID.#text`.
 pub fn path_ok(path: &str) -> bool {
     let p = path.strip_prefix('$').unwrap_or(path);
     let p = p.strip_prefix('.').unwrap_or(p);
@@ -638,6 +640,9 @@ pub fn path_ok(path: &str) -> bool {
     p.split('.').all(|seg| {
         if seg.is_empty() {
             return false;
+        }
+        if seg == "#text" {
+            return true;
         }
         let (name, rest) = seg.split_once('[').map_or((seg, ""), |(n, r)| (n, r));
         (name.is_empty() && !rest.is_empty() || name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '@'))

@@ -393,6 +393,21 @@ mod tests {
         assert_eq!(quoted[0]["b"], "x\ny");
     }
 
+    /// The words of an element with attributes are `#text`, and a declaration
+    /// may say so: PubMed's `<PMID Version="1">` was unreadable when the path
+    /// check refused the `#` (found by the plan M8 try, 2026-11-06). Nothing
+    /// else with a `#` is a path.
+    #[test]
+    fn the_words_of_an_element_with_attributes_can_be_picked() {
+        let v = xml(r#"<Set><Article><PMID Version="1">41203311</PMID></Article></Set>"#).expect("reads");
+        assert_eq!(super::super::pick::one(&v, "Set.Article.PMID.#text"), "41203311");
+        assert!(super::super::manifest::path_ok("MedlineCitation.PMID.#text"));
+        assert!(super::super::manifest::path_ok("$.items[*].#text"));
+        for bad in ["PMID.#txt", "PMID#text", "#text#", "a.#.b"] {
+            assert!(!super::super::manifest::path_ok(bad), "{bad}");
+        }
+    }
+
     #[test]
     fn xml_reads_by_local_names() {
         let v = xml(r#"<D:multistatus xmlns:D="DAV:"><D:response><D:href>/a</D:href></D:response><D:response><D:href>/b</D:href><D:x id="7"/></D:response></D:multistatus>"#).expect("reads");
