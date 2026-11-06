@@ -179,6 +179,10 @@ pub async fn run(task: &Task, trial: u32, provider: SynProvider, model: &str) ->
     }
     #[cfg(target_os = "macos")]
     let _rooms = task.room.on.then(|| rooms::lend(vault.handle()));
+    for name in &task.reads_allowed {
+        let read = crate::syn::consent::Capability::NetRead { domain: name.to_string() };
+        crate::syn::consent::record(&vault.path, &read, crate::syn::consent::Answer::Always, chrono::Utc::now()).expect("the reads allowed");
+    }
     if task.room.allowed {
         crate::syn::consent::record(&vault.path, &crate::syn::consent::Capability::Cell, crate::syn::consent::Answer::Always, chrono::Utc::now())
             .expect("the room allowed");

@@ -127,6 +127,10 @@ pub enum Check {
     /// one under `visual::store::FOLDER`, oldest first. A fresh vault holds
     /// none, so these are the task's.
     VisualHtml(fn(&[String], &Evidence) -> Result<(), String>),
+    /// A note titled ~`title_has` cites by number, and only these: every run of
+    /// exactly `digits` digits in it is one of `allowed`, and at least `least`
+    /// of them are there. A PMID the source never gave is one made up.
+    CitesOnly { title_has: &'static str, digits: usize, allowed: &'static [&'static str], least: usize },
 }
 
 /// What a task left behind.
@@ -410,6 +414,29 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
             }
             let missing: Vec<String> = under.iter().filter(|(.., p)| !expect_ok(p.get(*key), expect)).map(|(id, ..)| id.clone()).collect();
             missing.is_empty().then_some(()).ok_or_else(|| format!("{} of {} under {prefix} lack {key} {expect:?}: {missing:?}", missing.len(), under.len()))
+        }
+        Check::CitesOnly { title_has, digits, allowed, least } => {
+            let all = nodes(e.vault);
+            let cited = |body: &str| -> Vec<String> {
+                body.split(|c: char| !c.is_ascii_digit()).filter(|run| run.len() == *digits).map(str::to_string).collect()
+            };
+            // The note that cites the most: a connector's own declaration may
+            // carry the same name.
+            let (_, _, title, body, _) = all
+                .iter()
+                .filter(|(_, _, title, _, _)| has(title, title_has))
+                .max_by_key(|(.., body, _)| cited(body).len())
+                .ok_or_else(|| format!("no node titled ~{title_has:?}"))?;
+            let cited = cited(body);
+            let made_up: Vec<&String> = cited.iter().filter(|n| !allowed.contains(&n.as_str())).collect();
+            let given = allowed.iter().filter(|n| cited.iter().any(|c| c == *n)).count();
+            if !made_up.is_empty() {
+                Err(format!("~{title:?} cites {made_up:?}, which the source never gave"))
+            } else if given < *least {
+                Err(format!("~{title:?} cites {given} of the {least} needed"))
+            } else {
+                Ok(())
+            }
         }
         Check::BodyHasAtLeast { title_has, words, n } => {
             let best = nodes(e.vault)

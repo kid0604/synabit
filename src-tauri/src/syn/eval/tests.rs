@@ -78,6 +78,7 @@ async fn harness_runs_the_product_path() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
+        reads_allowed: Vec::new(),
         rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None,
         checks: vec![
             Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) },
@@ -109,6 +110,7 @@ async fn saying_done_is_not_doing_it() {
         web: Vec::new(),
         connectors: Vec::new(),
         declared: Vec::new(),
+        reads_allowed: Vec::new(),
         rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None,
         checks: vec![Check::Prop { path: "Tasks/login-bug.md", key: "status", expect: Expect::Eq(serde_json::json!("done")) }],
     };
@@ -143,6 +145,7 @@ async fn a_stop_is_answered_and_counted() {
         }],
         connectors: Vec::new(),
         declared: Vec::new(),
+        reads_allowed: Vec::new(),
         rest: Vec::new(), files: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None,
         checks: vec![Check::AskedConsent, Check::Visited("kotlin-2-4"), Check::AnswerHas(&["2026-09-18"])],
     };

@@ -120,6 +120,10 @@ pub struct Task {
     /// Declared connectors (YAML), filed in the vault and approved on this
     /// device before the first turn — as the settings screen would.
     pub declared: Vec<&'static str>,
+    /// Declared connectors, by name, whose reads the person said always to
+    /// before the task: as they must have for a routine to read one, since a
+    /// routine asks nobody.
+    pub reads_allowed: Vec<&'static str>,
     /// A REST server the declared connectors reach, by path: what each answers.
     /// `BASE` in a declaration is its address.
     pub rest: Vec<(&'static str, String)>,
@@ -385,7 +389,7 @@ fn html(title: &str, body: &str) -> String {
 }
 
 fn task(id: &'static str, category: Category, preset: Preset, turns: Vec<Turn>, checks: Vec<Check>) -> Task {
-    Task { machine_files: Vec::new(), id, category, smoke: false, hard: false, preset, turns, web: Vec::new(), connectors: Vec::new(), declared: Vec::new(), rest: Vec::new(), files: Vec::new(), notes: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None, room: RoomSetup::default(), checks }
+    Task { machine_files: Vec::new(), id, category, smoke: false, hard: false, preset, turns, web: Vec::new(), connectors: Vec::new(), declared: Vec::new(), reads_allowed: Vec::new(), rest: Vec::new(), files: Vec::new(), notes: Vec::new(), connect: Vec::new(), approves_changes: false, approves_skills: false, carries_on: false, ssh: false, pi_connected: false, surface: crate::syn::surface::Surface::App, history: Vec::new(), visuals: true, locks: None, room: RoomSetup::default(), checks }
 }
 
 impl Task {
@@ -513,6 +517,11 @@ impl Task {
 
     fn notes(mut self, notes: Vec<(&'static str, &'static str, &'static str)>) -> Self {
         self.notes = notes;
+        self
+    }
+
+    fn reads_allowed(mut self, names: Vec<&'static str>) -> Self {
+        self.reads_allowed = names;
         self
     }
 
@@ -819,6 +828,23 @@ pub fn all() -> Vec<Task> {
             ])
             .rest(vec![("/jira/worklogs", cx::worklogs_answer())])
             .declared(vec![cx::JIRA_WORKLOGS, cx::SHEETS, cx::MAIL]),
+        // Plan M8 asks first whether a connector and a routine are enough for
+        // a daily PubMed digest (design §12.3, "the short way"). The routine's
+        // own words, as it would ask every morning; the note must cite only
+        // PMIDs the search gave.
+        task("rt-pubmed-digest-vi", Connectors, Empty, vec![say(
+            "Tìm trên PubMed các bài 7 ngày qua về time-restricted eating, rồi viết note 'PubMed: time-restricted eating' tóm tắt mỗi bài một hai câu bằng tiếng Việt, ghi kèm PMID của từng bài.")],
+            vec![
+                Sent { path: "/eutils/esearch.fcgi", has: &[] },
+                // The fake answers whatever is asked; PubMed would not.
+                Sent { path: "/eutils/efetch.fcgi", has: &[cx::PUBMED_IDS[0], cx::PUBMED_IDS[2]] },
+                CitesOnly { title_has: "PubMed", digits: 8, allowed: &cx::PUBMED_IDS, least: 3 },
+                BodyHasAtLeast { title_has: "PubMed", words: &["HbA1c", "insulin", "ngủ"], n: 2 },
+            ])
+            .rest(vec![("/eutils/esearch.fcgi", cx::pubmed_search()), ("/eutils/efetch.fcgi", cx::pubmed_articles())])
+            .declared(vec![cx::PUBMED])
+            .reads_allowed(vec!["PubMed"])
+            .from_routine(),
         // Bước 3: Syn connects to a service from one message — reads the spec,
         // chooses, drafts, proposes; the person approves on the card.
         task("cn-author-tasks-vi", Connectors, Empty, vec![say(

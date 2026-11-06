@@ -615,3 +615,92 @@ mod tests {
         }
     }
 }
+
+/// PubMed's E-utilities, declared as the person would connect them: a search
+/// for ids, then the articles by id (design §12.3, "the short way"). Plan M8
+/// asks for this to be tried before any approved tool is built. `each` ends on
+/// the list rather than `[*]`, because XML says nothing of one or many: a
+/// search with one article in it decodes to an object, not a list of one.
+pub const PUBMED: &str = "id: pubmed\nname: PubMed\nbase_url: BASE/eutils\noperations:\n  - name: search\n    description: PubMed ids (PMIDs) of the articles matching a query and published in the last days, newest first, one a row, at most 20. Read them with articles.\n    effect: read\n    call: { method: GET, path: /esearch.fcgi, query: { db: pubmed, term: \"{{query}}\", reldate: \"{{days}}\", datetype: pdat, retmode: json, retmax: \"20\", sort: pub_date } }\n    params:\n      query: { required: true, description: \"PubMed search terms\" }\n      days: { type: integer, required: true, description: \"How many days back\" }\n    result:\n      each: $.esearchresult.idlist\n      pick:\n        pmid: $\n  - name: articles\n    description: Title, journal, year and abstract of PubMed articles, by their PMIDs, all at once.\n    effect: read\n    decoder: xml\n    call: { method: GET, path: /efetch.fcgi, query: { db: pubmed, id: \"{{ids}}\", retmode: xml } }\n    params:\n      ids: { required: true, description: \"Every PMID to read, separated by commas\" }\n    result:\n      each: $.PubmedArticleSet.PubmedArticle\n      pick:\n        pmid: MedlineCitation.PMID.#text\n        title: { path: MedlineCitation.Article.ArticleTitle, free_text: true }\n        journal: MedlineCitation.Article.Journal.Title\n        year: MedlineCitation.Article.Journal.JournalIssue.PubDate.Year\n        abstract: { path: MedlineCitation.Article.Abstract.AbstractText, free_text: true }\n";
+
+/// The three articles the fake PubMed has this week, by PMID.
+pub const PUBMED_IDS: [&str; 3] = ["41203311", "41198762", "41187045"];
+
+/// What `esearch.fcgi` answers, as E-utilities does with `retmode=json`.
+pub fn pubmed_search() -> String {
+    serde_json::json!({
+        "header": { "type": "esearch", "version": "0.3" },
+        "esearchresult": { "count": "3", "retmax": "3", "retstart": "0", "idlist": PUBMED_IDS, "querytranslation": "time restricted eating" }
+    })
+    .to_string()
+}
+
+/// What `efetch.fcgi` answers with `retmode=xml`, cut to the parts read.
+pub fn pubmed_articles() -> String {
+    let articles = [
+        (PUBMED_IDS[0], "Nutrients", "Time-restricted eating and glycaemic control in adults with prediabetes: a 12-week randomised trial",
+         "In 148 adults with prediabetes, eating within an 8-hour window for 12 weeks lowered HbA1c by 0.3 percentage points more than usual care. Weight fell by 2.1 kg more. Adherence was 81%."),
+        (PUBMED_IDS[1], "Obesity Reviews", "Early versus late time-restricted eating: a systematic review and meta-analysis",
+         "Across 19 trials, an eating window that ends in the early afternoon reduced fasting insulin more than a late window, with no difference in weight loss between the two."),
+        (PUBMED_IDS[2], "Sleep Medicine", "Time-restricted eating and sleep quality in shift workers: a pilot study",
+         "In 42 night-shift nurses, a 10-hour eating window did not change sleep quality scores after 8 weeks; gastrointestinal complaints fell."),
+    ];
+    let mut out = String::from("<?xml version=\"1.0\" ?><PubmedArticleSet>");
+    for (pmid, journal, title, abstract_text) in articles {
+        out.push_str(&format!(
+            "<PubmedArticle><MedlineCitation Status=\"Publisher\" Owner=\"NLM\"><PMID Version=\"1\">{pmid}</PMID><Article PubModel=\"Electronic\"><Journal><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue><Title>{journal}</Title></Journal><ArticleTitle>{title}</ArticleTitle><Abstract><AbstractText>{abstract_text}</AbstractText></Abstract></Article></MedlineCitation></PubmedArticle>"
+        ));
+    }
+    out + "</PubmedArticleSet>"
+}
+
+#[cfg(test)]
+mod pubmed_live {
+    /// The declaration against PubMed itself, by hand: both operations read a
+    /// real answer into rows, and the PMIDs the articles carry are the ones the
+    /// search gave. What the fixture above copies.
+    #[tokio::test]
+    #[ignore = "asks eutils.ncbi.nlm.nih.gov; run by hand"]
+    async fn the_declaration_reads_pubmed_itself() {
+        use crate::syn::connector::{http, instance, manifest};
+        let m = manifest::parse_yaml(&super::PUBMED.replace("BASE", "https://eutils.ncbi.nlm.nih.gov/entrez")).expect("parses");
+        let inst = instance::Instance {
+            manifest_id: m.id.clone(),
+            label: String::new(),
+            zone: Default::default(),
+            exposure: Default::default(),
+            network: instance::Network::Public,
+            pinned_cert: None,
+            attested: Default::default(),
+            mirrors: Default::default(),
+            folder: None,
+            inputs: Default::default(),
+            operations: Default::default(),
+            approved: "a test".into(),
+            approved_at: String::new(),
+        };
+        let op = |name: &str| m.operations.iter().find(|o| o.name == name).expect("declared").clone();
+        let found = http::fetch(&m, &inst, &op("search"), &serde_json::json!({ "query": "time restricted eating", "days": 30 }), None)
+            .await
+            .map_err(|f| f.said)
+            .expect("searched");
+        println!("search: {:?} {:?}", found.columns.iter().map(|c| &c.name).collect::<Vec<_>>(), found.rows);
+        let col = |f: &http::Fetched, name: &str| f.columns.iter().position(|c| c.name == name).expect("a column");
+        let ids: Vec<String> = found.rows.iter().filter_map(|r| r[col(&found, "pmid")].as_str().map(str::to_string)).collect();
+        assert!(!ids.is_empty(), "nothing in a month: {:?}", found.rows);
+        let some = ids.iter().take(5).cloned().collect::<Vec<_>>();
+        let read = http::fetch(&m, &inst, &op("articles"), &serde_json::json!({ "ids": some.join(",") }), None)
+            .await
+            .map_err(|f| f.said)
+            .expect("read");
+        println!("articles: {} rows, missing {:?}", read.rows.len(), read.missing);
+        for row in &read.rows {
+            let shown: Vec<String> = row.iter().map(|v| v.to_string().chars().take(70).collect()).collect();
+            println!("  {shown:?}");
+        }
+        let pmids: Vec<String> = read.rows.iter().filter_map(|r| r[col(&read, "pmid")].as_str().map(str::to_string)).collect();
+        assert_eq!(pmids, some, "every article, with the PMID it was asked by");
+        let one = http::fetch(&m, &inst, &op("articles"), &serde_json::json!({ "ids": some[0] }), None).await.map_err(|f| f.said).expect("one");
+        assert_eq!(one.rows.len(), 1, "one article is still a row");
+    }
+}
