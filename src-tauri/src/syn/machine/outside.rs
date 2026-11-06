@@ -13,7 +13,9 @@
 //! temporary folder, whose path has no name in it, and a place whose path
 //! would is refused rather than used. Measured 2026-11-05 on macOS 26.5.2:
 //! `hostname` and `uname -n` are refused, `id -un` says 501, `scutil` gives
-//! the model's default name rather than the one the person chose.
+//! the model's default name rather than the one the person chose. `logname`
+//! is refused too, found on macOS 15 over SSH on 2026-11-06: the kernel keeps
+//! the session's login name, and a test run here had none to give.
 //!
 //! The system's `curl` does not run here: its LibreSSL reads
 //! `/private/etc/ssl/openssl.cnf`, which a sealed room may read too (§5.8). So
@@ -556,9 +558,14 @@ mod tests {
         for secret in [login.to_lowercase(), short.to_lowercase(), home.display().to_string().to_lowercase()] {
             assert!(!lower.contains(&secret), "the room said {secret:?}:\n{said}");
         }
-        for refused in ["/etc/passwd: operation not permitted", "/users: operation not permitted", "/opt/homebrew: operation not permitted"] {
+        // `logname` by name too: this side may have no login to compare with,
+        // and the app, opened from the Dock, always has one.
+        for refused in ["/etc/passwd: operation not permitted", "/users: operation not permitted", "logname: operation not permitted"] {
             assert!(lower.contains(refused), "{refused}: {said}");
         }
+        // Refused where there is one; a blank Mac has none to refuse.
+        let homebrew = if Path::new("/opt/homebrew").exists() { "/opt/homebrew: operation not permitted" } else { "/opt/homebrew: no such file or directory" };
+        assert!(lower.contains(homebrew), "{homebrew}: {said}");
     }
 
     /// What a helper hands up lands in the asking run's sealed room, under its
