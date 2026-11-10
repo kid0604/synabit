@@ -32,6 +32,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::secrets::SecretManager;
+use tauri::Manager;
 
 // ── Rate Limiting State (in-memory, resets on app restart) ──
 
@@ -231,15 +232,37 @@ fn new_challenge(folder: &Path, now: u64) -> ResetChallenge {
 
 // ── Commands ──
 
+/// Keychain work, run where it cannot hold the app's main thread.
+///
+/// A command without `async` runs on the main thread, and every one of these
+/// reads the keychain — which on macOS can wait on a permission dialog for as
+/// long as nobody answers it. `get_app_lock_config` is asked on every start,
+/// so after each rebuild (a new signature, asked again) the main thread waited
+/// on the dialog, every command and every page heartbeat queued behind it, and
+/// the page sat half mounted: 40 s to three minutes at a time on 2026-10-22,
+/// 25, 27 and 28 (`ui.page-alive`). On a blocking thread the dialog holds only
+/// the command that asked.
+async fn off_main<T: Send + 'static>(
+    app: tauri::AppHandle,
+    work: impl FnOnce(&tauri::AppHandle) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || work(&app))
+        .await
+        .map_err(|e| format!("the keychain read did not finish: {e}"))?
+}
+
 /// Set the first PIN. Refused when one exists: replacing it is
 /// `change_app_lock`, which asks for the old one — otherwise "set up" would be
 /// a way to swap in a PIN you know and then remove it.
 #[tauri::command]
-pub fn setup_app_lock(app: tauri::AppHandle, pin: String) -> Result<(), String> {
-    if SecretManager::get_app_lock_hash(Some(&app)).is_some() {
-        return Err(PIN_ALREADY_SET.to_string());
-    }
-    store_pin(&app, &pin)
+pub async fn setup_app_lock(app: tauri::AppHandle, pin: String) -> Result<(), String> {
+    off_main(app, move |app| {
+        if SecretManager::get_app_lock_hash(Some(app)).is_some() {
+            return Err(PIN_ALREADY_SET.to_string());
+        }
+        store_pin(app, &pin)
+    })
+    .await
 }
 
 fn store_pin(app: &tauri::AppHandle, pin: &str) -> Result<(), String> {
@@ -255,13 +278,12 @@ fn store_pin(app: &tauri::AppHandle, pin: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn verify_app_lock(
-    app: tauri::AppHandle,
-    pin: String,
-    state: tauri::State<'_, AppLockState>,
-) -> Result<VerifyResult, String> {
-    let hash = SecretManager::get_app_lock_hash(Some(&app)).ok_or("App lock is not set up")?;
-    check_pin(&state, &hash, &pin)
+pub async fn verify_app_lock(app: tauri::AppHandle, pin: String) -> Result<VerifyResult, String> {
+    off_main(app, move |app| {
+        let hash = SecretManager::get_app_lock_hash(Some(app)).ok_or("App lock is not set up")?;
+        check_pin(&app.state::<AppLockState>(), &hash, &pin)
+    })
+    .await
 }
 
 /// Remove the PIN — only with the PIN.
@@ -270,37 +292,34 @@ pub fn verify_app_lock(
 /// thing in the way, and anything that could call a command could remove it.
 /// Family-safe answers stay as they are; they are not the PIN's to undo.
 #[tauri::command]
-pub fn remove_app_lock(
-    app: tauri::AppHandle,
-    pin: String,
-    state: tauri::State<'_, AppLockState>,
-) -> Result<(), String> {
-    let hash = SecretManager::get_app_lock_hash(Some(&app));
-    require_pin(&state, hash.as_deref(), Some(&pin))?;
-    SecretManager::clear_app_lock(Some(&app))
+pub async fn remove_app_lock(app: tauri::AppHandle, pin: String) -> Result<(), String> {
+    off_main(app, move |app| {
+        let hash = SecretManager::get_app_lock_hash(Some(app));
+        require_pin(&app.state::<AppLockState>(), hash.as_deref(), Some(&pin))?;
+        SecretManager::clear_app_lock(Some(app))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn change_app_lock(
-    app: tauri::AppHandle,
-    old_pin: String,
-    new_pin: String,
-    state: tauri::State<'_, AppLockState>,
-) -> Result<(), String> {
-    valid_pin(&new_pin)?;
-    let hash = SecretManager::get_app_lock_hash(Some(&app)).ok_or("App lock is not set up")?;
-    require_pin(&state, Some(&hash), Some(&old_pin)).map_err(|e| {
-        if e == PIN_WRONG { "Current PIN is incorrect".to_string() } else { e }
-    })?;
-    store_pin(&app, &new_pin)
+pub async fn change_app_lock(app: tauri::AppHandle, old_pin: String, new_pin: String) -> Result<(), String> {
+    off_main(app, move |app| {
+        valid_pin(&new_pin)?;
+        let hash = SecretManager::get_app_lock_hash(Some(app)).ok_or("App lock is not set up")?;
+        require_pin(&app.state::<AppLockState>(), Some(&hash), Some(&old_pin)).map_err(|e| {
+            if e == PIN_WRONG { "Current PIN is incorrect".to_string() } else { e }
+        })?;
+        store_pin(app, &new_pin)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn get_app_lock_config(app: tauri::AppHandle) -> Result<AppLockConfig, String> {
+pub async fn get_app_lock_config(app: tauri::AppHandle) -> Result<AppLockConfig, String> {
     // The front end asks this on start, so Syn learns the app here — which a
     // phone needs before it can read what is locked. See `syn::locks`.
     crate::syn::locks::know_handle(&app);
-    Ok(read_config(&app))
+    off_main(app, |app| Ok(read_config(app))).await
 }
 
 fn read_config(app: &tauri::AppHandle) -> AppLockConfig {
@@ -371,26 +390,28 @@ fn syn_allowed_after(current: &AppLockConfig, update: &AppLockConfigUpdate) -> R
 /// limit — otherwise switching the whole-app lock off, or unprotecting a note,
 /// would be a way round the PIN that `remove_app_lock` already refuses.
 #[tauri::command]
-pub fn update_app_lock_config(
+pub async fn update_app_lock_config(
     app: tauri::AppHandle,
     config: AppLockConfigUpdate,
     pin: Option<String>,
-    state: tauri::State<'_, AppLockState>,
 ) -> Result<(), String> {
-    let current = read_config(&app);
-    let syn_allowed = syn_allowed_after(&current, &config)?;
-    if loosens(&current, &config) {
-        let hash = SecretManager::get_app_lock_hash(Some(&app));
-        require_pin(&state, hash.as_deref(), pin.as_deref())?;
-    }
-    SecretManager::update_app_lock_config(
-        Some(&app),
-        config.protected_apps,
-        config.protected_notes,
-        syn_allowed,
-        config.auto_lock_timeout_secs,
-        config.app_lock_active,
-    )
+    off_main(app, move |app| {
+        let current = read_config(app);
+        let syn_allowed = syn_allowed_after(&current, &config)?;
+        if loosens(&current, &config) {
+            let hash = SecretManager::get_app_lock_hash(Some(app));
+            require_pin(&app.state::<AppLockState>(), hash.as_deref(), pin.as_deref())?;
+        }
+        SecretManager::update_app_lock_config(
+            Some(app),
+            config.protected_apps,
+            config.protected_notes,
+            syn_allowed,
+            config.auto_lock_timeout_secs,
+            config.app_lock_active,
+        )
+    })
+    .await
 }
 
 /// The vault settings file's old family-safe flag, for the one-time carry.
@@ -406,8 +427,11 @@ fn vault_family_safe(vault_path: Option<&str>) -> bool {
 /// `vault_path`, when given, lets a vault that had it on carry that across
 /// (see `syn::family_safe::resolve`); it is never a way to turn it off.
 #[tauri::command]
-pub fn get_family_safe(app: tauri::AppHandle, vault_path: Option<String>) -> bool {
-    crate::syn::family_safe::is_on(Some(&app), vault_family_safe(vault_path.as_deref()))
+pub async fn get_family_safe(app: tauri::AppHandle, vault_path: Option<String>) -> Result<bool, String> {
+    off_main(app, move |app| {
+        Ok(crate::syn::family_safe::is_on(Some(app), vault_family_safe(vault_path.as_deref())))
+    })
+    .await
 }
 
 /// Switch family-safe answers on or off on this device.
@@ -416,19 +440,21 @@ pub fn get_family_safe(app: tauri::AppHandle, vault_path: Option<String>) -> boo
 /// here against the stored hash with the same attempt limit as the lock
 /// screen — the settings screen asking first is a courtesy, not the lock.
 #[tauri::command]
-pub fn set_family_safe(
+pub async fn set_family_safe(
     app: tauri::AppHandle,
     on: bool,
     pin: Option<String>,
     vault_path: Option<String>,
-    state: tauri::State<'_, AppLockState>,
 ) -> Result<(), String> {
-    let currently_on = crate::syn::family_safe::is_on(Some(&app), vault_family_safe(vault_path.as_deref()));
-    may_set_family_safe(currently_on, on, || {
-        let hash = SecretManager::get_app_lock_hash(Some(&app));
-        require_pin(&state, hash.as_deref(), pin.as_deref())
-    })?;
-    crate::syn::family_safe::store(Some(&app), on)
+    off_main(app, move |app| {
+        let currently_on = crate::syn::family_safe::is_on(Some(app), vault_family_safe(vault_path.as_deref()));
+        may_set_family_safe(currently_on, on, || {
+            let hash = SecretManager::get_app_lock_hash(Some(app));
+            require_pin(&app.state::<AppLockState>(), hash.as_deref(), pin.as_deref())
+        })?;
+        crate::syn::family_safe::store(Some(app), on)
+    })
+    .await
 }
 
 /// Start a forgotten-PIN reset: the folder to make, and where.
@@ -443,7 +469,6 @@ pub fn app_lock_reset_begin(
     if cfg!(mobile) {
         return Err(RESET_NOT_ON_THIS_DEVICE.to_string());
     }
-    use tauri::Manager;
     let folder = app.path().app_data_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
     let challenge = new_challenge(&folder, now_unix());
@@ -456,16 +481,18 @@ pub fn app_lock_reset_begin(
 /// stay on if they were on — but with no PIN, nothing then stops them being
 /// switched off, which the lock screen says before anyone gets here.
 #[tauri::command]
-pub fn app_lock_reset_finish(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppLockState>,
-) -> Result<(), String> {
+pub async fn app_lock_reset_finish(app: tauri::AppHandle) -> Result<(), String> {
+    off_main(app, reset_finish).await
+}
+
+fn reset_finish(app: &tauri::AppHandle) -> Result<(), String> {
     if cfg!(mobile) {
         return Err(RESET_NOT_ON_THIS_DEVICE.to_string());
     }
+    let state = app.state::<AppLockState>();
     let mut slot = state.reset.lock().unwrap_or_else(|p| p.into_inner());
     let marker = reset_proven(slot.as_ref(), now_unix())?;
-    SecretManager::clear_app_lock(Some(&app))?;
+    SecretManager::clear_app_lock(Some(app))?;
     *slot = None;
     *state.failed_attempts.lock().unwrap_or_else(|p| p.into_inner()) = 0;
     *state.locked_until.lock().unwrap_or_else(|p| p.into_inner()) = None;
@@ -516,7 +543,7 @@ mod tests {
     #[test]
     fn remove_app_lock_takes_a_pin_and_checks_it_before_clearing() {
         let source = include_str!("app_lock.rs");
-        let body = source.split("pub fn remove_app_lock(").nth(1).unwrap().split("\n}\n").next().unwrap();
+        let body = source.split("pub async fn remove_app_lock(").nth(1).unwrap().split("\n}\n").next().unwrap();
         let check = body.find("require_pin(").expect("checks the PIN");
         let clear = body.find("clear_app_lock").expect("clears");
         assert!(check < clear, "the PIN is checked before anything is cleared");
