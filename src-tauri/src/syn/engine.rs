@@ -284,6 +284,25 @@ fn with_what_it_did(m: &SynMessage, said: String) -> String {
     said
 }
 
+/// The tool calls of the runs a run carries on from, oldest first, as the
+/// message's log holds them. A call a stop held back is not among a run's
+/// steps — the run that carries on makes it — so none comes twice.
+fn earlier_tool_calls(runs: &[crate::syn::run::Run]) -> Vec<SynToolCallEvent> {
+    runs.iter()
+        .flat_map(|r| {
+            r.steps.iter().filter(|s| matches!(s.kind, crate::syn::run::StepKind::ToolCall)).map(move |s| {
+                SynToolCallEvent {
+                    conversation_id: r.conversation_id.clone().unwrap_or_default(),
+                    tool_name: s.tool.clone().unwrap_or_default(),
+                    tool_args: s.args.clone().unwrap_or(serde_json::Value::Null),
+                    result_preview: s.preview.clone(),
+                    iteration: s.iteration,
+                }
+            })
+        })
+        .collect()
+}
+
 /// Trim a conversation to the last `max_msgs`, keeping the system prompt.
 ///
 /// The system message carries the personality and the RAG context, so dropping
@@ -609,6 +628,10 @@ impl SynEngine {
         started: std::time::Instant,
     ) -> AppResult<SynMessage> {
         let mut working = build_pruned_history(req.history, req.max_history);
+        // Kept alongside the run's own steps because it is what a `SynMessage`
+        // carries and what the chat bubble draws. The transcript is the record;
+        // this is the view the conversation file already had.
+        let mut tool_log: Vec<SynToolCallEvent> = Vec::new();
 
         // Carrying on from a run that stopped to ask: what it had already done
         // goes back in, round by round, so this run starts where that one was
@@ -640,11 +663,13 @@ impl SynEngine {
                 );
                 working.splice(at..at, replayed);
             }
+            // The answer is the whole chain's, so its log is too. Started
+            // empty, a run that asked four times saved only what its last
+            // stretch did: on 2026-11-10 "stopped and disabled the gateway"
+            // stood beside a status check alone, and `with_what_it_did` named
+            // that one call back to the next turn.
+            tool_log.extend(earlier_tool_calls(&runs));
         }
-        // Kept alongside the run's own steps because it is what a `SynMessage`
-        // carries and what the chat bubble draws. The transcript is the record;
-        // this is the view the conversation file already had.
-        let mut tool_log: Vec<SynToolCallEvent> = Vec::new();
 
         // What the most recent query turned up, for `syn::ambiguity`.
         //
@@ -3931,6 +3956,27 @@ mod tests {
 
         let out = build_pruned_history(&[msg("user", "Quick: gọi CMC"), saved], 50);
         assert!(out[1].content.contains("capture"), "{}", out[1].content);
+    }
+
+    /// 2026-11-10: "stopped and disabled the gateway" was saved beside the last
+    /// run's status check alone — the stop and the disable were two runs back.
+    /// The runs before a carry-on give their calls, oldest first; a note is
+    /// not a call.
+    #[test]
+    fn a_carried_on_answer_keeps_the_calls_of_the_runs_before_it() {
+        use crate::syn::registry::Reversal;
+        let mut first = Run::new("tắt openclaw", Some("conv-pi".into()), crate::syn::run::Budget::from_settings(&Default::default()));
+        first.record_tool(0, "connector__pi__check", serde_json::json!({}), true, Reversal::Nothing, "running", 1);
+        first.note(1, "Stopped on a plan of 1 send(s) for the user to approve.");
+        let mut second = Run::new("tắt openclaw", Some("conv-pi".into()), crate::syn::run::Budget::from_settings(&Default::default()));
+        second.record_tool(0, "propose_writes", serde_json::json!({}), true, Reversal::Nothing, r#"{"approved":[]}"#, 1);
+        second.record_tool(1, "connector__pi__stop", serde_json::json!({}), true, Reversal::Nothing, "Stopped", 1);
+
+        let log = earlier_tool_calls(&[first, second]);
+        let names: Vec<&str> = log.iter().map(|e| e.tool_name.as_str()).collect();
+        assert_eq!(names, ["connector__pi__check", "propose_writes", "connector__pi__stop"]);
+        assert!(log.iter().all(|e| e.conversation_id == "conv-pi"));
+        assert_eq!(log[2].result_preview, "Stopped");
     }
 
     /// The history that emptied an answer: the last round asked for a page and
