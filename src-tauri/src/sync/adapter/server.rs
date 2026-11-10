@@ -349,6 +349,17 @@ impl Drop for SynabitServerAdapter {
         if let Ok(mut session) = self.session.try_lock() {
             *session = None;
         }
+        // An adapter goes when `sync_connect` puts a new one in its place, when
+        // `sync_disconnect` takes it out, or when the last sync holding it ends —
+        // and none of those called `close`. iroh then aborts the endpoint
+        // ("Endpoint dropped without calling `Endpoint::close`", 149 times by
+        // 2026-11-10, each one a `connection closed` on the server's side).
+        // `close` cannot be awaited in `drop`, so a clone of the endpoint is
+        // closed after it: the clone keeps the socket alive until it has.
+        if !self.endpoint.is_closed() {
+            let endpoint = self.endpoint.clone();
+            tauri::async_runtime::spawn(async move { endpoint.close().await });
+        }
     }
 }
 
