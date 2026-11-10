@@ -24,6 +24,43 @@ const TICK_MS = 100;
 const ASLEEP_MS = 60_000;
 /** As `invariants::BEAT_EVERY`. */
 const BEAT_MS = 2000;
+/** One line per route this often at most; the ones between are counted in it. */
+const REPORT_EVERY_MS = 10_000;
+
+/**
+ * Whether a tick this late was the page's thread held, and not the timer slowed.
+ *
+ * A window that is behind another, or on another Space, keeps
+ * `visibilityState` at `visible`, yet WebKit runs its timers once a second:
+ * every tick 900 ms late, for as long as the window stays there. From
+ * 2026-10-07 to 2026-11-10 that was 208 000 lines, 99.7% of every
+ * `ui.responsive` there was and three quarters of the whole log. They pushed
+ * five weeks of history out of the 60 MB the log is kept to, and hid the one
+ * block that was real (3.4 s in the note editor). Only a window that had focus
+ * from one tick to the next has timers run on time, so only that window's late
+ * tick is a block. A block in a window put away is no worse for that: the
+ * heartbeat (`ui.page-alive`) sees it from Rust.
+ */
+export function isBlocked(lateMs: number, focusedThroughout: boolean, visible: boolean): boolean {
+  return lateMs > BLOCKED_MS && lateMs < ASLEEP_MS && visible && focusedThroughout;
+}
+
+/**
+ * At most one report per route every `everyMs`. Returns `null` when this one
+ * is to be held back, otherwise how many were held back since the last.
+ */
+export function reportLimiter(everyMs: number): (route: string, now: number) => number | null {
+  const last = new Map<string, { at: number; held: number }>();
+  return (route, now) => {
+    const seen = last.get(route);
+    if (seen && now - seen.at < everyMs) {
+      seen.held += 1;
+      return null;
+    }
+    last.set(route, { at: now, held: 0 });
+    return seen?.held ?? 0;
+  };
+}
 
 interface Pressed {
   kind: 'pointer' | 'key';
@@ -65,17 +102,23 @@ export function watchPage(route: () => string): void {
   window.addEventListener('keydown', remember('key'), { capture: true, passive: true });
 
   let prev = performance.now();
+  let wasFocused = document.hasFocus();
+  const limit = reportLimiter(REPORT_EVERY_MS);
   setInterval(() => {
     const now = performance.now();
     const late = now - prev - TICK_MS;
     prev = now;
-    if (late > BLOCKED_MS && late < ASLEEP_MS && document.visibilityState === 'visible') {
-      reportViolation({
-        invariant: 'ui.responsive',
-        subject: route(),
-        detail: { blocked_ms: Math.round(late), ...lastPressed(now) },
-      });
-    }
+    const focused = document.hasFocus();
+    const blocked = isBlocked(late, wasFocused && focused, document.visibilityState === 'visible');
+    wasFocused = focused;
+    if (!blocked) return;
+    const repeats = limit(route(), now);
+    if (repeats === null) return;
+    reportViolation({
+      invariant: 'ui.responsive',
+      subject: route(),
+      detail: { blocked_ms: Math.round(late), ...(repeats ? { repeats } : {}), ...lastPressed(now) },
+    });
   }, TICK_MS);
 
   const beat = () => {
