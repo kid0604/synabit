@@ -353,6 +353,10 @@ pub async fn syn_connect(
     secrets: std::collections::BTreeMap<String, String>,
     trust_cert: Option<String>,
     folder: Option<String>,
+    // The commands the person ticked as only looking, on the card. Absent, what
+    // was vouched before stands. `instance::approve` keeps only `read_attested`
+    // ones.
+    attested: Option<Vec<String>>,
 ) -> Result<Connected, AppError> {
     use manifest::InputKind;
     let views = declared_views(&app, &vault_path)?;
@@ -392,7 +396,10 @@ pub async fn syn_connect(
         exposure: before.as_ref().map(|i| i.exposure).unwrap_or_default(),
         network: instance::network_for(&filled.base_url),
         pinned_cert: trust_cert.or_else(|| before.as_ref().and_then(|i| i.pinned_cert.clone())),
-        attested: before.as_ref().map(|i| i.attested.clone()).unwrap_or_default(),
+        attested: match attested {
+            Some(ticked) => ticked.into_iter().collect(),
+            None => before.as_ref().map(|i| i.attested.clone()).unwrap_or_default(),
+        },
         mirrors: before.as_ref().map(|i| i.mirrors.clone()).unwrap_or_default(),
         folder: folder.or_else(|| before.as_ref().and_then(|i| i.folder.clone())),
         inputs,
@@ -568,7 +575,7 @@ pub(crate) async fn phone_connect(app: &tauri::AppHandle, vault_path: &str, mani
     let inst = instance::load(vault_path).get(manifest_id).cloned();
     let inputs = inst.as_ref().map(|i| i.inputs.clone()).unwrap_or_default();
     let folder = inst.and_then(|i| i.folder);
-    syn_connect(app.clone(), vault_path.to_string(), manifest_id.to_string(), inputs, Default::default(), None, folder).await
+    syn_connect(app.clone(), vault_path.to_string(), manifest_id.to_string(), inputs, Default::default(), None, folder, None).await
 }
 
 #[cfg(test)]

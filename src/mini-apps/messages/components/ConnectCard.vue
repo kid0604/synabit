@@ -38,6 +38,7 @@ onMounted(async () => {
   const inst = view.value?.instance;
   for (const [k, v] of Object.entries(inst?.inputs ?? {})) values.value[k] = v;
   folder.value = inst?.folder ?? null;
+  attested.value = [...(inst?.attested ?? [])];
   if (packages.value.length) access.value = await declared.device.access();
 });
 
@@ -57,6 +58,17 @@ const isSsh = computed(() => m.value?.transport === 'ssh');
 const bridges = computed(() => (m.value ? bridgesOf(m.value) : []));
 const packages = computed(() => (m.value ? notificationPackages(m.value) : []));
 const folder = ref<string | null>(null);
+/**
+ * The commands the person vouches only look. Nothing proves a shell command
+ * only reads, so a `read_attested` one is a send — asked about every time —
+ * until they tick it here. With no box to tick, every status check on the Pi
+ * was a plan to approve (2026-11-10).
+ */
+const attested = ref<string[]>([]);
+const looks = (op: { effect: string }) => op.effect === 'read_attested';
+const vouch = (name: string, on: boolean) => {
+  attested.value = on ? [...new Set([...attested.value, name])] : attested.value.filter((n) => n !== name);
+};
 const agreed = ref(false);
 const access = ref(false);
 
@@ -104,7 +116,7 @@ const hostKey = computed(() => (result.value?.code?.startsWith('host_key_') ? (r
 const connect = async (trustCert: string | null = null) => {
   if (!m.value || busy.value) return;
   busy.value = true;
-  result.value = await declared.connect(m.value.id, { ...values.value }, { ...secrets.value }, trustCert, folder.value);
+  result.value = await declared.connect(m.value.id, { ...values.value }, { ...secrets.value }, trustCert, folder.value, [...attested.value]);
   busy.value = false;
   secrets.value = {};
   if (result.value?.ok) emit('done', true);
@@ -181,12 +193,22 @@ const ready = computed(
               {{ op.description }}
             </p>
             <code class="block font-mono text-gray-600 dark:text-gray-300 break-all">{{ commandText(op.command) }}</code>
+            <label v-if="looks(op)" class="flex items-start gap-1.5 pt-0.5 text-gray-600 dark:text-gray-300" :data-test="`looks-${op.name}`">
+              <input type="checkbox" class="mt-0.5" :checked="attested.includes(op.name)" @change="vouch(op.name, ($event.target as HTMLInputElement).checked)" />
+              <span>{{ t('syn.connect_only_looks') }}</span>
+            </label>
           </li>
         </ul>
         <div v-if="oldOps.length" class="space-y-1 pt-1 text-gray-500 dark:text-gray-400" data-test="commands-allowed">
           <p>{{ t('syn.connect_already_allowed') }}</p>
           <ul class="space-y-0.5 px-3">
-            <li v-for="op in oldOps" :key="op.name"><code class="font-mono break-all">{{ commandText(op.command) }}</code></li>
+            <li v-for="op in oldOps" :key="op.name">
+              <code class="font-mono break-all">{{ commandText(op.command) }}</code>
+              <label v-if="looks(op)" class="flex items-start gap-1.5 pt-0.5" :data-test="`looks-${op.name}`">
+                <input type="checkbox" class="mt-0.5" :checked="attested.includes(op.name)" @change="vouch(op.name, ($event.target as HTMLInputElement).checked)" />
+                <span>{{ t('syn.connect_only_looks') }}</span>
+              </label>
+            </li>
           </ul>
         </div>
       </div>

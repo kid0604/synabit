@@ -4692,6 +4692,7 @@
     "connect_again_add": "Syn wants to add a command on {where}:",
     "connect_new_badge": "New",
     "connect_already_allowed": "Already allowed:",
+    "connect_only_looks": "This one only looks and changes nothing on the machine — Syn may run it without asking",
     "connect_kept_summary": "Password kept on this device.",
     "connect_change_details": "Change address or password",
     "connect_allow": "Allow",

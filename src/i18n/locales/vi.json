@@ -4692,6 +4692,7 @@
     "connect_again_add": "Syn muốn thêm lệnh chạy trên {where}:",
     "connect_new_badge": "Mới",
     "connect_already_allowed": "Đã cho phép từ trước:",
+    "connect_only_looks": "Lệnh này chỉ xem, không thay đổi gì trên máy — Syn được chạy mà không cần hỏi",
     "connect_kept_summary": "Mật khẩu đã lưu trên máy này.",
     "connect_change_details": "Đổi địa chỉ hoặc mật khẩu",
     "connect_allow": "Cho phép",

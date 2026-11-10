@@ -107,6 +107,54 @@ describe('Connecting to a machine over SSH', () => {
     expect(commandText(['echo', '{{text}}', '--tail={{n}}', 'two words'])).toBe("echo <text> --tail=<n> 'two words'");
   });
 
+  it('lets the person vouch that a looking command only looks, and nothing else', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'syn_manifest_list') return [pi];
+      if (cmd === 'syn_connect') return { ok: true, said: '' };
+      return null;
+    });
+    const w = show();
+    await flushPromises();
+    expect(w.find('[data-test="looks-disk"]').text()).toContain('only looks');
+    expect(w.find('[data-test="looks-restart"]').exists()).toBe(false);
+    expect((w.find('[data-test="looks-disk"] input').element as HTMLInputElement).checked).toBe(false);
+    await w.find('[data-test="input-host"] input').setValue('ssh://pi@raspberrypi.local');
+    await w.find('[data-test="input-login"] input').setValue('raspberry');
+    await w.find('[data-test="looks-disk"] input').setValue(true);
+    await w.find('[data-test="connect"]').trigger('click');
+    await flushPromises();
+    const call = invoke.mock.calls.find(([c]) => c === 'syn_connect');
+    expect(call?.[1]).toMatchObject({ attested: ['disk'] });
+  });
+
+  it('starts from what was vouched before, which the old commands can change too', async () => {
+    const vouched: DeclaredView = {
+      ...pi,
+      standing: { state: 'changed' },
+      instance: {
+        manifest_id: 'pi', label: '', zone: { kind: 'personal' }, exposure: 'full', network: 'internal',
+        pinned_cert: FP, attested: ['disk'], inputs: { host: 'ssh://pi@192.168.1.3' }, approved: 'old',
+        approved_at: '2026-10-13T00:00:00Z',
+      },
+      secret_here: true,
+      not_yet_approved: ['restart'],
+    };
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'syn_manifest_list') return [vouched];
+      if (cmd === 'syn_connect') return { ok: true, said: '' };
+      return null;
+    });
+    const w = show();
+    await flushPromises();
+    const box = w.find('[data-test="commands-allowed"] [data-test="looks-disk"] input');
+    expect((box.element as HTMLInputElement).checked).toBe(true);
+    await box.setValue(false);
+    await w.find('[data-test="connect"]').trigger('click');
+    await flushPromises();
+    const call = invoke.mock.calls.find(([c]) => c === 'syn_connect');
+    expect(call?.[1]).toMatchObject({ attested: [] });
+  });
+
   it('can be closed when the connector is gone from the vault', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'syn_manifest_list' ? [] : null));
     const w = show();

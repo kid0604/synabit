@@ -83,9 +83,10 @@ export function useSynDeclared(vaultPath: () => string) {
     secrets: Record<string, string>,
     trustCert: string | null = null,
     folder: string | null = null,
+    attested: string[] | null = null,
   ): Promise<Connected | null> => {
     const out = await run('connect', () =>
-      invoke<Connected>('syn_connect', { vaultPath: vaultPath(), manifestId, inputs, secrets, trustCert, folder }),
+      invoke<Connected>('syn_connect', { vaultPath: vaultPath(), manifestId, inputs, secrets, trustCert, folder, attested }),
     );
     await load();
     return out;
