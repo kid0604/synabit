@@ -495,6 +495,9 @@ fn a_line_that_only_looks_is_told_from_one_that_does() {
         "vcgencmd measure_temp",
         "systemctl status openclaw-gateway",
         "systemctl --failed",
+        "systemctl --user is-enabled openclaw-gateway.service",
+        "systemctl --user --no-pager status openclaw-gateway",
+        "systemctl --user",
         "journalctl -u ssh -n 50 --no-pager",
         "ip addr",
     ] {
@@ -507,6 +510,8 @@ fn a_line_that_only_looks_is_told_from_one_that_does() {
         "hostname pwned",
         "systemctl stop openclaw-gateway",
         "systemctl restart ssh",
+        "systemctl --user disable openclaw-gateway.service",
+        "systemctl --user stop openclaw-gateway",
         "journalctl -f",
         "journalctl --vacuum-time=1d",
         "ip link set eth0 down",

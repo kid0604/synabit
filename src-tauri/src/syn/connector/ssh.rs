@@ -150,13 +150,24 @@ const LOOKS_BUT: &[&str] = &[
     "--setup-keys", "--update-catalog", "-F", "set", "add", "del", "delete", "flush", "change", "replace",
 ];
 
+/// What may come before `systemctl`'s verb without changing what it does.
+const SYSTEMCTL_SCOPE: &[&str] = &["--user", "--system", "--no-pager"];
+
 /// Whether `line` only looks: one program from `LOOKS`, plain words after it,
 /// and nothing a shell would read as more than words. `top` only in batch
 /// mode, with a count, or it never finishes.
 pub fn reads_only(line: &str) -> bool {
     let plain = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || "_./:=@,+%-".contains(c));
     let words: Vec<&str> = line.split_ascii_whitespace().collect();
-    let Some((program, rest)) = words.split_first() else { return false };
+    let Some((program, mut rest)) = words.split_first() else { return false };
+    // `systemctl --user is-enabled x` asks the same of the user's own
+    // services: the scope comes before the verb, and the verb is still what
+    // is checked. Seen 2026-11-10, a Pi whose gateway is a user unit.
+    if *program == "systemctl" {
+        while let Some((_, after)) = rest.split_first().filter(|(w, _)| SYSTEMCTL_SCOPE.contains(*w)) {
+            rest = after;
+        }
+    }
     if !words.iter().all(|w| plain(w)) || rest.iter().any(|w| LOOKS_BUT.contains(&w.split('=').next().unwrap_or(w))) {
         return false;
     }
