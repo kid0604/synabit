@@ -276,13 +276,15 @@ impl SecretManager {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let _ = app_handle; // unused on desktop
-            let entry = Self::get_entry()?;
-            match entry.get_password() {
-                Ok(content) => serde_json::from_str::<AppSecrets>(&content)
-                    .map_err(|e| format!("the keychain holds a secrets blob this build cannot parse: {e}")),
-                Err(keyring::Error::NoEntry) => Ok(AppSecrets::default()),
-                Err(e) => Err(format!("Keyring error: {e}")),
-            }
+            in_line(&ASKING, || {
+                let entry = Self::get_entry()?;
+                match entry.get_password() {
+                    Ok(content) => serde_json::from_str::<AppSecrets>(&content)
+                        .map_err(|e| format!("the keychain holds a secrets blob this build cannot parse: {e}")),
+                    Err(keyring::Error::NoEntry) => Ok(AppSecrets::default()),
+                    Err(e) => Err(format!("Keyring error: {e}")),
+                }
+            })
         }
         #[cfg(target_os = "ios")]
         {
@@ -374,10 +376,9 @@ impl SecretManager {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let _ = app_handle;
-            let entry = Self::get_entry()?;
-            entry
-                .set_password(&content)
-                .map_err(|e| format!("Keyring error: {}", e))
+            in_line(&ASKING, || {
+                Self::get_entry()?.set_password(&content).map_err(|e| format!("Keyring error: {}", e))
+            })
         }
         #[cfg(target_os = "ios")]
         {
@@ -621,12 +622,14 @@ impl SecretManager {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let _ = app_handle;
-            let entry = keyring::Entry::new("synabit", name).map_err(|e| format!("Keyring error: {e}"))?;
-            match entry.get_password() {
-                Ok(value) => Ok(Some(value)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(e) => Err(format!("Keyring error: {e}")),
-            }
+            in_line(&ASKING, || {
+                let entry = keyring::Entry::new("synabit", name).map_err(|e| format!("Keyring error: {e}"))?;
+                match entry.get_password() {
+                    Ok(value) => Ok(Some(value)),
+                    Err(keyring::Error::NoEntry) => Ok(None),
+                    Err(e) => Err(format!("Keyring error: {e}")),
+                }
+            })
         }
         #[cfg(target_os = "ios")]
         {
@@ -650,9 +653,11 @@ impl SecretManager {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let _ = app_handle;
-            keyring::Entry::new("synabit", name)
-                .and_then(|entry| entry.set_password(value))
-                .map_err(|e| format!("Keyring error: {e}"))
+            in_line(&ASKING, || {
+                keyring::Entry::new("synabit", name)
+                    .and_then(|entry| entry.set_password(value))
+                    .map_err(|e| format!("Keyring error: {e}"))
+            })
         }
         #[cfg(target_os = "ios")]
         {
@@ -704,6 +709,32 @@ fn read_modify_write(
     let mut secrets = load()?;
     change(&mut secrets);
     save(&secrets)
+}
+
+/// Held while the keychain is asked anything, so that asks wait in line.
+///
+/// # Why
+///
+/// At start-up two readers ask at once — the Telegram supervisor from `setup`,
+/// the app lock from the front end's mount. macOS answers each ask with its own
+/// dialog, and the second was already waiting when "Always Allow" was pressed
+/// on the first: two dialogs on every launch of a new build (2026-11-10). In
+/// line, the second asks after the first was answered, when this build is
+/// already allowed, and no dialog comes.
+///
+/// Nothing is kept. What was read is the caller's, for as long as the caller
+/// holds it, as before — `get_e2ee_key` zeroes the key's bytes for a reason.
+#[cfg_attr(any(target_os = "android", target_os = "ios"), allow(dead_code))]
+static ASKING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// `ask`, in line behind every other ask. Never nested: a blob read and its
+/// write in `update_secrets` each take it in turn, under `SECRETS_WRITE`.
+#[cfg_attr(any(target_os = "android", target_os = "ios"), allow(dead_code))]
+fn in_line<T>(line: &std::sync::Mutex<()>, ask: impl FnOnce() -> T) -> T {
+    // An ask that panicked changed nothing here, so a poisoned lock is still a
+    // perfectly good lock.
+    let _held = line.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    ask()
 }
 
 #[cfg(test)]
@@ -819,5 +850,43 @@ mod tests {
         let after = store.read();
         assert_eq!(after.e2ee_key.as_deref(), Some("existing"), "an unrelated secret was lost");
         assert_eq!(after.syn_api_keys.get("anthropic").map(String::as_str), Some("sk-ant-test"));
+    }
+
+    /// Two readers at start-up, the keychain slow to answer — a dialog open:
+    /// the second asks only once the first has its answer. Each ask at once
+    /// was a dialog of its own.
+    #[test]
+    fn asks_wait_in_line() {
+        let line = Arc::new(Mutex::new(()));
+        let asking = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let most = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(8));
+        let readers: Vec<_> = (0..8)
+            .map(|_| {
+                let (line, asking, most, start) = (line.clone(), asking.clone(), most.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    in_line(&line, || {
+                        let now = asking.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        most.fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        asking.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    })
+                })
+            })
+            .collect();
+        for r in readers {
+            r.join().unwrap();
+        }
+        assert_eq!(most.load(std::sync::atomic::Ordering::SeqCst), 1, "two asks were open at once");
+    }
+
+    /// An ask that panicked leaves the line usable for the next one.
+    #[test]
+    fn a_panicked_ask_does_not_close_the_line() {
+        let line = Arc::new(Mutex::new(()));
+        let l = line.clone();
+        let _ = std::thread::spawn(move || in_line(&l, || panic!("the dialog crashed"))).join();
+        assert_eq!(in_line(&line, || 7), 7);
     }
 }
