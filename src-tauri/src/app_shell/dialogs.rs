@@ -48,7 +48,9 @@ impl Filter {
 /// then abandoned — the export failed, the screen closed — does not leave a
 /// path open for the rest of the session.
 pub struct Chosen {
-    picked: Mutex<Vec<(String, Instant)>>,
+    /// Each pick, when it was made, and the one command it may be spent on,
+    /// if it was opened for one.
+    picked: Mutex<Vec<(String, Instant, Option<String>)>>,
 }
 
 /// Long enough for somebody to pick a file and then type the export's
@@ -61,18 +63,30 @@ impl Chosen {
     }
 
     pub fn remember(&self, path: &str) {
+        self.remember_for(path, None);
+    }
+
+    /// A pick that only `command` may spend: a folder chosen to save results
+    /// into must not become a folder Files reads from.
+    pub fn remember_for(&self, path: &str, command: Option<&str>) {
         let mut picked = self.picked.lock().unwrap_or_else(|e| e.into_inner());
-        picked.retain(|(_, at)| at.elapsed() < GOOD_FOR);
-        picked.push((path.to_string(), Instant::now()));
+        picked.retain(|(_, at, _)| at.elapsed() < GOOD_FOR);
+        picked.push((path.to_string(), Instant::now(), command.map(str::to_string)));
     }
 
     /// Whether this exact path was picked and is still good, forgetting it if
     /// so. Compared as the string the dialog returned: the webview hands back
     /// what it was given, and anything else was not picked.
     pub fn take(&self, path: &str) -> bool {
+        self.take_for(path, None)
+    }
+
+    /// [`Self::take`], by `command`: a pick made for another command does not count.
+    pub fn take_for(&self, path: &str, command: Option<&str>) -> bool {
         let mut picked = self.picked.lock().unwrap_or_else(|e| e.into_inner());
-        picked.retain(|(_, at)| at.elapsed() < GOOD_FOR);
-        match picked.iter().position(|(p, _)| p == path) {
+        picked.retain(|(_, at, _)| at.elapsed() < GOOD_FOR);
+        let fits = |owner: &Option<String>| owner.as_deref().is_none_or(|o| Some(o) == command);
+        match picked.iter().position(|(p, _, owner)| p == path && fits(owner)) {
             Some(i) => {
                 picked.remove(i);
                 true
@@ -178,12 +192,19 @@ pub async fn pick_save_path(
     Ok(Some(picked))
 }
 
-/// A folder to add as a file source. Good for one `add_file_source`.
+/// A folder, for the command named by `purpose` (by default `add_file_source`)
+/// and no other: good for one call of it.
 #[tauri::command]
-pub async fn pick_folder(app: tauri::AppHandle, title: Option<String>) -> AppResult<Option<String>> {
+pub async fn pick_folder(app: tauri::AppHandle, title: Option<String>, purpose: Option<String>) -> AppResult<Option<String>> {
+    // Only the commands that take a folder may be named.
+    const FOLDER_COMMANDS: &[&str] = &["add_file_source", "utility_save_all"];
+    let purpose = purpose.unwrap_or_else(|| "add_file_source".to_string());
+    if !FOLDER_COMMANDS.contains(&purpose.as_str()) {
+        return Err(crate::error::AppError::General(format!("no folder is picked for {purpose}")));
+    }
     let picked = ask_folder(&app, title, None).await?;
     if let Some(picked) = &picked {
-        chosen().remember(picked);
+        chosen().remember_for(picked, Some(&purpose));
     }
     Ok(picked)
 }
@@ -215,6 +236,16 @@ mod tests {
         assert!(!chosen.take("/Users/a/.zshrc"));
         assert!(chosen.take("/Users/a/export.ics"));
         assert!(!chosen.take("/Users/a/export.ics"), "a second write to the same pick");
+    }
+
+    #[test]
+    fn a_pick_for_one_command_is_not_another_commands() {
+        let chosen = Chosen::new();
+        chosen.remember_for("/Users/a", Some("utility_save_all"));
+        assert!(!chosen.take_for("/Users/a", Some("add_file_source")));
+        assert!(chosen.take_for("/Users/a", Some("utility_save_all")));
+        chosen.remember("/Users/b");
+        assert!(chosen.take_for("/Users/b", Some("export_contacts")), "a pick for nothing in particular serves any");
     }
 
     #[test]

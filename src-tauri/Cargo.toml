@@ -97,6 +97,9 @@ quick-xml = "0.37"
 # Opening KeePass databases (.kdbx 4) into Safe: AES-256-CBC or ChaCha20,
 # and gzip. All three already in the build at these versions.
 aes = "0.8"
+# MD5, for opening PDFs protected the old way (RC4 and AES-128 derive their
+# keys with it; `utilities::crypt`). Already in the build through lopdf.
+md-5 = "0.10"
 chacha20 = "0.9"
 flate2 = "1"
 lz4_flex = "0.13.1"

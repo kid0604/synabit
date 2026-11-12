@@ -22,7 +22,7 @@
 
 import type { Component } from 'vue';
 import { i18n } from '../i18n';
-import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, KeyRound, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Zap } from 'lucide-vue-next';
+import { Boxes, Calendar, CheckSquare, FileText, FolderOpen, KeyRound, MessageCircle, Palette, Rss, Users, Wallet, Waypoints, Wrench, Zap } from 'lucide-vue-next';
 
 export interface AppEntry {
   /**
@@ -81,6 +81,7 @@ export const BUILT_IN_APPS: readonly AppEntry[] = [
   { id: 'feeds',      name: 'Feeds',      icon: Rss,           view: () => import('../mini-apps/feeds/FeedsApp.vue') },
   { id: 'things',     name: 'Things',     icon: Boxes,         view: () => import('../mini-apps/things/ThingsApp.vue') },
   { id: 'safe',       name: 'Safe',       icon: KeyRound,      view: () => import('../mini-apps/safe/SafeApp.vue') },
+  { id: 'utilities',  name: 'Utilities',  icon: Wrench,        view: () => import('../mini-apps/utilities/UtilitiesApp.vue') },
 ];
 
 /**

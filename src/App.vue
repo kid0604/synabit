@@ -109,7 +109,7 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPaneDrag);
   window.removeEventListener('mouseup', endPaneDrag);
 });
-import { Loader2, FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
+import { Loader2, FileText, FolderOpen, Calendar, CheckSquare, Zap, Globe, Waypoints, RefreshCw, Settings, Users, Wallet, MessageCircle, Palette, MoreHorizontal, Rss, Server, Boxes, KeyRound, Wrench, X, ArrowLeft, ArrowRight } from 'lucide-vue-next';
 import { invoke } from '@tauri-apps/api/core';
 import { emit, listen } from '@tauri-apps/api/event';
 import { autorunVisualSpike } from './shared/syn/visualSpike';
@@ -1814,6 +1814,12 @@ onUnmounted(() => {
                    <KeyRound class="w-5 h-5" />
                    <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('safe') }}</span>
                    <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('safe') }}</span>
+                </button>
+
+                <button v-if="isAppVisible('utilities')" @click="activeTool = 'utilities'" :aria-label="getAppName('utilities')" :aria-current="activeTool === 'utilities' ? 'page' : undefined" :class="[railButtonShape, activeTool === 'utilities' ? 'bg-accent/10 text-accent dark:text-accent-dark' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800']">
+                   <Wrench class="w-5 h-5" />
+                   <span v-if="!useMobileLayout" class="absolute left-full ml-3 px-2.5 py-1 whitespace-nowrap bg-black dark:bg-white text-white dark:text-black text-xs font-semibold rounded-md opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 pointer-events-none transition-all z-50 shadow-lg">{{ getAppName('utilities') }}</span>
+                   <span v-else class="text-xs leading-none truncate max-w-full">{{ getAppName('utilities') }}</span>
                 </button>
 
                 <div v-if="moreMenuApps.length > 0" :class="['relative flex justify-center', useMobileLayout && 'flex-1 min-w-0']">

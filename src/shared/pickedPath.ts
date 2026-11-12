@@ -24,7 +24,10 @@ export function pickSavePath(defaultName: string, filters: DialogFilter[]): Prom
   return invoke<string | null>('pick_save_path', { defaultName, filters });
 }
 
-/** A folder to add as a file source, or null when the dialog was closed. */
-export function pickFolder(title: string): Promise<string | null> {
-  return invoke<string | null>('pick_folder', { title });
+/**
+ * A folder, or null when the dialog was closed. Good for one call of the
+ * command it was picked for: `add_file_source` unless `purpose` says another.
+ */
+export function pickFolder(title: string, purpose?: 'add_file_source' | 'utility_save_all'): Promise<string | null> {
+  return invoke<string | null>('pick_folder', { title, purpose });
 }

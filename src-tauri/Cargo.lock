@@ -8422,6 +8422,7 @@ dependencies = [
  "lopdf",
  "loro",
  "lz4_flex",
+ "md-5",
  "ndk-context",
  "notify",
  "objc2",

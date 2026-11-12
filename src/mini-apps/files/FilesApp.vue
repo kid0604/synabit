@@ -18,6 +18,11 @@ import FileDetailPanel from './components/FileDetailPanel.vue';
 import type { NavEntry } from '../../stores/useNavigationStore';
 import { invoke } from '@tauri-apps/api/core';
 import { parseTimeFragment, type TimeFragment } from '../../shared/mediaTime';
+import { useRouter } from 'vue-router';
+import { askVision, openInUtilities, toolsForFiles } from '../utilities/handoff';
+import { appOffered } from '../../shared/appAccess';
+import { useAppStore } from '../../stores/useAppStore';
+import { errorText } from '../../shared/errorText';
 
 const { t } = useI18n();
 const props = defineProps<{ vaultPath: string }>();
@@ -497,6 +502,7 @@ const openMenu = (file: FileMetadata, event: MouseEvent) => {
   }
   // Kept inside the window: a menu opened near the bottom edge would otherwise
   // hang off it.
+  askVision();
   menu.value = {
     x: Math.min(event.clientX, window.innerWidth - 220),
     y: Math.min(event.clientY, window.innerHeight - 300),
@@ -541,6 +547,29 @@ const onMenuKeydown = (event: KeyboardEvent) => {
 };
 
 const closeMenu = () => { menu.value = null; };
+
+/**
+ * "Utilities ▸ …" for what the menu acts on: the selection when the clicked
+ * file is in it, all of one kind (PDFs, or pictures). A mixed selection gets
+ * no tools rather than a guess at which half was meant.
+ */
+const router = useRouter();
+const menuTargets = computed(() => {
+  if (!menu.value) return [];
+  const chosen = store.isSelected(menu.value.file) ? store.selectedFiles.value : [menu.value.file];
+  return chosen.length ? chosen : [menu.value.file];
+});
+const menuTools = computed(() =>
+  // The store is read here, when a menu opens, not at setup: Files mounts in
+  // tests without Pinia.
+  menu.value && appOffered('utilities', useAppStore().simpleMode) ? toolsForFiles(menuTargets.value.map(f => f.filename)) : [],
+);
+const sendToUtilities = (tool: (typeof menuTools.value)[number]['id']) => {
+  const paths = menuTargets.value.map(f => f.path);
+  openInUtilities(router, props.vaultPath, tool, paths).catch((e) =>
+    showAppNotice(t('utilities.errors.other', { reason: errorText(e) }), 'error'),
+  );
+};
 
 const copyPath = (path: string) => navigator.clipboard.writeText(path).catch(() => {});
 
@@ -625,6 +654,14 @@ onUnmounted(() => {
         <button role="menuitem" @click="runFromMenu(() => store.openLocalFile(menu!.file.path))" class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer">{{ $t('file.open_externally') }}</button>
         <button role="menuitem" @click="runFromMenu(() => store.revealFile(menu!.file.path))" class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer">{{ $t('file.reveal') }}</button>
         <button role="menuitem" @click="runFromMenu(() => copyPath(menu!.file.path))" class="w-full text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer">{{ $t('file.copy_path') }}</button>
+
+        <template v-if="menuTools.length">
+          <div class="my-1 border-t border-gray-100 dark:border-white/5" />
+          <p class="px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ $t('shell.apps.utilities') }}</p>
+          <button v-for="tool in menuTools" :key="tool.id" role="menuitem" @click="runFromMenu(() => sendToUtilities(tool.id))" class="w-full flex items-center gap-2 text-left px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-white/10 cursor-pointer">
+            <component :is="tool.icon" class="w-4 h-4 text-gray-500 dark:text-gray-400" aria-hidden="true" />{{ $t(`utilities.tools.${tool.id}.name`) }}
+          </button>
+        </template>
 
         <div class="my-1 border-t border-gray-100 dark:border-white/5" />
         <p class="px-3 py-1 text-xs font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400">{{ $t('file.label') }}</p>

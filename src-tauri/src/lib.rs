@@ -26,6 +26,7 @@ pub mod secrets;
 pub mod syn;
 pub mod sync;
 pub mod timeline;
+pub mod utilities;
 pub mod vault_archive;
 pub mod watcher;
 
@@ -1101,6 +1102,43 @@ pub fn run() {
             // See `app_shell::dialogs`.
             app_shell::dialogs::pick_vault_folder,
             app_shell::dialogs::pick_save_path,
+            commands::utilities::utility_pick_inputs,
+            commands::utilities::utility_stage,
+            commands::utilities::utility_new_job,
+            commands::utilities::utility_cancel,
+            commands::utilities::utility_assemble,
+            commands::utilities::utility_images_to_pdf,
+            commands::utilities::utility_put_output,
+            commands::utilities::utility_job,
+            commands::utilities::utility_results,
+            commands::utilities::utility_discard,
+            commands::utilities::utility_save,
+            commands::utilities::utility_save_all,
+            commands::utilities::utility_save_zip,
+            commands::utilities::utility_save_to_vault,
+            commands::utilities::utility_input_from_output,
+            commands::utilities::utility_watermark,
+            commands::utilities::utility_number_pages,
+            commands::utilities::utility_protect,
+            commands::utilities::utility_unlock,
+            commands::utilities::utility_strip_metadata,
+            commands::utilities::utility_lock_status,
+            commands::utilities::utility_add_from_vault,
+            commands::utilities::utility_save_beside,
+            commands::utilities::utility_vision_status,
+            commands::utilities::utility_subject_mask,
+            commands::utilities::utility_recognize,
+            commands::utilities::utility_searchable,
+            commands::utilities::utility_pdf_pictures,
+            commands::utilities::utility_pdf_picture,
+            commands::utilities::utility_compress_put,
+            commands::utilities::utility_compress,
+            commands::utilities::utility_office_status,
+            commands::utilities::utility_office_to_pdf,
+            commands::utilities::utility_install_pdf2docx,
+            commands::utilities::utility_pdf_to_word,
+            commands::utilities::utility_open,
+            commands::utilities::utility_reveal_saved,
             app_shell::dialogs::pick_folder,
             // Whiteboards
             whiteboards::scan_whiteboards,

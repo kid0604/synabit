@@ -102,6 +102,9 @@ pub const CHOSEN_ARGS: &[(&str, &str)] = &[
     ("safe_export", "path"),
     ("safe_export_plain", "path"),
     ("add_file_source", "path"),
+    ("utility_save", "destination"),
+    ("utility_save_zip", "destination"),
+    ("utility_save_all", "folder"),
 ];
 
 /// Why a call was refused.
@@ -187,7 +190,7 @@ pub fn check<R: tauri::Runtime>(invoke: &tauri::ipc::Invoke<R>) -> Result<(), Ap
     };
     let open = super::vault::global().current();
     judge(message.webview_ref().label(), command, args, open.as_ref(), |path| {
-        super::dialogs::chosen().take(path)
+        super::dialogs::chosen().take_for(path, Some(command))
     })
     .map_err(|refusal| {
         log::warn!(

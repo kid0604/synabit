@@ -1,0 +1,771 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Utilities — mockup UI/UX, 2026-11-11</title>
+<!--
+  Mockup bấm được cho app Utilities của Synabit. Không phải code của app:
+  một file, không phụ thuộc gì, mở thẳng trong trình duyệt. Màu, cỡ chữ, nút
+  lấy theo src/style.css và AppHeader.vue để trông như app thật.
+  Thiết kế: docs/utilities-2026-11-11.md, §9.
+-->
+<style>
+:root{
+  --base:#fdfdfc;--surface:#fff;--surface-alt:#fbfbfc;--hover:#f5f5f5;--border:#e6e6e6;--border-subtle:#e0e0e0;
+  --muted:#6b6b6b;--text:#1c1c1e;--text2:#52525b;--text3:#71717a;--accent:#1a66cc;--accent-text:#1a66cc;
+  --danger:#ef4444;--success:#16a34a;--warning:#b45309;--warning-bg:#fef3c7;
+  --c-pdf:#d93838;--c-conv:#1a66cc;--c-img:#7c3aed;--c-media:#c2410c;
+  --page:#fff;--page-line:#e4e4e7;--radius:8px;
+}
+.dark{
+  --base:#242424;--surface:#1e1e1e;--surface-alt:#191919;--hover:#2a2a2a;--border:#2c2c2c;--border-subtle:#3a3a3a;
+  --muted:#a1a1aa;--text:#f4f4f5;--text2:#a1a1aa;--text3:#909098;--accent-text:#3fc3e0;
+  --warning:#fbbf24;--warning-bg:#3a2e12;--success:#4ade80;
+  --c-pdf:#f87171;--c-conv:#60a5fa;--c-img:#a78bfa;--c-media:#fb923c;
+  --page:#f4f4f5;--page-line:#d4d4d8;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--base);color:var(--text);font-size:14px;overflow:hidden}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:disabled{cursor:default}
+input,select{font:inherit;color:var(--text)}
+svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+svg.i.lg{width:20px;height:20px}
+svg.i.xl{width:28px;height:28px}
+.shell{display:flex;height:100vh}
+/* the app switcher rail */
+.rail{width:52px;border-right:1px solid var(--border);background:var(--surface-alt);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px}
+.rail button{width:34px;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--text3)}
+.rail button:hover{background:var(--hover)}
+.rail button.on{background:color-mix(in oklab,var(--accent) 14%,transparent);color:var(--accent-text)}
+.rail .sp{flex:1}
+/* the app's own sidebar */
+.side{width:256px;border-right:1px solid var(--border);background:var(--surface-alt);display:flex;flex-direction:column;overflow:auto}
+.side .top{padding:12px 12px 8px;display:flex;align-items:center;gap:8px}
+.side .badge{width:28px;height:28px;border-radius:7px;background:var(--accent);color:#fff;display:grid;place-items:center}
+.side h2{font-size:15px;margin:0;font-weight:600}
+.search{display:flex;align-items:center;gap:8px;margin:4px 12px 8px;padding:0 10px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text3)}
+.search input{border:0;outline:0;background:transparent;flex:1;min-width:0}
+.search kbd{font-size:11px;border:1px solid var(--border);border-radius:4px;padding:0 5px;color:var(--text3)}
+.sec{padding:10px 12px 2px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text3);display:flex;justify-content:space-between;align-items:center}
+.nav{display:flex;align-items:center;gap:9px;margin:1px 8px;padding:6px 8px;border-radius:7px;color:var(--text2);text-align:left;width:calc(100% - 16px)}
+.nav:hover{background:var(--hover)}
+.nav.on{background:color-mix(in oklab,var(--accent) 12%,transparent);color:var(--accent-text);font-weight:500}
+.nav .n{margin-left:auto;font-size:12px;color:var(--text3)}
+.nav .sub{display:block;font-size:11.5px;color:var(--text3)}
+.dot{width:8px;height:8px;border-radius:3px;flex-shrink:0}
+.side .foot{margin-top:auto;padding:12px;font-size:12px;color:var(--text3);display:flex;gap:8px;line-height:1.4}
+/* main column */
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+header{display:flex;align-items:center;gap:12px;min-height:56px;padding:8px 24px;border-bottom:1px solid var(--border);background:var(--base)}
+header .navb{display:flex;gap:2px;color:var(--text3)}
+header .navb button{width:28px;height:28px;border-radius:6px;display:grid;place-items:center}
+header .navb button:hover{background:var(--hover)}
+header .title{display:flex;align-items:center;gap:8px;min-width:0}
+header h1{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:0;white-space:nowrap}
+header .subt{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .acts{margin-left:auto;display:flex;gap:8px;align-items:center}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;padding:0 14px;border-radius:var(--radius);font-size:14px;font-weight:500;white-space:nowrap}
+.btn.p{background:var(--accent);color:#fff}
+.btn.p:hover{background:color-mix(in oklab,var(--accent) 88%,black)}
+.btn.p:disabled{opacity:.45}
+.btn.s{border:1px solid var(--border);background:var(--surface)}
+.btn.s:hover{background:var(--hover)}
+.btn.g{color:var(--text2)}
+.btn.g:hover{background:var(--hover)}
+.btn.sm{height:30px;padding:0 10px;font-size:13px}
+.ib{width:32px;height:32px;border-radius:7px;display:grid;place-items:center;color:var(--text3)}
+.ib:hover{background:var(--hover);color:var(--text)}
+.body{flex:1;overflow:auto;position:relative}
+/* home */
+.home{padding:20px 28px 40px;max-width:1180px}
+.dropbar{display:flex;align-items:center;gap:14px;border:1.5px dashed var(--border-subtle);border-radius:12px;padding:14px 18px;color:var(--text2);background:var(--surface)}
+.dropbar b{color:var(--text);font-weight:600}
+.dropbar .btn{margin-left:auto}
+.grp{margin-top:26px}
+.grp h3{font-size:13px;font-weight:600;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.grp h3 small{font-weight:400;color:var(--text3)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(232px,1fr));gap:10px}
+.card{position:relative;display:flex;gap:12px;align-items:flex-start;text-align:left;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--surface);transition:border-color .12s,box-shadow .12s}
+.card:hover{border-color:var(--border-subtle);box-shadow:0 1px 3px rgb(0 0 0/.06)}
+.card .ic{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;flex-shrink:0}
+.card .nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:6px}
+.card .ds{font-size:12.5px;color:var(--text2);margin-top:2px;line-height:1.35}
+.card .pin{position:absolute;top:8px;right:8px;opacity:0;color:var(--text3)}
+.card:hover .pin,.card .pin.on{opacity:1}
+.card .pin.on{color:#eab308}
+.card .pin.on svg{fill:#eab308}
+.card.off{opacity:.55}
+.tag{font-size:10.5px;font-weight:600;padding:1px 6px;border-radius:999px;white-space:nowrap}
+.tag.t-setup{background:var(--warning-bg);color:var(--warning)}
+.tag.t-na{background:var(--hover);color:var(--text3)}
+.ic.pdf{background:color-mix(in oklab,var(--c-pdf) 13%,transparent);color:var(--c-pdf)}
+.ic.conv{background:color-mix(in oklab,var(--c-conv) 13%,transparent);color:var(--c-conv)}
+.ic.img{background:color-mix(in oklab,var(--c-img) 13%,transparent);color:var(--c-img)}
+.ic.media{background:color-mix(in oklab,var(--c-media) 13%,transparent);color:var(--c-media)}
+.empty-search{padding:40px;text-align:center;color:var(--text2)}
+/* tool screen */
+.tool{display:flex;height:100%}
+.work{flex:1;overflow:auto;padding:22px 26px;min-width:0;position:relative}
+.opts{width:316px;border-left:1px solid var(--border);background:var(--surface-alt);overflow:auto;display:flex;flex-direction:column}
+.opts .o{padding:16px 18px;border-bottom:1px solid var(--border)}
+.opts h4{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.05em}
+.opts label.row{display:flex;align-items:center;gap:8px;margin:8px 0;color:var(--text2)}
+.opts .field{width:100%;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:0 10px;outline:none}
+.opts .field:focus{border-color:var(--accent)}
+.opts .hint{font-size:12px;color:var(--text3);margin-top:6px;line-height:1.4}
+.seg{display:flex;background:var(--hover);border-radius:8px;padding:3px;gap:2px}
+.seg button{flex:1;height:28px;border-radius:6px;font-size:13px;color:var(--text2)}
+.seg button.on{background:var(--surface);color:var(--text);font-weight:500;box-shadow:0 1px 2px rgb(0 0 0/.08)}
+.range{display:flex;align-items:center;gap:10px}
+.range input{flex:1;accent-color:var(--accent)}
+.range span{width:42px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text2);font-size:13px}
+.pos{display:grid;grid-template-columns:repeat(3,28px);gap:4px}
+.pos button{height:28px;border:1px solid var(--border);border-radius:6px;background:var(--surface)}
+.pos button.on{background:var(--accent);border-color:var(--accent)}
+.levels{display:flex;flex-direction:column;gap:8px}
+.level{border:1px solid var(--border);border-radius:9px;padding:10px 12px;text-align:left;background:var(--surface)}
+.level.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.level b{display:flex;justify-content:space-between;font-weight:600}
+.level b small{font-weight:500;color:var(--success)}
+.level p{margin:3px 0 0;font-size:12.5px;color:var(--text2)}
+.out{margin-top:auto}
+/* drop zone, first state of a tool */
+.dz{height:100%;min-height:380px;border:2px dashed var(--border-subtle);border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;background:var(--surface);padding:24px}
+.dz.hot{border-color:var(--accent);background:color-mix(in oklab,var(--accent) 6%,var(--surface))}
+.dz .big{width:64px;height:64px;border-radius:16px;display:grid;place-items:center}
+.dz .big svg.i{width:30px;height:30px}
+.dz h2{margin:6px 0 0;font-size:18px}
+.dz p{margin:0;color:var(--text2)}
+.dz .row{display:flex;gap:8px;margin-top:8px}
+.dz .fine{font-size:12px;color:var(--text3);margin-top:6px}
+/* files in a tool */
+.files{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:14px}
+.fc{position:relative;border:1px solid var(--border);border-radius:10px;background:var(--surface);padding:10px;cursor:grab}
+.fc.dragging{opacity:.4}
+.fc.over{outline:2px solid var(--accent);outline-offset:2px}
+.fc .ord{z-index:2;position:absolute;top:8px;left:8px;width:20px;height:20px;border-radius:6px;background:var(--text);color:var(--base);font-size:11px;font-weight:700;display:grid;place-items:center}
+.fc .rm{z-index:2;position:absolute;top:6px;right:6px;width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--text3);background:var(--surface);opacity:0}
+.fc:hover .rm{opacity:1}
+.fc .nm{font-size:12.5px;font-weight:500;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fc .mt{font-size:11.5px;color:var(--text3)}
+.addc{border:1.5px dashed var(--border-subtle);border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--text3);min-height:190px}
+.addc:hover{color:var(--accent-text);border-color:var(--accent)}
+/* a fake page */
+.pg{aspect-ratio:1/1.414;background:var(--page);border:1px solid var(--border);border-radius:3px;position:relative;overflow:hidden;padding:12% 11%}
+.pg i{display:block;height:4%;background:var(--page-line);border-radius:2px;margin-bottom:5%}
+.pg i.h{height:7%;width:60%;background:color-mix(in oklab,var(--c) 45%,var(--page-line))}
+.pg i.s{width:70%}
+.pg .wm{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;font-weight:700;color:var(--wmc,#d93838);white-space:nowrap}
+.pg .pn{position:absolute;font-size:9px;color:#71717a}
+.worktop{display:flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--text2);font-size:13px}
+.worktop .sp{flex:1}
+/* page grid (split, organize) */
+.pages{display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:14px}
+.pc{position:relative;text-align:center;font-size:12px;color:var(--text3)}
+.pc .pg{cursor:pointer;transition:transform .1s}
+.pc.sel .pg{outline:2.5px solid var(--accent);outline-offset:2px}
+.pc .ck{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:5px;border:1.5px solid var(--border-subtle);background:var(--surface);display:grid;place-items:center}
+.pc.sel .ck{background:var(--accent);border-color:var(--accent);color:#fff}
+.pc .cut{position:absolute;right:-11px;top:30%;color:var(--accent-text)}
+.pc.grp1 .pg{box-shadow:inset 0 -4px 0 #60a5fa}.pc.grp2 .pg{box-shadow:inset 0 -4px 0 #f59e0b}.pc.grp3 .pg{box-shadow:inset 0 -4px 0 #a78bfa}
+/* preview for watermark */
+.preview{display:flex;gap:24px;align-items:flex-start}
+.preview .big{width:min(420px,60%)}
+.preview .thumbs{display:flex;flex-direction:column;gap:10px;width:84px}
+.preview .thumbs .pg{padding:10%}
+/* background removal */
+.ba{position:relative;width:min(560px,100%);aspect-ratio:4/3;border-radius:12px;overflow:hidden;border:1px solid var(--border);user-select:none}
+.ba .l{position:absolute;inset:0}
+.checker{background-color:#fff;background-image:linear-gradient(45deg,#e5e5e5 25%,transparent 25%),linear-gradient(-45deg,#e5e5e5 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#e5e5e5 75%),linear-gradient(-45deg,transparent 75%,#e5e5e5 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}
+.ba .handle{position:absolute;top:0;bottom:0;width:2px;background:#fff;box-shadow:0 0 0 1px rgb(0 0 0/.2)}
+.ba .handle span{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:30px;height:30px;border-radius:50%;background:#fff;color:#333;display:grid;place-items:center;box-shadow:0 1px 4px rgb(0 0 0/.3)}
+.ba .lab{position:absolute;top:10px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:rgb(0 0 0/.55);color:#fff}
+.swatches{display:flex;gap:6px;flex-wrap:wrap}
+.sw{width:28px;height:28px;border-radius:7px;border:1px solid var(--border)}
+.sw.on{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent)}
+/* running and done */
+.veil{position:absolute;inset:0;background:color-mix(in oklab,var(--base) 82%,transparent);display:grid;place-items:center;backdrop-filter:blur(2px)}
+.prog{width:360px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px;box-shadow:0 8px 30px rgb(0 0 0/.12)}
+.bar{height:6px;background:var(--hover);border-radius:999px;overflow:hidden;margin:12px 0 8px}
+.bar div{height:100%;background:var(--accent);border-radius:999px;transition:width .2s}
+.result{max-width:820px;margin:8px auto 0}
+.rhead{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.rhead .ok{width:30px;height:30px;border-radius:50%;background:color-mix(in oklab,var(--success) 18%,transparent);color:var(--success);display:grid;place-items:center}
+.rhead h2{margin:0;font-size:18px}
+.rcard{display:flex;gap:20px;border:1px solid var(--border);border-radius:14px;background:var(--surface);padding:18px}
+.rcard .pg{width:150px;height:212px;flex-shrink:0;padding:18px 16px}
+.rcard .meta{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px}
+.rcard .fn{display:flex;align-items:center;gap:6px;font-weight:600;font-size:15px}
+.rcard .fn input{font-weight:600;font-size:15px;border:1px solid transparent;border-radius:6px;padding:3px 6px;margin-left:-7px;background:transparent;width:100%;outline:none}
+.rcard .fn input:hover{border-color:var(--border)}
+.rcard .fn input:focus{border-color:var(--accent);background:var(--surface)}
+.saving{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+.delta{color:var(--success);font-weight:600}
+.temp{font-size:12px;color:var(--text3);display:flex;align-items:center;gap:6px}
+.next{margin-top:22px}
+.next h4{font-size:13px;margin:0 0 8px;font-weight:600}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 12px 0 6px;border:1px solid var(--border);border-radius:999px;background:var(--surface);font-size:13px}
+.chip:hover{border-color:var(--accent)}
+.chip .ic{width:24px;height:24px;border-radius:999px;display:grid;place-items:center}
+.chip .ic svg.i{width:13px;height:13px}
+.multi{display:flex;flex-direction:column;gap:8px}
+.mrow{display:flex;align-items:center;gap:12px;border:1px solid var(--border);border-radius:10px;padding:8px 12px;background:var(--surface)}
+.mrow .pg{width:34px;padding:4px}
+.mrow .pg i{margin-bottom:12%}
+.mrow .nm{flex:1;font-weight:500}
+.mrow .mt{color:var(--text3);font-size:12.5px}
+/* setup needed */
+.setup{max-width:560px;margin:40px auto;border:1px solid var(--border);border-radius:14px;background:var(--surface);padding:24px}
+.setup h2{margin:0 0 6px;font-size:18px;display:flex;gap:10px;align-items:center}
+.setup p{color:var(--text2);line-height:1.5;margin:6px 0}
+.setup ol{color:var(--text2);line-height:1.7;padding-left:20px}
+.setup .row{display:flex;gap:8px;margin-top:14px}
+.note{display:flex;gap:10px;padding:10px 12px;border-radius:9px;background:var(--hover);color:var(--text2);font-size:13px;line-height:1.45}
+/* smart drop sheet */
+.scrim{position:fixed;inset:0;background:rgb(0 0 0/.35);display:grid;place-items:center;z-index:50}
+.sheet{width:520px;max-height:80vh;overflow:auto;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 20px 60px rgb(0 0 0/.25)}
+.sheet .hd{padding:16px 18px 10px;display:flex;align-items:center;gap:10px}
+.sheet .hd h2{font-size:16px;margin:0;flex:1}
+.sheet .fl{display:flex;gap:6px;flex-wrap:wrap;padding:0 18px 12px}
+.fchip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:3px 9px;border-radius:999px;background:var(--hover);color:var(--text2)}
+.sugg{padding:4px 8px 10px}
+.sg{display:flex;align-items:center;gap:12px;width:100%;padding:9px 10px;border-radius:9px;text-align:left}
+.sg:hover,.sg.kb{background:var(--hover)}
+.sg .ic{width:32px;height:32px;border-radius:8px;display:grid;place-items:center}
+.sg .t{flex:1}
+.sg .t b{display:block;font-weight:600}
+.sg .t span{font-size:12.5px;color:var(--text2)}
+.sg kbd{font-size:11px;color:var(--text3);border:1px solid var(--border);border-radius:4px;padding:0 5px}
+.sheet .ft{border-top:1px solid var(--border);padding:10px 18px;font-size:12px;color:var(--text3);display:flex;justify-content:space-between}
+/* global drop overlay */
+.dropall{position:fixed;inset:10px;border:2.5px dashed var(--accent);border-radius:16px;background:color-mix(in oklab,var(--accent) 8%,transparent);display:grid;place-items:center;z-index:40;pointer-events:none;font-size:18px;font-weight:600;color:var(--accent-text)}
+/* mockup-only controls, not part of the design */
+.demo{position:fixed;right:14px;bottom:14px;display:flex;max-width:84px;overflow:hidden;white-space:nowrap;transition:max-width .2s;gap:6px;z-index:60;background:#111;color:#fff;border-radius:10px;padding:6px 8px;font-size:12px;align-items:center;box-shadow:0 4px 16px rgb(0 0 0/.3)}
+.demo:hover{max-width:900px}
+.demo button{color:#fff;padding:4px 8px;border-radius:6px;background:#333}
+.demo button:hover{background:#444}
+.demo span{opacity:.6;padding:0 4px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--text);color:var(--base);padding:9px 14px;border-radius:9px;font-size:13px;z-index:70;display:flex;gap:10px;align-items:center}
+.toast button{color:var(--accent-text);font-weight:600}
+.dark .toast button{color:#1a66cc}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const ICONS = {"wrench":"<path d=\"M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.106-3.105c.32-.322.863-.22.983.218a6 6 0 0 1-8.259 7.057l-7.91 7.91a1 1 0 0 1-2.999-3l7.91-7.91a6 6 0 0 1 7.057-8.259c.438.12.54.662.219.984z\"/>","search":"<path d=\"m21 21-4.34-4.34\"/><circle cx=\"11\" cy=\"11\" r=\"8\"/>","pin":"<path d=\"M12 17v5\"/><path d=\"M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z\"/>","clock":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 6v6l4 2\"/>","history":"<path d=\"M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8\"/><path d=\"M3 3v5h5\"/><path d=\"M12 7v5l4 2\"/>","file-stack":"<path d=\"M11 21a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1\"/><path d=\"M16 16a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1\"/><path d=\"M21 6a2 2 0 0 0-.586-1.414l-2-2A2 2 0 0 0 17 2h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1z\"/>","scissors":"<circle cx=\"6\" cy=\"6\" r=\"3\"/><path d=\"M8.12 8.12 12 12\"/><path d=\"M20 4 8.12 15.88\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><path d=\"M14.8 14.8 20 20\"/>","layout-grid":"<rect width=\"7\" height=\"7\" x=\"3\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"3\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"14\" y=\"14\" rx=\"1\"/><rect width=\"7\" height=\"7\" x=\"3\" y=\"14\" rx=\"1\"/>","rotate-cw":"<path d=\"M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8\"/><path d=\"M21 3v5h-5\"/>","trash-2":"<path d=\"M10 11v6\"/><path d=\"M14 11v6\"/><path d=\"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6\"/><path d=\"M3 6h18\"/><path d=\"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2\"/>","minimize-2":"<path d=\"m14 10 7-7\"/><path d=\"M20 10h-6V4\"/><path d=\"m3 21 7-7\"/><path d=\"M4 14h6v6\"/>","stamp":"<path d=\"M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-6 0c0 2 1 2 1 3.5V13\"/><path d=\"M20 15.5a2.5 2.5 0 0 0-2.5-2.5h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1z\"/><path d=\"M5 22h14\"/>","list-ordered":"<path d=\"M11 5h10\"/><path d=\"M11 12h10\"/><path d=\"M11 19h10\"/><path d=\"M4 4h1v5\"/><path d=\"M4 9h2\"/><path d=\"M6.5 20H3.4c0-1 2.6-1.925 2.6-3.5a1.5 1.5 0 0 0-2.6-1.02\"/>","lock":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/>","lock-open":"<rect width=\"18\" height=\"11\" x=\"3\" y=\"11\" rx=\"2\" ry=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 9.9-1\"/>","pen-line":"<path d=\"M13 21h8\"/><path d=\"M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z\"/>","file-text":"<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10 9H8\"/><path d=\"M16 13H8\"/><path d=\"M16 17H8\"/>","file-spreadsheet":"<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M8 13h2\"/><path d=\"M14 13h2\"/><path d=\"M8 17h2\"/><path d=\"M14 17h2\"/>","presentation":"<path d=\"M2 3h20\"/><path d=\"M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3\"/><path d=\"m7 21 5-5 5 5\"/>","image":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" ry=\"2\"/><circle cx=\"9\" cy=\"9\" r=\"2\"/><path d=\"m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21\"/>","images":"<path d=\"m22 11-1.296-1.296a2.4 2.4 0 0 0-3.408 0L11 16\"/><path d=\"M4 8a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2\"/><circle cx=\"13\" cy=\"7\" r=\"1\" fill=\"currentColor\"/><rect x=\"8\" y=\"2\" width=\"14\" height=\"14\" rx=\"2\"/>","file-image":"<path d=\"M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><circle cx=\"10\" cy=\"12\" r=\"2\"/><path d=\"m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22\"/>","eraser":"<path d=\"M21 21H8a2 2 0 0 1-1.42-.587l-3.994-3.999a2 2 0 0 1 0-2.828l10-10a2 2 0 0 1 2.829 0l5.999 6a2 2 0 0 1 0 2.828L12.834 21\"/><path d=\"m5.082 11.09 8.828 8.828\"/>","crop":"<path d=\"M6 2v14a2 2 0 0 0 2 2h14\"/><path d=\"M18 22V8a2 2 0 0 0-2-2H2\"/>","scaling":"<path d=\"M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7\"/><path d=\"M14 15H9v-5\"/><path d=\"M16 3h5v5\"/><path d=\"M21 3 9 15\"/>","repeat":"<path d=\"m17 2 4 4-4 4\"/><path d=\"M3 11v-1a4 4 0 0 1 4-4h14\"/><path d=\"m7 22-4-4 4-4\"/><path d=\"M21 13v1a4 4 0 0 1-4 4H3\"/>","eye-off":"<path d=\"M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49\"/><path d=\"M14.084 14.158a3 3 0 0 1-4.242-4.242\"/><path d=\"M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143\"/><path d=\"m2 2 20 20\"/>","film":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M7 3v18\"/><path d=\"M3 7.5h4\"/><path d=\"M3 12h18\"/><path d=\"M3 16.5h4\"/><path d=\"M17 3v18\"/><path d=\"M17 7.5h4\"/><path d=\"M17 16.5h4\"/>","music":"<path d=\"M9 18V5l12-2v13\"/><circle cx=\"6\" cy=\"18\" r=\"3\"/><circle cx=\"18\" cy=\"16\" r=\"3\"/>","upload":"<path d=\"M12 3v12\"/><path d=\"m17 8-5-5-5 5\"/><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/>","plus":"<path d=\"M5 12h14\"/><path d=\"M12 5v14\"/>","x":"<path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/>","grip-vertical":"<circle cx=\"9\" cy=\"12\" r=\"1\"/><circle cx=\"9\" cy=\"5\" r=\"1\"/><circle cx=\"9\" cy=\"19\" r=\"1\"/><circle cx=\"15\" cy=\"12\" r=\"1\"/><circle cx=\"15\" cy=\"5\" r=\"1\"/><circle cx=\"15\" cy=\"19\" r=\"1\"/>","chevron-left":"<path d=\"m15 18-6-6 6-6\"/>","chevron-right":"<path d=\"m9 18 6-6-6-6\"/>","check":"<path d=\"M20 6 9 17l-5-5\"/>","download":"<path d=\"M12 15V3\"/><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><path d=\"m7 10 5 5 5-5\"/>","folder-open":"<path d=\"m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2\"/>","save":"<path d=\"M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z\"/><path d=\"M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7\"/><path d=\"M7 3v4a1 1 0 0 0 1 1h7\"/>","loader-circle":"<path d=\"M21 12a9 9 0 1 1-6.219-8.56\"/>","moon":"<path d=\"M20.985 12.486a9 9 0 1 1-9.473-9.472c.405-.022.617.46.402.803a6 6 0 0 0 8.268 8.268c.344-.215.825-.004.803.401\"/>","sun":"<circle cx=\"12\" cy=\"12\" r=\"4\"/><path d=\"M12 2v2\"/><path d=\"M12 20v2\"/><path d=\"m4.93 4.93 1.41 1.41\"/><path d=\"m17.66 17.66 1.41 1.41\"/><path d=\"M2 12h2\"/><path d=\"M20 12h2\"/><path d=\"m6.34 17.66-1.41 1.41\"/><path d=\"m19.07 4.93-1.41 1.41\"/>","info":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"M12 16v-4\"/><path d=\"M12 8h.01\"/>","hard-drive-download":"<path d=\"M12 2v8\"/><path d=\"m16 6-4 4-4-4\"/><rect width=\"20\" height=\"8\" x=\"2\" y=\"14\" rx=\"2\"/><path d=\"M6 18h.01\"/><path d=\"M10 18h.01\"/>","scan-text":"<path d=\"M3 7V5a2 2 0 0 1 2-2h2\"/><path d=\"M17 3h2a2 2 0 0 1 2 2v2\"/><path d=\"M21 17v2a2 2 0 0 1-2 2h-2\"/><path d=\"M7 21H5a2 2 0 0 1-2-2v-2\"/><path d=\"M7 8h8\"/><path d=\"M7 12h10\"/><path d=\"M7 16h6\"/>","clapperboard":"<path d=\"m12.296 3.464 3.02 3.956\"/><path d=\"M20.2 6 3 11l-.9-2.4c-.3-1.1.3-2.2 1.3-2.5l13.5-4c1.1-.3 2.2.3 2.5 1.3z\"/><path d=\"M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/><path d=\"m6.18 5.276 3.1 3.899\"/>","audio-lines":"<path d=\"M2 10v3\"/><path d=\"M6 6v11\"/><path d=\"M10 3v18\"/><path d=\"M14 8v7\"/><path d=\"M18 5v13\"/><path d=\"M22 10v3\"/>","external-link":"<path d=\"M15 3h6v6\"/><path d=\"M10 14 21 3\"/><path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/>","copy":"<rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/>","undo-2":"<path d=\"M9 14 4 9l5-5\"/><path d=\"M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11\"/>","folder-input":"<path d=\"M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1\"/><path d=\"M2 13h10\"/><path d=\"m9 16 3-3-3-3\"/>","waypoints":"<path d=\"m10.586 5.414-5.172 5.172\"/><path d=\"m18.586 13.414-5.172 5.172\"/><path d=\"M6 12h12\"/><circle cx=\"12\" cy=\"20\" r=\"2\"/><circle cx=\"12\" cy=\"4\" r=\"2\"/><circle cx=\"20\" cy=\"12\" r=\"2\"/><circle cx=\"4\" cy=\"12\" r=\"2\"/>","message-circle":"<path d=\"M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719\"/>","zap":"<path d=\"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z\"/>","square-check":"<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"m9 12 2 2 4-4\"/>","calendar":"<path d=\"M8 2v4\"/><path d=\"M16 2v4\"/><rect width=\"18\" height=\"18\" x=\"3\" y=\"4\" rx=\"2\"/><path d=\"M3 10h18\"/>","palette":"<path d=\"M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z\"/><circle cx=\"13.5\" cy=\"6.5\" r=\".5\" fill=\"currentColor\"/><circle cx=\"17.5\" cy=\"10.5\" r=\".5\" fill=\"currentColor\"/><circle cx=\"6.5\" cy=\"12.5\" r=\".5\" fill=\"currentColor\"/><circle cx=\"8.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\"/>","users":"<path d=\"M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2\"/><path d=\"M16 3.128a4 4 0 0 1 0 7.744\"/><path d=\"M22 21v-2a4 4 0 0 0-3-3.87\"/><circle cx=\"9\" cy=\"7\" r=\"4\"/>","wallet":"<path d=\"M19 7V4a1 1 0 0 0-1-1H5a2 2 0 0 0 0 4h15a1 1 0 0 1 1 1v4h-3a2 2 0 0 0 0 4h3a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1\"/><path d=\"M3 5v14a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1v-4\"/>","rss":"<path d=\"M4 11a9 9 0 0 1 9 9\"/><path d=\"M4 4a16 16 0 0 1 16 16\"/><circle cx=\"5\" cy=\"19\" r=\"1\"/>","boxes":"<path d=\"M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0L12 19v-5.5l-5-3-4.03 2.42Z\"/><path d=\"m7 16.5-4.74-2.85\"/><path d=\"m7 16.5 5-3\"/><path d=\"M7 16.5v5.17\"/><path d=\"M12 13.5V19l3.97 2.38a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71L17 10.5l-5 3Z\"/><path d=\"m17 16.5-5-3\"/><path d=\"m17 16.5 4.74-2.85\"/><path d=\"M17 16.5v5.17\"/><path d=\"M7.97 4.42A2 2 0 0 0 7 6.13v4.37l5 3 5-3V6.13a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0l-3 1.8Z\"/><path d=\"M12 8 7.26 5.15\"/><path d=\"m12 8 4.74-2.85\"/><path d=\"M12 13.5V8\"/>","key-round":"<path d=\"M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z\"/><circle cx=\"16.5\" cy=\"7.5\" r=\".5\" fill=\"currentColor\"/>","settings":"<path d=\"M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/>","circle-check":"<circle cx=\"12\" cy=\"12\" r=\"10\"/><path d=\"m9 12 2 2 4-4\"/>","type":"<path d=\"M12 4v16\"/><path d=\"M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2\"/><path d=\"M9 20h6\"/>","file-pen":"<path d=\"M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34\"/><path d=\"M14 2v5a1 1 0 0 0 1 1h5\"/><path d=\"M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z\"/>","star":"<path d=\"M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z\"/>"};
+const ic = (n, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`;
+
+// ── The catalog ─────────────────────────────────────────────────────────────
+// status: ready | setup (needs something installed) | na (not on this machine)
+const CATS = [
+  { id: 'pdf',   name: 'PDF',               cls: 'pdf',   note: 'Sắp xếp, chỉnh và bảo vệ' },
+  { id: 'conv',  name: 'Chuyển đổi',        cls: 'conv',  note: 'Sang PDF và từ PDF' },
+  { id: 'img',   name: 'Ảnh',               cls: 'img',   note: 'Nén, đổi cỡ, tách nền' },
+  { id: 'media', name: 'Video và âm thanh', cls: 'media', note: 'Chạy bằng ffmpeg trong phòng kín' },
+];
+const TOOLS = [
+  { id:'merge', cat:'pdf', icon:'file-stack', name:'Gộp PDF', desc:'Ghép nhiều PDF thành một, theo thứ tự bạn sắp', accept:'pdf', min:2, verb:n=>`Gộp ${n} file` },
+  { id:'split', cat:'pdf', icon:'scissors', name:'Tách PDF', desc:'Theo khoảng trang, mỗi N trang, hoặc trang đã chọn', accept:'pdf', min:1, max:1, verb:()=>'Tách' },
+  { id:'organize', cat:'pdf', icon:'layout-grid', name:'Sắp xếp trang', desc:'Kéo để đổi thứ tự, xoay hoặc bỏ từng trang', accept:'pdf', min:1, max:1, verb:()=>'Lưu thứ tự mới' },
+  { id:'rotate', cat:'pdf', icon:'rotate-cw', name:'Xoay PDF', desc:'Xoay mọi trang hoặc từng trang', accept:'pdf', min:1, verb:()=>'Xoay' },
+  { id:'compress', cat:'pdf', icon:'minimize-2', name:'Nén PDF', desc:'Giảm dung lượng, chọn mức nén', accept:'pdf', min:1, verb:n=>n>1?`Nén ${n} file`:'Nén', status:'setup', need:'pack' },
+  { id:'watermark', cat:'pdf', icon:'stamp', name:'Watermark', desc:'Đóng chữ hoặc ảnh lên trang, có xem trước', accept:'pdf', min:1, verb:()=>'Đóng watermark' },
+  { id:'numbers', cat:'pdf', icon:'list-ordered', name:'Đánh số trang', desc:'Vị trí, kiểu số, bỏ qua trang bìa', accept:'pdf', min:1, verb:()=>'Đánh số' },
+  { id:'sign', cat:'pdf', icon:'pen-line', name:'Ký tên', desc:'Vẽ chữ ký hoặc dùng chữ ký đã lưu', accept:'pdf', min:1, max:1, verb:()=>'Ký' },
+  { id:'protect', cat:'pdf', icon:'lock', name:'Khoá PDF', desc:'Đặt mật khẩu mở file', accept:'pdf', min:1, verb:()=>'Khoá' },
+  { id:'unlock', cat:'pdf', icon:'lock-open', name:'Mở khoá PDF', desc:'Bỏ mật khẩu của file bạn có mật khẩu', accept:'pdf', min:1, verb:()=>'Mở khoá' },
+  { id:'ocr', cat:'pdf', icon:'scan-text', name:'Nhận dạng chữ', desc:'Biến PDF scan thành PDF tìm và chép được chữ', accept:'pdf', min:1, verb:()=>'Nhận dạng' },
+
+  { id:'word2pdf', cat:'conv', icon:'file-text', name:'Word → PDF', desc:'.docx, .doc, .odt, .rtf', accept:'doc', min:1, verb:()=>'Chuyển', status:'setup', need:'libreoffice' },
+  { id:'excel2pdf', cat:'conv', icon:'file-spreadsheet', name:'Excel → PDF', desc:'.xlsx, .xls, .ods, .csv', accept:'xls', min:1, verb:()=>'Chuyển', status:'setup', need:'libreoffice' },
+  { id:'ppt2pdf', cat:'conv', icon:'presentation', name:'PowerPoint → PDF', desc:'.pptx, .ppt, .odp', accept:'ppt', min:1, verb:()=>'Chuyển', status:'setup', need:'libreoffice' },
+  { id:'img2pdf', cat:'conv', icon:'file-image', name:'Ảnh → PDF', desc:'Mỗi ảnh một trang, chọn khổ giấy và lề', accept:'img', min:1, verb:n=>`Tạo PDF từ ${n} ảnh` },
+  { id:'pdf2word', cat:'conv', icon:'file-pen', name:'PDF → Word', desc:'Giữ đoạn, bảng và ảnh khi có thể', accept:'pdf', min:1, verb:()=>'Chuyển', status:'setup', need:'pack' },
+  { id:'pdf2img', cat:'conv', icon:'images', name:'PDF → Ảnh', desc:'Mỗi trang một ảnh PNG hoặc JPG', accept:'pdf', min:1, verb:()=>'Xuất ảnh' },
+  { id:'pdf2text', cat:'conv', icon:'type', name:'PDF → Văn bản', desc:'Lấy chữ ra file .txt hoặc .md', accept:'pdf', min:1, verb:()=>'Lấy chữ' },
+
+  { id:'removebg', cat:'img', icon:'eraser', name:'Tách nền', desc:'Giữ chủ thể, bỏ nền. Xử lý bằng Vision của macOS', accept:'img', min:1, verb:n=>n>1?`Tách nền ${n} ảnh`:'Tách nền' },
+  { id:'imgcompress', cat:'img', icon:'minimize-2', name:'Nén ảnh', desc:'JPG, PNG, WebP nhẹ hơn, nhìn như cũ', accept:'img', min:1, verb:n=>`Nén ${n} ảnh` },
+  { id:'resize', cat:'img', icon:'scaling', name:'Đổi cỡ ảnh', desc:'Theo pixel, phần trăm, hoặc cỡ có sẵn', accept:'img', min:1, verb:()=>'Đổi cỡ' },
+  { id:'crop', cat:'img', icon:'crop', name:'Cắt ảnh', desc:'Tự do hoặc theo tỉ lệ 1:1, 4:3, 16:9', accept:'img', min:1, max:1, verb:()=>'Cắt' },
+  { id:'imgconvert', cat:'img', icon:'repeat', name:'Đổi định dạng ảnh', desc:'HEIC, PNG, JPG, WebP qua lại', accept:'img', min:1, verb:()=>'Đổi' },
+  { id:'exif', cat:'img', icon:'eye-off', name:'Xoá thông tin ảnh', desc:'Bỏ vị trí GPS, máy chụp, giờ chụp trước khi gửi', accept:'img', min:1, verb:n=>`Làm sạch ${n} ảnh` },
+
+  { id:'video2gif', cat:'media', icon:'clapperboard', name:'Video → GIF', desc:'Chọn đoạn, cỡ và tốc độ khung hình', accept:'video', min:1, max:1, verb:()=>'Tạo GIF', status:'na', why:'Cần macOS 14 trở lên' },
+  { id:'vcompress', cat:'media', icon:'film', name:'Nén video', desc:'Giảm dung lượng để gửi qua chat', accept:'video', min:1, verb:()=>'Nén', status:'na', why:'Cần macOS 14 trở lên' },
+  { id:'extractaudio', cat:'media', icon:'audio-lines', name:'Tách âm thanh', desc:'Lấy tiếng từ video ra MP3 hoặc M4A', accept:'video', min:1, verb:()=>'Tách', status:'na', why:'Cần macOS 14 trở lên' },
+  { id:'aconvert', cat:'media', icon:'music', name:'Đổi định dạng âm thanh', desc:'MP3, M4A, WAV, FLAC, OGG', accept:'audio', min:1, verb:()=>'Đổi', status:'na', why:'Cần macOS 14 trở lên' },
+];
+const tool = id => TOOLS.find(t => t.id === id);
+const cat = id => CATS.find(c => c.id === id);
+
+// What the smart drop offers for a kind of file, best first.
+const SUGGEST = {
+  pdf:  ['merge','compress','split','watermark','numbers','pdf2word','organize','pdf2img','protect'],
+  img:  ['removebg','imgcompress','resize','img2pdf','imgconvert','exif','crop'],
+  doc:  ['word2pdf'],
+};
+
+const SAMPLE = {
+  pdf: [
+    { name:'Hop-dong-thue-nha-2026.pdf', pages:12, size:'2,1 MB', c:'#d93838' },
+    { name:'Phu-luc-A.pdf', pages:3, size:'640 KB', c:'#1a66cc' },
+    { name:'Bien-ban-ban-giao.pdf', pages:5, size:'1,4 MB', c:'#16a34a' },
+  ],
+  img: [
+    { name:'IMG_2041.HEIC', pages:0, size:'3,8 MB', c:'#7c3aed' },
+    { name:'san-pham-binh-gom.jpg', pages:0, size:'2,2 MB', c:'#c2410c' },
+  ],
+  doc: [ { name:'Bao-cao-quy-3.docx', pages:0, size:'480 KB', c:'#1a66cc' } ],
+};
+
+// ── State ──────────────────────────────────────────────────────────────────
+const S = {
+  view: 'home',          // home | tool
+  tool: null,
+  phase: 'empty',        // empty | loaded | running | done
+  files: [],
+  q: '',
+  catFilter: 'all',
+  pins: new Set(['merge','compress','removebg']),
+  recent: ['watermark','pdf2word','resize'],
+  sheet: null,           // { kind, files }
+  sheetIdx: 0,
+  dragAll: false,
+  setupState: {},        // libreoffice: missing | ok, pack: missing | installing | ok
+  progress: 0,
+  // tool options
+  o: { split:'ranges', ranges:'1-3, 4-8, 9-12', every:4, wmMode:'text', wmText:'BẢN NHÁP — KHÔNG LƯU HÀNH', wmSize:44, wmOpacity:22, wmRot:-35, wmPos:4, wmColor:'#d93838', level:1, bg:'transparent', ba:52, sel:new Set([2,3,7]) },
+  toast: null,
+};
+
+// ── Rendering helpers ──────────────────────────────────────────────────────
+function page(c = '#1a66cc', extra = '') {
+  return `<div class="pg" style="--c:${c}"><i class="h"></i><i></i><i></i><i class="s"></i><i></i><i></i><i class="s"></i><i></i><i></i><i class="s"></i>${extra}</div>`;
+}
+function chipIcon(t) { return `<span class="ic ${cat(t.cat).cls}">${ic(t.icon)}</span>`; }
+function statusTag(t) {
+  const st = effectiveStatus(t);
+  if (st === 'setup') return `<span class="tag t-setup">Cần cài</span>`;
+  if (st === 'na') return `<span class="tag t-na">${t.why}</span>`;
+  return '';
+}
+function effectiveStatus(t) {
+  if (t.status === 'setup' && S.setupState[t.need] === 'ok') return 'ready';
+  return t.status || 'ready';
+}
+
+function rail() {
+  const apps = ['waypoints','message-circle','zap','file-text','square-check','calendar','folder-open','palette','users','wallet','rss','boxes','key-round'];
+  return `<nav class="rail">${apps.map(a => `<button title="${a}">${ic(a)}</button>`).join('')}
+    <button class="on" title="Tiện ích">${ic('wrench')}</button><div class="sp"></div>
+    <button title="Đổi giao diện sáng tối (chỉ mockup)" onclick="toggleDark()">${ic(document.documentElement.classList.contains('dark') ? 'sun' : 'moon')}</button>
+    <button>${ic('settings')}</button></nav>`;
+}
+
+function sidebar() {
+  const pinned = [...S.pins].map(tool);
+  const counts = id => TOOLS.filter(t => t.cat === id).length;
+  return `<aside class="side">
+    <div class="top"><span class="badge">${ic('wrench')}</span><h2>Tiện ích</h2></div>
+    <label class="search">${ic('search')}<input id="q" placeholder="Tìm công cụ…" value="${S.q}" oninput="setQ(this.value)"><kbd>/</kbd></label>
+    <div class="sec">Đã ghim</div>
+    ${pinned.map(t => `<button class="nav ${S.view==='tool'&&S.tool===t.id?'on':''}" onclick="openTool('${t.id}')">${ic(t.icon)}${t.name}</button>`).join('')}
+    <div class="sec">Dùng gần đây</div>
+    ${S.recent.filter(id => !S.pins.has(id)).map(tool).map(t => `<button class="nav ${S.view==='tool'&&S.tool===t.id?'on':''}" onclick="openTool('${t.id}')">${ic(t.icon)}${t.name}</button>`).join('')}
+    <div class="sec">Nhóm</div>
+    <button class="nav ${S.view==='home'&&S.catFilter==='all'?'on':''}" onclick="goHome('all')">${ic('layout-grid')}Tất cả<span class="n">${TOOLS.length}</span></button>
+    ${CATS.map(c => `<button class="nav ${S.view==='home'&&S.catFilter===c.id?'on':''}" onclick="goHome('${c.id}')"><span class="dot" style="background:var(--c-${c.id})"></span>${c.name}<span class="n">${counts(c.id)}</span></button>`).join('')}
+    <div class="sec">Kết quả chưa lưu</div>
+    <button class="nav" onclick="showDone('merge')">${ic('file-stack')}<span>Hop-dong-day-du.pdf<span class="sub">Gộp PDF · tự xoá sau 21 giờ</span></span></button>
+    <button class="nav" onclick="showDone('removebg')">${ic('eraser')}<span>san-pham-binh-gom.png<span class="sub">Tách nền · tự xoá sau 3 giờ</span></span></button>
+    <div class="foot">${ic('info')}<span>Mọi việc chạy trên máy này. Không file nào được gửi lên mạng.</span></div>
+  </aside>`;
+}
+
+function header() {
+  if (S.view === 'home') {
+    return `<header><div class="navb"><button>${ic('chevron-left')}</button><button>${ic('chevron-right')}</button></div>
+      <div class="title"><span style="color:var(--accent-text)">${ic('wrench','lg')}</span><div><h1>Tiện ích</h1></div></div>
+      <div class="acts"><button class="btn p" onclick="pickAny()">${ic('upload')}Chọn file…</button></div></header>`;
+  }
+  const t = tool(S.tool);
+  const n = S.files.length;
+  const ok = S.phase === 'loaded' && n >= t.min && (!t.max || n <= t.max) && effectiveStatus(t) === 'ready';
+  const ready = effectiveStatus(t) === 'ready';
+  const primary = !ready ? '' : S.phase === 'done'
+    ? `<button class="btn s" onclick="redo()">${ic('undo-2')}Sửa và chạy lại</button>`
+    : `<button class="btn p" ${ok ? '' : 'disabled'} onclick="run()">${ic(t.icon)}${t.verb(n || 1)}</button>`;
+  return `<header><div class="navb"><button onclick="goHome()">${ic('chevron-left')}</button><button>${ic('chevron-right')}</button></div>
+    <div class="title"><span class="ic ${cat(t.cat).cls}" style="width:30px;height:30px;border-radius:8px;display:grid;place-items:center">${ic(t.icon)}</span>
+      <div style="min-width:0"><h1>${t.name}</h1></div><span class="subt">· ${t.desc}</span></div>
+    <div class="acts">${S.phase==='loaded'&&(!t.max||S.files.length<t.max)?`<button class="btn g" onclick="addMore()">${ic('plus')}Thêm file</button>`:''}${primary}</div></header>`;
+}
+
+// ── Home ───────────────────────────────────────────────────────────────────
+function home() {
+  const q = S.q.trim().toLowerCase();
+  const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/đ/g,'d');
+  const match = t => !q || fold((t.name+' '+t.desc+' '+t.id).toLowerCase()).includes(fold(q));
+  const cats = CATS.filter(c => S.catFilter === 'all' || S.catFilter === c.id);
+  let html = `<div class="home">
+    <div class="dropbar">${ic('folder-input','lg')}<div><b>Thả file vào bất cứ đâu trong Tiện ích</b><br>Synabit sẽ gợi ý việc làm được với loại file đó.</div>
+      <button class="btn s sm" onclick="simulateDrop('pdf')">Thử thả 3 PDF</button><button class="btn s sm" style="margin-left:0" onclick="simulateDrop('img')">Thử thả 2 ảnh</button></div>`;
+  let any = false;
+  for (const c of cats) {
+    const ts = TOOLS.filter(t => t.cat === c.id && match(t));
+    if (!ts.length) continue;
+    any = true;
+    html += `<section class="grp"><h3><span class="dot" style="background:var(--c-${c.id})"></span>${c.name} <small>${c.note}</small></h3><div class="grid">`;
+    for (const t of ts) {
+      const st = effectiveStatus(t);
+      html += `<button class="card ${st==='na'?'off':''}" onclick="openTool('${t.id}')" title="${st==='na'?t.why:''}">
+        <span class="ic ${c.cls}">${ic(t.icon,'lg')}</span>
+        <span style="min-width:0"><span class="nm">${t.name} ${statusTag(t)}</span><span class="ds" style="display:block">${t.desc}</span></span>
+        <span class="pin ${S.pins.has(t.id)?'on':''}" onclick="event.stopPropagation();togglePin('${t.id}')" title="${S.pins.has(t.id)?'Bỏ ghim':'Ghim lên thanh bên'}">${ic('star')}</span>
+      </button>`;
+    }
+    html += `</div></section>`;
+  }
+  if (!any) html += `<div class="empty-search">Không có công cụ nào khớp “${S.q}”.<br><span style="color:var(--text3);font-size:13px">Thử “gộp”, “nén”, “word”, “nền”.</span></div>`;
+  return html + `</div>`;
+}
+
+// ── A tool ─────────────────────────────────────────────────────────────────
+function toolView() {
+  const t = tool(S.tool);
+  const st = effectiveStatus(t);
+  if (st === 'setup') return setupView(t);
+  if (st === 'na') return `<div class="setup"><h2>${ic('info','lg')}${t.name} chưa có trên máy này</h2><p>${t.why}. Các công cụ video và âm thanh chạy ffmpeg trong phòng kín của Synabit, mà phòng kín cần macOS 14.</p><div class="row"><button class="btn s" onclick="goHome()">Về Tiện ích</button></div></div>`;
+  if (S.phase === 'done') return doneView(t);
+  return `<div class="tool"><div class="work" id="work">${S.phase==='empty' ? dropZone(t) : workspace(t)}${S.phase==='running'?runningVeil(t):''}</div>${S.phase==='empty'?'':`<aside class="opts">${options(t)}${outputOpts(t)}</aside>`}</div>`;
+}
+
+function dropZone(t) {
+  const kinds = { pdf:'PDF', img:'ảnh (JPG, PNG, HEIC, WebP)', doc:'tài liệu Word', xls:'bảng tính', ppt:'bài trình chiếu', video:'video', audio:'âm thanh' };
+  const many = !t.max || t.max > 1;
+  return `<div class="dz" id="dz" ondragover="event.preventDefault();this.classList.add('hot')" ondragleave="this.classList.remove('hot')" ondrop="event.preventDefault();load()">
+    <span class="big ic ${cat(t.cat).cls}">${ic(t.icon)}</span>
+    <h2>${many ? 'Chọn' : 'Chọn một'} ${kinds[t.accept].split(' (')[0]}</h2>
+    <p>hoặc kéo thả vào đây${t.min > 1 ? ` · cần ít nhất ${t.min} file` : ''}</p>
+    <div class="row"><button class="btn p" onclick="load()">${ic('upload')}Chọn file…</button><button class="btn s" onclick="load()">${ic('folder-open')}Chọn từ Tệp</button></div>
+    <div class="fine">Nhận ${kinds[t.accept]}. File gốc không bao giờ bị thay đổi.</div>
+  </div>`;
+}
+
+function workspace(t) {
+  if (t.id === 'split' || t.id === 'organize') return pageGrid(t);
+  if (t.id === 'watermark') return watermarkPreview();
+  if (t.id === 'removebg') return beforeAfter();
+  const total = S.files.reduce((a, f) => a + (f.pages || 0), 0);
+  const kind = t.accept === 'img' ? 'ảnh' : 'file';
+  return `<div class="worktop">${S.files.length} ${kind}${total ? ` · ${total} trang` : ''}${t.id==='merge'?' · kéo để đổi thứ tự':''}<span class="sp"></span><button class="btn g sm" onclick="sortFiles()">Sắp theo tên</button><button class="btn g sm" onclick="clearFiles()">Bỏ hết</button></div>
+    <div class="files" id="files">${S.files.map((f, i) => `
+      <div class="fc" draggable="true" data-i="${i}" ondragstart="dragStart(event,${i})" ondragover="dragOver(event,${i})" ondragleave="this.classList.remove('over')" ondrop="dropOn(event,${i})" ondragend="dragEnd()">
+        ${t.id==='merge'?`<span class="ord">${i+1}</span>`:''}<button class="rm" title="Bỏ file này" onclick="removeFile(${i})">${ic('x')}</button>
+        ${f.pages ? page(f.c) : `<div class="pg" style="padding:0;aspect-ratio:1;background:linear-gradient(135deg,${f.c}33,${f.c}aa)"></div>`}
+        <div class="nm" title="${f.name}">${f.name}</div><div class="mt">${f.pages ? f.pages + ' trang · ' : ''}${f.size}</div>
+      </div>`).join('')}
+      <button class="addc" onclick="addMore()">${ic('plus','lg')}<span>Thêm file</span></button>
+    </div>`;
+}
+
+function pageGrid(t) {
+  const n = 12;
+  const groups = splitGroups();
+  let html = `<div class="worktop">${S.files[0].name} · ${n} trang<span class="sp"></span>${t.id==='split'&&S.o.split==='pick'?`<span>${S.o.sel.size} trang đã chọn</span><button class="btn g sm" onclick="S.o.sel=new Set();render()">Bỏ chọn</button>`:''}</div><div class="pages">`;
+  for (let p = 1; p <= n; p++) {
+    const g = groups.findIndex(r => p >= r[0] && p <= r[1]);
+    const sel = S.o.split === 'pick' && S.o.sel.has(p);
+    const cut = S.o.split !== 'pick' && groups.some(r => r[1] === p) && p < n;
+    html += `<div class="pc ${sel?'sel':''} ${S.o.split!=='pick'&&g>=0?'grp'+(g%3+1):''}" onclick="pickPage(${p})">
+      ${page(p===1?'#d93838':'#71717a')}${S.o.split==='pick'?`<span class="ck">${sel?ic('check'):''}</span>`:''}${cut?`<span class="cut" title="Cắt ở đây">${ic('scissors')}</span>`:''}<div style="margin-top:5px">${p}</div></div>`;
+  }
+  return html + `</div>`;
+}
+function splitGroups() {
+  if (S.o.split === 'every') { const g=[]; for (let s=1;s<=12;s+=+S.o.every||1) g.push([s,Math.min(12,s+(+S.o.every||1)-1)]); return g; }
+  if (S.o.split === 'pick') return [];
+  return S.o.ranges.split(',').map(s => s.trim()).filter(Boolean).map(s => { const [a,b] = s.split('-').map(Number); return [a, b || a]; }).filter(r => r[0] >= 1 && r[1] <= 12 && r[0] <= r[1]);
+}
+
+function watermarkPreview() {
+  const o = S.o;
+  const pos = ['flex-start','center','flex-end'];
+  const wm = o.wmMode === 'text'
+    ? `<div class="wm" style="align-items:${pos[Math.floor(o.wmPos/3)]};justify-content:${pos[o.wmPos%3]};padding:8%"><span style="transform:rotate(${o.wmRot}deg);opacity:${o.wmOpacity/100};font-size:${o.wmSize*0.42}px;color:${o.wmColor}">${o.wmText}</span></div>`
+    : `<div class="wm" style="align-items:${pos[Math.floor(o.wmPos/3)]};justify-content:${pos[o.wmPos%3]};padding:8%"><span style="opacity:${o.wmOpacity/100};transform:rotate(${o.wmRot}deg);display:grid;place-items:center;width:38%;aspect-ratio:1;border-radius:50%;border:6px solid ${o.wmColor};color:${o.wmColor};font-size:13px">LOGO</span></div>`;
+  const small = wm.replace(/font-size:[\d.]+px/, `font-size:${o.wmSize*0.08}px`).replace('font-size:13px','font-size:4px').replace('border:6px','border:2px');
+  return `<div class="worktop">Xem trước trang 1 · ${S.files.reduce((a,f)=>a+f.pages,0)} trang trong ${S.files.length} file sẽ được đóng<span class="sp"></span></div>
+    <div class="preview"><div class="big">${page('#d93838', wm)}</div>
+    <div class="thumbs">${[1,2,3].map(()=>page('#71717a', small)).join('')}<div style="font-size:12px;color:var(--text3);text-align:center">+${S.files.reduce((a,f)=>a+f.pages,0)-3} trang</div></div></div>`;
+}
+
+function subject(dim) {
+  // A ceramic vase, drawn, so the mockup needs no photo.
+  return `<svg viewBox="0 0 400 300" style="position:absolute;inset:0;width:100%;height:100%">
+    <ellipse cx="200" cy="262" rx="70" ry="10" fill="rgb(0 0 0/${dim?0:.18})"/>
+    <path d="M170 70 h60 v18 c0 14 34 30 40 80 c6 50 -20 90 -70 92 c-50 -2 -76 -42 -70 -92 c6 -50 40 -66 40 -80z" fill="#c2410c"/>
+    <path d="M150 150 c30 12 70 12 100 0" stroke="#fde68a" stroke-width="6" fill="none"/>
+    <path d="M147 182 c34 12 72 12 106 0" stroke="#fde68a" stroke-width="3" fill="none"/>
+    <path d="M200 70 c-6 -30 -30 -40 -44 -46 M200 70 c4 -30 24 -44 42 -50 M200 70 c0 -24 0 -40 -2 -56" stroke="#15803d" stroke-width="5" fill="none" stroke-linecap="round"/>
+    <circle cx="156" cy="24" r="9" fill="#ec4899"/><circle cx="242" cy="20" r="9" fill="#f59e0b"/><circle cx="198" cy="12" r="9" fill="#ef4444"/></svg>`;
+}
+function beforeAfter() {
+  const o = S.o;
+  const bgs = { transparent:'', white:'background:#fff', black:'background:#111', blue:'background:#dbeafe', green:'background:#dcfce7' };
+  return `<div class="worktop">${S.files[0].name} · kéo thanh giữa để so trước và sau<span class="sp"></span>${S.files.length>1?`<span>Ảnh 1 / ${S.files.length}</span><button class="ib">${ic('chevron-left')}</button><button class="ib">${ic('chevron-right')}</button>`:''}</div>
+    <div class="ba" id="ba" onpointerdown="baDown(event)">
+      <div class="l" style="background:linear-gradient(160deg,#a8a29e,#57534e 60%,#292524)"><div style="position:absolute;left:8%;top:12%;width:30%;height:44%;background:#d6d3d1;opacity:.35;border-radius:4px"></div>${subject(false)}</div>
+      <div class="l ${o.bg==='transparent'?'checker':''}" style="${bgs[o.bg]};clip-path:inset(0 0 0 ${o.ba}%)">${subject(true)}</div>
+      <span class="lab" style="left:10px">Trước</span><span class="lab" style="right:10px">Sau</span>
+      <div class="handle" style="left:${o.ba}%"><span>${ic('grip-vertical')}</span></div>
+    </div>`;
+}
+
+function runningVeil(t) {
+  const n = S.files.length;
+  return `<div class="veil"><div class="prog"><b>${t.verb(n).replace(/^\S+/, w => 'Đang ' + w.toLowerCase())}…</b>
+    <div class="bar"><div style="width:${S.progress}%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--text2)"><span>${t.id==='merge'?`Trang ${Math.round(S.progress*0.2)} / 20`:`${Math.min(n, Math.ceil(S.progress/100*n))} / ${n}`}</span><button class="btn g sm" onclick="cancel()">Huỷ</button></div></div></div>`;
+}
+
+// ── Options per tool ───────────────────────────────────────────────────────
+function options(t) {
+  const o = S.o;
+  switch (t.id) {
+    case 'merge': return `<div class="o"><h4>Tuỳ chọn</h4>
+      <label class="row"><input type="checkbox" checked> Giữ mục lục (bookmark) của từng file</label>
+      <label class="row"><input type="checkbox"> Thêm mục lục theo tên file</label>
+      <label class="row"><input type="checkbox"> Chèn trang trắng giữa các file</label></div>`;
+    case 'split': {
+      const g = splitGroups();
+      const count = o.split === 'pick' ? (o.sel.size ? 1 : 0) : g.length;
+      return `<div class="o"><h4>Tách theo</h4><div class="seg">
+        <button class="${o.split==='ranges'?'on':''}" onclick="setO('split','ranges')">Khoảng</button>
+        <button class="${o.split==='every'?'on':''}" onclick="setO('split','every')">Mỗi N trang</button>
+        <button class="${o.split==='pick'?'on':''}" onclick="setO('split','pick')">Chọn trang</button></div>
+        ${o.split==='ranges'?`<div style="margin-top:12px"><input class="field" value="${o.ranges}" oninput="S.o.ranges=this.value;renderWork()"><div class="hint">Ví dụ: 1-3, 4-8, 9-12. Mỗi khoảng là một file.</div></div>`:''}
+        ${o.split==='every'?`<div style="margin-top:12px" class="range"><input type="range" min="1" max="6" value="${o.every}" oninput="S.o.every=+this.value;renderWork();this.nextElementSibling.textContent=this.value+' tr'"><span>${o.every} tr</span></div>`:''}
+        ${o.split==='pick'?`<div class="hint" style="margin-top:10px">Bấm vào trang để chọn. Các trang đã chọn thành một file mới. Giữ ⇧ để chọn một dải.</div>`:''}
+      </div><div class="o"><h4>Sẽ tạo</h4><div style="font-weight:600">${count} file PDF</div>
+        <div class="hint">${o.split==='pick'?[...o.sel].sort((a,b)=>a-b).join(', ')||'Chưa chọn trang nào':g.map(r=>r[0]===r[1]?`trang ${r[0]}`:`trang ${r[0]}–${r[1]}`).join(' · ')}</div>
+        ${count>1?`<label class="row"><input type="checkbox" checked> Gói thành một file .zip</label>`:''}</div>`;
+    }
+    case 'organize': return `<div class="o"><h4>Thao tác</h4><div class="hint" style="margin-top:0">Kéo trang để đổi chỗ. Rê chuột lên trang để xoay hoặc bỏ. Chọn nhiều trang bằng ⌘ hoặc ⇧.</div>
+      <div style="display:flex;gap:6px;margin-top:10px"><button class="btn s sm">${ic('rotate-cw')}Xoay</button><button class="btn s sm">${ic('trash-2')}Bỏ</button><button class="btn s sm">${ic('plus')}Trang trắng</button></div></div>`;
+    case 'watermark': return `<div class="o"><h4>Kiểu</h4><div class="seg"><button class="${o.wmMode==='text'?'on':''}" onclick="setO('wmMode','text')">${ic('type')} Chữ</button><button class="${o.wmMode==='image'?'on':''}" onclick="setO('wmMode','image')">${ic('image')} Ảnh</button></div>
+        ${o.wmMode==='text'?`<input class="field" style="margin-top:10px" value="${o.wmText}" oninput="S.o.wmText=this.value;renderWork()">`:`<button class="btn s sm" style="margin-top:10px;width:100%">${ic('upload')}Chọn logo (PNG trong suốt)</button>`}
+        <div class="swatches" style="margin-top:10px">${['#d93838','#1c1c1e','#71717a','#1a66cc','#16a34a'].map(c=>`<button class="sw ${o.wmColor===c?'on':''}" style="background:${c}" onclick="setO('wmColor','${c}')"></button>`).join('')}</div></div>
+      <div class="o"><h4>Vị trí</h4><div style="display:flex;gap:18px;align-items:flex-start"><div class="pos">${[...Array(9)].map((_,i)=>`<button class="${o.wmPos===i?'on':''}" onclick="setO('wmPos',${i})"></button>`).join('')}</div>
+        <div style="flex:1"><label class="row" style="margin-top:0"><input type="checkbox"> Lặp kín trang</label><label class="row"><input type="checkbox" checked> Nằm dưới chữ</label></div></div></div>
+      <div class="o"><h4>Hiển thị</h4>
+        ${o.wmMode==='text'?`<div class="hint" style="margin:0 0 2px">Cỡ chữ</div><div class="range"><input type="range" min="16" max="80" value="${o.wmSize}" oninput="liveO('wmSize',this)"><span>${o.wmSize}</span></div>`:''}
+        <div class="hint" style="margin:8px 0 2px">Độ đậm</div><div class="range"><input type="range" min="5" max="100" value="${o.wmOpacity}" oninput="liveO('wmOpacity',this,'%')"><span>${o.wmOpacity}%</span></div>
+        <div class="hint" style="margin:8px 0 2px">Góc xoay</div><div class="range"><input type="range" min="-90" max="90" value="${o.wmRot}" oninput="liveO('wmRot',this,'°')"><span>${o.wmRot}°</span></div></div>
+      <div class="o"><h4>Trang</h4><div class="seg"><button class="on">Tất cả</button><button>Trừ trang 1</button><button>Chọn…</button></div></div>`;
+    case 'compress': return `<div class="o"><h4>Mức nén</h4><div class="levels">
+      ${[['Nhẹ','−20%','Gần như không đổi. Hợp để lưu trữ.'],['Vừa','−60%','Ảnh còn rõ khi xem trên màn hình. Đề xuất.'],['Mạnh','−85%','Ảnh mờ đi. Hợp để gửi qua chat.']].map(([a,b,c],i)=>`<button class="level ${o.level===i?'on':''}" onclick="setO('level',${i})"><b>${a}<small>${b}</small></b><p>${c}</p></button>`).join('')}</div>
+      <div class="hint">Ước tính trên 4,1 MB của ${S.files.length} file. Số thật có sau khi nén.</div></div>`;
+    case 'removebg': {
+      const bgs = [['transparent','checker',''],['white','','#fff'],['black','','#111'],['blue','','#dbeafe'],['green','','#dcfce7']];
+      return `<div class="o"><h4>Nền mới</h4><div class="swatches">${bgs.map(([k,c,v])=>`<button class="sw ${c} ${o.bg===k?'on':''}" style="${v?'background:'+v:''}" title="${k==='transparent'?'Trong suốt':''}" onclick="setO('bg','${k}')"></button>`).join('')}<button class="sw" style="display:grid;place-items:center" title="Ảnh khác làm nền">${ic('image')}</button></div>
+        <div class="hint">Trong suốt thì lưu PNG. Có màu nền thì chọn được JPG.</div></div>
+      <div class="o"><h4>Chủ thể</h4><label class="row"><input type="radio" name="subj" checked> Mọi chủ thể Vision thấy</label><label class="row"><input type="radio" name="subj"> Chỉ chủ thể lớn nhất</label>
+        <label class="row"><input type="checkbox" checked> Cắt sát chủ thể</label></div>`;
+    }
+    case 'img2pdf': return `<div class="o"><h4>Trang</h4><div class="seg"><button class="on">A4</button><button>Letter</button><button>Vừa ảnh</button></div>
+      <div class="seg" style="margin-top:8px"><button class="on">Dọc</button><button>Ngang</button><button>Tự động</button></div>
+      <div class="hint" style="margin:10px 0 2px">Lề</div><div class="seg"><button>Không</button><button class="on">Nhỏ</button><button>Vừa</button></div></div>`;
+    case 'resize': return `<div class="o"><h4>Cỡ mới</h4><div class="seg"><button class="on">Pixel</button><button>Phần trăm</button><button>Có sẵn</button></div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center"><input class="field" value="1600"> × <input class="field" value="1200"></div>
+      <label class="row"><input type="checkbox" checked> Giữ tỉ lệ</label><label class="row"><input type="checkbox" checked> Không phóng to ảnh nhỏ hơn</label></div>`;
+    default: return `<div class="o"><h4>Tuỳ chọn</h4><div class="hint" style="margin:0">Công cụ này chưa có màn tuỳ chọn trong mockup. Khung chung giống các công cụ khác.</div></div>`;
+  }
+}
+function outputOpts(t) {
+  const n = S.files.length;
+  const suffix = { merge:'-gop', split:'-phan-{n}', compress:'-nen', watermark:'-watermark', removebg:'-tach-nen', organize:'-sap-xep', img2pdf:'' }[t.id] ?? '-' + t.id;
+  const name = t.id === 'merge' ? 'Hop-dong-thue-nha-2026-gop.pdf' : (S.files[0]?.name.replace(/\.[^.]+$/, '') || 'file') + suffix + (t.id==='removebg'?'.png':'.pdf');
+  return `<div class="o out"><h4>Đầu ra</h4>
+    <div class="hint" style="margin:0 0 4px">Tên file</div><input class="field" value="${name}">
+    <div class="hint">File gốc giữ nguyên. Kết quả chờ bạn lưu${n>1&&t.id!=='merge'?`, ${n} file`:''}.</div></div>`;
+}
+
+// ── Setup needed ───────────────────────────────────────────────────────────
+function setupView(t) {
+  if (t.need === 'libreoffice') {
+    const checking = S.setupState.libreoffice === 'checking';
+    return `<div class="setup"><h2><span class="ic ${cat(t.cat).cls}" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center">${ic(t.icon)}</span>${t.name} cần LibreOffice</h2>
+      <p>Synabit dùng LibreOffice để dựng trang của tài liệu Office, nhưng không chở nó theo: bản cài nặng gần 1 GB. Máy này chưa có.</p>
+      <ol><li>Tải LibreOffice từ libreoffice.org (khoảng 300 MB).</li><li>Kéo vào thư mục Applications như mọi app.</li><li>Quay lại đây, bấm Kiểm tra lại.</li></ol>
+      <div class="note">${ic('info')}<span>Tài liệu được mở trong phòng kín của Synabit, không có mạng và không thấy file nào khác. Một file Word lạ không làm gì được máy bạn.</span></div>
+      <div class="row"><button class="btn p">${ic('external-link')}Mở trang tải</button><button class="btn s" onclick="checkLO()">${checking?ic('loader-circle'):ic('repeat')}${checking?'Đang tìm…':'Kiểm tra lại'}</button></div>
+      <p style="font-size:12px;color:var(--text3);margin-top:14px">Cùng cần LibreOffice: Word → PDF, Excel → PDF, PowerPoint → PDF.</p></div>`;
+  }
+  const st = S.setupState.pack;
+  return `<div class="setup"><h2><span class="ic ${cat(t.cat).cls}" style="width:34px;height:34px;border-radius:9px;display:grid;place-items:center">${ic(t.icon)}</span>${t.name} cần cài thêm một lần</h2>
+    <p>Bộ chuyển đổi PDF (pdf2docx, pikepdf) nặng khoảng 60 MB, tải một lần rồi dùng không cần mạng.</p>
+    ${st==='installing'?`<div class="bar"><div style="width:${S.progress}%"></div></div><div style="font-size:12.5px;color:var(--text2)">Đang tải… ${Math.round(S.progress*0.6)} / 60 MB</div>`:''}
+    <div class="note" style="margin-top:12px">${ic('info')}<span>Cài vào thư mục riêng của Synabit, không đụng tới Python hay thư viện nào trên máy bạn. Gỡ được trong Cài đặt.</span></div>
+    <div class="row">${st==='installing'?`<button class="btn s" disabled>Đang cài…</button>`:`<button class="btn p" onclick="installPack()">${ic('hard-drive-download')}Cài (60 MB)</button><button class="btn g" onclick="goHome()">Để sau</button>`}</div>
+    <p style="font-size:12px;color:var(--text3);margin-top:14px">Cùng cần bộ này: PDF → Word, Nén PDF.</p></div>`;
+}
+
+// ── Done ───────────────────────────────────────────────────────────────────
+function doneView(t) {
+  const next = { merge:['compress','watermark','numbers','protect','split'], removebg:['imgcompress','resize','img2pdf'], split:['compress','merge'], watermark:['compress','protect'], compress:['protect','watermark'], organize:['compress','watermark'] }[t.id] || ['compress'];
+  const fromVault = t.id === 'merge';
+  let card;
+  if (t.id === 'split') {
+    const g = splitGroups();
+    card = `<div class="multi">${g.map((r,i)=>`<div class="mrow">${page('#71717a')}<span class="nm">Hop-dong-thue-nha-2026-phan-${i+1}.pdf</span><span class="mt">trang ${r[0]}–${r[1]} · ${(r[1]-r[0]+1)*170} KB</span><button class="ib" title="Mở">${ic('external-link')}</button></div>`).join('')}</div>
+      <div class="saving" style="margin-top:14px"><button class="btn p" onclick="saved('Đã lưu ${g.length} file vào Tải về')">${ic('folder-open')}Lưu tất cả vào thư mục…</button><button class="btn s" onclick="saved('Đã lưu file .zip')">${ic('download')}Lưu thành .zip</button></div>`;
+  } else {
+    const isImg = t.id === 'removebg';
+    const name = { merge:'Hop-dong-day-du.pdf', removebg:'san-pham-binh-gom.png', watermark:'Hop-dong-thue-nha-2026-watermark.pdf', compress:'Hop-dong-thue-nha-2026-nen.pdf' }[t.id] || 'ket-qua.pdf';
+    const meta = { merge:'20 trang · 4,1 MB · từ 3 file', removebg:'1600 × 1200 · PNG trong suốt · 1,1 MB', watermark:'20 trang · 4,2 MB', compress:`20 trang · <span class="delta">4,1 MB → 1,6 MB (−61%)</span>` }[t.id] || '';
+    const thumb = isImg ? `<div class="checker" style="position:relative;width:180px;aspect-ratio:4/3;border-radius:8px;overflow:hidden;flex-shrink:0;border:1px solid var(--border)">${subject(true)}</div>` : page('#d93838');
+    card = `<div class="rcard">${thumb}<div class="meta">
+      <div class="fn">${ic(isImg?'image':'file-text')}<input value="${name}" title="Đổi tên trước khi lưu"></div>
+      <div style="color:var(--text2)">${meta}</div>
+      <div class="temp">${ic('clock')}Chưa lưu. Tự xoá sau 24 giờ nếu bạn không lưu.</div>
+      <div class="saving">
+        ${fromVault?`<button class="btn p" onclick="saved('Đã lưu cạnh file gốc trong vault: Hợp đồng/')">${ic('save')}Lưu cạnh file gốc</button><button class="btn s" onclick="saved('Đã lưu vào Tải về')">${ic('download')}Lưu ra…</button>`
+                   :`<button class="btn p" onclick="saved('Đã lưu vào Tải về')">${ic('download')}Lưu…</button><button class="btn s" onclick="saved('Đã thêm vào vault, mở trong Tệp')">${ic('folder-input')}Thêm vào vault</button>`}
+        <button class="btn g">${ic('external-link')}Mở</button><button class="btn g" title="Chép file để dán vào chat, mail">${ic('copy')}Chép</button>
+      </div></div></div>`;
+  }
+  return `<div class="work"><div class="result">
+    <div class="rhead"><span class="ok">${ic('check')}</span><h2>Xong${t.id==='compress'?', nhẹ hơn 61%':''}</h2><span style="color:var(--text3);font-size:13px">trong 1,4 giây</span></div>
+    ${card}
+    <div class="next"><h4>Dùng tiếp với kết quả này</h4><div class="chips">${next.map(id=>tool(id)).map(n=>`<button class="chip" onclick="chain('${n.id}')">${chipIcon(n)}${n.name}</button>`).join('')}</div>
+    <div class="hint" style="font-size:12px;color:var(--text3);margin-top:8px">Kết quả đi thẳng sang công cụ kế tiếp, không cần lưu ra rồi chọn lại.</div></div>
+  </div></div>`;
+}
+
+// ── Smart drop sheet ───────────────────────────────────────────────────────
+function sheet() {
+  if (!S.sheet) return '';
+  const { kind, files } = S.sheet;
+  const ids = SUGGEST[kind].filter(id => { const t = tool(id); return files.length >= t.min && (!t.max || files.length <= t.max) || id==='split'; });
+  const label = { pdf:'PDF', img:'ảnh', doc:'tài liệu' }[kind];
+  return `<div class="scrim" onclick="if(event.target===this){S.sheet=null;render()}"><div class="sheet" role="dialog">
+    <div class="hd"><h2>Làm gì với ${files.length} ${label} này?</h2><button class="ib" onclick="S.sheet=null;render()">${ic('x')}</button></div>
+    <div class="fl">${files.map(f=>`<span class="fchip">${ic(kind==='img'?'image':'file-text')}${f.name}</span>`).join('')}</div>
+    <div class="sugg">${ids.map((id,i)=>{const t=tool(id);return `<button class="sg ${i===S.sheetIdx?'kb':''}" onclick="fromSheet('${id}')">
+      <span class="ic ${cat(t.cat).cls}">${ic(t.icon)}</span><span class="t"><b>${t.id==='split'&&files.length>1?'Tách từng file':t.name} ${statusTag(t)}</b><span>${t.desc}</span></span>${i<9?`<kbd>${i+1}</kbd>`:''}</button>`}).join('')}</div>
+    <div class="ft"><span>↑↓ để chọn · ↵ để mở · số để mở nhanh</span><span>Sắp theo việc bạn hay làm với ${label}</span></div></div></div>`;
+}
+
+// ── Render ─────────────────────────────────────────────────────────────────
+function render() {
+  const active = document.activeElement?.id;
+  document.getElementById('app').innerHTML = `<div class="shell">${rail()}${sidebar()}<div class="main">${header()}<div class="body">${S.view==='home'?home():toolView()}</div></div></div>
+    ${sheet()}${S.dragAll?`<div class="dropall">Thả để xem làm được gì</div>`:''}
+    ${S.toast?`<div class="toast">${ic('circle-check')}${S.toast}<button>Hiện trong Finder</button></div>`:''}
+    <div class="demo"><span>Mockup ▸</span><button onclick="resetAll()">Về đầu</button><button onclick="openTool('word2pdf')">Cần LibreOffice</button><button onclick="openTool('pdf2word')">Cần cài gói</button><button onclick="openTool('split');load()">Tách PDF</button><button onclick="openTool('watermark');load()">Watermark</button><button onclick="openTool('removebg');load()">Tách nền</button><button onclick="openTool('compress');load()">Nén PDF</button></div>`;
+  if (active === 'q') { const q = document.getElementById('q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+}
+function renderWork() { const w = document.getElementById('work'); if (w) { w.innerHTML = workspace(tool(S.tool)); const opts = document.querySelector('.opts'); if (opts && S.tool==='split') { opts.innerHTML = options(tool(S.tool)) + outputOpts(tool(S.tool)); } } }
+
+// ── Actions ────────────────────────────────────────────────────────────────
+function goHome(c) { S.view = 'home'; if (c) S.catFilter = c; S.tool = null; render(); }
+function setQ(v) { S.q = v; S.view = 'home'; render(); }
+function openTool(id) {
+  S.view = 'tool'; S.tool = id; S.phase = 'empty'; S.files = [];
+  S.recent = [id, ...S.recent.filter(x => x !== id)].slice(0, 3);
+  render();
+}
+function kindOf(t) { return t.accept === 'pdf' ? 'pdf' : t.accept === 'img' ? 'img' : 'doc'; }
+function load() {
+  const t = tool(S.tool);
+  let fs = SAMPLE[kindOf(t)].map(f => ({ ...f }));
+  if (t.max) fs = fs.slice(0, t.max);
+  if (t.id === 'split' || t.id === 'organize') fs = [{ ...SAMPLE.pdf[0] }];
+  S.files = fs; S.phase = 'loaded'; render();
+}
+function addMore() {
+  const t = tool(S.tool);
+  const extra = t.accept === 'img' ? { name:'chan-dung.png', pages:0, size:'1,9 MB', c:'#0891b2' } : { name:'Giay-uy-quyen.pdf', pages:2, size:'310 KB', c:'#7c3aed' };
+  if (t.max && S.files.length >= t.max) return;
+  S.files.push(extra); render();
+}
+function removeFile(i) { S.files.splice(i, 1); if (!S.files.length) S.phase = 'empty'; render(); }
+function clearFiles() { S.files = []; S.phase = 'empty'; render(); }
+function sortFiles() { S.files.sort((a, b) => a.name.localeCompare(b.name)); render(); }
+let dragI = null;
+function dragStart(e, i) { dragI = i; e.currentTarget.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; }
+function dragOver(e, i) { e.preventDefault(); e.stopPropagation(); if (i !== dragI) e.currentTarget.classList.add('over'); }
+function dropOn(e, i) { e.preventDefault(); e.stopPropagation(); if (dragI === null || dragI === i) return; const [f] = S.files.splice(dragI, 1); S.files.splice(i, 0, f); dragI = null; render(); }
+function dragEnd() { dragI = null; render(); }
+function run() {
+  S.phase = 'running'; S.progress = 0; render();
+  const step = () => { if (S.phase !== 'running') return; S.progress += 7 + Math.random() * 9; if (S.progress >= 100) { S.progress = 100; S.phase = 'done'; render(); return; } render(); setTimeout(step, 110); };
+  setTimeout(step, 110);
+}
+function cancel() { S.phase = 'loaded'; render(); }
+function redo() { S.phase = 'loaded'; render(); }
+function showDone(id) { openTool(id); load(); S.phase = 'done'; render(); }
+function chain(id) {
+  const t = tool(id);
+  S.view = 'tool'; S.tool = id; S.phase = 'loaded';
+  S.files = t.accept === 'img' ? [{ name:'san-pham-binh-gom.png', pages:0, size:'1,1 MB', c:'#c2410c' }] : [{ name:'Hop-dong-day-du.pdf', pages:20, size:'4,1 MB', c:'#d93838' }];
+  render();
+}
+function saved(msg) { S.toast = msg; render(); clearTimeout(saved.t); saved.t = setTimeout(() => { S.toast = null; render(); }, 2600); }
+function setO(k, v) { S.o[k] = v; render(); }
+function liveO(k, el, unit = '') { S.o[k] = +el.value; el.nextElementSibling.textContent = el.value + unit; renderWork(); }
+function togglePin(id) { S.pins.has(id) ? S.pins.delete(id) : S.pins.add(id); render(); }
+function pickPage(p) {
+  if (S.tool !== 'split' || S.o.split !== 'pick') return;
+  S.o.sel.has(p) ? S.o.sel.delete(p) : S.o.sel.add(p); render();
+}
+function simulateDrop(kind) { S.sheet = { kind, files: SAMPLE[kind] }; S.sheetIdx = 0; render(); }
+function fromSheet(id) {
+  const files = S.sheet.files; S.sheet = null;
+  openTool(id);
+  const t = tool(id);
+  if (effectiveStatus(t) === 'ready') { S.files = files.map(f => ({ ...f })).slice(0, t.max || 99); S.phase = 'loaded'; }
+  render();
+}
+function pickAny() { simulateDrop('pdf'); }
+function checkLO() { S.setupState.libreoffice = 'checking'; render(); setTimeout(() => { S.setupState.libreoffice = 'ok'; render(); }, 900); }
+function installPack() {
+  S.setupState.pack = 'installing'; S.progress = 0; render();
+  const step = () => { S.progress += 6 + Math.random() * 8; if (S.progress >= 100) { S.setupState.pack = 'ok'; render(); return; } render(); setTimeout(step, 120); };
+  setTimeout(step, 120);
+}
+let baDrag = false;
+function baDown(e) { baDrag = true; baMove(e); }
+function baMove(e) { if (!baDrag) return; const r = document.getElementById('ba')?.getBoundingClientRect(); if (!r) return; S.o.ba = Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100)); renderWork(); }
+addEventListener('pointermove', baMove); addEventListener('pointerup', () => baDrag = false);
+function toggleDark() { document.documentElement.classList.toggle('dark'); render(); }
+function resetAll() { Object.assign(S, { view:'home', tool:null, phase:'empty', files:[], q:'', catFilter:'all', sheet:null, setupState:{} }); render(); }
+
+// A file dragged in from the desktop, anywhere on the home screen.
+let dragDepth = 0;
+addEventListener('dragenter', e => { if (e.dataTransfer?.types.includes('Files') && S.view === 'home') { dragDepth++; S.dragAll = true; render(); } });
+addEventListener('dragleave', e => { if (S.dragAll && --dragDepth <= 0) { S.dragAll = false; render(); } });
+addEventListener('dragover', e => { if (S.dragAll) e.preventDefault(); });
+addEventListener('drop', e => { if (!S.dragAll) return; e.preventDefault(); dragDepth = 0; S.dragAll = false; const n = [...e.dataTransfer.files]; const img = n.length && n.every(f => f.type.startsWith('image/')); simulateDrop(img ? 'img' : 'pdf'); });
+addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement?.tagName !== 'INPUT') { e.preventDefault(); document.getElementById('q')?.focus(); }
+  if (e.key === 'Escape') { if (S.sheet) { S.sheet = null; render(); } else if (S.view === 'tool') goHome(); }
+  if (S.sheet) {
+    const items = document.querySelectorAll('.sg');
+    if (e.key === 'ArrowDown') { S.sheetIdx = Math.min(items.length - 1, S.sheetIdx + 1); render(); }
+    if (e.key === 'ArrowUp') { S.sheetIdx = Math.max(0, S.sheetIdx - 1); render(); }
+    if (e.key === 'Enter') items[S.sheetIdx]?.click();
+    if (/^[1-9]$/.test(e.key)) items[+e.key - 1]?.click();
+  }
+});
+render();
+</script>
+</body>
+</html>

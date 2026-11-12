@@ -892,6 +892,449 @@
       "deleted": "Đã xoá ma trận. Nhấn {key} để lấy lại."
     }
   },
+  "utilities": {
+    "subtitle": "Công cụ nhỏ cho file. Mọi việc chạy trên máy này.",
+    "choose_files": "Chọn file…",
+    "tools": {
+      "merge": {
+        "name": "Gộp PDF",
+        "desc": "Ghép nhiều PDF thành một, theo thứ tự bạn sắp",
+        "verb": "Gộp {n} file",
+        "running": "Đang gộp…"
+      },
+      "split": {
+        "name": "Tách PDF",
+        "desc": "Theo khoảng trang, mỗi N trang, hoặc trang bạn chọn",
+        "verb": "Tách",
+        "running": "Đang tách…"
+      },
+      "organize": {
+        "name": "Sắp xếp trang",
+        "desc": "Kéo để đổi thứ tự, xoay hoặc bỏ từng trang",
+        "verb": "Lưu thứ tự mới",
+        "running": "Đang lưu thứ tự mới…"
+      },
+      "rotate": {
+        "name": "Xoay PDF",
+        "desc": "Xoay mọi trang của một hay nhiều PDF",
+        "verb": "Xoay | Xoay {n} file",
+        "running": "Đang xoay…"
+      },
+      "img2pdf": {
+        "name": "Ảnh → PDF",
+        "desc": "Mỗi ảnh một trang, chọn khổ giấy và lề",
+        "verb": "Tạo PDF từ 1 ảnh | Tạo PDF từ {n} ảnh",
+        "running": "Đang tạo PDF…"
+      },
+      "pdf2img": {
+        "name": "PDF → Ảnh",
+        "desc": "Mỗi trang thành một ảnh PNG hoặc JPG",
+        "verb": "Xuất ảnh",
+        "running": "Đang vẽ các trang…"
+      },
+      "watermark": {
+        "name": "Watermark",
+        "desc": "Đóng chữ hoặc logo lên trang, có xem trước",
+        "verb": "Đóng watermark | Đóng watermark {n} file",
+        "running": "Đang đóng watermark…"
+      },
+      "numbers": {
+        "name": "Đánh số trang",
+        "desc": "Chọn vị trí, kiểu số, bỏ qua trang bìa",
+        "verb": "Đánh số | Đánh số {n} file",
+        "running": "Đang đánh số…"
+      },
+      "protect": {
+        "name": "Khoá PDF",
+        "desc": "Đặt mật khẩu để mở file",
+        "verb": "Khoá | Khoá {n} file",
+        "running": "Đang khoá…"
+      },
+      "unlock": {
+        "name": "Mở khoá PDF",
+        "desc": "Bỏ mật khẩu của file bạn biết mật khẩu",
+        "verb": "Mở khoá | Mở khoá {n} file",
+        "running": "Đang mở khoá…"
+      },
+      "pdf2text": {
+        "name": "PDF → Văn bản",
+        "desc": "Lấy chữ ra file .txt, theo từng trang",
+        "verb": "Lấy chữ",
+        "running": "Đang đọc chữ…"
+      },
+      "imgcompress": {
+        "name": "Nén ảnh",
+        "desc": "JPG, PNG, WebP nhẹ hơn",
+        "verb": "Nén {n} ảnh",
+        "running": "Đang nén…"
+      },
+      "resize": {
+        "name": "Đổi cỡ ảnh",
+        "desc": "Theo phần trăm, hoặc vừa trong một cỡ",
+        "verb": "Đổi cỡ {n} ảnh",
+        "running": "Đang đổi cỡ…"
+      },
+      "crop": {
+        "name": "Cắt ảnh",
+        "desc": "Tự do hoặc theo tỉ lệ 1:1, 4:3, 16:9",
+        "verb": "Cắt",
+        "running": "Đang cắt…"
+      },
+      "imgconvert": {
+        "name": "Đổi định dạng ảnh",
+        "desc": "HEIC, PNG, JPG, WebP sang định dạng khác",
+        "verb": "Đổi {n} ảnh",
+        "running": "Đang đổi…"
+      },
+      "exif": {
+        "name": "Xoá thông tin ảnh",
+        "desc": "Bỏ vị trí GPS, máy chụp, giờ chụp trước khi gửi",
+        "verb": "Làm sạch {n} ảnh",
+        "running": "Đang làm sạch…"
+      },
+      "removebg": {
+        "name": "Tách nền",
+        "desc": "Giữ chủ thể, bỏ nền. Dùng Vision của macOS",
+        "verb": "Tách nền | Tách nền {n} ảnh",
+        "running": "Đang tách nền…"
+      },
+      "ocr": {
+        "name": "Nhận dạng chữ",
+        "desc": "Biến PDF scan thành PDF tìm và chép được chữ",
+        "verb": "Nhận dạng | Nhận dạng {n} file",
+        "running": "Đang đọc các trang…"
+      },
+      "imgtext": {
+        "name": "Lấy chữ từ ảnh",
+        "desc": "Chữ trong ảnh chụp màn hình hoặc ảnh chụp, ra file .txt",
+        "verb": "Lấy chữ | Lấy chữ {n} ảnh",
+        "running": "Đang đọc chữ…"
+      },
+      "compress": {
+        "name": "Nén PDF",
+        "desc": "Làm PDF nhẹ hơn bằng cách nén ảnh bên trong",
+        "verb": "Nén | Nén {n} file",
+        "running": "Đang nén ảnh…"
+      },
+      "office2pdf": {
+        "name": "Office → PDF",
+        "desc": "Word, Excel, PowerPoint và OpenDocument sang PDF",
+        "verb": "Chuyển | Chuyển {n} file",
+        "running": "Đang chuyển…"
+      },
+      "pdf2word": {
+        "name": "PDF → Word",
+        "desc": "File .docx sửa được, giữ đoạn, bảng và ảnh khi có thể",
+        "verb": "Chuyển | Chuyển {n} file",
+        "running": "Đang chuyển…"
+      }
+    },
+    "categories": {
+      "pdf": {
+        "name": "PDF",
+        "note": "Sắp xếp, nén, đánh dấu và bảo vệ"
+      },
+      "convert": {
+        "name": "Chuyển đổi",
+        "note": "Sang PDF và từ PDF"
+      },
+      "image": {
+        "name": "Ảnh",
+        "note": "Nén, đổi cỡ, cắt và làm sạch"
+      }
+    },
+    "accepts": {
+      "pdf": "file PDF",
+      "image": "ảnh",
+      "office": "tài liệu Office"
+    },
+    "sidebar": {
+      "label": "Tiện ích",
+      "search": "Tìm công cụ…",
+      "pinned": "Đã ghim",
+      "recent": "Dùng gần đây",
+      "groups": "Nhóm",
+      "all": "Tất cả",
+      "unsaved": "Kết quả chưa lưu",
+      "n_files": "{n} file",
+      "expires": "tự xoá sau {hours} giờ",
+      "discard": "Bỏ {name}",
+      "local": "Mọi việc chạy trên máy này. Không file nào được gửi lên mạng."
+    },
+    "home": {
+      "drop_title": "Thả file vào bất cứ đâu trong Tiện ích",
+      "drop_body": "Synabit sẽ gợi ý việc làm được với chúng. Hoặc bấm để chọn file.",
+      "pin": "Ghim {name} lên thanh bên",
+      "unpin": "Bỏ ghim {name}",
+      "no_match": "Không có công cụ nào khớp “{query}”."
+    },
+    "drop": {
+      "choose": "Chọn {what}",
+      "choose_one": "Chọn một {what}",
+      "or_drag": "hoặc kéo thả vào đây",
+      "at_least": "Cần ít nhất {n} file",
+      "pick": "Chọn file…",
+      "untouched": "File gốc không bao giờ bị thay đổi.",
+      "refused": "Đã bỏ ra {n} file: công cụ này nhận {what}",
+      "add_here": "Thả để thêm vào {tool}",
+      "see_what": "Thả để xem làm được gì"
+    },
+    "files": {
+      "no_preview": "Không xem trước được",
+      "pages": "{n} trang",
+      "remove": "Bỏ {name}",
+      "move_earlier": "Đưa {name} lên trước",
+      "move_later": "Đưa {name} ra sau",
+      "add": "Thêm file",
+      "count": "{n} file",
+      "drag_to_order": "kéo để đổi thứ tự",
+      "sort_by_name": "Sắp theo tên",
+      "clear": "Bỏ hết",
+      "other_file": "File khác",
+      "problem_unreadable": "Không đọc được như một PDF",
+      "problem_locked": "Có mật khẩu",
+      "problem_wrong-kind": "Công cụ này không nhận loại file này",
+      "lock_none": "không có mật khẩu",
+      "lock_restrictions": "chỉ hạn chế in, chép",
+      "lock_password": "cần mật khẩu"
+    },
+    "pages": {
+      "page": "Trang {n}",
+      "cut_after": "File mới bắt đầu sau trang {n}",
+      "turn_left": "Xoay trang {n} sang trái",
+      "turn_right": "Xoay trang {n} sang phải",
+      "leave_out": "Bỏ trang {n}",
+      "keys": "⌥← ⌥→ dời trang"
+    },
+    "options": {
+      "title": "Tuỳ chọn",
+      "merge_hint": "Các file được ghép theo thứ tự thẻ. Kéo thẻ, hoặc dùng mũi tên trên thẻ, để đổi.",
+      "split_by": "Tách theo",
+      "split_ranges": "Khoảng",
+      "split_every": "Mỗi N trang",
+      "split_pick": "Chọn trang",
+      "ranges": "Khoảng trang",
+      "ranges_placeholder": "1-3, 4-8, 9-",
+      "ranges_bad": "“{part}” không phải khoảng trang của file {n} trang này.",
+      "ranges_hint": "Mỗi khoảng thành một file. “9-” là tới trang cuối.",
+      "every": "Mỗi",
+      "pages_word": "trang",
+      "pick_hint": "Bấm vào trang để chọn, giữ ⇧ để chọn một dải. Các trang đã chọn thành một file mới.",
+      "organize_hint": "Kéo trang để đổi chỗ. Rê chuột lên trang để xoay hoặc bỏ.",
+      "organize_count": "Giữ {kept} / {total} trang",
+      "organize_reset": "Làm lại từ đầu",
+      "rotate_by": "Xoay",
+      "rotate_90": "90° phải",
+      "rotate_180": "180°",
+      "rotate_270": "90° trái",
+      "page_size": "Khổ giấy",
+      "size_a4": "A4",
+      "size_letter": "Letter",
+      "size_fit": "Vừa ảnh",
+      "orientation": "Hướng",
+      "orientation_auto": "Tự động",
+      "orientation_portrait": "Dọc",
+      "orientation_landscape": "Ngang",
+      "margin": "Lề",
+      "margin_none": "Không",
+      "margin_small": "Nhỏ",
+      "margin_medium": "Vừa",
+      "format": "Định dạng",
+      "quality": "Độ nét",
+      "dpi_72": "Màn hình",
+      "dpi_150": "Vừa",
+      "dpi_300": "In",
+      "png_hint": "PNG giữ chữ sắc nét; JPG nhẹ hơn cho bản scan và ảnh chụp.",
+      "output": "Sẽ tạo",
+      "output_hint": "File gốc giữ nguyên. Kết quả chờ bạn lưu.",
+      "makes_files": "{n} file PDF",
+      "makes_images": "{n} ảnh",
+      "page_n": "trang {n}",
+      "pages_range": "trang {from}–{to}",
+      "mark_kind": "Kiểu watermark",
+      "mark_text": "Chữ",
+      "mark_image": "Ảnh",
+      "mark_text_placeholder": "ví dụ BẢN NHÁP — KHÔNG LƯU HÀNH",
+      "mark_color": "Màu",
+      "mark_pick_logo": "Chọn logo (PNG trong suốt)",
+      "mark_other_logo": "Logo khác",
+      "position": "Vị trí",
+      "place_0": "Trên trái",
+      "place_1": "Trên giữa",
+      "place_2": "Trên phải",
+      "place_3": "Giữa trái",
+      "place_4": "Chính giữa",
+      "place_5": "Giữa phải",
+      "place_6": "Dưới trái",
+      "place_7": "Dưới giữa",
+      "place_8": "Dưới phải",
+      "mark_tile": "Lặp kín trang",
+      "mark_under": "Nằm dưới nội dung",
+      "except_first": "Trừ trang đầu",
+      "mark_size": "Cỡ",
+      "mark_opacity": "Độ đậm",
+      "mark_rotate": "Góc xoay",
+      "number_place_0": "Trên trái",
+      "number_place_1": "Trên giữa",
+      "number_place_2": "Trên phải",
+      "number_place_3": "Dưới trái",
+      "number_place_4": "Dưới giữa",
+      "number_place_5": "Dưới phải",
+      "number_format": "Kiểu",
+      "number_start": "Số bắt đầu",
+      "number_size": "Cỡ chữ (pt)",
+      "skip_cover": "Không đánh số trang đầu (bìa)",
+      "password": "Mật khẩu",
+      "show_password": "Hiện mật khẩu",
+      "hide_password": "Ẩn mật khẩu",
+      "password_again": "Nhập lại mật khẩu",
+      "password_mismatch": "Hai mật khẩu chưa giống nhau.",
+      "password_ascii": "Preview trên Mac không mở được PDF có mật khẩu có dấu. Chrome, Acrobat và Synabit thì mở được. Nên dùng mật khẩu không dấu.",
+      "protect_hint": "AES-256, mức bảo vệ mạnh nhất của PDF. Không có mật khẩu thì không ai mở được file, kể cả bạn: hãy cất mật khẩu cẩn thận.",
+      "unlock_hint": "File chỉ chặn in hoặc chép thì mở không cần mật khẩu: để trống ô này.",
+      "text_hint": "Chữ của từng trang, dưới một dòng ghi số trang. Trang scan không có chữ để lấy.",
+      "text_page": "Trang",
+      "text_none": "(trang này không có chữ)",
+      "image_quality": "Chất lượng",
+      "format_keep": "Giữ nguyên",
+      "compress_hint": "Thấp hơn thì nhẹ hơn. Khoảng 70–80 thì mắt thường khó thấy khác. PNG nén không mất dữ liệu; chọn JPG để nhẹ đi nhiều.",
+      "resize_by": "Đổi theo",
+      "resize_percent": "Phần trăm",
+      "resize_fit": "Vừa trong",
+      "max_width": "Rộng tối đa",
+      "max_height": "Cao tối đa",
+      "fit_hint": "Ảnh giữ tỉ lệ và nằm vừa trong khung này.",
+      "enlarge": "Phóng to cả ảnh nhỏ hơn",
+      "now_size": "Hiện tại {w} × {h} px",
+      "aspect": "Tỉ lệ",
+      "aspect_free": "Tự do",
+      "crop_reset": "Đặt lại khung",
+      "exif_hint": "JPG và PNG giữ nguyên từng điểm ảnh, chỉ bỏ thông tin bên trong; ảnh xoay vẫn đúng chiều. HEIC và WebP được vẽ lại thành ảnh mới.",
+      "backdrop": "Nền mới",
+      "backdrop_none": "Trong suốt",
+      "backdrop_other": "Màu khác",
+      "backdrop_png": "Nền trong suốt lưu thành PNG.",
+      "backdrop_jpg": "Nền màu lưu thành JPG.",
+      "trim": "Cắt sát chủ thể",
+      "removebg_hint": "Tốt nhất với người, con vật hoặc đồ vật có đường viền rõ. Nhiều chủ thể thì giữ cả.",
+      "ocr_makes": "Tạo",
+      "ocr_pdf": "PDF tìm được chữ (bản scan, có chữ để tìm và chép)",
+      "ocr_text": "File .txt chứa chữ",
+      "skip_text_pages": "Bỏ qua trang đã có chữ",
+      "language": "Ngôn ngữ",
+      "language_vi": "Tiếng Việt + Anh",
+      "language_auto": "Tự nhận",
+      "no_vietnamese": "macOS này không có nhận dạng tiếng Việt; chữ có dấu có thể ra sai.",
+      "ocr_hint": "Khoảng 0,2 giây một trang. Trang giữ nguyên ảnh scan; chữ nằm vô hình bên trên.",
+      "imgtext_hint": "Ảnh chụp màn hình và ảnh chụp tài liệu đọc tốt nhất. Chữ ra theo từng dòng.",
+      "makes_texts": "{n} file chữ",
+      "compress_level": "Mức nén",
+      "compress_0": "Nhẹ",
+      "compress_0_hint": "Ảnh giữ {dpi} dpi. Gần như không đổi, cả khi in.",
+      "compress_1": "Vừa",
+      "compress_1_hint": "Ảnh {dpi} dpi. Rõ trên màn hình. Đề xuất.",
+      "compress_2": "Mạnh",
+      "compress_2_hint": "Ảnh {dpi} dpi. Mờ hơn; hợp để gửi qua chat.",
+      "compress_pdf_hint": "Chỉ ảnh bị đổi; chữ và hình vẽ giữ nguyên. File ít ảnh thì không nhẹ đi nhiều.",
+      "office2pdf_hint": "Mỗi file thành một PDF do LibreOffice dàn trang. Font tài liệu dùng mà máy không có sẽ được thay bằng font gần giống.",
+      "pdf2word_hint": "Tốt với tài liệu chữ. Bố cục phức tạp, nhiều cột và bản scan ra kém hơn; bản scan cần Nhận dạng chữ trước."
+    },
+    "progress": {
+      "of": "{done} / {total}",
+      "starting": "Đang bắt đầu…",
+      "cancel": "Huỷ"
+    },
+    "result": {
+      "done": "Xong",
+      "files": "{n} file · {size}",
+      "name": "Tên file",
+      "rename_hint": "Đổi tên trước khi lưu",
+      "not_saved": "Chưa lưu. Tự xoá sau {hours} giờ nếu bạn không lưu.",
+      "not_saved_all": "Chưa lưu. Tự xoá sau {hours} giờ nếu bạn không lưu.",
+      "was_saved": "Đã lưu",
+      "save": "Lưu…",
+      "add_to_vault": "Thêm vào vault",
+      "open": "Mở",
+      "open_one": "Mở {name}",
+      "discard": "Bỏ",
+      "save_all": "Lưu tất cả vào thư mục…",
+      "save_zip": "Lưu thành .zip…",
+      "use_with": "Dùng tiếp với kết quả này",
+      "use_with_hint": "Kết quả đi thẳng sang công cụ kế tiếp, không cần lưu ra rồi chọn lại.",
+      "saved_to": "Đã lưu vào {where}",
+      "show_in_finder": "Hiện trong thư mục",
+      "save_failed": "Không lưu được: {reason}",
+      "no_vault": "Chưa mở vault nào.",
+      "saved_in_vault": "Đã thêm vào vault: {where}",
+      "pick_folder": "Lưu các file vào…",
+      "edit_again": "Sửa và chạy lại",
+      "save_beside": "Lưu cạnh file gốc",
+      "save_elsewhere": "Lưu chỗ khác…",
+      "beside_in": "Vào {folder}",
+      "vault_root": "vault",
+      "smaller_by": "nhẹ hơn {n}%"
+    },
+    "smart_drop": {
+      "title_pdf": "Làm gì với {n} PDF này?",
+      "title_image": "Làm gì với {n} ảnh này?",
+      "nothing": "Không công cụ nào nhận các file này",
+      "left_out": "Đã bỏ ra {n} file khác loại.",
+      "none_fit": "Không công cụ nào nhận chừng này file loại này.",
+      "keys": "↑↓ để chọn · ↵ để mở · gõ số để mở dòng đó",
+      "title_office": "Làm gì với {n} tài liệu này?"
+    },
+    "errors": {
+      "locked": "“{name}” có mật khẩu. Hãy mở khoá bằng Mở khoá PDF trước.",
+      "unreadable": "“{name}” không đọc được như một PDF. File có thể đã hỏng.",
+      "other": "Có lỗi: {reason}",
+      "wrong_password": "Mật khẩu của “{name}” chưa đúng.",
+      "no_subject": "Không tìm thấy chủ thể trong ảnh này: Vision tìm người, con vật hoặc một đồ vật rõ ràng.",
+      "some_without_subject": "Không tìm thấy chủ thể trong {names}, đã bỏ qua.",
+      "not_smaller": "File đã gọn, không nén thêm được.",
+      "some_not_smaller": "{n} file đã gọn, giữ nguyên không nén.",
+      "missing_program": "Một thứ công cụ này cần không còn được cài. Hãy xem lại phần cài đặt của công cụ.",
+      "no_room": "Phòng kín không dùng được trên máy này, nên tài liệu không được mở.",
+      "install_failed": "Chưa cài xong: {reason}"
+    },
+    "preview": {
+      "applies_to": "Áp dụng cho {n} file"
+    },
+    "crop": {
+      "box": "Vùng cắt",
+      "size": "Kết quả: {size} px",
+      "keys": "Phím mũi tên dời khung, ⌥ + mũi tên đổi cỡ; giữ ⇧ để bước lớn hơn"
+    },
+    "cutout": {
+      "drag": "kéo thanh giữa để so",
+      "n_of": "{n} / {total}",
+      "previous": "Ảnh trước",
+      "next": "Ảnh sau",
+      "before": "Trước",
+      "after": "Sau",
+      "compare": "So trước và sau",
+      "finding": "Đang tìm chủ thể…"
+    },
+    "vision": {
+      "unavailable_title": "{tool} chưa có trên máy này",
+      "not_mac": "Công cụ này dùng Vision của Apple, có sẵn trong macOS. Trên Windows và Linux thì chưa có.",
+      "old_mac": "Cần macOS 14 Sonoma trở lên: các bản macOS cũ hơn không có phần này của Vision.",
+      "tag_mac": "Chỉ macOS",
+      "tag_mac14": "Cần macOS 14"
+    },
+    "setup": {
+      "tag": "Cần cài",
+      "libreoffice_title": "{tool} cần LibreOffice",
+      "libreoffice_body": "Synabit dùng LibreOffice để dựng trang tài liệu Office, nhưng không chở theo: bản cài nặng gần 1 GB. LibreOffice miễn phí. Cài như mọi app, rồi quay lại bấm Kiểm tra lại.",
+      "pdf2docx_title": "{tool} cần cài thêm một lần",
+      "pdf2docx_body": "Bộ chuyển đổi (pdf2docx và những gì nó dùng) khoảng 150 MB, tải một lần từ kho gói Python. Sau đó dùng không cần mạng.",
+      "sealed": "Tài liệu được chuyển trong phòng kín của Synabit: không có mạng, không thấy file nào của bạn ngoài file đang chuyển. Một tài liệu độc hại không chạm được vào gì.",
+      "download": "Mở trang tải",
+      "check_again": "Kiểm tra lại",
+      "install": "Cài (khoảng 150 MB)",
+      "installing": "Đang cài… mất một hai phút",
+      "brew_hint": "Nếu dùng Homebrew: brew install --cask libreoffice"
+    }
+  },
   "things": {
     "row_actions": "Thao tác với mục này",
     "open_in": "Mở trong {app}",
@@ -5369,7 +5812,8 @@
       "finance": "Tài chính",
       "feeds": "Nguồn tin",
       "things": "Things",
-      "safe": "Safe"
+      "safe": "Safe",
+      "utilities": "Tiện ích"
     },
     "simple_link": {
       "body": "Mục này nằm trong {app}, ứng dụng đang bị ẩn ở chế độ đơn giản.",

@@ -892,6 +892,449 @@
       "deleted": "Matrix deleted. {key} brings it back."
     }
   },
+  "utilities": {
+    "subtitle": "Small tools for files. Everything runs on this machine.",
+    "choose_files": "Choose files…",
+    "tools": {
+      "merge": {
+        "name": "Merge PDF",
+        "desc": "Combine several PDFs into one, in the order you set",
+        "verb": "Merge {n} files",
+        "running": "Merging…"
+      },
+      "split": {
+        "name": "Split PDF",
+        "desc": "By page ranges, every N pages, or the pages you pick",
+        "verb": "Split",
+        "running": "Splitting…"
+      },
+      "organize": {
+        "name": "Organize pages",
+        "desc": "Drag pages into a new order, turn them or leave them out",
+        "verb": "Save new order",
+        "running": "Saving the new order…"
+      },
+      "rotate": {
+        "name": "Rotate PDF",
+        "desc": "Turn every page of one or more PDFs",
+        "verb": "Rotate | Rotate {n} files",
+        "running": "Rotating…"
+      },
+      "img2pdf": {
+        "name": "Images → PDF",
+        "desc": "One picture per page; choose the paper and margins",
+        "verb": "Make a PDF of 1 image | Make a PDF of {n} images",
+        "running": "Making the PDF…"
+      },
+      "pdf2img": {
+        "name": "PDF → Images",
+        "desc": "Every page as a PNG or JPG picture",
+        "verb": "Export images",
+        "running": "Drawing the pages…"
+      },
+      "watermark": {
+        "name": "Watermark",
+        "desc": "Stamp text or a logo on the pages, with a preview",
+        "verb": "Add watermark | Add watermark to {n} files",
+        "running": "Adding the watermark…"
+      },
+      "numbers": {
+        "name": "Page numbers",
+        "desc": "Choose where, which style, and whether to skip the cover",
+        "verb": "Number pages | Number {n} files",
+        "running": "Numbering…"
+      },
+      "protect": {
+        "name": "Protect PDF",
+        "desc": "Set a password needed to open it",
+        "verb": "Protect | Protect {n} files",
+        "running": "Protecting…"
+      },
+      "unlock": {
+        "name": "Unlock PDF",
+        "desc": "Remove the password from a PDF you have the password for",
+        "verb": "Unlock | Unlock {n} files",
+        "running": "Unlocking…"
+      },
+      "pdf2text": {
+        "name": "PDF → Text",
+        "desc": "Take the text out to a .txt file, page by page",
+        "verb": "Get the text",
+        "running": "Reading the text…"
+      },
+      "imgcompress": {
+        "name": "Compress images",
+        "desc": "Make JPG, PNG and WebP files smaller",
+        "verb": "Compress 1 image | Compress {n} images",
+        "running": "Compressing…"
+      },
+      "resize": {
+        "name": "Resize images",
+        "desc": "By percentage, or to fit within a size",
+        "verb": "Resize 1 image | Resize {n} images",
+        "running": "Resizing…"
+      },
+      "crop": {
+        "name": "Crop image",
+        "desc": "Freely or to 1:1, 4:3, 16:9",
+        "verb": "Crop",
+        "running": "Cropping…"
+      },
+      "imgconvert": {
+        "name": "Convert images",
+        "desc": "HEIC, PNG, JPG, WebP to another format",
+        "verb": "Convert 1 image | Convert {n} images",
+        "running": "Converting…"
+      },
+      "exif": {
+        "name": "Remove photo info",
+        "desc": "Strip GPS location, camera and time before sending",
+        "verb": "Clean 1 image | Clean {n} images",
+        "running": "Cleaning…"
+      },
+      "removebg": {
+        "name": "Remove background",
+        "desc": "Keep the subject, drop the background. Uses macOS Vision",
+        "verb": "Remove background | Remove background from {n} images",
+        "running": "Removing backgrounds…"
+      },
+      "ocr": {
+        "name": "Recognise text",
+        "desc": "Make a scanned PDF searchable and copyable",
+        "verb": "Recognise text | Recognise text in {n} files",
+        "running": "Reading the pages…"
+      },
+      "imgtext": {
+        "name": "Text from images",
+        "desc": "The text in a screenshot or photo, as a .txt file",
+        "verb": "Get the text | Get the text from {n} images",
+        "running": "Reading the text…"
+      },
+      "compress": {
+        "name": "Compress PDF",
+        "desc": "Make a PDF smaller by shrinking its pictures",
+        "verb": "Compress | Compress {n} files",
+        "running": "Compressing the pictures…"
+      },
+      "office2pdf": {
+        "name": "Office → PDF",
+        "desc": "Word, Excel, PowerPoint and OpenDocument files as PDF",
+        "verb": "Convert | Convert {n} files",
+        "running": "Converting…"
+      },
+      "pdf2word": {
+        "name": "PDF → Word",
+        "desc": "An editable .docx, keeping paragraphs, tables and pictures where it can",
+        "verb": "Convert | Convert {n} files",
+        "running": "Converting…"
+      }
+    },
+    "categories": {
+      "pdf": {
+        "name": "PDF",
+        "note": "Arrange, compress, mark and protect"
+      },
+      "convert": {
+        "name": "Convert",
+        "note": "To PDF and from PDF"
+      },
+      "image": {
+        "name": "Images",
+        "note": "Compress, resize, crop and clean"
+      }
+    },
+    "accepts": {
+      "pdf": "PDF files",
+      "image": "images",
+      "office": "Office documents"
+    },
+    "sidebar": {
+      "label": "Utilities",
+      "search": "Find a tool…",
+      "pinned": "Pinned",
+      "recent": "Recent",
+      "groups": "Groups",
+      "all": "All",
+      "unsaved": "Not saved yet",
+      "n_files": "{n} file | {n} files",
+      "expires": "removed in {hours} hour | removed in {hours} hours",
+      "discard": "Throw away {name}",
+      "local": "Everything runs on this machine. No file is sent anywhere."
+    },
+    "home": {
+      "drop_title": "Drop files anywhere in Utilities",
+      "drop_body": "You will be shown what can be done with them. Or click to choose files.",
+      "pin": "Pin {name} to the sidebar",
+      "unpin": "Unpin {name}",
+      "no_match": "No tool matches “{query}”."
+    },
+    "drop": {
+      "choose": "Choose {what}",
+      "choose_one": "Choose one of your {what}",
+      "or_drag": "or drag them here",
+      "at_least": "Needs at least {n} files",
+      "pick": "Choose files…",
+      "untouched": "Your original files are never changed.",
+      "refused": "1 file was left out: this tool takes {what} | {n} files were left out: this tool takes {what}",
+      "add_here": "Drop to add to {tool}",
+      "see_what": "Drop to see what can be done"
+    },
+    "files": {
+      "no_preview": "No preview",
+      "pages": "1 page | {n} pages",
+      "remove": "Remove {name}",
+      "move_earlier": "Move {name} earlier",
+      "move_later": "Move {name} later",
+      "add": "Add files",
+      "count": "1 file | {n} files",
+      "drag_to_order": "drag to change the order",
+      "sort_by_name": "Sort by name",
+      "clear": "Remove all",
+      "other_file": "Another file",
+      "problem_unreadable": "Cannot be read as a PDF",
+      "problem_locked": "Protected by a password",
+      "problem_wrong-kind": "Not a file this tool takes",
+      "lock_none": "no password",
+      "lock_restrictions": "restrictions only",
+      "lock_password": "needs a password"
+    },
+    "pages": {
+      "page": "Page {n}",
+      "cut_after": "A new file starts after page {n}",
+      "turn_left": "Turn page {n} left",
+      "turn_right": "Turn page {n} right",
+      "leave_out": "Leave page {n} out",
+      "keys": "⌥← ⌥→ move a page"
+    },
+    "options": {
+      "title": "Options",
+      "merge_hint": "The files are joined in the order of the cards. Drag a card, or use its arrows, to change it.",
+      "split_by": "Split by",
+      "split_ranges": "Ranges",
+      "split_every": "Every N",
+      "split_pick": "Pick pages",
+      "ranges": "Page ranges",
+      "ranges_placeholder": "1-3, 4-8, 9-",
+      "ranges_bad": "“{part}” is not a range of this file’s {n} pages.",
+      "ranges_hint": "Each range becomes a file. “9-” runs to the end.",
+      "every": "Every",
+      "pages_word": "pages",
+      "pick_hint": "Click pages to pick them; ⇧-click picks a run. The picked pages become one new file.",
+      "organize_hint": "Drag a page to move it. Point at a page to turn it or leave it out.",
+      "organize_count": "{kept} of {total} pages kept",
+      "organize_reset": "Start over",
+      "rotate_by": "Turn by",
+      "rotate_90": "90° right",
+      "rotate_180": "180°",
+      "rotate_270": "90° left",
+      "page_size": "Paper",
+      "size_a4": "A4",
+      "size_letter": "Letter",
+      "size_fit": "Fit image",
+      "orientation": "Orientation",
+      "orientation_auto": "Auto",
+      "orientation_portrait": "Portrait",
+      "orientation_landscape": "Landscape",
+      "margin": "Margin",
+      "margin_none": "None",
+      "margin_small": "Small",
+      "margin_medium": "Medium",
+      "format": "Format",
+      "quality": "Size",
+      "dpi_72": "Screen",
+      "dpi_150": "Standard",
+      "dpi_300": "Print",
+      "png_hint": "PNG keeps text sharp; JPG is smaller for scans and photos.",
+      "output": "Makes",
+      "output_hint": "Your files stay as they are. The result waits for you to save it.",
+      "makes_files": "1 PDF file | {n} PDF files",
+      "makes_images": "1 image | {n} images",
+      "page_n": "page {n}",
+      "pages_range": "pages {from}–{to}",
+      "mark_kind": "Watermark kind",
+      "mark_text": "Text",
+      "mark_image": "Image",
+      "mark_text_placeholder": "e.g. DRAFT — DO NOT DISTRIBUTE",
+      "mark_color": "Colour",
+      "mark_pick_logo": "Choose a logo (transparent PNG)",
+      "mark_other_logo": "Another logo",
+      "position": "Position",
+      "place_0": "Top left",
+      "place_1": "Top centre",
+      "place_2": "Top right",
+      "place_3": "Middle left",
+      "place_4": "Centre",
+      "place_5": "Middle right",
+      "place_6": "Bottom left",
+      "place_7": "Bottom centre",
+      "place_8": "Bottom right",
+      "mark_tile": "Repeat across the page",
+      "mark_under": "Behind the content",
+      "except_first": "Not on the first page",
+      "mark_size": "Size",
+      "mark_opacity": "Opacity",
+      "mark_rotate": "Angle",
+      "number_place_0": "Top left",
+      "number_place_1": "Top centre",
+      "number_place_2": "Top right",
+      "number_place_3": "Bottom left",
+      "number_place_4": "Bottom centre",
+      "number_place_5": "Bottom right",
+      "number_format": "Style",
+      "number_start": "First number",
+      "number_size": "Size (pt)",
+      "skip_cover": "No number on the first page (cover)",
+      "password": "Password",
+      "show_password": "Show the password",
+      "hide_password": "Hide the password",
+      "password_again": "Password again",
+      "password_mismatch": "The two passwords are not the same.",
+      "password_ascii": "Preview on the Mac cannot open a PDF whose password has accents or non-Latin letters. Chrome, Acrobat and Synabit can.",
+      "protect_hint": "AES-256, the strongest protection PDF has. Without the password nobody can open the file — keep it somewhere safe.",
+      "unlock_hint": "A file that only stops printing or copying opens without a password: leave this empty.",
+      "text_hint": "Each page’s text under a heading with its page number. A scanned page has no text to give.",
+      "text_page": "Page",
+      "text_none": "(no text on this page)",
+      "image_quality": "Quality",
+      "format_keep": "Keep",
+      "compress_hint": "Lower is smaller. Around 70–80 looks the same to most eyes. PNG stays lossless; choose JPG to shrink it a lot.",
+      "resize_by": "Resize by",
+      "resize_percent": "Percentage",
+      "resize_fit": "Fit within",
+      "max_width": "Largest width",
+      "max_height": "Largest height",
+      "fit_hint": "The picture keeps its shape and fits inside this box.",
+      "enlarge": "Also enlarge smaller pictures",
+      "now_size": "Now {w} × {h} px",
+      "aspect": "Ratio",
+      "aspect_free": "Free",
+      "crop_reset": "Reset the box",
+      "exif_hint": "JPG and PNG keep every pixel; only the information inside goes, and a turned photo stays turned. HEIC and WebP are redrawn as a new picture.",
+      "backdrop": "New background",
+      "backdrop_none": "Transparent",
+      "backdrop_other": "Another colour",
+      "backdrop_png": "Transparent is saved as PNG.",
+      "backdrop_jpg": "A coloured background is saved as JPG.",
+      "trim": "Crop close to the subject",
+      "removebg_hint": "Works best on a person, an animal or an object with a clear outline. Several subjects are all kept.",
+      "ocr_makes": "Make",
+      "ocr_pdf": "A searchable PDF (the scan, with text you can find and copy)",
+      "ocr_text": "A .txt file with the text",
+      "skip_text_pages": "Skip pages that already have text",
+      "language": "Language",
+      "language_vi": "Vietnamese + English",
+      "language_auto": "Detect",
+      "no_vietnamese": "This macOS does not offer Vietnamese recognition; accented letters may come out wrong.",
+      "ocr_hint": "About a fifth of a second a page. The page keeps its picture; the text lies invisibly over it.",
+      "imgtext_hint": "Screenshots and photos of documents read best. The text comes out a line at a time.",
+      "makes_texts": "1 text file | {n} text files",
+      "compress_level": "How much",
+      "compress_0": "Light",
+      "compress_0_hint": "Pictures kept at {dpi} dpi. Looks the same, also when printed.",
+      "compress_1": "Medium",
+      "compress_1_hint": "Pictures at {dpi} dpi. Sharp on screen. Recommended.",
+      "compress_2": "Strong",
+      "compress_2_hint": "Pictures at {dpi} dpi. Softer; good for sending by chat.",
+      "compress_pdf_hint": "Only pictures are changed; text and drawings stay exactly as they are. A file with few pictures will not get much smaller.",
+      "office2pdf_hint": "Each file becomes a PDF laid out by LibreOffice. Fonts the document uses but this Mac lacks are replaced by similar ones.",
+      "pdf2word_hint": "Works well for text documents. Complex layouts, many columns and scans come out less faithfully; a scan needs Recognise text first."
+    },
+    "progress": {
+      "of": "{done} / {total}",
+      "starting": "Starting…",
+      "cancel": "Cancel"
+    },
+    "result": {
+      "done": "Done",
+      "files": "1 file · {size} | {n} files · {size}",
+      "name": "File name",
+      "rename_hint": "Rename before saving",
+      "not_saved": "Not saved. Removed in 1 hour unless you save it. | Not saved. Removed in {hours} hours unless you save it.",
+      "not_saved_all": "Not saved. Removed in 1 hour unless you save them. | Not saved. Removed in {hours} hours unless you save them.",
+      "was_saved": "Saved",
+      "save": "Save…",
+      "add_to_vault": "Add to vault",
+      "open": "Open",
+      "open_one": "Open {name}",
+      "discard": "Throw away",
+      "save_all": "Save all to a folder…",
+      "save_zip": "Save as .zip…",
+      "use_with": "Use the result with",
+      "use_with_hint": "The result goes straight to the next tool, without saving it first.",
+      "saved_to": "Saved to {where}",
+      "show_in_finder": "Show in folder",
+      "save_failed": "Could not save: {reason}",
+      "no_vault": "No vault is open.",
+      "saved_in_vault": "Added to the vault as {where}",
+      "pick_folder": "Save the files into…",
+      "edit_again": "Change and run again",
+      "save_beside": "Save beside the original",
+      "save_elsewhere": "Save elsewhere…",
+      "beside_in": "Into {folder}",
+      "vault_root": "the vault",
+      "smaller_by": "{n}% smaller"
+    },
+    "smart_drop": {
+      "title_pdf": "What to do with this PDF? | What to do with these {n} PDFs?",
+      "title_image": "What to do with this image? | What to do with these {n} images?",
+      "nothing": "No tool takes these files",
+      "left_out": "1 file of another kind was left out. | {n} files of another kind were left out.",
+      "none_fit": "No tool takes this many files of this kind.",
+      "keys": "↑↓ to choose · ↵ to open · a number opens that row",
+      "title_office": "What to do with this document? | What to do with these {n} documents?"
+    },
+    "errors": {
+      "locked": "“{name}” is protected by a password. Open it with Unlock PDF first.",
+      "unreadable": "“{name}” could not be read as a PDF. It may be damaged.",
+      "other": "Something went wrong: {reason}",
+      "wrong_password": "The password for “{name}” is not right.",
+      "no_subject": "No subject was found in this picture: Vision looks for a person, an animal or a distinct object.",
+      "some_without_subject": "No subject was found in {names}; it was left out. | No subject was found in {names}; they were left out.",
+      "not_smaller": "The file is already compact: it could not be made smaller.",
+      "some_not_smaller": "1 file was already compact and was left as it is. | {n} files were already compact and were left as they are.",
+      "missing_program": "Something this tool needs is not installed any more. Check the tool’s setup.",
+      "no_room": "The sealed room is not available on this Mac, so the document was not opened.",
+      "install_failed": "The install did not finish: {reason}"
+    },
+    "preview": {
+      "applies_to": "Applied to 1 file | Applied to all {n} files"
+    },
+    "crop": {
+      "box": "Crop area",
+      "size": "Result: {size} pixels",
+      "keys": "Arrow keys move the box, ⌥ + arrows size it; hold ⇧ for bigger steps"
+    },
+    "cutout": {
+      "drag": "drag the bar to compare",
+      "n_of": "{n} of {total}",
+      "previous": "Previous picture",
+      "next": "Next picture",
+      "before": "Before",
+      "after": "After",
+      "compare": "Before and after",
+      "finding": "Finding the subject…"
+    },
+    "vision": {
+      "unavailable_title": "{tool} is not on this computer",
+      "not_mac": "It uses Apple’s Vision, which comes with macOS. On Windows and Linux it is not available yet.",
+      "old_mac": "It needs macOS 14 Sonoma or later: earlier versions of macOS do not have this part of Vision.",
+      "tag_mac": "macOS only",
+      "tag_mac14": "Needs macOS 14"
+    },
+    "setup": {
+      "tag": "Needs setup",
+      "libreoffice_title": "{tool} needs LibreOffice",
+      "libreoffice_body": "Synabit uses LibreOffice to lay out Office documents, but does not ship it: it is close to 1 GB installed. It is free. Install it like any app, then come back and check again.",
+      "pdf2docx_title": "{tool} needs a one-time install",
+      "pdf2docx_body": "The converter (pdf2docx and what it uses) is about 150 MB, downloaded once from the Python package registry. After that it works without a connection.",
+      "sealed": "Documents are converted in Synabit’s sealed room: no network, and no file of yours but the one being converted. A malicious document cannot reach anything.",
+      "download": "Open the download page",
+      "check_again": "Check again",
+      "install": "Install (about 150 MB)",
+      "installing": "Installing… this takes a minute or two",
+      "brew_hint": "With Homebrew: brew install --cask libreoffice"
+    }
+  },
   "things": {
     "row_actions": "Actions for this",
     "open_in": "Open in {app}",
@@ -5369,7 +5812,8 @@
       "finance": "Finance",
       "feeds": "Feeds",
       "things": "Things",
-      "safe": "Safe"
+      "safe": "Safe",
+      "utilities": "Utilities"
     },
     "simple_link": {
       "body": "This lives in {app}, which simple mode hides.",

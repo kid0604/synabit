@@ -31,6 +31,8 @@ withDefaults(
     /** Words on the primary button. No button without them. */
     primaryLabel?: string;
     primaryIcon?: Component;
+    /** The primary action exists but cannot run yet, e.g. too few files. */
+    primaryDisabled?: boolean;
     /** Show the back/forward buttons. */
     nav?: boolean;
     /** Label for a phone-only button that opens the app's sidebar. */
@@ -93,8 +95,9 @@ const { useMobileLayout } = usePlatform();
     <button
       v-if="primaryLabel"
       type="button"
-      class="btn-primary shrink-0"
+      class="btn-primary shrink-0 disabled:opacity-45 disabled:cursor-default"
       :aria-label="primaryLabel"
+      :disabled="primaryDisabled"
       @click="emit('primary')"
     >
       <component :is="primaryIcon" v-if="primaryIcon" class="w-4 h-4" aria-hidden="true" />

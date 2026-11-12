@@ -28,6 +28,7 @@ pub mod tags;
 pub mod thumbnails;
 pub mod timeline;
 pub mod trash;
+pub mod utilities;
 pub mod vault;
 pub mod vault_health;
 pub mod versions;
