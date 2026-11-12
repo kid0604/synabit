@@ -122,6 +122,21 @@ impl Cell {
         self
     }
 
+    /// The same room, able to read and run these application bundles
+    /// ([`super::profile::Profile::programs`]).
+    pub fn with_programs(mut self, programs: Vec<PathBuf>) -> Self {
+        self.profile.programs = programs;
+        self
+    }
+
+    /// The same room, able to run LibreOffice from `bundle`
+    /// ([`super::profile::Profile::office`]).
+    pub fn for_libreoffice(mut self, bundle: PathBuf) -> Self {
+        self.profile.programs = vec![bundle];
+        self.profile.office = true;
+        self
+    }
+
     pub fn room(&self) -> &Path {
         &self.profile.room
     }
