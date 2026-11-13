@@ -28,7 +28,8 @@
 //!
 //! macOS only, and macOS 14 or later: 13 does not know the `file-lock` rule, so
 //! the profile does not compile there and [`selftest`] reports the room broken.
-//! The app itself still runs on 13.3.
+//! The app's own floor is 14.4 (see CLAUDE.md), so on a Mac it installs on, only
+//! an Apple change to Seatbelt can make the room fail its self-test.
 
 pub mod apply;
 pub mod cell;

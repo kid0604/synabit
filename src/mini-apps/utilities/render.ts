@@ -6,12 +6,8 @@
  * has, so Rust needs no renderer and no image decoder (see
  * `commands::thumbnails` for why it has none).
  */
-import * as pdfjsLib from 'pdfjs-dist';
-import type { PDFDocumentProxy } from 'pdfjs-dist';
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { convertFileSrc } from '@tauri-apps/api/core';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
+import { pageText, pdfjsLib, type PDFDocumentProxy } from '../../shared/pdfjs';
 
 /** A workspace file, as a URL the WebView can fetch. */
 export function fileUrl(path: string): string {
@@ -215,7 +211,7 @@ export async function pdfText(path: string, pageLabel: string, noText: string, o
   for (let n = 1; n <= doc.numPages; n++) {
     if (onPage && !onPage()) throw new Error('cancelled');
     const page = await doc.getPage(n);
-    const content = await page.getTextContent();
+    const content = await pageText(page);
     let text = '';
     for (const item of content.items) {
       if (!('str' in item)) continue;
@@ -335,7 +331,7 @@ export async function pagePixels(path: string, page: number, dpi = 200, maxSide 
 /** Whether a page already has text of its own, so it needs no reading. */
 export async function pageHasText(path: string, page: number): Promise<boolean> {
   const doc = await openPdf(path);
-  const content = await (await doc.getPage(page)).getTextContent();
+  const content = await pageText(await doc.getPage(page));
   return content.items.some((i) => 'str' in i && i.str.trim().length > 0);
 }
 

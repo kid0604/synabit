@@ -458,7 +458,11 @@ phòng, front end) rồi sửa.
   không cảnh báo nào trong file của Utilities.
 - **Để lại, có lý do:**
   - pdf.js 6 bản chuẩn dùng `Promise.withResolvers` (Safari 17.4) và `Promise.try` (Safari 18.2), dưới mức sàn 16.4 —
-    chung cho cả Files, cần một việc riêng.
+    chung cho cả Files, cần một việc riêng. **Đã xử lý 2026-11-12:** dùng bản legacy qua `src/shared/pdfjs.ts`. Bản
+    legacy từ 6.1 thiếu `ArrayBuffer#transferToFixedLength` (17.4), nên sàn được nâng lên macOS 14.4 / Safari 17.4.
+    Đọc chữ qua `pageText()` thay cho `getTextContent()`, vì chưa Safari nào lặp được `ReadableStream` bằng
+    `for await`. Trước đây `pdfText`/`pageHasText` của Utilities chạy được chỉ nhờ polyfill toàn cục của Files đã nạp
+    trước. Xem `CLAUDE.md`.
   - Quyền fs-plugin cho trang ghi `$APPCACHE`/`$APPDATA` (job.json, môi trường pdf2docx) có từ trước.
   - Font chữ vô hình không nhúng (Acrobat có thể cảnh báo).
   - `pdf_picture` đọc lại PDF cho mỗi ảnh.

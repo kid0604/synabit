@@ -82,12 +82,24 @@ export default [
           selector: "MemberExpression[property.value=0][object.type='CallExpression'][object.callee.property.name='split'][object.arguments.0.value='T'][object.callee.object.type='CallExpression'][object.callee.object.callee.property.name='toISOString']",
           message: "toISOString() is UTC, so this is yesterday's date in the early morning east of Greenwich. Use todayIso() / localDateKey() from src/shared/localDay.ts for a calendar day.",
         },
+        // pdf.js reads the text stream with `for await`, which no Safari can do.
+        {
+          selector: "CallExpression[callee.property.name='getTextContent']",
+          message: 'getTextContent() iterates a ReadableStream with for await, which WKWebView cannot. Use pageText(page) from src/shared/pdfjs.ts.',
+        },
       ],
       'no-restricted-imports': ['error', {
         paths: [{
           name: '@tauri-apps/plugin-dialog',
           importNames: ['ask', 'confirm'],
           message: 'Use ConfirmModal, or useUndoableAction for deletes.',
+        }, {
+          name: 'pdfjs-dist',
+          message: 'Import pdf.js from src/shared/pdfjs.ts: the standard build needs a newer Safari than the floor in CLAUDE.md.',
+        }],
+        patterns: [{
+          group: ['pdfjs-dist/build/*', 'pdfjs-dist/legacy/build/*'],
+          message: 'Import pdf.js from src/shared/pdfjs.ts: the standard build needs a newer Safari than the floor in CLAUDE.md.',
         }],
       }],
     }
@@ -103,5 +115,10 @@ export default [
     // is the right last resort, after everything better has been tried.
     files: ['src/shared/errorText.ts', 'src/utils/said.ts'],
     rules: { 'no-restricted-syntax': 'off' },
+  },
+  {
+    // The one place pdf.js is imported, so the build it loads is chosen once.
+    files: ['src/shared/pdfjs.ts'],
+    rules: { 'no-restricted-imports': 'off' },
   }
 ]

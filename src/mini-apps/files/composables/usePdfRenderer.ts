@@ -1,31 +1,8 @@
 import { ref, shallowRef } from 'vue';
-import * as pdfjsLib from 'pdfjs-dist';
-import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
+import { pdfjsLib, type PDFDocumentProxy, type PDFPageProxy } from '../../../shared/pdfjs';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { i18n } from '../../../i18n';
 import { logger } from '../../../utils/logger';
-
-// Import worker URL from node_modules — Vite resolves this at build time
-import pdfjsWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
-
-// Polyfill for ReadableStream async iteration (required by pdf.js TextLayer on older WebKit/Tauri)
-// @ts-expect-error - TS doesn't know about asyncIterator polyfill on ReadableStream
-if (typeof ReadableStream !== 'undefined' && !ReadableStream.prototype[Symbol.asyncIterator]) {
-  // @ts-expect-error
-  ReadableStream.prototype[Symbol.asyncIterator] = async function* () {
-    const reader = this.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        yield value;
-      }
-    } finally {
-      reader.releaseLock();
-    }
-  };
-}
 
 export interface PageInfo {
   pageNumber: number;
@@ -139,10 +116,11 @@ export function usePdfRenderer() {
       textLayerDiv.style.setProperty('--scale-round-x', '1px');
       textLayerDiv.style.setProperty('--scale-round-y', '1px');
 
-      const textContent = await page.getTextContent();
-      const { TextLayer } = await import('pdfjs-dist');
-      const textLayer = new TextLayer({
-        textContentSource: textContent,
+      // The stream itself: TextLayer reads it with a reader, and
+      // `getTextContent()` would iterate it with `for await`, which no Safari
+      // can do (see shared/pdfjs.ts).
+      const textLayer = new pdfjsLib.TextLayer({
+        textContentSource: page.streamTextContent(),
         container: textLayerDiv,
         viewport,
       });

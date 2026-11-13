@@ -4,7 +4,7 @@
  * so a note beside a side panel stacks as a phone does.
  *
  * Container size queries are Baseline Widely available (Safari 16), under the
- * macOS 13.3 floor; see CLAUDE.md.
+ * app's floor (macOS 14.4, Safari 17.4); see CLAUDE.md.
  */
 .eis-matrix {
   position: relative;

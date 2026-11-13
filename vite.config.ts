@@ -10,11 +10,12 @@ export default defineConfig(async () => ({
   plugins: [vue(), tailwindcss()],
 
   build: {
-    // The oldest WebView this app has to run in, not a browser list. Tailwind 4
-    // already needs Safari 16.4 and Chrome 111 for the CSS it emits, so that is
-    // the floor in practice — macOS's WKWebView being the one that cannot be
-    // updated without updating the OS (see CLAUDE.md).
-    target: ['es2020', 'safari16.4', 'chrome111'],
+    // The oldest WebView this app has to run in, not a browser list: Safari 17.4,
+    // what macOS 14.4 — `minimumSystemVersion` — ships. pdf.js set it (its
+    // legacy build needs 17.4 from 6.1 on); Tailwind 4 alone needed 16.4. Chrome
+    // 111 is Tailwind's line for WebView2, which updates itself. macOS's
+    // WKWebView is the one that cannot be updated without the OS (see CLAUDE.md).
+    target: ['es2020', 'safari17.4', 'chrome111'],
     rollupOptions: {
       output: {
         // The editor's engine — Tiptap's core and ProseMirror, which the note
