@@ -220,8 +220,19 @@ pub fn rotation_of(doc: &Document, value: &Object) -> i64 {
     }
 }
 
-/// Write a document to a file.
+/// Write a document to a file, whole: one body, one cross-reference section.
+///
+/// A file saved incrementally (an Acrobat edit, a filled form, many Word
+/// exports) loads with its last trailer, and that trailer's `/Prev` — and
+/// `/XRefStm` in a hybrid file — give the byte offsets of earlier sections
+/// *of that file*. lopdf writes the trailer back as it is, so the new file
+/// pointed into nothing and would not open again, not even in this app. The
+/// `/DecodeParms` of a source cross-reference stream go too: lopdf writes its
+/// own stream unfiltered, and a predictor left on it would garble it.
 pub fn save(doc: &mut Document, path: &Path) -> Result<(), PdfError> {
+    for key in [&b"Prev"[..], b"XRefStm", b"DecodeParms"] {
+        doc.trailer.remove(key);
+    }
     let file = std::fs::File::create(path).map_err(|e| PdfError::Write(e.to_string()))?;
     let mut out = std::io::BufWriter::new(file);
     doc.save_to(&mut out).map_err(|e| PdfError::Write(e.to_string()))?;
@@ -444,6 +455,48 @@ pub(crate) mod tests {
         let mut bytes = Vec::new();
         doc.save_to(&mut bytes).unwrap();
         Document::load_mem(&bytes).unwrap()
+    }
+
+    /// `sample` saved, then changed by an incremental update, as an editor
+    /// would: the last trailer names the first section with `/Prev`.
+    fn incremental(xref: lopdf::xref::XrefType) -> Vec<u8> {
+        let mut doc = sample(2, "p");
+        doc.reference_table.cross_reference_type = xref;
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let at = text.rfind("startxref").unwrap();
+        let prev: usize = text[at + 9..].trim_start().lines().next().unwrap().trim().parse().unwrap();
+        let size = doc.max_id + 1;
+        let info = bytes.len();
+        bytes.extend(format!("{size} 0 obj\n<< /Title (edited) >>\nendobj\n").as_bytes());
+        let section = bytes.len();
+        let root = match doc.trailer.get(b"Root").unwrap() {
+            Object::Reference((n, g)) => format!("{n} {g} R"),
+            _ => unreachable!(),
+        };
+        bytes.extend(
+            format!(
+                "xref\n{size} 1\n{info:010} 00000 n \ntrailer\n<< /Size {} /Root {root} /Info {size} 0 R /Prev {prev} >>\nstartxref\n{section}\n%%EOF\n",
+                size + 1
+            )
+            .as_bytes(),
+        );
+        bytes
+    }
+
+    #[test]
+    fn a_file_saved_incrementally_comes_out_whole_and_opens_again() {
+        for xref in [lopdf::xref::XrefType::CrossReferenceTable, lopdf::xref::XrefType::CrossReferenceStream] {
+            let mut doc = Document::load_mem(&incremental(xref)).unwrap();
+            assert!(doc.trailer.get(b"Prev").is_ok(), "the sample should be incremental");
+            let dir = tempfile::tempdir().unwrap();
+            let out = dir.path().join("out.pdf");
+            save(&mut doc, &out).unwrap();
+            let again = Document::load(&out).expect("a saved file opens again");
+            assert_eq!(labels(&again), ["p-1", "p-2"]);
+            assert!(again.trailer.get(b"Prev").is_err());
+        }
     }
 
     fn all(source: usize) -> Pick {

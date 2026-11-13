@@ -470,6 +470,37 @@ phòng, front end) rồi sửa.
   - Không huỷ được giữa chừng một lần chạy trong phòng (LibreOffice, pdf2docx); bộ tự kiểm của phòng chưa phủ profile
     `programs`/`office`; lookup `launchservicesd` chưa được thử xem có mở được app khác không.
 
+**Rà soát lần hai, 2026-11-13 (chưa commit):** bốn lượt đọc độc lập (trạng thái front end, component, lệnh Rust,
+lõi PDF/ảnh); mọi điểm dưới đây đã được đối chiếu với code trước khi sửa.
+
+- **Nặng:**
+  - **Canvas bị "taint".** Ảnh nạp từ `asset:` mà không có CORS làm canvas không cho đọc điểm ảnh, nên mọi tool ảnh
+    và logo watermark đều lỗi "The operation is insecure" khi chạy. Nay ảnh được nạp với `crossOrigin`.
+  - **PDF lưu kiểu incremental.** Output giữ `/Prev` và `/XRefStm` cũ nên không mở lại được, kể cả trong app; nay
+    hai khoá này bị bỏ khi lưu (có test).
+  - **PDF scan JBIG2 và JPEG 2000 ra trang trắng.** Nay app mang theo bộ giải mã JS của pdf.js trong
+    `public/pdfjs/wasm/`, dùng chung qua `DOCUMENT_OPTIONS` cho cả Files.
+  - **Bộ nhớ phình.** Mỗi trang được `cleanup()` sau khi vẽ hoặc đọc chữ.
+- **Vừa:**
+  - **OCR:** file .txt ghi chữ sẵn có của trang được bỏ qua, không còn ghi "(không có chữ)".
+  - **Tool một file** không mất file đang mở khi bị thả nhầm loại file.
+  - **Sau Khoá PDF,** "Dùng tiếp" chỉ còn Mở khoá.
+  - **Danh sách chưa lưu** không có lần chạy đang dở.
+  - **Cài pdf2docx:** trạng thái cài nằm ở workbench và Rust chặn cài hai lần cùng lúc.
+  - **Lưu ghi ra file tạm rồi đổi tên.** Áp dụng cho Lưu, .zip và lưu vào vault; .zip dùng ZIP64 khi một file vượt
+    4 GiB.
+  - **Phòng kín:** chép file vào/ra, parse PDF để kiểm và dọn phòng chuyển khỏi luồng async.
+- **Đã kiểm:**
+  - 66 test Rust của Utilities, cùng `real_office` với LibreOffice thật.
+  - 36 test front end.
+  - PDF JPEG 2000 vẽ đúng màu trong bản build (`vite preview`) và trong `vite dev`.
+- **Chưa kiểm:**
+  - Vẫn chưa chạy trong app Tauri thật, nên bản sửa CORS mới dựa trên header `Access-Control-Allow-Origin` của asset
+    protocol Tauri 2.10.
+  - Chưa thử với một PDF JBIG2 thật.
+- **Còn lại (nhỏ):** thông báo lỗi Office→PDF và ảnh hỏng, dấu âm ở "nhẹ hơn", `MediaBox` thừa kế khi nén, focus
+  sau khi chạy, file độc hại cố ý (lồng sâu, zip bomb, watermark lặp vô hạn), EXIF/GPS trong Ảnh→PDF.
+
 ---
 
 ## 8. Bước 0: cần đo trước

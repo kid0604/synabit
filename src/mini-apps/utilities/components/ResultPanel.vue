@@ -70,6 +70,8 @@ const next = computed<ToolId[]>(() => offered.value.filter((id) => availability(
 const offered = computed<ToolId[]>(() => {
   if (!outputs.value.length) return [];
   const tool = props.job.tool as ToolId;
+  // A locked PDF opens in no other tool: each would refuse it as locked.
+  if (tool === 'protect') return ['unlock'];
   if (outputs.value.every((o) => isPdf(o.name))) {
     const all: ToolId[] = outputs.value.length > 1
       ? ['merge', 'compress', 'watermark', 'numbers', 'protect', 'pdf2img']

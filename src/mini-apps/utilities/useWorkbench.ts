@@ -15,7 +15,7 @@ import * as api from './api';
 import { errorText } from '../../shared/errorText';
 import { showAppNotice } from '../../composables/useAppNotice';
 import {
-  asJpeg, canEncode, closePdf, cutOut, encodeCanvas, encodeImage, imageMark, loadImage, openPdf, pageAsImage, pageHasText, pagePixels,
+  asJpeg, canEncode, closePdf, cutOut, encodeCanvas, encodeImage, imageMark, loadImage, openPdf, pageAsImage, pageWords, pagePixels,
   pdfText, pixelsOf, textMark, type Region,
 } from './render';
 import {
@@ -134,6 +134,29 @@ export const COMPRESS_LEVELS = [
 const office = ref<OfficeStatus | null | undefined>(undefined);
 function askOffice(): Promise<void> {
   return api.officeStatus().then((o) => { office.value = o ?? null; }).catch(() => { office.value = null; });
+}
+
+/**
+ * Installing pdf2docx: minutes, once, through the room that reaches only the
+ * package registry. Kept here rather than on the tool's screen, which is made
+ * anew each time the tool opens: leaving and coming back showed "Install"
+ * again while the first install went on, and a second could start beside it.
+ */
+const installing = ref(false);
+const installError = ref('');
+async function installPdf2docx(): Promise<void> {
+  if (installing.value) return;
+  installing.value = true;
+  installError.value = '';
+  try {
+    await api.installPdf2docx();
+    await askOffice();
+  } catch (e) {
+    // Rust says `install-failed: <why>`; the sentence around it says the first part.
+    installError.value = errorText(e).replace(/^install-failed:\s*/, '');
+  } finally {
+    installing.value = false;
+  }
 }
 
 /** What Vision can do here: `undefined` until asked, `null` off macOS. */
@@ -327,8 +350,9 @@ function addInputs(inputs: api.Input[]): number {
   const t = current.value;
   if (!t) return inputs.length;
   let room = t.max === undefined ? Infinity : t.max - usable.value.length;
-  // A one-file tool given a new file swaps it in.
-  if (t.max === 1 && inputs.length) {
+  // A one-file tool given a new file swaps it in — only a file it takes: one
+  // of the wrong kind is refused and the file already open stays.
+  if (t.max === 1 && inputs.some((i) => kindOf(i.name) === t.accepts)) {
     for (const i of items.value) if (i.kind === 'pdf') void closePdf(i.input.path);
     items.value = [];
     room = 1;
@@ -681,12 +705,16 @@ async function run() {
           for (let p = 1; p <= (f.pages ?? 0); p++) {
             check();
             let lines: TextLine[] = [];
-            if (!(o.skipText && (await pageHasText(f.input.path, p)))) {
+            // A page that has text already is not read again; the .txt takes
+            // the text it has, not a "no text here".
+            const own = o.skipText ? await pageWords(f.input.path, p) : '';
+            if (!own) {
+              check();
               const px = await pagePixels(f.input.path, p);
               lines = await api.recognize(px.width, px.height, px.rgba, languages);
             }
             pages.push({ page: p, lines });
-            text.push(`—— ${tr('utilities.options.text_page')} ${p} ——\n\n${linesToText(lines) || tr('utilities.options.text_none')}`);
+            text.push(`—— ${tr('utilities.options.text_page')} ${p} ——\n\n${own || linesToText(lines) || tr('utilities.options.text_none')}`);
             tick();
           }
           found.push({ input: f.input.id, name: outputName('ocr', f.input.name), pages });
@@ -749,7 +777,7 @@ async function run() {
     phase.value = 'done';
     void refreshUnsaved();
   } catch (e) {
-    if (started) void api.discard(started.id).catch(() => {});
+    if (started) void api.discard(started.id).catch(() => {}).then(refreshUnsaved);
     if (shown()) {
       failure.value = run.cancelled ? null : explain(e);
       phase.value = 'loaded';
@@ -791,7 +819,11 @@ async function chain(next: ToolId) {
 
 async function refreshUnsaved() {
   try {
-    unsaved.value = (await api.unsavedResults()) ?? [];
+    const found = (await api.unsavedResults()) ?? [];
+    // A run still going writes its files as it goes, so it has outputs, but it
+    // is not a result yet: opening it from the list would cancel it and
+    // throw those files away under the result on screen.
+    unsaved.value = found.filter((j) => j.id !== active?.job);
   } catch {
     unsaved.value = [];
   }
@@ -820,7 +852,7 @@ function stopListening() {
 export function useWorkbench() {
   return {
     tool, current, items, usable, firstPdf, phase, progress, job, before, failure, options, unsaved, splitPlan, ready, webp,
-    resetCrop, defaultCrop, vision, askVision, maskFor, office, askOffice,
+    resetCrop, defaultCrop, vision, askVision, maskFor, office, askOffice, installing, installError, installPdf2docx,
     openTool, closeTool, addInputs, removeItem, moveItem, sortByName, clearItems, run, cancel, editAgain,
     showJob, chain, refreshUnsaved, noteSaved, listenForProgress, stopListening,
   };

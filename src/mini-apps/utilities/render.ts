@@ -7,7 +7,7 @@
  * `commands::thumbnails` for why it has none).
  */
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { pageText, pdfjsLib, type PDFDocumentProxy } from '../../shared/pdfjs';
+import { DOCUMENT_OPTIONS, pageText, pdfjsLib, type PDFDocumentProxy, type PDFPageProxy } from '../../shared/pdfjs';
 
 /** A workspace file, as a URL the WebView can fetch. */
 export function fileUrl(path: string): string {
@@ -31,9 +31,7 @@ export function openPdf(path: string): Promise<PDFDocumentProxy> {
       .then(async (data) => {
         const task = pdfjsLib.getDocument({
           data: new Uint8Array(data),
-          cMapUrl: '/pdfjs/cmaps/',
-          cMapPacked: true,
-          standardFontDataUrl: '/pdfjs/standard_fonts/',
+          ...DOCUMENT_OPTIONS,
         });
         try {
           return await task.promise;
@@ -77,7 +75,23 @@ export async function drawPage(path: string, page: number, canvas: HTMLCanvasEle
   canvas.height = Math.round(viewport.height);
   canvas.style.width = `${width}px`;
   canvas.style.height = `${Math.round(viewport.height / ratio)}px`;
-  await p.render({ canvas, viewport }).promise;
+  try {
+    await p.render({ canvas, viewport }).promise;
+  } finally {
+    letGo(p);
+  }
+}
+
+/**
+ * Let go of what drawing a page decoded. pdf.js keeps a page's pictures and
+ * drawing commands until it is told to — on its own it does so only after
+ * printing — so a run over a 300-page scan held every page's decoded images
+ * at once and the WebView ran out of memory. A page drawn again is decoded
+ * again. While another draw of the same page is still going this does
+ * nothing, so it is safe after any draw.
+ */
+function letGo(page: PDFPageProxy) {
+  page.cleanup();
 }
 
 function toBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
@@ -101,7 +115,11 @@ export async function pageAsImage(path: string, page: number, dpi: number, forma
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
-  await p.render({ canvas, viewport }).promise;
+  try {
+    await p.render({ canvas, viewport }).promise;
+  } finally {
+    letGo(p);
+  }
   const blob = await toBlob(canvas, format === 'png' ? 'image/png' : 'image/jpeg', 0.92);
   canvas.width = canvas.height = 0;
   return new Uint8Array(await blob.arrayBuffer());
@@ -113,10 +131,7 @@ export async function pageAsImage(path: string, page: number, dpi: number, forma
  * so the result is upright and carries no orientation of its own.
  */
 export async function asJpeg(path: string): Promise<Uint8Array> {
-  const img = new Image();
-  img.decoding = 'async';
-  img.src = fileUrl(path);
-  await img.decode();
+  const img = await loadImage(path);
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
@@ -151,10 +166,20 @@ export function canEncode(type: 'image/webp' | 'image/jpeg' | 'image/png'): bool
   return known;
 }
 
-/** A picture from the workspace, decoded and upright. */
+/**
+ * A picture from the workspace, decoded and upright, that a canvas may read.
+ *
+ * The `asset:` URL is another origin from the page, and a picture loaded from
+ * another origin without CORS taints any canvas it is drawn on: `toBlob` and
+ * `getImageData` then throw "The operation is insecure" (thumbnails hit this
+ * first; see `shared/thumbnails.ts`). Tauri's asset protocol answers with the
+ * window's origin in `Access-Control-Allow-Origin`, so asking in CORS mode is
+ * all it takes.
+ */
 export async function loadImage(path: string): Promise<HTMLImageElement> {
   const img = new Image();
   img.decoding = 'async';
+  img.crossOrigin = 'anonymous';
   img.src = fileUrl(path);
   await img.decode();
   return img;
@@ -210,16 +235,26 @@ export async function pdfText(path: string, pageLabel: string, noText: string, o
   const parts: string[] = [];
   for (let n = 1; n <= doc.numPages; n++) {
     if (onPage && !onPage()) throw new Error('cancelled');
-    const page = await doc.getPage(n);
-    const content = await pageText(page);
-    let text = '';
-    for (const item of content.items) {
-      if (!('str' in item)) continue;
-      text += item.str + (item.hasEOL ? '\n' : '');
-    }
-    parts.push(`—— ${pageLabel} ${n} ——\n\n${text.trim() || noText}`);
+    parts.push(`—— ${pageLabel} ${n} ——\n\n${(await pageWords(path, n)) || noText}`);
   }
   return parts.join('\n\n') + '\n';
+}
+
+/**
+ * The text a page carries of its own, line by line as it was set (pdf.js
+ * marks where a line ends), trimmed: empty for a scan.
+ */
+export async function pageWords(path: string, page: number): Promise<string> {
+  const doc = await openPdf(path);
+  const p = await doc.getPage(page);
+  const content = await pageText(p);
+  letGo(p);
+  let text = '';
+  for (const item of content.items) {
+    if (!('str' in item)) continue;
+    text += item.str + (item.hasEOL ? '\n' : '');
+  }
+  return text.trim();
 }
 
 /** A page's size as it is shown (its own rotation applied), in points. */
@@ -321,18 +356,15 @@ export async function pagePixels(path: string, page: number, dpi = 200, maxSide 
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  await p.render({ canvas, canvasContext: ctx, viewport }).promise;
+  try {
+    await p.render({ canvas, canvasContext: ctx, viewport }).promise;
+  } finally {
+    letGo(p);
+  }
   const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
   const out = { width: canvas.width, height: canvas.height, rgba: new Uint8Array(data.buffer.slice(0)) };
   canvas.width = canvas.height = 0;
   return out;
-}
-
-/** Whether a page already has text of its own, so it needs no reading. */
-export async function pageHasText(path: string, page: number): Promise<boolean> {
-  const doc = await openPdf(path);
-  const content = await pageText(await doc.getPage(page));
-  return content.items.some((i) => 'str' in i && i.str.trim().length > 0);
 }
 
 export type Backdrop = 'transparent' | string;

@@ -1,5 +1,5 @@
 import { ref, shallowRef } from 'vue';
-import { pdfjsLib, type PDFDocumentProxy, type PDFPageProxy } from '../../../shared/pdfjs';
+import { DOCUMENT_OPTIONS, pdfjsLib, type PDFDocumentProxy, type PDFPageProxy } from '../../../shared/pdfjs';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { i18n } from '../../../i18n';
 import { logger } from '../../../utils/logger';
@@ -42,7 +42,8 @@ export function usePdfRenderer() {
       const arrayBuffer = await response.arrayBuffer();
       const bytes = new Uint8Array(arrayBuffer);
 
-      // Served from the bundle, not from unpkg.
+      // Served from the bundle, not from unpkg (DOCUMENT_OPTIONS, in
+      // shared/pdfjs.ts, also brings the JBIG2 and JPEG 2000 decoders).
       //
       // These pointed at `https://unpkg.com/pdfjs-dist@5.7.284/...`, which could
       // not work: `connect-src` in tauri.conf.json does not list unpkg, so the
@@ -58,9 +59,7 @@ export function usePdfRenderer() {
       // they came to name a version the package had already moved past.
       const loadingTask = pdfjsLib.getDocument({
         data: bytes,
-        cMapUrl: '/pdfjs/cmaps/',
-        cMapPacked: true,
-        standardFontDataUrl: '/pdfjs/standard_fonts/',
+        ...DOCUMENT_OPTIONS,
       });
       const doc = await loadingTask.promise;
       pdfDoc.value = doc;

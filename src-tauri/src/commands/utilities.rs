@@ -612,6 +612,19 @@ fn room_name(job: &str, index: usize) -> String {
     format!("u-{}-{index}", &job[..16])
 }
 
+/// Write what a room made as one of the job's outputs, off the async runtime.
+#[cfg(target_os = "macos")]
+async fn keep_output(app: &tauri::AppHandle, job: &str, name: &str, bytes: Vec<u8>) -> AppResult<()> {
+    let (ws, job, name) = (workspace(app)?, job.to_string(), name.to_string());
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = ws.output_path(&job, &name)?;
+        std::fs::write(&out, bytes)?;
+        ws.add_output(&job, &out).map(drop)
+    })
+    .await
+    .map_err(|e| AppError::General(e.to_string()))?
+}
+
 /// Each Word, Excel, PowerPoint or OpenDocument file as a PDF, by LibreOffice
 /// in a sealed room.
 #[tauri::command]
@@ -632,11 +645,7 @@ pub async fn utility_office_to_pdf(app: tauri::AppHandle, job: String, files: Ve
             let path = ws.input_path(&file.input)?;
             let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
             match crate::utilities::room::office_to_pdf(&rooms, &room_name(&job, i), &path).await {
-                Ok(pdf) => {
-                    let out = ws.output_path(&job, &file.name)?;
-                    std::fs::write(&out, pdf)?;
-                    ws.add_output(&job, &out)?;
-                }
+                Ok(pdf) => keep_output(&app, &job, &file.name, pdf).await?,
                 Err(e) => {
                     failure = Some(room_error(&name, e));
                     break;
@@ -663,6 +672,18 @@ pub async fn utility_office_to_pdf(app: tauri::AppHandle, job: String, files: Ve
 pub async fn utility_install_pdf2docx(app: tauri::AppHandle) -> AppResult<()> {
     #[cfg(target_os = "macos")]
     {
+        // One at a time: two would build into the same room.
+        static INSTALLING: AtomicBool = AtomicBool::new(false);
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                INSTALLING.store(false, Ordering::SeqCst);
+            }
+        }
+        if INSTALLING.swap(true, Ordering::SeqCst) {
+            return Err(AppError::General("install-failed: an install is already running".into()));
+        }
+        let _done = Done;
         let rooms = machine(&app)?;
         let root = rooms.root().to_path_buf();
         let id = crate::utilities::room::install_pdf2docx(&rooms, &root, "utilities-install")
@@ -698,17 +719,20 @@ pub async fn utility_pdf_to_word(app: tauri::AppHandle, job: String, files: Vec<
             let path = ws.input_path(&file.input)?;
             let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
             // A PDF that needs a password, or does not open, is said as such
-            // before a room is spent on it.
-            if let Err(e) = pdf::open(&path) {
+            // before a room is spent on it. Reading it whole takes a while
+            // for a big one, so not on the async runtime.
+            let opens = {
+                let path = path.clone();
+                tauri::async_runtime::spawn_blocking(move || pdf::open(&path).map(drop))
+                    .await
+                    .map_err(|e| AppError::General(e.to_string()))?
+            };
+            if let Err(e) = opens {
                 failure = Some(pdf_error(&name, e));
                 break;
             }
             match crate::utilities::room::pdf_to_docx(&rooms, &room_name(&job, i), &bin, &path).await {
-                Ok(docx) => {
-                    let out = ws.output_path(&job, &file.name)?;
-                    std::fs::write(&out, docx)?;
-                    ws.add_output(&job, &out)?;
-                }
+                Ok(docx) => keep_output(&app, &job, &file.name, docx).await?,
                 Err(e) => {
                     failure = Some(room_error(&name, e));
                     break;
@@ -1005,7 +1029,7 @@ pub async fn utility_save_beside(
     }
     let from = ws.output_file(&job, &output)?;
     let to = unused_path(&dir, &clean_name(&name));
-    copy_out(&from, &to)?;
+    copy_off_runtime(from, to.clone()).await?;
     ws.mark_saved(&job, &to)?;
     crate::commands::files::index_written_file(state.inner(), &to)?;
     Ok(to.strip_prefix(&vault).unwrap_or(&to).to_string_lossy().into_owned())
@@ -1053,12 +1077,42 @@ pub fn utility_discard(app: tauri::AppHandle, job: String) -> AppResult<()> {
     workspace(&app)?.discard(&job)
 }
 
-fn copy_out(from: &Path, to: &Path) -> AppResult<()> {
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent)?;
+/// Write a file where the person will find it, in one step: into a hidden
+/// temporary file beside it, then renamed over the name. A full disk or an
+/// output that cannot be read halfway through used to leave a cut-off file
+/// there — and when they had chosen to replace a file, the old one was already
+/// gone. Now they find the old file or the whole new one.
+fn write_whole(to: &Path, write: impl FnOnce(&mut std::fs::File) -> AppResult<()>) -> AppResult<()> {
+    let dir = to.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let name = to.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.{}.tmp", uuid::Uuid::new_v4().simple()));
+    let written = (|| -> AppResult<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        write(&mut file)?;
+        crate::path_utils::flush_to_disk(&file)?;
+        Ok(())
+    })()
+    .and_then(|()| std::fs::rename(&tmp, to).map_err(AppError::from));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::copy(from, to)?;
-    Ok(())
+    written
+}
+
+/// `copy_out` on a blocking thread: a large result into a vault on a disk
+/// that cannot clone (exFAT, a network share) takes seconds.
+async fn copy_off_runtime(from: PathBuf, to: PathBuf) -> AppResult<()> {
+    tauri::async_runtime::spawn_blocking(move || copy_out(&from, &to))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))?
+}
+
+fn copy_out(from: &Path, to: &Path) -> AppResult<()> {
+    write_whole(to, |file| {
+        std::io::copy(&mut std::fs::File::open(from)?, file)?;
+        Ok(())
+    })
 }
 
 /// Save one output where the person just chose (`gate::CHOSEN_ARGS`).
@@ -1102,20 +1156,25 @@ pub async fn utility_save_zip(app: tauri::AppHandle, job: String, destination: S
     let ws = workspace(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
         let record = ws.job(&job)?;
-        // Every output is there before the chosen file is touched: a failure
-        // must not leave an empty .zip where the person said to save.
+        // Every output is there before anything is written, and the .zip is
+        // written whole (`write_whole`): a failure leaves no broken .zip.
         let froms: Vec<(String, PathBuf)> =
             record.outputs.iter().map(|o| ws.output_file(&job, &o.name).map(|p| (o.name.clone(), p))).collect::<AppResult<_>>()?;
         let to = PathBuf::from(&destination);
-        let file = std::fs::File::create(&to)?;
-        let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
-        // Stored, not deflated: PDFs and pictures are compressed already.
-        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        for (name, from) in &froms {
-            zip.start_file(clean_name(name), options).map_err(|e| AppError::General(e.to_string()))?;
-            std::io::copy(&mut std::fs::File::open(from)?, &mut zip)?;
-        }
-        zip.finish().map_err(|e| AppError::General(e.to_string()))?;
+        write_whole(&to, |file| {
+            let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
+            // Stored, not deflated: PDFs and pictures are compressed already.
+            let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            for (name, from) in &froms {
+                // Past 4 GiB a file needs ZIP64, which is asked for up front.
+                let large = std::fs::metadata(from)?.len() >= u64::from(u32::MAX);
+                zip.start_file(clean_name(name), options.large_file(large)).map_err(|e| AppError::General(e.to_string()))?;
+                std::io::copy(&mut std::fs::File::open(from)?, &mut zip)?;
+            }
+            use std::io::Write;
+            zip.finish().map_err(|e| AppError::General(e.to_string()))?.flush()?;
+            Ok(())
+        })?;
         ws.mark_saved(&job, &to)
     })
     .await
@@ -1136,9 +1195,8 @@ pub async fn utility_save_to_vault(
     let ws = workspace(&app)?;
     let from = ws.output_file(&job, &output)?;
     let assets = Path::new(&vault_path).join("assets");
-    std::fs::create_dir_all(&assets)?;
     let to = unused_path(&assets, &clean_name(&name));
-    copy_out(&from, &to)?;
+    copy_off_runtime(from, to.clone()).await?;
     ws.mark_saved(&job, &to)?;
     crate::commands::files::index_written_file(state.inner(), &to)?;
     Ok(to.strip_prefix(&vault_path).unwrap_or(&to).to_string_lossy().into_owned())
@@ -1203,4 +1261,33 @@ pub fn utility_reveal_saved(app: tauri::AppHandle, job: String) -> AppResult<()>
 #[tauri::command]
 pub fn utility_reveal_saved(_app: tauri::AppHandle, _job: String) -> AppResult<()> {
     Err(AppError::UnsupportedCapability("There is no file manager here".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_save_that_fails_halfway_leaves_the_old_file_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("Results.zip");
+        std::fs::write(&to, b"the old file").unwrap();
+        let failed = write_whole(&to, |file| {
+            use std::io::Write;
+            file.write_all(b"half of the new")?;
+            Err(AppError::General("disk full".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read(&to).unwrap(), b"the old file");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1, "no temporary file left behind");
+
+        write_whole(&to, |file| {
+            use std::io::Write;
+            file.write_all(b"the new file")?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&to).unwrap(), b"the new file");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 }

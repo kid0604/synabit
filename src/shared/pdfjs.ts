@@ -30,6 +30,36 @@ export type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist/legacy/build/pdf
 export type TextContent = Awaited<ReturnType<PDFPageProxy['getTextContent']>>;
 
 /**
+ * What every `getDocument` in the app passes besides the file: where pdf.js
+ * finds what it does not carry, all served from `public/pdfjs/`, never a CDN
+ * (the CSP would block one, and the app works offline).
+ *
+ * - **CMaps and standard fonts**, for CJK text and fonts a PDF names but does
+ *   not embed.
+ * - **The image decoders.** pdf.js 6 decodes JBIG2 and JPEG 2000 — what office
+ *   scanners and archives write — only through these; without them a scanned
+ *   page drew white, and a searchable PDF made from it had no text. They are
+ *   the JavaScript builds (`useWasm: false`): the CSP has no
+ *   `'wasm-unsafe-eval'`, and the wasm is fetched with `Response#bytes()`,
+ *   which Safari has only from 18. Slower than wasm, and only on such images.
+ *
+ * Copied from `node_modules/pdfjs-dist/{cmaps,standard_fonts,wasm}`; when
+ * pdf.js is upgraded, copy them again.
+ *
+ * The worker `import()`s a decoder by URL. A built app serves the worker as
+ * it is, so `public/` answers. The dev server rewrites that `import()` to ask
+ * for `?import`, which it refuses for a file in `public/`, so under
+ * `npm run tauri dev` the decoders come from `node_modules` instead.
+ */
+export const DOCUMENT_OPTIONS = {
+  cMapUrl: '/pdfjs/cmaps/',
+  cMapPacked: true,
+  standardFontDataUrl: '/pdfjs/standard_fonts/',
+  wasmUrl: import.meta.env.DEV ? '/node_modules/pdfjs-dist/wasm/' : '/pdfjs/wasm/',
+  useWasm: false,
+} as const;
+
+/**
  * A page's text, as `page.getTextContent()` gives it.
  *
  * `getTextContent()` reads its stream with `for await`, and no Safari can

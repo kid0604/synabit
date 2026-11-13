@@ -20,6 +20,7 @@
 //!   nothing else.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::syn::machine::cell::Limits;
@@ -61,21 +62,54 @@ fn limits(minutes: u64) -> Limits {
 }
 
 /// A room of its own for one conversion, emptied and removed afterwards.
-struct Borrowed<'a> {
-    rooms: &'a Rooms,
+///
+/// Emptying waits for whatever is still running in it to end, which can take
+/// seconds, so it happens on a blocking thread: done here, on the async
+/// runtime, it held up every other command the app was answering.
+struct Borrowed {
+    rooms: Arc<Rooms>,
     cell: crate::syn::machine::cell::Cell,
 }
 
-impl Drop for Borrowed<'_> {
+impl Drop for Borrowed {
     fn drop(&mut self) {
-        let _ = self.rooms.clear(&self.cell);
-        let _ = std::fs::remove_dir_all(self.cell.room());
+        let (rooms, cell) = (self.rooms.clone(), self.cell.clone());
+        drop(tauri::async_runtime::spawn_blocking(move || {
+            let _ = rooms.clear(&cell);
+            let _ = std::fs::remove_dir_all(cell.room());
+        }));
     }
 }
 
-async fn borrow<'a>(rooms: &'a Rooms, name: &str) -> Result<Borrowed<'a>, RoomError> {
+async fn borrow(rooms: &Arc<Rooms>, name: &str) -> Result<Borrowed, RoomError> {
     let cell = rooms.open(name).await.map_err(|e| RoomError::Unavailable(e.to_string()))?;
-    Ok(Borrowed { rooms, cell })
+    Ok(Borrowed { rooms: rooms.clone(), cell })
+}
+
+/// File work — a document copied in, a result read out, up to a gigabyte —
+/// off the async runtime.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, RoomError> + Send + 'static) -> Result<T, RoomError> {
+    tauri::async_runtime::spawn_blocking(work).await.map_err(|e| RoomError::Io(e.to_string()))?
+}
+
+/// Copy `input` into the room as `name`.
+async fn copy_in(cell: &crate::syn::machine::cell::Cell, input: &Path, name: &str) -> Result<(), RoomError> {
+    let (cell, input, name) = (cell.clone(), input.to_path_buf(), name.to_string());
+    blocking(move || {
+        let bytes = std::fs::read(&input).map_err(|e| RoomError::Io(e.to_string()))?;
+        inside::write(&cell, Path::new(&name), &bytes).map_err(|e| RoomError::Io(e.to_string()))
+    })
+    .await
+}
+
+/// What the room made at `name`, if it made it whole.
+async fn take_out(cell: &crate::syn::machine::cell::Cell, name: &str) -> Option<Vec<u8>> {
+    let (cell, name) = (cell.clone(), name.to_string());
+    blocking(move || Ok(inside::read(&cell, Path::new(&name), MOST_OUT).ok()))
+        .await
+        .ok()
+        .flatten()
+        .and_then(|(bytes, cut)| (!cut).then_some(bytes))
 }
 
 /// The extension a file keeps in the room: what LibreOffice reads the format by.
@@ -99,13 +133,12 @@ fn tail(text: &str) -> String {
 
 /// A Word, Excel, PowerPoint or OpenDocument file as a PDF. `name` is the
 /// room's, unique to this call.
-pub async fn office_to_pdf(rooms: &Rooms, name: &str, input: &Path) -> Result<Vec<u8>, RoomError> {
+pub async fn office_to_pdf(rooms: &Arc<Rooms>, name: &str, input: &Path) -> Result<Vec<u8>, RoomError> {
     libreoffice().ok_or(RoomError::Missing("libreoffice"))?;
     let room = borrow(rooms, name).await?;
     let cell = room.cell.clone().for_libreoffice(PathBuf::from(LIBREOFFICE));
     let file = format!("in.{}", safe_extension(input));
-    let bytes = std::fs::read(input).map_err(|e| RoomError::Io(e.to_string()))?;
-    inside::write(&cell, Path::new(&file), &bytes).map_err(|e| RoomError::Io(e.to_string()))?;
+    copy_in(&cell, input, &file).await?;
     // Its settings in the room, not in ~/Library; a fresh profile each time.
     // A URL, percent-encoded, and quoted for the shell: the room lives under
     // "Application Support", and a space would split the argument in two.
@@ -118,8 +151,8 @@ pub async fn office_to_pdf(rooms: &Rooms, name: &str, input: &Path) -> Result<Ve
         quoted(&file),
     );
     let watched = rooms.run(&cell, &script, limits(5)).await.map_err(|e| RoomError::Io(e.to_string()))?;
-    match inside::read(&cell, Path::new("out/in.pdf"), MOST_OUT) {
-        Ok((pdf, false)) if pdf.starts_with(b"%PDF") => Ok(pdf),
+    match take_out(&cell, "out/in.pdf").await {
+        Some(pdf) if pdf.starts_with(b"%PDF") => Ok(pdf),
         _ => Err(failed(&watched)),
     }
 }
@@ -151,16 +184,15 @@ const PDF2DOCX_SCRIPT: &str = "import sys\nfrom pdf2docx import Converter\n\
 c = Converter('in.pdf')\nc.convert('out.docx', multi_processing=False)\nc.close()\n";
 
 /// A PDF as a Word file, by pdf2docx in a room. `bin` is the environment's.
-pub async fn pdf_to_docx(rooms: &Rooms, name: &str, bin: &Path, input: &Path) -> Result<Vec<u8>, RoomError> {
+pub async fn pdf_to_docx(rooms: &Arc<Rooms>, name: &str, bin: &Path, input: &Path) -> Result<Vec<u8>, RoomError> {
     let room = borrow(rooms, name).await?;
     let cell = &room.cell;
-    let bytes = std::fs::read(input).map_err(|e| RoomError::Io(e.to_string()))?;
-    inside::write(cell, Path::new("in.pdf"), &bytes).map_err(|e| RoomError::Io(e.to_string()))?;
+    copy_in(cell, input, "in.pdf").await?;
     inside::write(cell, Path::new("convert.py"), PDF2DOCX_SCRIPT.as_bytes()).map_err(|e| RoomError::Io(e.to_string()))?;
     let script = format!("{} -I convert.py", quoted(&bin.join("python3").to_string_lossy()));
     let watched = rooms.run(cell, &script, limits(10)).await.map_err(|e| RoomError::Io(e.to_string()))?;
-    match inside::read(cell, Path::new("out.docx"), MOST_OUT) {
-        Ok((docx, false)) if docx.starts_with(b"PK") => Ok(docx),
+    match take_out(cell, "out.docx").await {
+        Some(docx) if docx.starts_with(b"PK") => Ok(docx),
         _ => Err(failed(&watched)),
     }
 }
@@ -192,7 +224,7 @@ mod tests {
         let input = PathBuf::from(std::env::var("UTILITIES_OFFICE").unwrap());
         let dir = tempfile::tempdir().unwrap();
         // A space in the path, as under ~/Library/Application Support.
-        let rooms = Rooms::at(&dir.path().join("Application Support/machine")).unwrap();
+        let rooms = Arc::new(Rooms::at(&dir.path().join("Application Support/machine")).unwrap());
         let started = std::time::Instant::now();
         rooms.ready().await.unwrap();
         println!("self-check: {:?}", started.elapsed());
@@ -214,7 +246,7 @@ mod tests {
     async fn real_pdf2docx() {
         let input = PathBuf::from(std::env::var("UTILITIES_PDF").unwrap());
         let root = PathBuf::from(std::env::var("UTILITIES_MACHINE").unwrap());
-        let rooms = Rooms::at(&root).unwrap();
+        let rooms = Arc::new(Rooms::at(&root).unwrap());
         let root = rooms.root().to_path_buf();
         let id_file = root.join("pdf2docx-env");
         let id = match std::fs::read_to_string(&id_file) {
@@ -245,7 +277,7 @@ mod probe {
     #[ignore]
     async fn probe() {
         let script = std::env::var("UTILITIES_SCRIPT").unwrap();
-        let rooms = Rooms::at(Path::new(&std::env::var("UTILITIES_MACHINE").unwrap())).unwrap();
+        let rooms = Arc::new(Rooms::at(Path::new(&std::env::var("UTILITIES_MACHINE").unwrap())).unwrap());
         let room = borrow(&rooms, "probe").await.unwrap();
         let mut cell = room.cell.clone().for_libreoffice(PathBuf::from(LIBREOFFICE));
         if let Ok(extra) = std::env::var("UTILITIES_EXTRA") {

@@ -15,7 +15,6 @@ import CropBox from './CropBox.vue';
 import CutoutPreview from './CutoutPreview.vue';
 import * as api from '../api';
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { errorText } from '../../../shared/errorText';
 import { COMPRESS_LEVELS } from '../useWorkbench';
 import { logger } from '../../../utils/logger';
 import { useWorkbench } from '../useWorkbench';
@@ -138,21 +137,6 @@ const acceptLabel = computed(() => t(`utilities.accepts.${tool.value.accepts}`))
 const avail = computed(() => availability(tool.value, wb.vision.value, wb.office.value));
 const hasVietnamese = computed(() => !!wb.vision.value?.languages.includes('vi-VT'));
 
-const installing = ref(false);
-const installError = ref('');
-/** Install pdf2docx: minutes, once, through the room that reaches only the package registry. */
-async function install() {
-  installing.value = true;
-  installError.value = '';
-  try {
-    await api.installPdf2docx();
-    await wb.askOffice();
-  } catch (e) {
-    installError.value = errorText(e);
-  } finally {
-    installing.value = false;
-  }
-}
 const checking = ref(false);
 async function checkAgain() {
   checking.value = true;
@@ -214,12 +198,12 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
                 <Loader2 v-if="checking" class="w-4 h-4 animate-spin" aria-hidden="true" /><RefreshCw v-else class="w-4 h-4" aria-hidden="true" />{{ t('utilities.setup.check_again') }}
               </button>
             </template>
-            <button v-else type="button" class="btn-primary" :disabled="installing" @click="install">
-              <Loader2 v-if="installing" class="w-4 h-4 animate-spin" aria-hidden="true" /><Download v-else class="w-4 h-4" aria-hidden="true" />
-              {{ installing ? t('utilities.setup.installing') : t('utilities.setup.install') }}
+            <button v-else type="button" class="btn-primary" :disabled="wb.installing.value" @click="wb.installPdf2docx">
+              <Loader2 v-if="wb.installing.value" class="w-4 h-4 animate-spin" aria-hidden="true" /><Download v-else class="w-4 h-4" aria-hidden="true" />
+              {{ wb.installing.value ? t('utilities.setup.installing') : t('utilities.setup.install') }}
             </button>
           </div>
-          <p v-if="installError" role="alert" class="text-sm text-danger mt-3 mb-0">{{ t('utilities.errors.install_failed', { reason: installError }) }}</p>
+          <p v-if="wb.installError.value" role="alert" class="text-sm text-danger mt-3 mb-0">{{ t('utilities.errors.install_failed', { reason: wb.installError.value }) }}</p>
           <p v-if="tool.needs === 'libreoffice'" class="text-xs text-muted dark:text-muted-dark mt-3 mb-0">{{ t('utilities.setup.brew_hint') }}</p>
         </div>
 

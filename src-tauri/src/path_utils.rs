@@ -205,7 +205,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// function promises — the rename never exposes a half-written file after a
 /// crash or a killed process. What it gives up is only the last moments before
 /// a power cut, which the drive's cache may still be holding.
-fn flush_to_disk(file: &std::fs::File) -> std::io::Result<()> {
+pub(crate) fn flush_to_disk(file: &std::fs::File) -> std::io::Result<()> {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         use std::os::unix::io::AsRawFd;
