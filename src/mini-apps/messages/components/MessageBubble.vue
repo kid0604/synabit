@@ -449,6 +449,16 @@ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ic
 const runBlockAction = async (button: HTMLElement) => {
   const id = button.dataset.for ?? '';
 
+  // "Open in Whiteboard" under a board Syn drew. Handled here because every
+  // `data-act` comes here first: it used to be looked for further down the
+  // click handler, after the branch that sends every `data-act` to this
+  // function — which knew no `board-app`, so the button did nothing at all.
+  if (button.dataset.act === 'board-app') {
+    const board = boards.get(id);
+    if (board) emit('open-source', { id: board.id, title: board.title, node_type: 'whiteboard' });
+    return;
+  }
+
   if (button.dataset.act === 'open') {
     const kept = keptNotes.get(id);
     if (!kept) return;
@@ -589,19 +599,13 @@ const handleContentClick = async (e: MouseEvent) => {
   }
 
   // A board shown under the answer: the picture opens it beside the
-  // conversation, the button hands it to the Whiteboard app.
+  // conversation. Its button is a `data-act` like any block's, so it is
+  // `runBlockAction` that hands it to the Whiteboard app.
   const picture = target.closest('[data-board]') as HTMLElement | null;
   if (picture) {
     e.preventDefault();
     const board = boards.get(picture.dataset.board ?? '');
     if (board) emit('open-board', board);
-    return;
-  }
-  const toApp = target.closest('[data-act="board-app"]') as HTMLElement | null;
-  if (toApp) {
-    e.preventDefault();
-    const board = boards.get(toApp.dataset.for ?? '');
-    if (board) emit('open-source', { id: board.id, title: board.title, node_type: 'whiteboard' });
     return;
   }
 
