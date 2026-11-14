@@ -86,8 +86,8 @@ export const forCanvas = (n: { id: string; type: string; position: { x: number; 
  * picture that answer describes is the one thing it must not do. So it sits in
  * the row, the conversation narrows, and the edge between them can be dragged.
  */
-import { ref, computed, watch, onBeforeUnmount, provide, toRef } from 'vue';
-import { VueFlow, type NodeDragEvent } from '@vue-flow/core';
+import { ref, shallowRef, computed, watch, nextTick, onBeforeUnmount, provide, toRef } from 'vue';
+import { VueFlow, type NodeDragEvent, type VueFlowStore } from '@vue-flow/core';
 import { Controls } from '@vue-flow/controls';
 import { X, PenTool } from 'lucide-vue-next';
 import ShapeNode from '../../whiteboard/nodes/ShapeNode.vue';
@@ -107,6 +107,7 @@ import { isMarker } from '../../whiteboard/edgeMarkers';
 import { paint } from '../../whiteboard/ink';
 import { EDGE_GREY } from '../../whiteboard/composables/useNodeOperations';
 import { applyRoute, outlineOf, routeLines, waitsForRoute, type Outline, type Route } from '../../whiteboard/autoRoute';
+import { layOutPending } from '../../whiteboard/autoLayout';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
 import { logger } from '../../../utils/logger';
 
@@ -123,31 +124,29 @@ const nodes = ref<any[]>([]);
 const edges = ref<any[]>([]);
 const saving = ref(false);
 
-watch(
-  () => props.board,
-  board => {
-    // A folded mind-map branch stays folded here, as it is in the app.
-    const hidden = hiddenByCollapse(board.data.nodes, board.data.edges);
-    nodes.value = board.data.nodes.map(n => forCanvas({ ...n, hidden: hidden.has(n.id) }));
-    edges.value = board.data.edges.map(e => {
-      const d = (e.data ?? {}) as { label?: string; color?: string; strokeWidth?: number; dashStyle?: string };
-      return {
-        ...e,
-        type: e.type || 'default',
-        label: d.label || '',
-        // Colour, weight and dashes as the app draws them (`buildVfEdge`): a
-        // reply drawn dashed in the file came out solid here.
-        style: {
-          stroke: paint(d.color) || undefined,
-          strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
-          strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
-        },
-        zIndex: 10001,
-      };
-    });
-  },
-  { immediate: true },
-);
+/** The board's items and lines on the canvas, as the file has them. */
+function drawBoard(board: KeptBoard) {
+  // A folded mind-map branch stays folded here, as it is in the app.
+  const hidden = hiddenByCollapse(board.data.nodes, board.data.edges);
+  nodes.value = board.data.nodes.map(n => forCanvas({ ...n, hidden: hidden.has(n.id) }));
+  edges.value = board.data.edges.map(e => {
+    const d = (e.data ?? {}) as { label?: string; color?: string; strokeWidth?: number; dashStyle?: string };
+    return {
+      ...e,
+      type: e.type || 'default',
+      label: d.label || '',
+      // Colour, weight and dashes as the app draws them (`buildVfEdge`): a
+      // reply drawn dashed in the file came out solid here.
+      style: {
+        stroke: paint(d.color) || undefined,
+        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
+        strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
+      },
+      zIndex: 10001,
+    };
+  });
+}
+watch(() => props.board, drawBoard, { immediate: true });
 
 // ── Routed lines (autoRoute.ts) ─────────────────────────────
 /**
@@ -161,9 +160,27 @@ watch(
  * keeps its bends, as in the app.
  */
 let routedHere = new Map<string, Route>();
-watch(() => props.board, () => {
+/** How the view fits the board: see the note on the canvas below. */
+const FIT = { padding: 0.08, minZoom: 0.25, maxZoom: 1 };
+const flow = shallowRef<VueFlowStore | null>(null);
+watch(() => props.board, async (board) => {
   routedHere = new Map();
-  void routeHere(props.board.data.edges.filter(waitsForRoute).map(e => e.id));
+  // Laid out first, if Syn asked for it (autoLayout.ts): the places go into
+  // the file's own copy, and the lines are routed from them.
+  try {
+    if (await layOutPending(board.data)) {
+      if (props.board !== board) return;
+      drawBoard(board);
+      save();
+      // The view was fitted to where the boxes were.
+      await nextTick();
+      void flow.value?.fitView(FIT);
+    }
+  } catch (e) {
+    logger.warn('[Syn] Could not lay out the board', e as string);
+  }
+  if (props.board !== board) return;
+  void routeHere(board.data.edges.filter(waitsForRoute).map(e => e.id));
 }, { immediate: true });
 
 /** The boxes lines go around, as they are in this pane now. */
@@ -362,11 +379,12 @@ onBeforeUnmount(() => {
         v-model:edges="edges"
         class="w-full h-full"
         :fit-view-on-init="true"
-        :fit-view-options="{ padding: 0.08, minZoom: 0.25, maxZoom: 1 }"
+        :fit-view-options="FIT"
         :nodes-connectable="false"
         :only-render-visible-elements="true"
         :min-zoom="0.1"
         @node-drag-stop="onDragStop"
+        @init="(f: VueFlowStore) => (flow = f)"
       >
         <Controls :show-interactive="false" />
         <!-- The app's own pieces, each locked (see `forCanvas`); nothing

@@ -138,7 +138,7 @@ nên chạy layout ở webview **một lần** rồi ghi lại là đủ; Rust k
 và `labelAt` vào file, rồi xoá cờ. Từ đó board là của người dùng như mọi board khác. Thêm lệnh "Sắp lại đường" cho board
 người dùng tự vẽ: cùng một hàm, áp dụng cho các đường đang chọn.
 
-**Bước 2 — ELK cho các loại mà Syn không có bố cục riêng có nghĩa:**
+**Bước 2 — ELK cho các loại mà Syn không có bố cục riêng có nghĩa:** (Đã làm, khác vài chỗ; xem mục 10.)
 - Sketch có `fields`: ERD/class, port theo từng cột.
 - Sketch không có `group`, `lane` hay `order`: data flow, đồ thị tự do.
 
@@ -220,4 +220,60 @@ Với ba hộp đứng riêng thì không tái hiện được; thêm gần như
   thiếu (đã dò trong bản build), nhưng chưa chạy thử.
 - Hai đường cùng vào một đỉnh hình thoi vẫn chung điểm, ví dụ "Không" và đường quay lại từ "Bổ sung thông tin".
 - Board nhúng trong note, ảnh xem trước trong chat và export draw.io/Excalidraw chưa đọc `sourceAt`/`targetAt`/`labelAt`.
+
+## 10. Bước 2 đã làm, 2026-11-14
+
+Code nằm trong `src/mini-apps/whiteboard/autoLayout.ts`. Phía Rust là `left_to_elk` / `lay_out_later` trong
+`board.rs`. Những chỗ khác so với mục 6:
+
+- **Loại nào dùng ELK:** sketch xếp theo `layers` mà không item nào có `group`, `row` hay `col`. Gồm flowchart, data
+  flow, bảng và các đường nối giữa chúng. Không dùng ELK khi:
+  - có `lane` hoặc `order`;
+  - bảng nằm trong nhóm (site): ELK sẽ chồng các site lên nhau;
+  - Syn đã nói rõ hàng/cột của item.
+- **Cờ đặt trên từng item:** `data.layout = "pending"`, chứ không phải `metadata.layout`. Cùng lý do với cờ route:
+  sync gộp theo từng item, nên bản đã xếp mới hơn ở mọi item nó dời.
+  - App xếp lại cả board khi còn item nào mang cờ, rồi gỡ cờ khỏi mọi item.
+  - Nếu một edit đã thêm frame vùng hoặc một thứ không phải hộp/bảng, app chỉ gỡ cờ, không dời gì.
+  - `edit_board place` gỡ cờ ngay, vì xếp lại sẽ đặt hộp đi chỗ khác.
+- **ELK chạy ở đâu, theo thứ tự nào:** chạy trước router, trong cả Whiteboard lẫn pane cạnh chat.
+  - Đường ELK vẽ được ghi giống hệt đường MSAGL vẽ (`routed`), nên cũng bám theo hộp khi kéo.
+  - Đường nào của ELK đi xuyên hộp thì để lại cho MSAGL.
+  - ELK không chạy được (ví dụ WebView cũ) thì board giữ bố cục Rust, đường vẫn được route, và lần mở sau thử lại.
+- **Hình thoi có điểm nối cố định ở bốn đỉnh.** Để ELK tự chọn thì nó giãn đầu đường dọc cạnh. Khi dời về đỉnh, ba
+  đường của một câu hỏi dồn vào một đỉnh và chạy đè nhau. Giờ:
+  - Đường vào đi vào đỉnh trên.
+  - Chỉ một câu trả lời ra đỉnh dưới. Các câu trả lời khác ra hai bên, cái xa hơn chọn trước.
+  - Đường quay lại vào đỉnh bên phía nó, trừ khi bên đó đã có câu trả lời đi ra; khi đó nó vào đỉnh trên.
+- **Thứ tự của Syn được giữ** (`considerModelOrder` và `cycleBreaking: MODEL_ORDER`, theo vị trí Rust đã xếp):
+  bước mà câu hỏi gửi quay lại vẫn nằm trên câu hỏi.
+- **Bảng:** cả bảng là một node, mỗi dòng có một cổng ở mỗi bên (`FIXED_POS`). Board đi từ trái sang phải; đường ra
+  ở cạnh phải dòng nguồn và vào ở cạnh trái dòng đích.
+- **Nhãn:** ELK đặt nhãn bên cạnh đường, còn app vẽ nhãn nằm trên đường. Trên data flow, hai đường hai chiều giữa
+  cùng một cặp hộp có nhãn đè nhau.
+  - Cho ELK đặt nhãn trên đường (`inline`) thì nó bẻ thêm bốn khúc để đi qua nhãn, nên không dùng.
+  - Thay vào đó, `placeLabels` trượt nhãn dọc theo đường của nó tới chỗ không đè nhãn khác và không đè hộp.
+  - Router MSAGL cũng dùng hàm này, nên board ở Bước 1 và lệnh "Sắp lại đường" cũng được.
+- **Sửa một lỗi của Bước 1:** `saveBoard` của pane chỉ ghi vị trí hộp, nên đường pane route chưa bao giờ vào file.
+  Giờ `writeItemChanges` ghi cả đường (`type`, route) và gỡ được khoá (`layout`, `routing`), vẫn chỉ ở chỗ pane sửa
+  sau cùng.
+
+**Kết quả trên board Rust vẽ** (test dùng chính các board này, `__tests__/fixtures/elk-*.json`):
+
+| Board | Đường do ELK route | Xuyên hộp | Chỗ gấp | Khổ | ELK |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Flowchart Change Request (16 hộp) | 18/18 | 0 | 15 | 632×1854 | ~95 ms |
+| ERD (4 bảng) | 3/3 | 0 | 4 | 753×362 | ~8 ms |
+| Data flow (6 hộp, 2 cặp hai chiều) | 7/7 | 0 | 14 | 395×638 | ~8 ms |
+
+Thời gian đo trong Node; chunk `elk.bundled` riêng là 449 KB gzip, chỉ tải khi có board cần xếp. Trong bản build,
+chunk này không gọi `Promise.try`, `URL.parse`, `toHex`, `transferToFixedLength`, `withResolvers`, `groupBy`,
+`findLast`, `.at(`. Không có `eval` hay `new Function`, nên CSP `script-src 'self'` vẫn chạy được.
+
+**Vẫn chưa làm hoặc chưa kiểm:**
+- Chưa chạy trong WKWebView thật (macOS 14.4) và trên Android, giống Bước 1.
+- ELK chạy trên main thread: 1,5 MB JS phải parse một lần, chưa đo trên máy yếu. Nếu thấy giật thì chuyển sang
+  `elk-api` với `elk-worker.min.js`.
+- Đã xem bằng mắt flowchart, ERD và data flow trong `WhiteboardApp` chạy trên trình duyệt. Chưa xem board lớn hơn
+  khoảng 20 hộp mà không có nhóm.
 

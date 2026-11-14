@@ -16,6 +16,7 @@ import EdgeMarkerDefs from './components/EdgeMarkerDefs.vue';
 import { isMarker } from './edgeMarkers';
 import { carryWaypoints } from './waypoints';
 import { applyRoute, linesToFollow, outlineOf, routeLines, routePending, waitsForRoute, type Outline, type Route } from './autoRoute';
+import { layOutPending, waitsForLayout } from './autoLayout';
 import { fromDrawio, fromExcalidraw, looksLikeMermaid, type Imported } from './importers';
 import { renderDiagram, diagramId } from '../../shared/mermaid';
 import { boardFromDiagram } from '../../shared/diagramToBoard';
@@ -891,30 +892,43 @@ watch(() => store.keptAside.value, (title) => {
 // The board was merged with a copy someone else wrote: draw what it is now.
 watch(() => store.externalRevision.value, () => syncToVueFlow());
 
-// ── Routed lines (autoRoute.ts) ─────────────────────────────
+// ── Laid-out boards and routed lines (autoLayout.ts, autoRoute.ts) ──
 /**
- * Route the lines on the open board that ask for it — the ones Syn drew
- * between boxes — then draw and save the board with their routes in.
+ * Lay out the open board if Syn asked for it, and route the lines on it that
+ * ask for it — the ones Syn drew between boxes — then draw and save the board
+ * with the places and routes in.
  *
  * Whenever a different copy of the board is in hand: opened, or merged with
- * one Syn just edited. Not a step to undo: it is how the board arrives. If the
- * router cannot run here (an old Android WebView), the lines stay as stepped
- * lines that find their own way, as they were drawn, and ask again next time.
+ * one Syn just edited. Not a step to undo: it is how the board arrives. If
+ * ELK or the router cannot run here (an old Android WebView), the board stays
+ * as Syn drew it — the lines stepped lines that find their own way — and asks
+ * again next time. The two are apart: a board ELK could not lay out still
+ * has its lines routed where its boxes are.
  */
 let routingBoard: WhiteboardData | null = null;
 async function routeWaiting() {
   const board = store.currentBoardData.value;
-  if (!board || routingBoard === board || !board.edges.some(waitsForRoute)) return;
+  if (!board || routingBoard === board) return;
+  if (!board.nodes.some(waitsForLayout) && !board.edges.some(waitsForRoute)) return;
   routingBoard = board;
   try {
-    const changed = await routePending(board);
-    // Left, or replaced by a merge, while routing: that copy is routed when
-    // it arrives, and this one is no longer on screen.
+    let changed = false;
+    try {
+      changed = await layOutPending(board);
+    } catch (err) {
+      logger.warn('Could not lay out this board', err as string);
+    }
+    // Left, or replaced by a merge, while this ran: that copy is seen to
+    // when it arrives, and this one is no longer on screen.
+    if (store.currentBoardData.value !== board) return;
+    try {
+      changed = (await routePending(board)) || changed;
+    } catch (err) {
+      logger.warn('Could not route the lines on this board', err as string);
+    }
     if (!changed || store.currentBoardData.value !== board) return;
     syncToVueFlow();
     scheduleSave();
-  } catch (err) {
-    logger.warn('Could not route the lines on this board', err as string);
   } finally {
     if (routingBoard === board) routingBoard = null;
   }

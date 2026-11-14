@@ -786,7 +786,11 @@ pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> 
         Arrangement::Lanes => lanes(&mut canvas, sketch),
         Arrangement::Sequence => sequence(&mut canvas, sketch),
     }
-    Ok(canvas.into_board(title))
+    let mut board = canvas.into_board(title);
+    if left_to_elk(sketch) {
+        lay_out_later(&mut board);
+    }
+    Ok(board)
 }
 
 /// A rectangle on the board: x, y, width, height.
@@ -1601,6 +1605,44 @@ fn reroute_lines_of(board: &mut Board, id: &str, now_ms: i64) {
     }
 }
 
+/// Whether the app is to lay this sketch out again when it is opened, with
+/// ELK's layered layout (`autoLayout.ts`).
+///
+/// Only a sketch whose shape says nothing: no groups, no lanes, no order in
+/// time, nobody saying which row or column. Sites side by side, lanes and a
+/// sequence are layouts that mean something, and stay as `layers`, `lanes`
+/// and `sequence` draw them; ELK put two data centres one above the other and
+/// a swimlane in a column 2,000 px long. What is left — a flowchart, a data
+/// flow, tables and what joins them — it draws with fewer crossings and
+/// bends than `layers`, and joins a table's lines to the row they name
+/// (docs/whiteboard-layout-elk-2026-11-13.md). Until it is opened in the app
+/// the board is as `layers` drew it, which is a fair drawing too.
+fn left_to_elk(sketch: &Sketch) -> bool {
+    matches!(arrangement(sketch), Arrangement::Layers)
+        && sketch.items.iter().all(|i| i.group.is_none() && i.row.is_none() && i.col.is_none())
+}
+
+/// Every item on the board marked to be laid out again (`left_to_elk`).
+///
+/// On each item rather than the board, for the reason lines carry their own
+/// `routing`: two devices' copies merge item by item (`board_merge`), and the
+/// copy that was laid out is newer in every item it moved.
+fn lay_out_later(board: &mut Board) {
+    for n in &mut board.nodes {
+        n.data.insert("layout".into(), json!("pending"));
+    }
+}
+
+/// The board's items where they are now, not to be laid out again: somebody
+/// has said where one of them goes.
+fn keep_where_they_are(board: &mut Board, now_ms: i64) {
+    for n in &mut board.nodes {
+        if n.data.remove("layout").is_some() {
+            n.updated = Some(now_ms);
+        }
+    }
+}
+
 /// How a line Syn draws between boxes runs: in steps, at right angles.
 ///
 /// Because a stepped line whose sides follow the boxes is the one the app
@@ -1919,6 +1961,8 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                 };
                 board.nodes[moving].position = Point { x: to.0, y: to.1 };
                 board.nodes[moving].updated = Some(now_ms);
+                // A layout would undo this, so there is none to come.
+                keep_where_they_are(board, now_ms);
                 let id = board.nodes[moving].id.clone();
                 reroute_lines_of(board, &id, now_ms);
                 done.push(format!("put \"{item}\" {side} of \"{of}\""));
@@ -2560,6 +2604,47 @@ mod tests {
             let board = draw("t", &sketch, NOW).expect("drawn");
             assert!(board.edges.iter().all(|e| e.data.get("routing").is_none()), "{name}");
         }
+    }
+
+    /// A drawing whose shape says nothing is laid out again in the app; one
+    /// in sites, lanes or time, or with a place given, keeps the one drawn.
+    #[test]
+    fn only_a_shapeless_drawing_waits_to_be_laid_out() {
+        let waits = |board: &Board| board.nodes.iter().all(|n| n.data.get("layout") == Some(&json!("pending")));
+        let none = |board: &Board| board.nodes.iter().all(|n| n.data.get("layout").is_none());
+        let schema = sketch(json!({
+            "items": [{ "label": "users", "fields": ["id"] }, { "label": "orders", "fields": ["user_id"] }],
+            "links": [{ "from": "orders.user_id", "to": "users.id" }]
+        }));
+        for (name, sketch) in [("flowchart", real("flowchart")), ("tables", schema)] {
+            assert!(waits(&draw("t", &sketch, NOW).expect("drawn")), "{name}");
+        }
+
+        let sites = sketch(json!({ "items": [{ "label": "A", "group": "DC1" }, { "label": "B", "group": "DC2" }] }));
+        let placed = sketch(json!({ "items": [{ "label": "A" }, { "label": "B", "row": 0, "col": 1 }] }));
+        let talk = sketch(json!({
+            "items": [{ "label": "App" }, { "label": "Kong" }],
+            "links": [{ "from": "App", "to": "Kong", "order": 1 }]
+        }));
+        for (name, sketch) in [("sites", sites), ("placed", placed), ("lanes", real("swimlane")), ("sequence", talk)] {
+            assert!(none(&draw("t", &sketch, NOW).expect("drawn")), "{name}");
+        }
+    }
+
+    /// Saying where a box goes takes the board out of being laid out again,
+    /// which would put the box somewhere else. Adding one does not.
+    #[test]
+    fn placing_a_box_keeps_the_layout() {
+        let mut board = draw("Change Request", &real("flowchart"), NOW).expect("drawn");
+        apply(&mut board, &changes(json!([{ "op": "add", "label": "Lưu hồ sơ" }])), NOW).expect("applied");
+        assert!(board.nodes.iter().any(|n| n.data.get("layout").is_some()));
+        apply(
+            &mut board,
+            &changes(json!([{ "op": "place", "item": "Kết thúc", "side": "right", "of": "Bắt đầu" }])),
+            NOW + 1,
+        )
+        .expect("applied");
+        assert!(board.nodes.iter().all(|n| n.data.get("layout").is_none()));
     }
 
     /// A line added by an edit waits to be routed; a box moved by one has its
