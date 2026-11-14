@@ -52,10 +52,33 @@ describe('a drawn diagram, as a board', () => {
 
   /** A frame drawn over its contents hides them. */
   it('puts the groups behind the boxes they hold', () => {
-    const firstBox = board.nodes.findIndex(n => (n.data as { color: string }).color === '#7c3aed');
-    const lastGroup = board.nodes.map(n => (n.data as { color: string }).color)
-      .lastIndexOf('#94a3b8');
+    const firstBox = board.nodes.findIndex(n => n.type === 'shape');
+    const lastGroup = board.nodes.map(n => n.type).lastIndexOf('frame');
     expect(lastGroup).toBeLessThan(firstBox);
+  });
+
+  /** A group is the app's own frame, which carries its contents when dragged. */
+  it('makes each group a frame', () => {
+    expect(byLabel('DC1 — Nội bộ')?.type).toBe('frame');
+    expect(byLabel('DC2 — Dự phòng')?.type).toBe('frame');
+    expect(board.nodes.filter(n => n.type === 'frame')).toHaveLength(2);
+  });
+
+  /** The ends Mermaid drew, and sides that follow the boxes. */
+  it('keeps which way a line points', () => {
+    const marked = boardFromDiagram(flowchart.replace(
+      'data-id="L_K1_F1_0"',
+      'data-id="L_K1_F1_0" marker-end="url(#probe-svg_flowchart-v2-pointEnd)"',
+    ));
+    const kong = marked.nodes.find(n => (n.data as { label?: string }).label === 'Kong API Gateway')!;
+    const line = marked.edges.find(e => e.source === kong.id)!;
+    expect(line.data).toMatchObject({ markerEnd: 'arrow', sides: 'auto' });
+
+    // The fixture's other lines were cut down with no markers: no end, then.
+    for (const e of board.edges) {
+      expect((e.data as { markerEnd?: string }).markerEnd).toBeUndefined();
+      expect((e.data as { sides?: string }).sides).toBe('auto');
+    }
   });
 
   it('keeps the lines, and what was written on them', () => {

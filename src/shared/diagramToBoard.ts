@@ -32,8 +32,20 @@ const MARGIN = 60;
 
 /** The colour a converted box is drawn in, matching the app's own violet. */
 const NODE_COLOUR = '#7c3aed';
-/** And the quieter one for a group's frame, which is background, not content. */
-const GROUP_COLOUR = '#94a3b8';
+
+/**
+ * The end a Mermaid line was drawn with, as the board's own marker.
+ *
+ * Mermaid names its markers by what they are (`…_flowchart-v2-pointEnd`,
+ * `…-circleStart`). An `x` end has no board equivalent and comes across as no
+ * end, as does a line with none, so `A --- B` stays a plain line.
+ */
+const markerOf = (el: Element, attr: 'marker-start' | 'marker-end'): string | undefined => {
+  const url = el.getAttribute(attr) ?? '';
+  if (/point/i.test(url)) return 'arrow';
+  if (/circle/i.test(url)) return 'circle';
+  return undefined;
+};
 
 /** `translate(12, 34)` → `[12, 34]`; `translate(12)` → `[12, 0]`. */
 const translationOf = (el: Element | null): [number, number] => {
@@ -259,17 +271,17 @@ export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
       w: numberAttr(rect, 'width'),
       h: numberAttr(rect, 'height'),
     });
+    // The app's own frame, not a grey box that looks like one: a frame
+    // carries what is in it when dragged, and is a slide in present mode.
     nodes.push({
       id,
-      type: 'shape',
+      type: 'frame',
       position: {
         x: gx + numberAttr(rect, 'x') + MARGIN,
         y: gy + numberAttr(rect, 'y') + MARGIN,
       },
       data: {
-        shapeType: 'rectangle',
         label: labelOf(cluster.querySelector('.cluster-label')),
-        color: GROUP_COLOUR,
         width: numberAttr(rect, 'width'),
         height: numberAttr(rect, 'height'),
       },
@@ -322,6 +334,8 @@ export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
     if (!from || !to) continue;
 
     const [sourceHandle, targetHandle] = sidesBetween(from, to);
+    const markerStart = markerOf(path, 'marker-start');
+    const markerEnd = markerOf(path, 'marker-end');
     edges.push({
       id: nextId('edge'),
       source: from.id,
@@ -329,7 +343,14 @@ export function boardFromDiagram(svg: string, idPrefix = 'd'): BoardDraft {
       target: to.id,
       targetHandle,
       type: 'default',
-      data: labels.has(edgeId) ? { label: labels.get(edgeId) } : {},
+      data: {
+        ...(labels.has(edgeId) ? { label: labels.get(edgeId) } : {}),
+        ...(markerStart ? { markerStart } : {}),
+        ...(markerEnd ? { markerEnd } : {}),
+        // Sides that follow the boxes once the person starts moving them,
+        // as a line drawn in the app does (routing.ts).
+        sides: 'auto',
+      },
       updated: now,
     });
   }
