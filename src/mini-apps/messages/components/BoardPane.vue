@@ -101,6 +101,10 @@ import CommentNode from '../../whiteboard/nodes/CommentNode.vue';
 import StrokeNode from '../../whiteboard/nodes/StrokeNode.vue';
 import { hiddenByCollapse } from '../../whiteboard/mindmap';
 import WaypointEdge from '../../whiteboard/components/WaypointEdge.vue';
+import EdgeMarkerDefs from '../../whiteboard/components/EdgeMarkerDefs.vue';
+import { isMarker } from '../../whiteboard/edgeMarkers';
+import { paint } from '../../whiteboard/ink';
+import { EDGE_GREY } from '../../whiteboard/composables/useNodeOperations';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
 import { logger } from '../../../utils/logger';
 
@@ -123,14 +127,32 @@ watch(
     // A folded mind-map branch stays folded here, as it is in the app.
     const hidden = hiddenByCollapse(board.data.nodes, board.data.edges);
     nodes.value = board.data.nodes.map(n => forCanvas({ ...n, hidden: hidden.has(n.id) }));
-    edges.value = board.data.edges.map(e => ({
-      ...e,
-      type: e.type || 'default',
-      label: (e.data as { label?: string })?.label || '',
-      zIndex: 10001,
-    }));
+    edges.value = board.data.edges.map(e => {
+      const d = (e.data ?? {}) as { label?: string; color?: string; strokeWidth?: number; dashStyle?: string };
+      return {
+        ...e,
+        type: e.type || 'default',
+        label: d.label || '',
+        // Colour, weight and dashes as the app draws them (`buildVfEdge`): a
+        // reply drawn dashed in the file came out solid here.
+        style: {
+          stroke: paint(d.color) || undefined,
+          strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
+          strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
+        },
+        zIndex: 10001,
+      };
+    });
   },
   { immediate: true },
+);
+
+/** Every line end on this board, by kind and colour, for `EdgeMarkerDefs`. */
+const markerUses = computed(() =>
+  edges.value.flatMap((e: any) => {
+    const color = paint(e.data?.color) || EDGE_GREY;
+    return [e.data?.markerStart, e.data?.markerEnd].filter(isMarker).map((kind: string) => ({ kind, color }));
+  }),
 );
 
 // ── How much of the row this takes ──────────────────────────
@@ -282,6 +304,18 @@ onBeforeUnmount(() => {
         <template #edge-default="edgeProps">
           <WaypointEdge v-bind="(edgeProps as any)" edge-type="default" />
         </template>
+        <!-- Every kind of line the app draws, drawn the app's way: a stepped
+             line left to the canvas's own came out with no ends and through
+             the boxes it should go round. -->
+        <template #edge-step="edgeProps">
+          <WaypointEdge v-bind="(edgeProps as any)" edge-type="step" />
+        </template>
+        <template #edge-straight="edgeProps">
+          <WaypointEdge v-bind="(edgeProps as any)" edge-type="straight" />
+        </template>
+        <!-- The arrowheads and line ends: without these every line here was
+             drawn bare, whatever its file said. -->
+        <EdgeMarkerDefs :uses="markerUses" />
       </VueFlow>
     </div>
   </aside>

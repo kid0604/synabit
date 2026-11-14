@@ -30,6 +30,83 @@ export function sidesFacing(a: Box, b: Box): { from: Side; to: Side } {
   return dy >= 0 ? { from: 'bottom', to: 'top' } : { from: 'top', to: 'bottom' };
 }
 
+const SIDES: readonly Side[] = ['top', 'right', 'bottom', 'left'];
+export const isSide = (s: unknown): s is Side => SIDES.includes(s as Side);
+
+/**
+ * Where on a box a line ends, when it says: a side, and how far along it.
+ *
+ * `t` runs from 0 to 1 — left to right along the top and bottom, top to bottom
+ * down the sides — and the middle is 0.5, which is where every line used to
+ * end. Four lines into one side met at one point, arrowheads on top of each
+ * other; a router that spreads them out (ELK, MSAGL) writes where each one
+ * goes, and this is how the line finds it again after the box has moved.
+ */
+export interface LineEnd { side: Side; t: number }
+
+export function lineEndOf(at: unknown): LineEnd | null {
+  const end = at as Partial<LineEnd> | null | undefined;
+  if (!end || !isSide(end.side)) return null;
+  const t = typeof end.t === 'number' && Number.isFinite(end.t) ? Math.min(1, Math.max(0, end.t)) : 0.5;
+  return { side: end.side, t };
+}
+
+/** A point `t` of the way along one side of a box. */
+export function anchorAt(b: Box, side: Side, t: number): Point {
+  switch (side) {
+    case 'top': return { x: b.x + b.width * t, y: b.y };
+    case 'bottom': return { x: b.x + b.width * t, y: b.y + b.height };
+    case 'left': return { x: b.x, y: b.y + b.height * t };
+    case 'right': return { x: b.x + b.width, y: b.y + b.height * t };
+  }
+}
+
+/**
+ * A path through these points, its corners rounded.
+ *
+ * A stepped line drawn with square corners reads as a diagram from a
+ * spreadsheet; every tool people compare this board with rounds them. The
+ * radius shrinks where a run is shorter than two of them, so a short jog
+ * stays a jog rather than becoming a loop.
+ */
+export function roundedPath(points: Point[], radius = 8): string {
+  const pts = points.filter((p, i) => i === 0 || p.x !== points[i - 1].x || p.y !== points[i - 1].y);
+  if (!pts.length) return '';
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [a, c, b] = [pts[i - 1], pts[i], pts[i + 1]];
+    const inLen = Math.hypot(c.x - a.x, c.y - a.y);
+    const outLen = Math.hypot(b.x - c.x, b.y - c.y);
+    const k = Math.min(radius, inLen / 2, outLen / 2);
+    if (k <= 0) {
+      d += ` L${c.x},${c.y}`;
+      continue;
+    }
+    const from = { x: c.x - ((c.x - a.x) / inLen) * k, y: c.y - ((c.y - a.y) / inLen) * k };
+    const to = { x: c.x + ((b.x - c.x) / outLen) * k, y: c.y + ((b.y - c.y) / outLen) * k };
+    d += ` L${from.x},${from.y} Q${c.x},${c.y} ${to.x},${to.y}`;
+  }
+  if (pts.length > 1) d += ` L${pts[pts.length - 1].x},${pts[pts.length - 1].y}`;
+  return d;
+}
+
+/**
+ * Points joined by upright and level runs: from each point, up or down first,
+ * then across. The same steps a stepped line through bends has always taken
+ * (`d3.curveStepBefore`), as points, so the corners can be rounded.
+ */
+export function stepThrough(points: Point[]): Point[] {
+  const out: Point[] = [];
+  points.forEach((p, i) => {
+    if (i > 0) {
+      const prev = points[i - 1];
+      if (prev.x !== p.x && prev.y !== p.y) out.push({ x: prev.x, y: p.y });
+    }
+    out.push(p);
+  });
+  return out;
+}
+
 /** The middle of a box's side. */
 export function anchor(b: Box, side: Side): Point {
   switch (side) {

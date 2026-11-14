@@ -126,10 +126,16 @@ function onResizeEnd(event: any) {
       :label="$t('whiteboard.rotate')"
       @rotate="(deg: number, final: boolean) => emit('rotate', deg, final)"
     />
+    <!--
+      Forty pixels is as small as a drag may make a shape — but not a floor to
+      raise a smaller one to. The resizer grows every node under its minimum as
+      soon as the node is measured, so a sequence's 12×24 activation bars came
+      out as 40×40 squares. A shape drawn smaller keeps its size.
+    -->
     <NodeResizer
       :is-visible="!!selected && !(data as any).locked"
-      :min-width="40"
-      :min-height="40"
+      :min-width="Math.min(40, Number(data.width) || 40)"
+      :min-height="Math.min(40, Number(data.height) || 40)"
       color="var(--wb-selection, var(--color-accent))"
       @resize-end="onResizeEnd"
     />

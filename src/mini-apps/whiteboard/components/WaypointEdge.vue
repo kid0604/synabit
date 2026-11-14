@@ -5,7 +5,7 @@ import * as d3 from 'd3';
 import { markerUrl } from '../edgeMarkers';
 import { paint } from '../ink';
 import { EDGE_GREY } from '../composables/useNodeOperations';
-import { anchor, orthogonalRoute, sidesFacing } from '../routing';
+import { anchor, anchorAt, lineEndOf, orthogonalRoute, roundedPath, sidesFacing, stepThrough, type Side } from '../routing';
 import type { Box } from '../inkLayer';
 
 const props = defineProps<{
@@ -39,16 +39,37 @@ function boxOf(n: any): Box | null {
 }
 
 /**
+ * Where each end of the line is: the place along a side the line says
+ * (`sourceAt`/`targetAt`, see `lineEndOf`), or else its handle — the middle of
+ * the side it was drawn from.
+ */
+const sourceAt = computed(() => lineEndOf(props.data?.sourceAt));
+const targetAt = computed(() => lineEndOf(props.data?.targetAt));
+const fixedEnd = (which: 'source' | 'target'): { x: number; y: number; side: Side } => {
+  const at = which === 'source' ? sourceAt.value : targetAt.value;
+  const box = boxOf(which === 'source' ? props.sourceNode : props.targetNode);
+  if (at && box) return { ...anchorAt(box, at.side, at.t), side: at.side };
+  return which === 'source'
+    ? { x: props.sourceX, y: props.sourceY, side: props.sourcePosition as Side }
+    : { x: props.targetX, y: props.targetY, side: props.targetPosition as Side };
+};
+
+/**
  * Ends that choose their own sides (see routing.ts): for a line set to, while
  * nobody has bent it by hand. A bent line keeps the sides it was bent from.
+ * An end that says where it is keeps that place; the other still chooses.
  */
 const autoEnds = computed(() => {
   if (props.data?.sides !== 'auto' || localWaypoints.value.length) return null;
   const a = boxOf(props.sourceNode);
   const b = boxOf(props.targetNode);
   if (!a || !b) return null;
-  const { from, to } = sidesFacing(a, b);
-  return { a, b, from, to, s: anchor(a, from), t: anchor(b, to) };
+  const facing = sidesFacing(a, b);
+  const from = sourceAt.value?.side ?? facing.from;
+  const to = targetAt.value?.side ?? facing.to;
+  const s = sourceAt.value ? anchorAt(a, from, sourceAt.value.t) : anchor(a, from);
+  const t = targetAt.value ? anchorAt(b, to, targetAt.value.t) : anchor(b, to);
+  return { a, b, from, to, s, t };
 });
 
 /**
@@ -71,6 +92,8 @@ const obstacles = computed(() => {
 const lineColor = computed(() => paint(props.data?.color) || EDGE_GREY);
 const endMarker = computed(() => markerUrl(props.data?.markerEnd, lineColor.value));
 const startMarker = computed(() => markerUrl(props.data?.markerStart, lineColor.value));
+/** How round a stepped line's corners are, in board pixels. */
+const CORNER = 8;
 const updateEdgeWaypoints = inject<(id: string, waypoints: any[]) => void>('updateEdgeWaypoints');
 
 const isDragging = ref(false);
@@ -92,16 +115,39 @@ watch(() => props.data?.waypoints, (newWp) => {
  */
 let measurer: SVGPathElement | null = null;
 function halfwayAlong(d: string): { x: number; y: number } | null {
+  return along(d, labelAt.value);
+}
+
+/**
+ * Where the label sits, as a share of the way along the line: the middle,
+ * unless the line says otherwise (`labelAt`). A share rather than a point, so
+ * the label stays on its line when a box is moved — a layout that put the
+ * label of a "no" branch near its question writes 0.2, and it stays near it.
+ */
+const labelAt = computed(() => {
+  const at = props.data?.labelAt;
+  return typeof at === 'number' && Number.isFinite(at) ? Math.min(1, Math.max(0, at)) : 0.5;
+});
+
+function along(d: string, share: number): { x: number; y: number } | null {
   try {
     measurer ??= document.createElementNS('http://www.w3.org/2000/svg', 'path');
     measurer.setAttribute('d', d);
     const length = measurer.getTotalLength();
     if (!length) return null;
-    const p = measurer.getPointAtLength(length / 2);
+    const p = measurer.getPointAtLength(length * share);
     return { x: p.x, y: p.y };
   } catch {
     return null;
   }
+}
+
+/** A path and its label's place, the place moved if the line asks for one. */
+function withLabel(drawn: [string, number, number, ...unknown[]]): [string, number, number] {
+  const [d, x, y] = drawn;
+  if (labelAt.value === 0.5) return [d, x, y];
+  const p = along(d, labelAt.value);
+  return p ? [d, p.x, p.y] : [d, x, y];
 }
 
 function getTangentPoint(x: number, y: number, pos: string) {
@@ -122,27 +168,30 @@ const edgePaths = computed(() => {
   const ends = autoEnds.value;
   if (ends) {
     const at = { sourceX: ends.s.x, sourceY: ends.s.y, sourcePosition: ends.from, targetX: ends.t.x, targetY: ends.t.y, targetPosition: ends.to };
-    if (type === 'straight') return getStraightPath(at as any);
+    if (type === 'straight') return withLabel(getStraightPath(at as any));
     if (type === 'step') {
       const route = orthogonalRoute(ends.s, ends.from, ends.t, ends.to, obstacles.value);
-      const d = route.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ');
+      const d = roundedPath(route, CORNER);
       const half = halfwayAlong(d) ?? route[Math.floor(route.length / 2)];
       return [d, half.x, half.y];
     }
-    return getBezierPath(at as any);
+    return withLabel(getBezierPath(at as any));
   }
 
+  const source = fixedEnd('source');
+  const target = fixedEnd('target');
   if (waypoints.length === 0) {
-    if (type === 'straight') return getStraightPath(props as any);
-    if (type === 'step') return getSmoothStepPath(props as any);
-    return getBezierPath(props as any);
+    const at = { sourceX: source.x, sourceY: source.y, sourcePosition: source.side, targetX: target.x, targetY: target.y, targetPosition: target.side };
+    if (type === 'straight') return withLabel(getStraightPath(at as any));
+    if (type === 'step') return withLabel(getSmoothStepPath({ ...at, borderRadius: CORNER } as any));
+    return withLabel(getBezierPath(at as any));
   }
 
   // Calculate label position (middle of the points)
   const allPoints = [
-    { x: props.sourceX, y: props.sourceY },
+    { x: source.x, y: source.y },
     ...waypoints,
-    { x: props.targetX, y: props.targetY }
+    { x: target.x, y: target.y }
   ];
   const midIndex = Math.floor((allPoints.length - 1) / 2);
   let lx, ly;
@@ -159,17 +208,18 @@ const edgePaths = computed(() => {
     const points = allPoints.map(p => [p.x, p.y]);
     p = d3.line()(points as [number, number][]) || '';
   } else if (type === 'step') {
-    const points = allPoints.map(p => [p.x, p.y]);
-    p = d3.line().curve(d3.curveStepBefore)(points as [number, number][]) || '';
+    // Up or down, then across, between each pair of points — the steps this
+    // always took — with the corners rounded.
+    p = roundedPath(stepThrough(allPoints), CORNER);
   } else {
-    const startTp = getTangentPoint(props.sourceX, props.sourceY, props.sourcePosition);
-    const endTp = getTangentPoint(props.targetX, props.targetY, props.targetPosition);
+    const startTp = getTangentPoint(source.x, source.y, source.side);
+    const endTp = getTangentPoint(target.x, target.y, target.side);
     const points = [
-      [props.sourceX, props.sourceY],
+      [source.x, source.y],
       [startTp.x, startTp.y],
       ...waypoints.map((w: any) => [w.x, w.y]),
       [endTp.x, endTp.y],
-      [props.targetX, props.targetY]
+      [target.x, target.y]
     ];
     p = d3.line().curve(d3.curveCatmullRom.alpha(0.5))(points as [number, number][]) || '';
   }
@@ -221,10 +271,12 @@ function addWaypoint(e: MouseEvent) {
   const pos = screenToFlowCoordinate({ x: e.clientX, y: e.clientY });
   const waypoints = [...localWaypoints.value];
   
+  const source = fixedEnd('source');
+  const target = fixedEnd('target');
   const pts = [
-    { x: props.sourceX, y: props.sourceY },
+    { x: source.x, y: source.y },
     ...waypoints,
-    { x: props.targetX, y: props.targetY }
+    { x: target.x, y: target.y }
   ];
   
   let bestIndex = 0;
