@@ -40,11 +40,12 @@ export interface Point {
   y: number;
 }
 
-/** A line to route: its id and the ids of the boxes at its ends. */
+/** A line to route: its id, the ids of the boxes at its ends, and its label if it has one. */
 export interface LineToRoute {
   id: string;
   source: string;
   target: string;
+  data?: { label?: unknown };
 }
 
 /** A routed line, as the board keeps one. */
@@ -360,6 +361,17 @@ export async function routeLines(boxes: Map<string, Outline>, lines: LineToRoute
     }
     routes.set(line.id, route);
   }
+
+  // Labels slid along their lines off one another (`placeLabels`).
+  const labelled: LabelToPlace[] = [];
+  for (const line of wanted) {
+    const route = routes.get(line.id);
+    const label = typeof line.data?.label === 'string' ? line.data.label.trim() : '';
+    if (!route || !label) continue;
+    const path = drawnPath(route, boxes.get(line.source)!, boxes.get(line.target)!);
+    labelled.push({ id: line.id, label, path, share: route.labelAt });
+  }
+  for (const [id, share] of placeLabels(labelled, boxes.values())) routes.get(id)!.labelAt = share;
   return routes;
 }
 
@@ -403,6 +415,72 @@ function routeWithMsagl(
     SEPARATION,
   );
   return edges;
+}
+
+/** A label's size as the app draws it (12px semibold, 8 and 4 px of padding), near enough. */
+export const labelSize = (text: string) => ({ width: Math.ceil(text.length * 7) + 18, height: 26 });
+
+/** The point a share of the way along a path. */
+export function pointAt(path: Point[], share: number): Point {
+  const runs = path.slice(1).map((p, i) => Math.hypot(p.x - path[i].x, p.y - path[i].y));
+  let left = runs.reduce((a, b) => a + b, 0) * share;
+  for (let i = 0; i < runs.length; i++) {
+    if (left <= runs[i] || i === runs.length - 1) {
+      const k = runs[i] ? Math.min(1, left / runs[i]) : 0;
+      return { x: path[i].x + (path[i + 1].x - path[i].x) * k, y: path[i].y + (path[i + 1].y - path[i].y) * k };
+    }
+    left -= runs[i];
+  }
+  return path[0];
+}
+
+/** A labelled line whose label is to be placed: its drawn path and where the label would go. */
+export interface LabelToPlace {
+  id: string;
+  label: string;
+  path: Point[];
+  share: number;
+}
+
+/**
+ * Where each label goes along its line so that it covers no other label and
+ * no box, as a share of the way along — its own place if that is clear, else
+ * the nearest clear one, slid along the line a step at a time each way.
+ *
+ * The app draws a label on its line, at a share of the way along. Two lines
+ * each way between the same pair of boxes run side by side, a dozen pixels
+ * apart, and with both labels halfway along, one covered the other. A label
+ * nowhere clear goes where it covers least.
+ */
+export function placeLabels(lines: LabelToPlace[], boxes: Iterable<Box>): Map<string, number> {
+  type Rect = { x0: number; y0: number; x1: number; y1: number };
+  const solid: Rect[] = [...boxes].map((b) => ({ x0: b.x, y0: b.y, x1: b.x + b.width, y1: b.y + b.height }));
+  const placed: Rect[] = [];
+  const overlap = (a: Rect, b: Rect) =>
+    Math.max(0, Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0)) * Math.max(0, Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0));
+  const shares = new Map<string, number>();
+  for (const line of lines) {
+    const { width, height } = labelSize(line.label);
+    const rectAt = (share: number): Rect => {
+      const p = pointAt(line.path, share);
+      return { x0: p.x - width / 2, y0: p.y - height / 2, x1: p.x + width / 2, y1: p.y + height / 2 };
+    };
+    const tries = [line.share];
+    for (let k = 1; k <= 8; k++) tries.push(line.share + 0.06 * k, line.share - 0.06 * k);
+    let best = { share: line.share, cost: Infinity };
+    for (const share of tries.filter((t) => t >= 0.1 && t <= 0.9)) {
+      const r = rectAt(share);
+      // Another label is worse to cover than a box's edge.
+      const cost = placed.reduce((sum, o) => sum + overlap(r, o) * 4, 0) + solid.reduce((sum, o) => sum + overlap(r, o), 0);
+      if (cost < best.cost) best = { share, cost };
+      if (!cost) break;
+    }
+    if (best.cost === Infinity) best.cost = 0;
+    const share = Math.round(best.share * 1000) / 1000;
+    shares.set(line.id, share);
+    placed.push(rectAt(share));
+  }
+  return shares;
 }
 
 /** A route as the app draws it: from one end, through its corners, to the other. */
