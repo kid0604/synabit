@@ -2,13 +2,29 @@ import { emit } from '@tauri-apps/api/event';
 import { readBoardFile } from './boardFile';
 import { boardText, rewriteBoard } from './boardDisk';
 
-/** What one item had changed by an editor: only the fields it touched. */
+/** What one item or line had changed by an editor: only the fields it touched. */
 export interface ItemChange {
   id: string;
   position?: { x: number; y: number };
-  /** Only the keys of `data` that were changed. */
+  /** A line's kind: `step` once it is routed. */
+  type?: string;
+  /** Only the keys of `data` that were changed; one set to `undefined` is taken off. */
   data?: Record<string, unknown>;
   updated: number;
+}
+
+/** An item or a line with a change laid over it, if the change is the later. */
+function laidOver<T extends { updated?: number; data?: Record<string, any> }>(item: T, ours: ItemChange | undefined): T {
+  if (!ours || ours.updated <= (item.updated ?? 0)) return item;
+  const data = ours.data ? { ...item.data, ...ours.data } : item.data;
+  if (data) for (const key of Object.keys(data)) if (data[key] === undefined) delete data[key];
+  return {
+    ...item,
+    ...(ours.position ? { position: { ...ours.position } } : {}),
+    ...(ours.type ? { type: ours.type } : {}),
+    data,
+    updated: ours.updated,
+  };
 }
 
 /**
@@ -25,28 +41,29 @@ export interface ItemChange {
  * The write says which version it was made from (see `boardDisk.ts`), so a
  * write from elsewhere in between is read in rather than written over.
  *
+ * Lines likewise, in `lineChanges`: the board pane writes the routes it
+ * worked out.
+ *
  * Returns false, writing nothing, when the file is gone, unreadable, or was
  * saved by a newer build.
  */
-export async function writeItemChanges(vaultPath: string, path: string, changes: ItemChange[]): Promise<boolean> {
-  if (!changes.length) return true;
+export async function writeItemChanges(
+  vaultPath: string,
+  path: string,
+  changes: ItemChange[],
+  lineChanges: ItemChange[] = [],
+): Promise<boolean> {
+  if (!changes.length && !lineChanges.length) return true;
   const byId = new Map(changes.map((c) => [c.id, c]));
+  const lineById = new Map(lineChanges.map((c) => [c.id, c]));
   let wrote: string | null;
   try {
     wrote = await rewriteBoard(vaultPath, path, (raw) => {
       const read = readBoardFile(raw);
       if (!read.ok) return null;
       const board = read.data;
-      board.nodes = board.nodes.map((n) => {
-        const ours = byId.get(n.id);
-        if (!ours || ours.updated <= (n.updated ?? 0)) return n;
-        return {
-          ...n,
-          ...(ours.position ? { position: { ...ours.position } } : {}),
-          data: ours.data ? { ...n.data, ...ours.data } : n.data,
-          updated: ours.updated,
-        };
-      });
+      board.nodes = board.nodes.map((n) => laidOver(n, byId.get(n.id)));
+      board.edges = board.edges.map((e) => laidOver(e, lineById.get(e.id)));
       board.metadata = { ...(board.metadata ?? {}), updated_at: new Date().toISOString() };
       return boardText(board);
     });

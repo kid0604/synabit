@@ -64,6 +64,36 @@ describe('writeItemChanges', () => {
     expect(saved().a.position.x).toBe(5);
   });
 
+  /** The board pane writes the routes it worked out, and takes the marks off. */
+  it('writes lines too, and takes off what is set to nothing', async () => {
+    onDisk = JSON.stringify({
+      ...newBoardData('B'),
+      nodes: [{ ...item('a', 'a', 10), data: { label: 'a', layout: 'pending' } }, item('b', 'b', 10)],
+      edges: [
+        { id: 'l', source: 'a', target: 'b', type: 'default', data: { label: 'yes', routing: 'pending' }, updated: 10 },
+        { id: 'm', source: 'b', target: 'a', type: 'default', data: { routing: 'pending' }, updated: 90 },
+      ],
+    });
+    const route = { routing: undefined, routed: true, waypoints: [{ x: 1, y: 2 }] };
+    await writeItemChanges(
+      '/v',
+      'W/b.whiteboard.json',
+      [{ id: 'a', position: { x: 7, y: 0 }, data: { layout: undefined }, updated: 20 }],
+      [
+        { id: 'l', type: 'step', data: route, updated: 20 },
+        { id: 'm', type: 'step', data: route, updated: 20 },
+      ],
+    );
+    const file = JSON.parse(written!);
+    expect(file.nodes[0]).toMatchObject({ position: { x: 7 }, data: { label: 'a' } });
+    expect('layout' in file.nodes[0].data).toBe(false);
+    expect(file.edges[0]).toEqual({
+      id: 'l', source: 'a', target: 'b', type: 'step', data: { label: 'yes', routed: true, waypoints: [{ x: 1, y: 2 }] }, updated: 20,
+    });
+    // Changed on disk later: disk wins, as for an item.
+    expect(file.edges[1]).toMatchObject({ type: 'default', data: { routing: 'pending' } });
+  });
+
   it('writes nothing over a file a newer build saved, or one that is gone', async () => {
     onDisk = JSON.stringify({ schemaVersion: 99, nodes: [], edges: [] });
     expect(await writeItemChanges('/v', 'x.whiteboard.json', [{ id: 'a', updated: 1 }])).toBe(false);

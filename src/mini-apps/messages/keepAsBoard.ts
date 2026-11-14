@@ -82,14 +82,24 @@ export const saveBoard = async (
   path: string,
   data: WhiteboardData,
 ): Promise<void> => {
-  // Positions only, and only where moved here later than anywhere else. A
-  // board that is gone, unreadable or from a newer build is not written at
-  // all: written from the pane's copy, a board deleted in the Whiteboard app
-  // came back, and half a file was replaced by the pane's older whole one.
+  // Positions, and what laying out and routing changed (autoLayout.ts,
+  // autoRoute.ts) — the item's mark, the line's route — and only where
+  // changed here later than anywhere else. A board that is gone, unreadable
+  // or from a newer build is not written at all: written from the pane's
+  // copy, a board deleted in the Whiteboard app came back, and half a file
+  // was replaced by the pane's older whole one.
+  const pick = (d: Record<string, any> | undefined, keys: string[]) =>
+    Object.fromEntries(keys.map((k) => [k, d?.[k]]));
   const ok = await writeItemChanges(
     vaultPath,
     path,
-    data.nodes.map((n) => ({ id: n.id, position: n.position, updated: n.updated ?? 0 })),
+    data.nodes.map((n) => ({ id: n.id, position: n.position, data: pick(n.data, ['layout']), updated: n.updated ?? 0 })),
+    data.edges.map((e) => ({
+      id: e.id,
+      type: e.type,
+      data: pick(e.data, ['routing', 'routed', 'waypoints', 'sourceAt', 'targetAt', 'labelAt']),
+      updated: e.updated ?? 0,
+    })),
   );
   if (!ok) throw new Error(`${path} could not be saved from the pane: it is gone, unreadable or from a newer build`);
 };
