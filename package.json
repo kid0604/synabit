@@ -24,6 +24,7 @@
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
+    "@msagl/core": "1.1.24",
     "@tailwindcss/typography": "^0.5.19",
     "@tailwindcss/vite": "^4.2.2",
     "@tauri-apps/api": "^2",

@@ -74,8 +74,9 @@ export const forCanvas = (n: { id: string; type: string; position: { x: number; 
  * It is not a second whiteboard. No shapes, no colours, no freehand, no text —
  * that is the Whiteboard app, one button away, editing the same board this
  * pane is editing. Two editors of one document is a thing to keep small on
- * purpose: this one moves boxes, and everything else lives where it already
- * lived.
+ * purpose: this one moves boxes — and the lines a router drew go with them,
+ * routed again (see "Routed lines" below) — and everything else lives where
+ * it already lived.
  *
  * # Why it takes room rather than covering it
  *
@@ -105,6 +106,7 @@ import EdgeMarkerDefs from '../../whiteboard/components/EdgeMarkerDefs.vue';
 import { isMarker } from '../../whiteboard/edgeMarkers';
 import { paint } from '../../whiteboard/ink';
 import { EDGE_GREY } from '../../whiteboard/composables/useNodeOperations';
+import { applyRoute, outlineOf, routeLines, waitsForRoute, type Outline, type Route } from '../../whiteboard/autoRoute';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
 import { logger } from '../../../utils/logger';
 
@@ -146,6 +148,65 @@ watch(
   },
   { immediate: true },
 );
+
+// ── Routed lines (autoRoute.ts) ─────────────────────────────
+/**
+ * Lines this pane routed that the file does not have yet, by id.
+ *
+ * A board Syn has just drawn is usually seen here first, before the
+ * Whiteboard app ever opens it, so the lines that ask to be routed are routed
+ * here as they would be there, and saved. And a box moved here takes its
+ * routed lines with it: their bends went around where it was. Only lines a
+ * router made (`routed`) or that ask for one; a line somebody bent by hand
+ * keeps its bends, as in the app.
+ */
+let routedHere = new Map<string, Route>();
+watch(() => props.board, () => {
+  routedHere = new Map();
+  void routeHere(props.board.data.edges.filter(waitsForRoute).map(e => e.id));
+}, { immediate: true });
+
+/** The boxes lines go around, as they are in this pane now. */
+function boxesHere(): Map<string, Outline> {
+  const boxes = new Map<string, Outline>();
+  for (const n of nodes.value) {
+    if (n.type === 'frame' || n.type === 'stroke' || n.hidden) continue;
+    const box = outlineOf(n);
+    if (box) boxes.set(n.id, box);
+  }
+  return boxes;
+}
+
+async function routeHere(ids: string[]) {
+  const board = props.board;
+  const wanted = new Set(ids);
+  const lines = board.data.edges.filter(e => wanted.has(e.id));
+  if (!lines.length) return;
+  let routes: Map<string, Route>;
+  try {
+    routes = await routeLines(boxesHere(), lines);
+  } catch (e) {
+    // Drawn as stepped lines that find their own way, as before.
+    logger.warn('[Syn] Could not route the board\'s lines', e as string);
+    return;
+  }
+  if (props.board !== board || !routes.size) return;
+  for (const [id, route] of routes) routedHere.set(id, route);
+  edges.value = edges.value.map(e => {
+    const route = routes.get(e.id);
+    if (!route) return e;
+    const drawn = { ...e, data: { ...e.data } };
+    applyRoute(drawn, route);
+    return drawn;
+  });
+  save();
+}
+
+/** The lines in and out of these boxes that a router drew or is asked to. */
+const routedLinesOf = (ids: Set<string>) =>
+  props.board.data.edges
+    .filter(e => (ids.has(e.source) || ids.has(e.target)) && (waitsForRoute(e) || routedHere.has(e.id) || e.data?.routed))
+    .map(e => e.id);
 
 /** Every line end on this board, by kind and colour, for `EdgeMarkerDefs`. */
 const markerUses = computed(() =>
@@ -196,6 +257,19 @@ const positionsNow = () =>
     return { ...n, position: { ...moved.position }, updated: Date.now() };
   });
 
+/** The board's lines, with the routes worked out here written in. */
+const linesNow = () => {
+  const lines = props.board.data.edges.map(e => {
+    const route = routedHere.get(e.id);
+    if (!route) return e;
+    const routed = { ...e, data: { ...e.data } };
+    applyRoute(routed, route);
+    return routed;
+  });
+  routedHere = new Map();
+  return lines;
+};
+
 const save = () => {
   if (pending) clearTimeout(pending);
   pending = setTimeout(async () => {
@@ -203,6 +277,7 @@ const save = () => {
     saving.value = true;
     try {
       props.board.data.nodes = positionsNow();
+      props.board.data.edges = linesNow();
       await saveBoard(props.vaultPath, props.board.path, props.board.data);
     } catch (e) {
       logger.error('[Syn] Could not save the board', e as string);
@@ -212,7 +287,11 @@ const save = () => {
   }, 400);
 };
 
-const onDragStop = (_: NodeDragEvent) => save();
+const onDragStop = (e: NodeDragEvent) => {
+  save();
+  const moved = new Set(e.nodes.map(n => n.id));
+  void routeHere(routedLinesOf(moved));
+};
 
 // A pane closed mid-drag still owes the board its last move.
 onBeforeUnmount(() => {
@@ -220,6 +299,7 @@ onBeforeUnmount(() => {
   clearTimeout(pending);
   pending = null;
   props.board.data.nodes = positionsNow();
+  props.board.data.edges = linesNow();
   void saveBoard(props.vaultPath, props.board.path, props.board.data);
 });
 </script>

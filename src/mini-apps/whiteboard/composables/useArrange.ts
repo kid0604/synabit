@@ -5,6 +5,7 @@ import { stampElement } from '../boardFile';
 import type { WBEdge, WBNode, WhiteboardData } from '../boardFile';
 import { SHAPES_MAP } from '../shapes';
 import { carryWaypoints } from '../waypoints';
+import { linesToFollow } from '../autoRoute';
 
 /**
  * What a copy from a board looks like on the system clipboard.
@@ -151,6 +152,8 @@ export function useArrange(ctx: {
    * an arrow key held down. Without it, `refresh` redraws the whole board.
    */
   moved?: (ids: string[]) => void;
+  /** Lines the router drew that a move left behind, to be routed again (autoRoute.ts). */
+  follow?: (lineIds: string[]) => void;
   scheduleSave: () => void;
 }) {
   const { store, vfNodes, refresh, scheduleSave } = ctx;
@@ -205,6 +208,8 @@ export function useArrange(ctx: {
       stampElement(node);
     }
     carryWaypoints(board()!.edges, moved);
+    const behind = linesToFollow(board()!.edges, moved);
+    if (behind.length) ctx.follow?.(behind);
   }
 
   function setData(id: string, data: Record<string, any>) {

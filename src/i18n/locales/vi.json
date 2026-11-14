@@ -2724,6 +2724,7 @@
       "distribute_y": "Giãn đều theo chiều dọc",
       "same_width": "Cùng chiều rộng",
       "same_height": "Cùng chiều cao",
+      "tidy_lines": "Sắp lại đường",
       "duplicate": "Nhân bản"
     },
     "custom_color": "Màu tuỳ chọn",
@@ -3103,6 +3104,7 @@
     },
     "fail": {
       "export": "Xuất không thành công.",
+      "tidy_lines": "Không sắp lại được đường.",
       "copy_image": "Không sao chép được thành hình.",
       "images": "Không thêm được {count} hình.",
       "clipboard": "Không truy cập được bộ nhớ tạm.",

@@ -15,6 +15,7 @@ import ContextMenu, { type ContextMenuItem } from './components/ContextMenu.vue'
 import EdgeMarkerDefs from './components/EdgeMarkerDefs.vue';
 import { isMarker } from './edgeMarkers';
 import { carryWaypoints } from './waypoints';
+import { applyRoute, linesToFollow, outlineOf, routeLines, routePending, waitsForRoute, type Outline, type Route } from './autoRoute';
 import { fromDrawio, fromExcalidraw, looksLikeMermaid, type Imported } from './importers';
 import { renderDiagram, diagramId } from '../../shared/mermaid';
 import { boardFromDiagram } from '../../shared/diagramToBoard';
@@ -708,7 +709,7 @@ const { applySize, applyState, computeShapeZIndex, deleteNodes, updateNodeData, 
     return [t('whiteboard.a11y.edge', { from: end(edge.source), to: end(edge.target) }), words].filter(Boolean).join(', ');
   });
 
-const arrange = useArrange({ store, vfNodes, refresh: (select) => syncToVueFlow(select), scheduleSave, moved: showMoved });
+const arrange = useArrange({ store, vfNodes, refresh: (select) => syncToVueFlow(select), scheduleSave, moved: showMoved, follow: followLater });
 
 /**
  * Items moved by a nudge, shown without redrawing the board: each moved
@@ -889,6 +890,100 @@ watch(() => store.keptAside.value, (title) => {
 
 // The board was merged with a copy someone else wrote: draw what it is now.
 watch(() => store.externalRevision.value, () => syncToVueFlow());
+
+// ── Routed lines (autoRoute.ts) ─────────────────────────────
+/**
+ * Route the lines on the open board that ask for it — the ones Syn drew
+ * between boxes — then draw and save the board with their routes in.
+ *
+ * Whenever a different copy of the board is in hand: opened, or merged with
+ * one Syn just edited. Not a step to undo: it is how the board arrives. If the
+ * router cannot run here (an old Android WebView), the lines stay as stepped
+ * lines that find their own way, as they were drawn, and ask again next time.
+ */
+let routingBoard: WhiteboardData | null = null;
+async function routeWaiting() {
+  const board = store.currentBoardData.value;
+  if (!board || routingBoard === board || !board.edges.some(waitsForRoute)) return;
+  routingBoard = board;
+  try {
+    const changed = await routePending(board);
+    // Left, or replaced by a merge, while routing: that copy is routed when
+    // it arrives, and this one is no longer on screen.
+    if (!changed || store.currentBoardData.value !== board) return;
+    syncToVueFlow();
+    scheduleSave();
+  } catch (err) {
+    logger.warn('Could not route the lines on this board', err as string);
+  } finally {
+    if (routingBoard === board) routingBoard = null;
+  }
+}
+watch(() => store.currentBoardData.value, () => void routeWaiting());
+
+/**
+ * "Tidy lines": route these lines around everything on the board, from the
+ * boxes as drawn on the canvas. One step to undo — or, after a move, part of
+ * the move's step (`asStep: false`): the lines a dragged box left behind are
+ * routed again when it is let go, and undoing the drag puts back both.
+ */
+async function tidyLines(edgeIds: Iterable<string>, { asStep = true } = {}) {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  const ids = new Set(edgeIds);
+  // A sequence's lifelines are straight down by what they mean.
+  const lines = board.edges.filter((e: WBEdge) => ids.has(e.id) && !e.data?.lifeline);
+  if (!lines.length) return;
+  const boxes = new Map<string, Outline>();
+  for (const n of canvasItems.value) {
+    if (n.type === 'frame' || n.type === 'stroke' || n.hidden) continue;
+    const box = outlineOf({ type: n.type, position: n.computedPosition ?? n.position, data: n.data }, n.dimensions);
+    if (box) boxes.set(n.id, box);
+  }
+  let routes: Map<string, Route>;
+  try {
+    routes = await routeLines(boxes, lines);
+  } catch (err) {
+    logger.warn('Could not tidy the lines', err as string);
+    // Asked for, it is said; after a move, the lines stay as they were drawn.
+    if (asStep) showAppNotice(t('whiteboard.fail.tidy_lines'), 'error');
+    return;
+  }
+  if (store.currentBoardData.value !== board || !routes.size) return;
+  if (asStep) store.pushUndoState();
+  for (const line of lines) {
+    const route = routes.get(line.id);
+    if (route) applyRoute(line, route);
+  }
+  syncToVueFlow();
+  scheduleSave();
+}
+
+/**
+ * Route again, once things stop moving, the router's lines that an arrange
+ * or an arrow key left behind. Gathered, because an arrow key held down moves
+ * the selection many times a second.
+ */
+const followIds = new Set<string>();
+let followTimer: ReturnType<typeof setTimeout> | null = null;
+function followLater(ids: string[]) {
+  for (const id of ids) followIds.add(id);
+  if (followTimer) clearTimeout(followTimer);
+  followTimer = setTimeout(() => {
+    followTimer = null;
+    const lines = [...followIds];
+    followIds.clear();
+    void tidyLines(lines, { asStep: false });
+  }, 250);
+}
+
+/** The lines among a selection: those selected, and those between two selected items. */
+function linesOfSelection(): string[] {
+  const picked = new Set(vfNodes.value.filter((n: any) => n.selected).map((n: any) => n.id));
+  return vfEdges.value
+    .filter((e: any) => e.selected || (picked.has(e.source) && picked.has(e.target)))
+    .map((e: any) => e.id);
+}
 
 // ── VueFlow Change Handlers ─────────────────────────────────
 /**
@@ -1862,6 +1957,9 @@ function handleNodeDragStop(event: any) {
     if (carryWaypoints(board.edges, moved)) {
       vfEdges.value = board.edges.map((e: WBEdge) => buildVfEdge(e, board.nodes));
     }
+    // The router's lines that were followed during the drag: routed again.
+    const follow = linesToFollow(board.edges, moved);
+    if (follow.length) void tidyLines(follow, { asStep: false });
   }
   positionsAtDragStart = new Map();
   scheduleSave();
@@ -1890,6 +1988,9 @@ function handleEdgeReconnect({ edge, connection }: { edge: any; connection: any 
   stampElement(wbEdge);
   syncToVueFlow();
   scheduleSave();
+  // A line the router drew is routed to where it now goes; its bends and
+  // ends were a way to the box it left.
+  if (wbEdge.data?.routed) void tidyLines([wbEdge.id], { asStep: false });
 }
 
 const { getNodes: allCanvasNodes } = useVueFlow({ id: 'whiteboard-flow' });
@@ -2202,6 +2303,7 @@ function handleArrangeAction(id: string, el?: HTMLElement) {
   else if (id === 'front' || id === 'back') arrange.reorder(id);
   else if (id === 'lock') arrange.toggleLock();
   else if (id === 'duplicate') arrange.duplicate();
+  else if (id === 'tidy-lines') void tidyLines(linesOfSelection());
 }
 
 /**
@@ -2972,7 +3074,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 
         <!-- Property Menus (Teleported) -->
         <Teleport to="body">
-          <EdgeMenu v-if="isAppActive && selectedEdgeId && selectedEdgeData" :edge-id="selectedEdgeId" :edge-data="selectedEdgeData" @update="handleEdgeUpdate" @delete="handleEdgeDelete" @close="closeEdgeMenu" />
+          <EdgeMenu v-if="isAppActive && selectedEdgeId && selectedEdgeData" :edge-id="selectedEdgeId" :edge-data="selectedEdgeData" @update="handleEdgeUpdate" @delete="handleEdgeDelete" @tidy="(id: string) => tidyLines([id])" @close="closeEdgeMenu" />
         </Teleport>
         <Teleport to="body">
           <ShapeMenu v-if="isAppActive && selectedShapeNodeId && selectedShapeData" :node-id="selectedShapeNodeId" :node-data="selectedShapeData" :can-paste-style="arrange.hasCopiedStyle()" @action="handleItemAction" @change-type="(id: string, type: string) => arrange.changeShapeType(id, type)" @update="handleShapeUpdate" @delete="handleShapeDelete" @close="closeShapeMenu" />

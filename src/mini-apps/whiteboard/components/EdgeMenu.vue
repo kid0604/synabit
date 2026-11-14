@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { Trash2, X } from 'lucide-vue-next';
+import { Trash2, X, Waypoints } from 'lucide-vue-next';
 import CustomColorSwatch from './CustomColorSwatch.vue';
 import { MARKER_KINDS, type MarkerPart } from '../edgeMarkers';
 
@@ -22,6 +22,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update', edgeId: string, data: Record<string, any>): void;
   (e: 'delete', edgeId: string): void;
+  /** Route this line around the boxes (autoRoute.ts); the canvas does the work. */
+  (e: 'tidy', edgeId: string): void;
   (e: 'close'): void;
 }>();
 
@@ -155,6 +157,9 @@ function handleDelete() { emit('delete', props.edgeId); }
     <div class="ep-header">
       <span class="ep-title">{{ $t('whiteboard.edge') }}</span>
       <div class="ep-header-actions">
+        <button @click="emit('tidy', edgeId)" class="ep-icon-btn" :title="$t('whiteboard.arrange.tidy_lines')" :aria-label="$t('whiteboard.arrange.tidy_lines')">
+          <Waypoints :size="14" />
+        </button>
         <button @click="handleDelete" class="ep-icon-btn ep-delete-btn" :title="$t('whiteboard.delete')" :aria-label="$t('whiteboard.delete')">
           <Trash2 :size="14" />
         </button>

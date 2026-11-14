@@ -5,7 +5,7 @@ import {
   AlignStartVertical, AlignCenterVertical, AlignEndVertical,
   AlignStartHorizontal, AlignCenterHorizontal, AlignEndHorizontal,
   AlignHorizontalDistributeCenter, AlignVerticalDistributeCenter,
-  MoveHorizontal, MoveVertical, BringToFront, SendToBack, Lock, LockOpen, Copy, Ellipsis } from 'lucide-vue-next';
+  MoveHorizontal, MoveVertical, BringToFront, SendToBack, Lock, LockOpen, Copy, Ellipsis, Waypoints } from 'lucide-vue-next';
 import CustomColorSwatch from './CustomColorSwatch.vue';
 
 const props = defineProps<{
@@ -62,6 +62,8 @@ const ARRANGE = computed(() => [
   { id: 'distribute-y', icon: AlignVerticalDistributeCenter, labelKey: 'whiteboard.arrange.distribute_y', disabled: props.selectedNodes.length < 3 },
   { id: 'same-width', icon: MoveHorizontal, labelKey: 'whiteboard.arrange.same_width' },
   { id: 'same-height', icon: MoveVertical, labelKey: 'whiteboard.arrange.same_height' },
+  // The lines between the selected items, routed around everything (autoRoute.ts).
+  { id: 'tidy-lines', icon: Waypoints, labelKey: 'whiteboard.arrange.tidy_lines' },
   { id: 'front', icon: BringToFront, labelKey: 'whiteboard.ctx.to_front' },
   { id: 'back', icon: SendToBack, labelKey: 'whiteboard.ctx.to_back' },
   { id: 'lock', icon: allLocked.value ? LockOpen : Lock, labelKey: allLocked.value ? 'whiteboard.ctx.unlock' : 'whiteboard.ctx.lock' },

@@ -81,7 +81,10 @@ export function useEdgeMenu(
     if (wbEdge) {
       // Dragging a waypoint reports every pointer move; same treatment.
       store.pushUndoState(`waypoints:${edgeId}`);
-      wbEdge.data = { ...wbEdge.data, waypoints };
+      // Bent by hand: the bends are the user's now, and stay put when a box
+      // moves rather than being routed again (autoRoute.ts).
+      const { routed: _routed, ...rest } = wbEdge.data ?? {};
+      wbEdge.data = { ...rest, waypoints };
       stampElement(wbEdge);
     }
 
@@ -89,6 +92,7 @@ export function useEdgeMenu(
     if (vfEdge) {
       if (!vfEdge.data) vfEdge.data = {};
       vfEdge.data.waypoints = waypoints;
+      delete vfEdge.data.routed;
     }
 
     scheduleSave();

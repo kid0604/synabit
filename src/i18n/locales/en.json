@@ -2724,6 +2724,7 @@
       "distribute_y": "Space evenly down",
       "same_width": "Same width",
       "same_height": "Same height",
+      "tidy_lines": "Tidy lines",
       "duplicate": "Duplicate"
     },
     "custom_color": "Any colour",
@@ -3103,6 +3104,7 @@
     },
     "fail": {
       "export": "The export did not work.",
+      "tidy_lines": "The lines could not be tidied.",
       "copy_image": "Could not copy as an image.",
       "images": "A picture could not be added. | {count} pictures could not be added.",
       "clipboard": "The clipboard could not be reached.",

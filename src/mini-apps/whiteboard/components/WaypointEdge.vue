@@ -39,12 +39,21 @@ function boxOf(n: any): Box | null {
 }
 
 /**
+ * A line the router drew, while a box at one end of it is being dragged: it
+ * is drawn as a stepped line that finds its own way, so it follows the box,
+ * and is routed again when the box is let go (`linesToFollow`, autoRoute.ts).
+ * Its bends were a way around where the box was; held while the box moved,
+ * the line ran through the box it was attached to.
+ */
+const following = computed(() => !!props.data?.routed && !!(props.sourceNode?.dragging || props.targetNode?.dragging));
+
+/**
  * Where each end of the line is: the place along a side the line says
  * (`sourceAt`/`targetAt`, see `lineEndOf`), or else its handle — the middle of
  * the side it was drawn from.
  */
-const sourceAt = computed(() => lineEndOf(props.data?.sourceAt));
-const targetAt = computed(() => lineEndOf(props.data?.targetAt));
+const sourceAt = computed(() => (following.value ? null : lineEndOf(props.data?.sourceAt)));
+const targetAt = computed(() => (following.value ? null : lineEndOf(props.data?.targetAt)));
 const fixedEnd = (which: 'source' | 'target'): { x: number; y: number; side: Side } => {
   const at = which === 'source' ? sourceAt.value : targetAt.value;
   const box = boxOf(which === 'source' ? props.sourceNode : props.targetNode);
@@ -60,7 +69,7 @@ const fixedEnd = (which: 'source' | 'target'): { x: number; y: number; side: Sid
  * An end that says where it is keeps that place; the other still chooses.
  */
 const autoEnds = computed(() => {
-  if (props.data?.sides !== 'auto' || localWaypoints.value.length) return null;
+  if (!following.value && (props.data?.sides !== 'auto' || localWaypoints.value.length)) return null;
   const a = boxOf(props.sourceNode);
   const b = boxOf(props.targetNode);
   if (!a || !b) return null;

@@ -1,0 +1,532 @@
+{
+ "schemaVersion": 1,
+ "title": "t",
+ "tags": [],
+ "created_at": "2026-11-14T01:56:13.738870+00:00",
+ "metadata": {
+  "updated_at": "2026-11-14T01:56:13.738870+00:00"
+ },
+ "viewport": {
+  "x": 0,
+  "y": 0,
+  "zoom": 1
+ },
+ "nodes": [
+  {
+   "id": "box-199155c6200-1",
+   "type": "shape",
+   "position": {
+    "x": 283.29999999999995,
+    "y": 80.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Bắt đầu",
+    "shapeType": "pill",
+    "width": 148.0
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-2",
+   "type": "shape",
+   "position": {
+    "x": 265.49999999999994,
+    "y": 208.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Gửi Change Request",
+    "shapeType": "process",
+    "width": 183.6
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-3",
+   "type": "shape",
+   "position": {
+    "x": 216.97999999999996,
+    "y": 336.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 88.0,
+    "label": "Thông tin đầy đủ?",
+    "shapeType": "diamond",
+    "width": 280.64
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-4",
+   "type": "shape",
+   "position": {
+    "x": 104.59999999999997,
+    "y": 496.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Bổ sung thông tin",
+    "shapeType": "process",
+    "width": 175.39999999999998
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-5",
+   "type": "shape",
+   "position": {
+    "x": 327.99999999999994,
+    "y": 496.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Ghi nhận và kiểm tra thông tin",
+    "shapeType": "process",
+    "width": 282.0
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-6",
+   "type": "shape",
+   "position": {
+    "x": 228.59999999999997,
+    "y": 624.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Đánh giá tác động và rủi ro",
+    "shapeType": "process",
+    "width": 257.4
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-7",
+   "type": "shape",
+   "position": {
+    "x": 216.97999999999996,
+    "y": 752.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 88.0,
+    "label": "Phê duyệt Change?",
+    "shapeType": "diamond",
+    "width": 280.64
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-8",
+   "type": "shape",
+   "position": {
+    "x": 80.0,
+    "y": 912.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Từ chối / đóng yêu cầu",
+    "shapeType": "process",
+    "width": 216.39999999999998
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-9",
+   "type": "shape",
+   "position": {
+    "x": 344.4,
+    "y": 912.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Lập kế hoạch và lịch triển khai",
+    "shapeType": "process",
+    "width": 290.2
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-10",
+   "type": "shape",
+   "position": {
+    "x": 228.59999999999997,
+    "y": 1040.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Thông báo các bên liên quan",
+    "shapeType": "process",
+    "width": 257.4
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-11",
+   "type": "shape",
+   "position": {
+    "x": 269.59999999999997,
+    "y": 1168.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Triển khai Change",
+    "shapeType": "process",
+    "width": 175.39999999999998
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-12",
+   "type": "shape",
+   "position": {
+    "x": 184.17999999999995,
+    "y": 1296.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 88.0,
+    "label": "Triển khai thành công?",
+    "shapeType": "diamond",
+    "width": 346.24
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-13",
+   "type": "shape",
+   "position": {
+    "x": 249.09999999999997,
+    "y": 1456.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Rollback / xử lý sự cố",
+    "shapeType": "process",
+    "width": 216.39999999999998
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-14",
+   "type": "shape",
+   "position": {
+    "x": 224.49999999999997,
+    "y": 1584.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Kiểm tra và xác nhận kết quả",
+    "shapeType": "process",
+    "width": 265.59999999999997
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-15",
+   "type": "shape",
+   "position": {
+    "x": 207.29999999999995,
+    "y": 1712.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Cập nhật hồ sơ, CMDB và đóng Change",
+    "shapeType": "process",
+    "width": 300.0
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "box-199155c6200-16",
+   "type": "shape",
+   "position": {
+    "x": 283.29999999999995,
+    "y": 1840.0
+   },
+   "data": {
+    "color": "#7c3aed",
+    "height": 56.0,
+    "label": "Kết thúc",
+    "shapeType": "pill",
+    "width": 148.0
+   },
+   "updated": 1757000000000
+  }
+ ],
+ "edges": [
+  {
+   "id": "edge-199155c6200-0",
+   "source": "box-199155c6200-1",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-2",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-1",
+   "source": "box-199155c6200-2",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-3",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-2",
+   "source": "box-199155c6200-3",
+   "sourceHandle": "left",
+   "target": "box-199155c6200-4",
+   "targetHandle": "right",
+   "type": "step",
+   "data": {
+    "label": "Không",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-3",
+   "source": "box-199155c6200-4",
+   "sourceHandle": "right",
+   "target": "box-199155c6200-3",
+   "targetHandle": "left",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-4",
+   "source": "box-199155c6200-3",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-5",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "label": "Có",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-5",
+   "source": "box-199155c6200-5",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-6",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-6",
+   "source": "box-199155c6200-6",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-7",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-7",
+   "source": "box-199155c6200-7",
+   "sourceHandle": "left",
+   "target": "box-199155c6200-8",
+   "targetHandle": "right",
+   "type": "step",
+   "data": {
+    "label": "Từ chối",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-8",
+   "source": "box-199155c6200-8",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-16",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-9",
+   "source": "box-199155c6200-7",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-9",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "label": "Phê duyệt",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-10",
+   "source": "box-199155c6200-9",
+   "sourceHandle": "left",
+   "target": "box-199155c6200-10",
+   "targetHandle": "right",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-11",
+   "source": "box-199155c6200-10",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-11",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-12",
+   "source": "box-199155c6200-11",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-12",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-13",
+   "source": "box-199155c6200-12",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-13",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "label": "Không",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-14",
+   "source": "box-199155c6200-13",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-14",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-15",
+   "source": "box-199155c6200-12",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-14",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "label": "Có",
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-16",
+   "source": "box-199155c6200-14",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-15",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  },
+  {
+   "id": "edge-199155c6200-17",
+   "source": "box-199155c6200-15",
+   "sourceHandle": "bottom",
+   "target": "box-199155c6200-16",
+   "targetHandle": "top",
+   "type": "step",
+   "data": {
+    "markerEnd": "arrow",
+    "routing": "pending",
+    "sides": "auto"
+   },
+   "updated": 1757000000000
+  }
+ ]
+}
