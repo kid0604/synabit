@@ -88,18 +88,26 @@ fn diagram_schema() -> Value {
             "title": { "type": "string" },
             "items": { "type": "array", "items": {
                 "type": "object",
-                "properties": { "label": { "type": "string" }, "shape": { "type": "string" }, "group": { "type": "string" } },
+                "properties": {
+                    "label": { "type": "string" }, "shape": { "type": "string" }, "group": { "type": "string" },
+                    "lane": { "type": "string" }, "fields": { "type": "array", "items": { "type": "string" } }
+                },
                 "required": ["label"]
             } },
             "links": { "type": "array", "items": {
                 "type": "object",
-                "properties": { "from": { "type": "string" }, "to": { "type": "string" }, "label": { "type": "string" } },
+                "properties": {
+                    "from": { "type": "string" }, "to": { "type": "string" }, "label": { "type": "string" },
+                    "order": { "type": "number" }, "end": { "type": "string" }, "dashed": { "type": "boolean" }
+                },
                 "required": ["from", "to"]
             } }
         },
         "required": ["items"]
     })
 }
+
+const END_WORDS: &str = "arrow, none, open, triangle, diamond, diamond-open, one, many, one-many, zero-one, zero-many";
 
 const SHAPE_WORDS: &str = "rectangle, rounded, ellipse, diamond (a decision), cylinder (a database or store), \
     cloud, document, person, server, desktop, mobile, router, firewall, internet, queue";
@@ -144,6 +152,9 @@ pub fn prompt(
              Draw it as a box-and-arrow diagram: the things in it as items with short labels (a few words, each label unique), \
              the relations between them as links from one label to another, with a short label on a link only when it says something. \
              Put things that belong to one place, team or layer in the same group; groups become frames. \
+             Pick the form from what it is about: a process passing between teams → give every item a `lane` (and no group); \
+             things happening in time between parties → number the links with `order` (a sequence diagram; `dashed` for replies); \
+             tables or classes → list each one's `fields`, and a link may end on a field as \"table.field\", with `end` one of {END_WORDS}. \
              Give an item a shape only when it means something — one of: {SHAPE_WORDS}. \
              Keep it to what the request and the material support: at most 40 items, nothing invented to fill space. \
              Give the diagram a short title."
@@ -305,51 +316,106 @@ pub fn tidy(action: Action, answer: Value, items: &[AssistItem]) -> Result<Value
 /// line, the second of two same-named items and the links that name nothing
 /// are left out here, labels are kept short, shapes are the board's own, and
 /// the sizes are capped.
+///
+/// The same for what does not go together (see `board::check`): lanes given
+/// to only some items are dropped, a group beside a lane gives way to it, and
+/// in a sequence — links with an order — fields, lanes and rows are dropped.
+/// A line end that is not one is left as the plain arrow.
+///
+/// A line is dropped as a repeat only when it is the same line: two links
+/// between the same pair with different words are two cables, "MPLS Line 1"
+/// and "MPLS Line 2", and in a sequence the same pair talk more than once.
 fn clean_sketch(answer: &Value) -> Result<crate::syn::board::Sketch, String> {
-    use crate::syn::board::{Sketch, SketchItem, SketchLink};
+    use crate::syn::board::{end_kind, field_name, Sketch, SketchItem, SketchLink};
     const MAX_ITEMS: usize = 60;
     const MAX_LINKS: usize = 120;
+    const MAX_FIELDS: usize = 20;
     let short = |s: &str| s.trim().chars().take(80).collect::<String>();
+    let words = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).map(short).filter(|s| !s.is_empty());
+    let place = |v: &Value, key: &str| v.get(key).and_then(Value::as_u64).filter(|n| *n < 100).map(|n| n as usize);
+    let list = |v: &Value, key: &str| -> Vec<Value> { v.get(key).and_then(Value::as_array).cloned().unwrap_or_default() };
+
     let mut seen = std::collections::HashSet::new();
-    let items: Vec<SketchItem> = answer
-        .get("items")
-        .and_then(Value::as_array)
-        .map(|a| a.as_slice())
-        .unwrap_or_default()
+    let mut items: Vec<SketchItem> = list(answer, "items")
         .iter()
         .filter_map(|i| {
-            let label = short(i.get("label").and_then(Value::as_str)?);
-            if label.is_empty() || !seen.insert(label.to_lowercase()) {
+            let label = words(i, "label")?;
+            if !seen.insert(label.to_lowercase()) {
                 return None;
             }
             let shape = i.get("shape").and_then(Value::as_str).and_then(crate::syn::board_shapes::board_shape).map(str::to_string);
-            let group = i.get("group").and_then(Value::as_str).map(short).filter(|g| !g.is_empty());
-            Some(SketchItem { label, shape, group })
+            let fields: Vec<String> = list(i, "fields")
+                .iter()
+                .filter_map(Value::as_str)
+                .map(short)
+                .filter(|f| !f.is_empty())
+                .take(MAX_FIELDS)
+                .collect();
+            Some(SketchItem {
+                label,
+                shape,
+                group: words(i, "group"),
+                lane: words(i, "lane"),
+                fields,
+                row: place(i, "row"),
+                col: place(i, "col"),
+            })
         })
         .take(MAX_ITEMS)
         .collect();
     if items.is_empty() {
         return Err("[syn:empty_diagram] Syn's diagram had nothing in it.".into());
     }
-    let kept: std::collections::HashSet<String> = items.iter().map(|i| i.label.to_lowercase()).collect();
+
+    let raw_links = list(answer, "links");
+    let in_time = raw_links.iter().any(|l| l.get("order").and_then(Value::as_f64).is_some());
+    let laned = items.iter().all(|i| i.lane.is_some());
+    for item in &mut items {
+        if in_time {
+            item.lane = None;
+            item.fields.clear();
+            item.row = None;
+        } else if laned {
+            item.group = None;
+        } else {
+            item.lane = None;
+        }
+    }
+
+    let mut kept: std::collections::HashSet<String> = items.iter().map(|i| i.label.to_lowercase()).collect();
+    for item in &items {
+        for field in &item.fields {
+            kept.insert(format!("{}.{}", item.label.to_lowercase(), field_name(field)));
+        }
+    }
     let mut joined = std::collections::HashSet::new();
-    let links: Vec<SketchLink> = answer
-        .get("links")
-        .and_then(Value::as_array)
-        .map(|a| a.as_slice())
-        .unwrap_or_default()
+    let links: Vec<SketchLink> = raw_links
         .iter()
         .filter_map(|l| {
-            let from = short(l.get("from").and_then(Value::as_str)?);
-            let to = short(l.get("to").and_then(Value::as_str)?);
+            let from = words(l, "from")?;
+            let to = words(l, "to")?;
             let (a, b) = (from.to_lowercase(), to.to_lowercase());
-            if a == b || !kept.contains(&a) || !kept.contains(&b) || !joined.insert((a, b)) {
+            let order = l.get("order").and_then(Value::as_f64).filter(|_| in_time);
+            // To itself is a message in a sequence, and a loop drawn on its
+            // own box anywhere else.
+            if (a == b && !in_time) || !kept.contains(&a) || !kept.contains(&b) {
                 return None;
             }
-            // The item's own spelling, so `draw` finds it.
-            let spelled = |k: &str| items.iter().find(|i| i.label.to_lowercase() == k).map(|i| i.label.clone()).unwrap_or_default();
-            let label = l.get("label").and_then(Value::as_str).map(short).filter(|s| !s.is_empty());
-            Some(SketchLink { from: spelled(&from.to_lowercase()), to: spelled(&to.to_lowercase()), label })
+            let label = words(l, "label");
+            let same = (a, b, label.clone().unwrap_or_default().to_lowercase(), order.map(f64::to_bits));
+            if !joined.insert(same) {
+                return None;
+            }
+            let end = |key: &str| words(l, key).filter(|w| end_kind(w).is_some());
+            Some(SketchLink {
+                from,
+                to,
+                label,
+                order,
+                start: end("start"),
+                end: end("end"),
+                dashed: l.get("dashed").and_then(Value::as_bool).unwrap_or(false),
+            })
         })
         .take(MAX_LINKS)
         .collect();
@@ -451,6 +517,49 @@ mod tests {
         assert!(shapes.contains(&("Stripe".into(), "rectangle".into())), "{shapes:?}");
         assert!(shapes.contains(&("Ledger".into(), "cylinder".into())), "{shapes:?}");
         assert_eq!(out["edges"].as_array().unwrap().len(), 2);
+    }
+
+    /// Two cables between the same two boxes are two lines; the same line
+    /// twice is one.
+    #[test]
+    fn lines_with_different_words_are_not_repeats() {
+        let answer = json!({
+            "items": [{ "label": "TCTV" }, { "label": "SW WAN" }],
+            "links": [
+                { "from": "TCTV", "to": "SW WAN", "label": "MPLS Line 1" },
+                { "from": "TCTV", "to": "SW WAN", "label": "MPLS Line 2" },
+                { "from": "TCTV", "to": "SW WAN", "label": "MPLS Line 2" }
+            ]
+        });
+        let sketch = clean_sketch(&answer).unwrap();
+        assert_eq!(sketch.links.len(), 2);
+    }
+
+    /// What does not go together is made to, rather than the answer refused.
+    #[test]
+    fn forms_that_do_not_combine_are_repaired() {
+        let some_lanes = json!({ "items": [{ "label": "A", "lane": "X", "group": "G" }, { "label": "B" }] });
+        let sketch = clean_sketch(&some_lanes).unwrap();
+        assert!(sketch.items.iter().all(|i| i.lane.is_none()), "lanes for only some are dropped");
+        assert_eq!(sketch.items[0].group.as_deref(), Some("G"));
+
+        let all_lanes = json!({ "items": [{ "label": "A", "lane": "X", "group": "G" }, { "label": "B", "lane": "Y" }] });
+        let sketch = clean_sketch(&all_lanes).unwrap();
+        assert!(sketch.items[0].group.is_none(), "a group gives way to a lane");
+
+        let in_time = json!({
+            "items": [{ "label": "App", "fields": ["id"], "row": 2 }, { "label": "DB" }],
+            "links": [
+                { "from": "App", "to": "DB", "order": 1, "end": "spaceship" },
+                { "from": "App", "to": "App", "order": 2 },
+                { "from": "App", "to": "DB", "order": 3 }
+            ]
+        });
+        let sketch = clean_sketch(&in_time).unwrap();
+        assert!(sketch.items[0].fields.is_empty() && sketch.items[0].row.is_none());
+        assert_eq!(sketch.links.len(), 3, "a message to itself, and the same pair twice, are kept in a sequence");
+        assert!(sketch.links[0].end.is_none(), "an end that is not one is the plain arrow");
+        assert!(crate::syn::board::draw("t", &sketch, 0).is_ok());
     }
 
     #[test]

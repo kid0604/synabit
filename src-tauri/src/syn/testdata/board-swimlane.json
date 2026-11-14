@@ -1,0 +1,170 @@
+{
+ "items": [
+  {
+   "label": "Bắt đầu",
+   "lane": "Người yêu cầu",
+   "shape": "pill"
+  },
+  {
+   "label": "Gửi Change Request",
+   "lane": "Người yêu cầu",
+   "shape": "process"
+  },
+  {
+   "label": "Bổ sung thông tin",
+   "lane": "Người yêu cầu",
+   "shape": "process"
+  },
+  {
+   "label": "Ghi nhận và kiểm tra thông tin",
+   "lane": "Change Manager / CAB",
+   "shape": "process"
+  },
+  {
+   "label": "Thông tin đầy đủ?",
+   "lane": "Change Manager / CAB",
+   "shape": "diamond"
+  },
+  {
+   "label": "Đánh giá tác động và rủi ro",
+   "lane": "Change Manager / CAB",
+   "shape": "process"
+  },
+  {
+   "label": "Phê duyệt Change?",
+   "lane": "Change Manager / CAB",
+   "shape": "diamond"
+  },
+  {
+   "label": "Từ chối / đóng yêu cầu",
+   "lane": "Change Manager / CAB",
+   "shape": "process"
+  },
+  {
+   "label": "Kết thúc - từ chối",
+   "lane": "Change Manager / CAB",
+   "shape": "pill"
+  },
+  {
+   "label": "Lập kế hoạch và lịch triển khai",
+   "lane": "Đội triển khai",
+   "shape": "process"
+  },
+  {
+   "label": "Thông báo các bên liên quan",
+   "lane": "Đội triển khai",
+   "shape": "process"
+  },
+  {
+   "label": "Triển khai Change",
+   "lane": "Đội triển khai",
+   "shape": "process"
+  },
+  {
+   "label": "Triển khai thành công?",
+   "lane": "Đội triển khai",
+   "shape": "diamond"
+  },
+  {
+   "label": "Rollback / xử lý sự cố",
+   "lane": "Đội triển khai",
+   "shape": "process"
+  },
+  {
+   "label": "Kiểm tra và xác nhận kết quả",
+   "lane": "Chủ hệ thống / Vận hành",
+   "shape": "process"
+  },
+  {
+   "label": "Cập nhật hồ sơ, CMDB và đóng Change",
+   "lane": "Chủ hệ thống / Vận hành",
+   "shape": "process"
+  },
+  {
+   "label": "Kết thúc - hoàn tất",
+   "lane": "Chủ hệ thống / Vận hành",
+   "shape": "pill"
+  }
+ ],
+ "links": [
+  {
+   "from": "Bắt đầu",
+   "to": "Gửi Change Request"
+  },
+  {
+   "from": "Gửi Change Request",
+   "to": "Ghi nhận và kiểm tra thông tin"
+  },
+  {
+   "from": "Ghi nhận và kiểm tra thông tin",
+   "to": "Thông tin đầy đủ?"
+  },
+  {
+   "from": "Thông tin đầy đủ?",
+   "label": "Không",
+   "to": "Bổ sung thông tin"
+  },
+  {
+   "from": "Bổ sung thông tin",
+   "to": "Ghi nhận và kiểm tra thông tin"
+  },
+  {
+   "from": "Thông tin đầy đủ?",
+   "label": "Có",
+   "to": "Đánh giá tác động và rủi ro"
+  },
+  {
+   "from": "Đánh giá tác động và rủi ro",
+   "to": "Phê duyệt Change?"
+  },
+  {
+   "from": "Phê duyệt Change?",
+   "label": "Từ chối",
+   "to": "Từ chối / đóng yêu cầu"
+  },
+  {
+   "from": "Từ chối / đóng yêu cầu",
+   "to": "Kết thúc - từ chối"
+  },
+  {
+   "from": "Phê duyệt Change?",
+   "label": "Phê duyệt",
+   "to": "Lập kế hoạch và lịch triển khai"
+  },
+  {
+   "from": "Lập kế hoạch và lịch triển khai",
+   "to": "Thông báo các bên liên quan"
+  },
+  {
+   "from": "Thông báo các bên liên quan",
+   "to": "Triển khai Change"
+  },
+  {
+   "from": "Triển khai Change",
+   "to": "Triển khai thành công?"
+  },
+  {
+   "from": "Triển khai thành công?",
+   "label": "Không",
+   "to": "Rollback / xử lý sự cố"
+  },
+  {
+   "from": "Rollback / xử lý sự cố",
+   "label": "Sau xử lý",
+   "to": "Kiểm tra và xác nhận kết quả"
+  },
+  {
+   "from": "Triển khai thành công?",
+   "label": "Có",
+   "to": "Kiểm tra và xác nhận kết quả"
+  },
+  {
+   "from": "Kiểm tra và xác nhận kết quả",
+   "to": "Cập nhật hồ sơ, CMDB và đóng Change"
+  },
+  {
+   "from": "Cập nhật hồ sơ, CMDB và đóng Change",
+   "to": "Kết thúc - hoàn tất"
+  }
+ ]
+}

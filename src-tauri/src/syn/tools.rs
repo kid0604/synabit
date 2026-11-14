@@ -227,6 +227,8 @@ const MAX_RESULT_CHARS: usize = 40_000;
 const MAX_CONTENT_CHARS: usize = 32_000;
 
 /// What a board item's `shape` may be, as the tools describe it (see `board_shapes`).
+const LINE_END_HELP: &str = "What the `to` end is: arrow (default), none, open, triangle (inherits), diamond (composed of), diamond-open (has), circle; for tables one, many, one-many, zero-one, zero-many.";
+
 const SHAPE_HELP: &str = "Any of the board's shapes by name, or a plain word for one: rectangle, rounded, ellipse, diamond (decision), cylinder (database), cloud, document, person, server, laptop, mobile, router, firewall, load balancer, queue, internet; flowchart (process, dataIO, pill), UML (umlClass, umlLifeline…), BPMN (bpmnTask, bpmnGateway, bpmnEvent…). Unknown names are a plain box.";
 
 /// Context passed to tool execution, providing access to DB, vault path, and app handle.
@@ -1634,7 +1636,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "draw_board".to_string(),
-                description: "Draw a whiteboard the user can rearrange by hand. Say what is on it and what joins what; positions are worked out here. Items sharing a `group` get a frame, frames sit side by side, and a group nests: `\"DC 1/Network Hub\"`.".to_string(),
+                description: "Draw a whiteboard the user can rearrange by hand. Say what is on it and what joins what; positions are worked out here, never give coordinates. Items sharing a `group` get a frame, frames sit side by side as columns, and a group nests: `\"DC 1/Network Hub\"`. What the drawing is follows from what you give: `lane` on every item → swimlanes (one band per lane, flow left to right); `order` on links → a sequence diagram (items are participants, links are messages top to bottom); `fields` → a table or class with a row per field, and a link can end on one: `\"orders.user_id\"`. These combine: a table can sit in a group or a lane.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["title", "items"],
@@ -1646,14 +1648,22 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                             "items": { "type": "object", "required": ["label"], "properties": {
                                 "label": { "type": "string" },
                                 "shape": { "type": "string", "description": SHAPE_HELP },
-                                "group": { "type": "string" }
+                                "group": { "type": "string", "description": "A column frame. Not with `lane`." },
+                                "lane": { "type": "string", "description": "A band across the board: who does this step. All items or none." },
+                                "fields": { "type": "array", "items": { "type": "string" }, "description": "Columns of a table or members of a class, one line each: \"user_id: uuid FK\", \"+ pay(): Receipt\"." },
+                                "row": { "type": "integer", "description": "Only to override: which row, from 0." },
+                                "col": { "type": "integer", "description": "Only to override: its place along the row, from 0; in lanes its column, in a sequence which participant." }
                             } }
                         },
                         "links": {
                             "type": "array",
                             "items": { "type": "object", "required": ["from", "to"], "properties": {
                                 "from": { "type": "string" }, "to": { "type": "string" },
-                                "label": { "type": "string" }
+                                "label": { "type": "string" },
+                                "order": { "type": "number", "description": "1, 2, 3… when things happen in time between participants; makes it a sequence." },
+                                "end": { "type": "string", "description": LINE_END_HELP },
+                                "start": { "type": "string", "description": "As `end`, for the `from` end. Default none." },
+                                "dashed": { "type": "boolean", "description": "A reply, a dependency, an optional path." }
                             } }
                         }
                     }
@@ -1672,14 +1682,17 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "board": { "type": "string", "description": "Its title, or its path." },
                         "changes": {
                             "type": "array",
-                            "description": "add {label, shape?, inside?, near?} · connect {from, to, label?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame}. `inside`/`move_into` put a box in a frame: the only way to say it is in a zone. The frame grows. Name things by label: boxes, frames, sticky notes, cards and writing all answer to theirs.",
+                            "description": "add {label, shape?, inside?, near?, fields?} · connect {from, to, label?, start?, end?, dashed?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame} · add_frame {label, near?, inside?}. `inside`/`move_into` put a box in a frame (never in a box): the only way to say it is in a zone. The frame grows. Swimlanes on an existing board: redraw with `lane`, do not build them from frames. Name things by label: boxes, frames, sticky notes, cards and writing all answer to theirs.",
                             "items": { "type": "object", "required": ["op"], "properties": {
-                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into"] },
+                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into", "add_frame"] },
                                 "label": { "type": "string" }, "shape": { "type": "string", "description": SHAPE_HELP },
                                 "near": { "type": "string" }, "inside": { "type": "string" },
                                 "frame": { "type": "string" }, "from": { "type": "string" },
                                 "to": { "type": "string" }, "item": { "type": "string" },
-                                "side": { "type": "string" }, "of": { "type": "string" }
+                                "side": { "type": "string" }, "of": { "type": "string" },
+                                "fields": { "type": "array", "items": { "type": "string" } },
+                                "start": { "type": "string" }, "end": { "type": "string", "description": LINE_END_HELP },
+                                "dashed": { "type": "boolean" }
                             } }
                         }
                     }
