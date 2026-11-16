@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { ref, onMounted, onUnmounted, onActivated, onDeactivated, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useEventBus } from '../../composables/useEventBus';
 import { useVaultReload } from '../../composables/useVaultReload';
@@ -659,12 +659,25 @@ const anyModalOpen = computed(
     showRulesModal.value,
 );
 
+// The keep-alive in App.vue holds this view, and the window listener with it,
+// while another app is in front. Without this, `?` typed in a note opened this
+// list over the note, and `s` or `o` starred or opened an article no one could
+// see.
+const isShowing = ref(true);
+onActivated(() => { isShowing.value = true; });
+onDeactivated(() => { isShowing.value = false; });
+
 const handleKeyboard = (e: KeyboardEvent) => {
-  // Don't trigger if typing in input
-  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+  if (!isShowing.value || e.defaultPrevented) return;
+  // Every binding is a bare key: Cmd+S, Ctrl+R and the like belong to someone else.
+  if (e.ctrlKey || e.metaKey) return;
+  // Typing, in a field or in an editor (a contenteditable, which is not an input).
+  const el = e.target as HTMLElement | null;
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) return;
+  if (el?.isContentEditable) return;
   // A dialog is in front: `j` belongs to it, not to the list behind it.
   if (anyModalOpen.value) return;
-  
+
   switch(e.key) {
     case 'j': // Next article
       navigateArticle(1);
@@ -695,7 +708,7 @@ const handleKeyboard = (e: KeyboardEvent) => {
       showShortcuts.value = !showShortcuts.value;
       break;
     case 'r': // Refresh
-      if (!e.ctrlKey && !e.metaKey) handleRefresh();
+      handleRefresh();
       break;
     case 'Escape':
       if (showShortcuts.value) {
@@ -749,15 +762,48 @@ const reconcileReadState = async (force = false) => {
   }
 };
 
+// The cleanup is registered here, not inside the async onMounted below: a hook
+// registered after an `await` has no component to belong to, so it never ran,
+// and the listeners and timers outlived the view.
+let unmounted = false;
+let unlistenRefreshed: (() => void) | null = null;
+let refreshInterval: ReturnType<typeof setInterval> | undefined;
+let cleanupInterval: ReturnType<typeof setInterval> | undefined;
+
+onMounted(() => window.addEventListener('keydown', handleKeyboard));
+onUnmounted(() => {
+  unmounted = true;
+  window.removeEventListener('keydown', handleKeyboard);
+  unlistenRefreshed?.();
+  clearInterval(refreshInterval);
+  clearInterval(cleanupInterval);
+  if (markReadTimer) clearTimeout(markReadTimer);
+  if (scrollReadTimer) {
+    clearTimeout(scrollReadTimer);
+    // Anything scrolled past in the last moment still counts as read.
+    flushScrollRead().finally(() => feedService.syncReadState().catch(() => {}));
+    return;
+  }
+  // Publish what was read here before the view goes away.
+  feedService.syncReadState().catch(() => {});
+});
+
 onMounted(async () => {
   await loadData();
   await reconcileReadState(true);
+  if (unmounted) return;
 
   // Feeds refreshed by the background scheduler, which runs whether or not
   // this view is mounted.
-  const unlistenRefreshed = await listen('feeds:refreshed', () => {
+  const unlisten = await listen('feeds:refreshed', () => {
     debouncedLoad(() => reconcileReadState(true));
   });
+  // Gone while the listener was being set up: nothing will remove it later.
+  if (unmounted) {
+    unlisten();
+    return;
+  }
+  unlistenRefreshed = unlisten;
 
   bus.on('vault:file-modified', () => debouncedLoad(() => loadData()));
   bus.on('vault:file-created-deleted', () => debouncedLoad(() => loadData()));
@@ -766,9 +812,6 @@ onMounted(async () => {
   bus.on('node:updated', ({ nodeType }) => {
     if (nodeType === 'feed_source' || nodeType === 'feed_article') debouncedLoad(() => loadData());
   });
-
-  // Keyboard shortcuts
-  window.addEventListener('keydown', handleKeyboard);
 
   // Auto-cleanup on mount, to whatever the settings say
   const runConfiguredCleanup = () =>
@@ -784,24 +827,9 @@ onMounted(async () => {
   // it keeps running whether or not anyone is looking. This timer covers the
   // time the view is open, and on Android — where a background timer would
   // just be killed — it is the whole of the schedule.
-  const refreshInterval = setInterval(autoRefresh, 5 * 60 * 1000);
+  refreshInterval = setInterval(autoRefresh, 5 * 60 * 1000);
   // Cleanup every 6 hours
-  const cleanupInterval = setInterval(runConfiguredCleanup, 6 * 60 * 60 * 1000);
-  onUnmounted(() => {
-    window.removeEventListener('keydown', handleKeyboard);
-    unlistenRefreshed();
-    clearInterval(refreshInterval);
-    clearInterval(cleanupInterval);
-    if (markReadTimer) clearTimeout(markReadTimer);
-    if (scrollReadTimer) {
-      clearTimeout(scrollReadTimer);
-      // Anything scrolled past in the last moment still counts as read.
-      flushScrollRead().finally(() => feedService.syncReadState().catch(() => {}));
-      return;
-    }
-    // Publish what was read here before the view goes away.
-    feedService.syncReadState().catch(() => {});
-  });
+  cleanupInterval = setInterval(runConfiguredCleanup, 6 * 60 * 60 * 1000);
 });
 
 const openFeedById = (feedId: string) => handleSelectSource(feedId);
