@@ -360,7 +360,7 @@ onBeforeUnmount(() => {
         <ToolView v-if="tool" :key="tool.id" @pick="pick" @chain="chain" @discarded="onDiscarded" />
 
         <div v-else class="h-full overflow-auto">
-          <div class="max-w-[1180px] px-7 pt-5 pb-10">
+          <div class="max-w-[1180px] mx-auto px-7 pt-5 pb-10">
             <button
               type="button"
               class="w-full flex items-center gap-3.5 rounded-xl border-[1.5px] border-dashed border-border-subtle dark:border-border-subtle-dark bg-surface dark:bg-surface-dark px-4 py-3.5 text-left text-text-secondary dark:text-text-secondary-dark hover:border-accent"
