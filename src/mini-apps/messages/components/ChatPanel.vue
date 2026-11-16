@@ -27,6 +27,8 @@ import { tidyComposerText } from '../../../shared/syn/composerText';
 const MAX_IMAGES = 4;
 
 const props = defineProps<{
+  /** The whole width of the window rather than the reading column. See MessagesApp's `wideChat`. */
+  wide?: boolean;
   messages: SynMessage[];
   streamingContent: string;
   isStreaming: boolean;
@@ -428,7 +430,7 @@ const handleStop = () => {
         widens so that the things which need width can have it, not so that
         sentences get longer.
       -->
-      <div class="max-w-5xl mx-auto flex flex-col gap-5">
+      <div class="mx-auto flex flex-col gap-5" :class="wide ? 'max-w-none' : 'max-w-5xl'">
         <!-- Nothing to answer with yet: say what is missing and how to fix it,
              rather than inviting a first message that cannot be answered. -->
         <div v-if="messages.length === 0 && !isStreaming && connectionLost" class="py-12">
@@ -576,7 +578,7 @@ const handleStop = () => {
     <div class="flex-shrink-0 px-4 md:px-8 pb-4">
       <!-- The same column as the messages, or the composer sits off-centre
            under them. -->
-      <div class="max-w-5xl mx-auto">
+      <div class="mx-auto" :class="wide ? 'max-w-none' : 'max-w-5xl'">
         <div class="relative flex flex-col bg-white dark:bg-[#1e1f25] border border-gray-200 dark:border-gray-700/60 rounded-2xl shadow-lg shadow-black/5 dark:shadow-black/20 transition-all focus-within:border-accent dark:focus-within:border-accent-dark focus-within:shadow-accent/10">
 
           <!-- Pending images preview -->

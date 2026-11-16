@@ -7,7 +7,7 @@ import { listen } from '@tauri-apps/api/event';
 import { useI18n } from 'vue-i18n';
 import { routeForNode } from '../../shared/nodeRoutes';
 import { WEB_SOURCE } from './types';
-import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen, Activity, CalendarClock } from 'lucide-vue-next';
+import { Loader2, Settings, Download, ChevronLeft, Zap, ScrollText, GitBranch, PowerOff, Bell, Globe, PanelLeftClose, PanelLeftOpen, Activity, CalendarClock, FoldHorizontal, UnfoldHorizontal } from 'lucide-vue-next';
 import { logger } from '../../utils/logger';
 import synAvatar from '../../assets/syn-avatar.jpg';
 
@@ -811,6 +811,26 @@ const toggleSidebar = () => {
   }
 };
 
+/**
+ * Whether the conversation takes the whole width of the window.
+ *
+ * The reading column is 64rem, which suits prose and leaves boards, tables
+ * and pictures smaller than they need be on a wide screen, with the space
+ * beside them empty. Prose keeps its own measure either way (`.prose > p` in
+ * MessageBubble), so widening only gives room to what can use it.
+ * Remembered, like the sidebar.
+ */
+const WIDE_KEY = 'syn.chat.wide';
+const wideChat = ref(localStorage.getItem(WIDE_KEY) === 'yes');
+const toggleWide = () => {
+  wideChat.value = !wideChat.value;
+  try {
+    localStorage.setItem(WIDE_KEY, wideChat.value ? 'yes' : 'no');
+  } catch {
+    // Storage switched off: the toggle still works for this session.
+  }
+};
+
 watch([roomForSidebar, isMobile], ([width, mobile]) => {
   sidebarRoom.value = mobile ? 0 : width;
 }, { immediate: true });
@@ -1430,6 +1450,22 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
                   @pull-model="handlePullModel"
                 />
 
+                <!-- Desktop only: below `md` the column is the screen already. -->
+                <button
+                  v-if="selection?.kind === 'conversation'"
+                  @click="toggleWide"
+                  class="hidden md:inline-flex p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-white/5 transition-colors cursor-pointer"
+                  :class="wideChat
+                    ? 'text-accent dark:text-accent-dark bg-accent/10'
+                    : 'text-gray-500 dark:text-gray-400'"
+                  :title="wideChat ? t('syn.chat_narrow') : t('syn.chat_wide')"
+                  :aria-label="wideChat ? t('syn.chat_narrow') : t('syn.chat_wide')"
+                  :aria-pressed="wideChat"
+                >
+                  <FoldHorizontal v-if="wideChat" class="w-4 h-4" />
+                  <UnfoldHorizontal v-else class="w-4 h-4" />
+                </button>
+
                 <button
                   v-if="activeMessages.length > 0"
                   @click="handleExportConversation"
@@ -1512,6 +1548,7 @@ defineExpose({ refresh, fetchNotifications, openConversation, openThread, openSy
             <template v-else-if="selection?.kind === 'conversation'">
                 <ChatPanel
                   ref="chatPanel"
+                  :wide="wideChat"
                   :messages="activeMessages"
                   :streaming-content="streamingContent"
                   :is-streaming="isStreaming"

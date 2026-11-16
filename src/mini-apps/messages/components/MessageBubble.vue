@@ -28,8 +28,9 @@ import { titleFor, bodyFor, KEPT_IN } from '../keepAsNote';
 import { linkCitations } from '../citations';
 import { boardsTouchedBy } from '../keepAsBoard';
 import { useNodeService } from '../../../composables/useNodeService';
-import { boardPreview } from '../../../shared/boardPreview';
 import type { WhiteboardData } from '../../whiteboard/boardFile';
+import type { KeptBoard } from '../keepAsBoard';
+import BoardPicture from './BoardPicture.vue';
 import { useEventBus } from '../../../composables/useEventBus';
 import synAvatar from '../../../assets/syn-avatar.jpg';
 
@@ -255,8 +256,9 @@ const renderMermaid = async () => {
  *
  * Because "I drew you a board" followed by a link is three actions before
  * anybody sees it: click, wait for the Whiteboard app to mount, come back.
- * The file is a few kilobytes and the picture is rectangles and lines — it
- * costs about what an image costs, and the answer stops being a promise.
+ * The picture is the Whiteboard's own canvas, read-only (`BoardPicture`), so
+ * what is in the answer is what the board looks like, and the answer stops
+ * being a promise.
  *
  * At most two per message, and resolved one at a time: each name is a lookup,
  * and an answer that listed a dozen boards would otherwise spend a dozen
@@ -291,27 +293,26 @@ const showBoards = async () => {
     }
     if (!data?.nodes) continue;
 
-    const picture = boardPreview(data);
-    if (!picture) continue;
+    // Nothing on it: an empty frame looks like something failed.
+    if (!data.nodes.some((n) => n.type !== 'comment')) continue;
 
-    const title = data.title || path;
-    boards.set(path, { id: path, path, title, data });
-    const card = document.createElement('div');
-    card.className = 'board-card';
-    card.innerHTML =
-      `<div class="board-picture" data-board="${path}" role="button" tabindex="0"` +
-      ` title="${t('syn.board_arrange_here')}">${picture}</div>` +
-      `<div class="board-actions"><span></span>` +
-      `<button type="button" data-act="board-app" data-for="${path}">` +
-      `${t('syn.board_open_in_app')}</button></div>`;
-    const name = card.querySelector('.board-actions span');
-    if (name) name.textContent = title;
-    messageEl.value.appendChild(card);
+    shownBoards.value.push({ id: path, path, title: data.title || path, data });
   }
 };
 
-/** The boards shown under this message, by node id. */
-const boards = new Map<string, { id: string; path: string; title: string; data: WhiteboardData }>();
+/**
+ * The boards shown under this message.
+ *
+ * Drawn by the template, not put into the answer's own markup: that markup is
+ * `v-html`, and a card appended into it was wiped by the next re-render while
+ * `boardsShown` still said it was there. Reactive, so the pane beside the
+ * conversation, which is handed the same board, moves the picture's boxes when
+ * it saves them.
+ */
+const shownBoards = ref<KeptBoard[]>([]);
+
+const openBoardInApp = (board: KeptBoard) =>
+  emit('open-source', { id: board.id, title: board.title, node_type: 'whiteboard' });
 
 /** Draw one, when it is worth drawing. */
 const drawDiagram = async (el: HTMLElement) => {
@@ -449,16 +450,6 @@ const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ic
 const runBlockAction = async (button: HTMLElement) => {
   const id = button.dataset.for ?? '';
 
-  // "Open in Whiteboard" under a board Syn drew. Handled here because every
-  // `data-act` comes here first: it used to be looked for further down the
-  // click handler, after the branch that sends every `data-act` to this
-  // function — which knew no `board-app`, so the button did nothing at all.
-  if (button.dataset.act === 'board-app') {
-    const board = boards.get(id);
-    if (board) emit('open-source', { id: board.id, title: board.title, node_type: 'whiteboard' });
-    return;
-  }
-
   if (button.dataset.act === 'open') {
     const kept = keptNotes.get(id);
     if (!kept) return;
@@ -595,17 +586,6 @@ const handleContentClick = async (e: MouseEvent) => {
   // diagram. Clicking it opens the one you can read.
   if (showDiagramUnder(target)) {
     e.preventDefault();
-    return;
-  }
-
-  // A board shown under the answer: the picture opens it beside the
-  // conversation. Its button is a `data-act` like any block's, so it is
-  // `runBlockAction` that hands it to the Whiteboard app.
-  const picture = target.closest('[data-board]') as HTMLElement | null;
-  if (picture) {
-    e.preventDefault();
-    const board = boards.get(picture.dataset.board ?? '');
-    if (board) emit('open-board', board);
     return;
   }
 
@@ -831,6 +811,16 @@ const copyContent = async () => {
           v-html="renderedContent"
           @click="handleContentClick"
           @keydown="handleContentKey"
+        />
+
+        <!-- The boards this answer drew, as the boards themselves. -->
+        <BoardPicture
+          v-for="board in shownBoards"
+          :key="board.path"
+          :board="board"
+          :vault-path="vaultPath || ''"
+          @arrange="emit('open-board', board)"
+          @open="openBoardInApp(board)"
         />
 
         <!-- Streaming cursor -->
@@ -1241,52 +1231,6 @@ const copyContent = async () => {
   every picture below the fold. The height keeps the transcript from jumping
   as each one lands.
 */
-/* A board the answer named, shown under it. */
-:deep(.board-card) {
-  margin: 0.75rem 0 0.25rem;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 15%, transparent);
-  border-radius: 0.75rem;
-  overflow: hidden;
-  background: rgba(0, 0, 0, 0.02);
-}
-
-:deep(.board-picture) {
-  display: flex;
-  justify-content: center;
-  padding: 0.75rem;
-  cursor: zoom-in;
-}
-
-:deep(.board-actions) {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.4rem 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--color-accent) 10%, transparent);
-  font-size: 12px;
-  color: #6b7280;
-}
-
-:deep(.board-actions button) {
-  font-size: 12px;
-  min-height: 24px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0.2rem 0.55rem;
-  border-radius: 0.5rem;
-  color: var(--color-accent);
-  cursor: pointer;
-}
-
-:deep(.board-actions button:is(.dark *)) {
-  color: var(--color-accent-dark);
-}
-
-:deep(.board-actions button:hover) {
-  background: color-mix(in srgb, var(--color-accent) 8%, transparent);
-}
-
 :deep(pre.mermaid[data-processed="waiting"]) {
   min-height: 140px;
   color: transparent;

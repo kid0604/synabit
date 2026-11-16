@@ -109,6 +109,7 @@ import { EDGE_GREY } from '../../whiteboard/composables/useNodeOperations';
 import { applyRoute, outlineOf, routeLines, waitsForRoute, type Outline, type Route } from '../../whiteboard/autoRoute';
 import { layOutPending } from '../../whiteboard/autoLayout';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
+import { edgeForCanvas } from '../boardCanvas';
 import { logger } from '../../../utils/logger';
 
 import '@vue-flow/core/dist/style.css';
@@ -129,22 +130,7 @@ function drawBoard(board: KeptBoard) {
   // A folded mind-map branch stays folded here, as it is in the app.
   const hidden = hiddenByCollapse(board.data.nodes, board.data.edges);
   nodes.value = board.data.nodes.map(n => forCanvas({ ...n, hidden: hidden.has(n.id) }));
-  edges.value = board.data.edges.map(e => {
-    const d = (e.data ?? {}) as { label?: string; color?: string; strokeWidth?: number; dashStyle?: string };
-    return {
-      ...e,
-      type: e.type || 'default',
-      label: d.label || '',
-      // Colour, weight and dashes as the app draws them (`buildVfEdge`): a
-      // reply drawn dashed in the file came out solid here.
-      style: {
-        stroke: paint(d.color) || undefined,
-        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
-        strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
-      },
-      zIndex: 10001,
-    };
-  });
+  edges.value = board.data.edges.map(edgeForCanvas);
 }
 watch(() => props.board, drawBoard, { immediate: true });
 
@@ -377,7 +363,7 @@ onBeforeUnmount(() => {
       <VueFlow
         v-model:nodes="nodes"
         v-model:edges="edges"
-        class="w-full h-full"
+        class="w-full h-full board-pane-flow"
         :fit-view-on-init="true"
         :fit-view-options="FIT"
         :nodes-connectable="false"
@@ -418,3 +404,22 @@ onBeforeUnmount(() => {
     </div>
   </aside>
 </template>
+
+<style>
+/* The board's ink, paper and lines, as the Whiteboard app paints them, on the
+   pane's own background (see whiteboard/ink.ts). */
+.board-pane-flow {
+  --wb-ink: #1e1e1e;
+  --wb-edge: var(--color-muted, #8b8b8b);
+  --wb-paper: #fff;
+}
+.dark .board-pane-flow {
+  --wb-ink: #e4e4e7;
+  --wb-edge: var(--color-muted-dark, #71717a);
+  --wb-paper: #15161a;
+}
+.board-pane-flow .vue-flow__edge-path {
+  stroke: var(--wb-edge);
+  stroke-width: 1.5;
+}
+</style>

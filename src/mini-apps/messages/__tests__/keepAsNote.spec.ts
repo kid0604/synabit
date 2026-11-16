@@ -179,10 +179,18 @@ describe('the button on the block', () => {
 describe('the room an answer gets', () => {
   it('gives the column more than the measure of a sentence', async () => {
     const panel = (await import('../components/ChatPanel.vue?raw')).default;
-    expect(panel, 'the messages').toContain('max-w-5xl mx-auto flex flex-col gap-5');
-    expect(panel, 'and the composer under them, or the two sit off-centre')
-      .toContain('max-w-5xl mx-auto');
+    const column = `:class="wide ? 'max-w-none' : 'max-w-5xl'"`;
+    expect(panel, 'the messages').toContain(`<div class="mx-auto flex flex-col gap-5" ${column}>`);
+    expect(panel, 'and the composer under them, the same, or the two sit off-centre')
+      .toContain(`<div class="mx-auto" ${column}>`);
     expect(panel, 'nothing is still pinned to the old column').not.toContain('max-w-3xl');
+  });
+
+  /** And the whole window when asked: pictures and boards are what use it. */
+  it('takes the whole width when the toggle says so, and remembers it', async () => {
+    const app = (await import('../MessagesApp.vue?raw')).default;
+    expect(app).toContain(':wide="wideChat"');
+    expect(app).toContain("localStorage.setItem(WIDE_KEY");
   });
 
   /**

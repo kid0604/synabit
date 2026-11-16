@@ -4,13 +4,14 @@ import { createPinia } from 'pinia';
 import { i18n } from '../../../i18n';
 
 /**
- * The board under an answer Syn drew it in: its button opens the Whiteboard.
+ * The board under an answer Syn drew it in: its buttons open it beside the
+ * conversation and in the Whiteboard.
  *
- * Run rather than read, because the defect was in the order of the click
- * handler's branches, not in any one of them: the button is a `data-act`, and
- * the branch that sends every `data-act` to `runBlockAction` came before the
- * one that looked for this button. Each branch read correctly on its own and
- * the button did nothing.
+ * Run rather than read: the first version's button did nothing because of
+ * the order of a click handler's branches, each correct on its own. The
+ * picture is its own component now (`BoardPicture`), stubbed here — it needs
+ * a layout engine jsdom does not have — and what is checked is that the
+ * bubble finds the board, hands it over, and passes on what it asks for.
  */
 
 const PATH = 'Whiteboards/whiteboard-1794586303594.whiteboard.json';
@@ -36,7 +37,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke, convertFileSrc: (p: string) => 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}), emit: vi.fn() }));
 
 describe('a board under an answer', () => {
-  it('opens in the Whiteboard app from its button', async () => {
+  it('is drawn, and opens beside the conversation or in the Whiteboard app', async () => {
     const { default: MessageBubble } = await import('../components/MessageBubble.vue');
     const wrapper = mount(MessageBubble, {
       attachTo: document.body,
@@ -54,21 +55,25 @@ describe('a board under an answer', () => {
       },
       global: {
         plugins: [i18n, createPinia()],
-        stubs: { SynVisual: true, DiagramViewer: true, KeepAsLens: true, HowWorkedOut: true, FootingMark: true, PlanList: true },
+        stubs: { BoardPicture: true, SynVisual: true, DiagramViewer: true, KeepAsLens: true, HowWorkedOut: true, FootingMark: true, PlanList: true },
       },
     });
 
-    let button: HTMLElement | null = null;
-    for (let i = 0; i < 20 && !button; i++) {
+    const { default: BoardPicture } = await import('../components/BoardPicture.vue');
+    let picture = wrapper.findComponent(BoardPicture);
+    for (let i = 0; i < 20 && !picture.exists(); i++) {
       await flushPromises();
-      button = wrapper.element.querySelector(`[data-act="board-app"][data-for="${PATH}"]`);
+      picture = wrapper.findComponent(BoardPicture);
     }
-    expect(button, 'the board card was drawn under the answer').not.toBeNull();
+    expect(picture.exists(), 'the board was drawn under the answer').toBe(true);
+    expect(picture.props('board')).toMatchObject({ path: PATH, title: 'Lưu đồ quy trình Change Request' });
 
-    button!.click();
+    picture.vm.$emit('open');
+    picture.vm.$emit('arrange');
     await flushPromises();
 
     expect(wrapper.emitted('open-source')).toEqual([[{ id: PATH, title: 'Lưu đồ quy trình Change Request', node_type: 'whiteboard' }]]);
+    expect(wrapper.emitted('open-board')?.[0]?.[0]).toMatchObject({ path: PATH });
     wrapper.unmount();
   });
 });
