@@ -1272,7 +1272,14 @@
       "save_elsewhere": "Save elsewhere…",
       "beside_in": "Into {folder}",
       "vault_root": "the vault",
-      "smaller_by": "{n}% smaller"
+      "smaller_by": "{n}% smaller",
+      "text": "Text",
+      "copy": "Copy",
+      "copy_one": "Copy the text of {name}",
+      "copy_all": "Copy all",
+      "copied": "Copied",
+      "copy_failed": "Could not copy the text.",
+      "no_text": "No text was found."
     },
     "smart_drop": {
       "title_pdf": "What to do with this PDF? | What to do with these {n} PDFs?",

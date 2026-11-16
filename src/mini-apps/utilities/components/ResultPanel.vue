@@ -151,6 +151,50 @@ const saveZip = () =>
 
 const open = (output: string) => guard(() => api.openOutput(props.job.id, output));
 
+/**
+ * The text a tool made, shown and copyable without a save and a second app:
+ * "Text from images" and "PDF → Text" are mostly wanted for pasting somewhere.
+ * Read from the workspace like the PDF previews are; a file too big to be
+ * worth reading on screen is left to "Open".
+ */
+const TEXT_LIMIT = 2_000_000;
+const isText = (name: string) => name.toLowerCase().endsWith('.txt');
+const texts = ref<{ name: string; text: string }[]>([]);
+watch(
+  () => props.job,
+  async (job) => {
+    const wanted = job.outputs.filter((o) => isText(o.name) && o.size <= TEXT_LIMIT);
+    texts.value = [];
+    if (!wanted.length) return;
+    try {
+      const read = await Promise.all(
+        wanted.map(async (o) => ({ name: o.name, text: (await (await fetch(fileUrl(o.path))).text()).trim() })),
+      );
+      if (props.job.id === job.id) texts.value = read;
+    } catch (e) {
+      logger.error('[utilities] could not read the text result', e);
+    }
+  },
+  { immediate: true },
+);
+
+/** Which copy button last worked, for a moment's tick in place of its icon. */
+const copied = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+onBeforeUnmount(() => clearTimeout(copiedTimer));
+async function copy(which: string, text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    copied.value = which;
+    clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied.value = null), 1500);
+  } catch (e) {
+    logger.error('[utilities] copy failed', e);
+    showAppNotice(t('utilities.result.copy_failed'), 'error');
+  }
+}
+const allText = computed(() => texts.value.map((x) => x.text).filter(Boolean).join('\n\n'));
+
 const throwAway = () =>
   guard(async () => {
     await api.discard(props.job.id);
@@ -252,6 +296,33 @@ const throwAway = () =>
         </button>
       </div>
     </div>
+
+    <section v-if="texts.length" class="mt-6" :aria-label="t('utilities.result.text')">
+      <div class="flex items-center gap-2 mb-2">
+        <h3 class="text-sm font-semibold text-text dark:text-text-dark m-0">{{ t('utilities.result.text') }}</h3>
+        <button v-if="texts.length > 1 && allText" type="button" class="btn-secondary ml-auto" @click="copy('*', allText)">
+          <component :is="copied === '*' ? Check : Copy" class="w-4 h-4" aria-hidden="true" />{{ copied === '*' ? t('utilities.result.copied') : t('utilities.result.copy_all') }}
+        </button>
+      </div>
+      <div class="flex flex-col gap-3">
+        <div v-for="x in texts" :key="x.name" class="rounded-xl border border-border dark:border-border-dark bg-surface dark:bg-surface-dark">
+          <div class="flex items-center gap-2 pl-3 pr-1.5 py-1.5 border-b border-border dark:border-border-dark">
+            <span class="flex-1 min-w-0 truncate text-xs text-muted dark:text-muted-dark">{{ x.name }}</span>
+            <button
+              v-if="x.text"
+              type="button"
+              class="btn-secondary !border-transparent !h-7 !px-2 text-xs"
+              :aria-label="t('utilities.result.copy_one', { name: x.name })"
+              @click="copy(x.name, x.text)"
+            >
+              <component :is="copied === x.name ? Check : Copy" class="w-3.5 h-3.5" aria-hidden="true" />{{ copied === x.name ? t('utilities.result.copied') : t('utilities.result.copy') }}
+            </button>
+          </div>
+          <pre v-if="x.text" class="m-0 px-3 py-2.5 max-h-[280px] overflow-auto whitespace-pre-wrap break-words select-text font-sans text-sm leading-relaxed text-text dark:text-text-dark">{{ x.text }}</pre>
+          <p v-else class="m-0 px-3 py-2.5 text-sm text-muted dark:text-muted-dark">{{ t('utilities.result.no_text') }}</p>
+        </div>
+      </div>
+    </section>
 
     <section v-if="next.length" class="mt-6">
       <h3 class="text-sm font-semibold text-text dark:text-text-dark mb-2">{{ t('utilities.result.use_with') }}</h3>

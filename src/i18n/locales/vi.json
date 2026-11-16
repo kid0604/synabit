@@ -1272,7 +1272,14 @@
       "save_elsewhere": "Lưu chỗ khác…",
       "beside_in": "Vào {folder}",
       "vault_root": "vault",
-      "smaller_by": "nhẹ hơn {n}%"
+      "smaller_by": "nhẹ hơn {n}%",
+      "text": "Chữ đọc được",
+      "copy": "Sao chép",
+      "copy_one": "Sao chép chữ của {name}",
+      "copy_all": "Sao chép hết",
+      "copied": "Đã sao chép",
+      "copy_failed": "Không sao chép được.",
+      "no_text": "Không tìm thấy chữ nào."
     },
     "smart_drop": {
       "title_pdf": "Làm gì với {n} PDF này?",
