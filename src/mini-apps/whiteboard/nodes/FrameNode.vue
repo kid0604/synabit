@@ -23,6 +23,11 @@ const props = defineProps<{
     lanes?: { value: string; x: number; width: number; count: number }[];
     ticks?: { day: string; x: number }[];
     undatedY?: number | null;
+    /**
+     * A frame Syn drew as something particular: a swimlane, its name in a
+     * header down its left side; a table, its name in a band across its top.
+     */
+    variant?: 'lane' | 'table';
   };
 }>();
 
@@ -74,7 +79,11 @@ function onResizeEnd(event: any) {
     that starts in an empty part of a frame draws a selection, as it would
     anywhere else.
   -->
-  <div class="wb-frame" :class="{ 'is-selected': selected }" :style="{ '--frame-color': paint(data.color) || '#94a3b8' }">
+  <div
+    class="wb-frame"
+    :class="{ 'is-selected': selected, 'wb-frame--lane': data.variant === 'lane', 'wb-frame--table': data.variant === 'table' }"
+    :style="{ '--frame-color': paint(data.color) || '#94a3b8' }"
+  >
     <NodeResizer
       :is-visible="!!selected && !data.locked"
       :min-width="120"
@@ -169,6 +178,46 @@ function onResizeEnd(event: any) {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+/* A swimlane: square, its name in a band down its left side read from the
+   bottom up, as draw.io draws a pool's lanes. The band is LANE_HEAD wide
+   (board.rs). */
+.wb-frame--lane {
+  border-radius: 0;
+  border-width: 1px;
+}
+.wb-frame--lane .wb-frame__title {
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  max-width: none;
+  padding: 8px 0;
+  justify-content: center;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: color-mix(in srgb, var(--frame-color) 60%, currentColor);
+  background: color-mix(in srgb, var(--frame-color) 14%, transparent);
+  /* On the left before the turn, so on the right after it. */
+  border-left: 1px solid color-mix(in srgb, var(--frame-color) 45%, transparent);
+}
+/* A table: its name in a band across its top (TABLE_HEAD in board.rs), the
+   rows on the board's paper under it. */
+.wb-frame--table {
+  border-radius: 6px;
+  border-width: 1.5px;
+  background: var(--wb-paper, transparent);
+}
+.wb-frame--table .wb-frame__title {
+  top: 0;
+  bottom: auto;
+  left: 0;
+  right: 0;
+  height: 36px;
+  max-width: none;
+  padding: 0 12px;
+  justify-content: center;
+  border-radius: 5px 5px 0 0;
+  background: color-mix(in srgb, var(--frame-color) 16%, transparent);
 }
 .wb-frame__live {
   padding: 0 6px;

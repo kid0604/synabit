@@ -1,0 +1,229 @@
+{
+  "title": "Data Flow — Đặt hàng online",
+  "nodes": [
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "Khách hàng",
+        "layout": "pending",
+        "shapeType": "umlActor",
+        "width": 56.0
+      },
+      "id": "box-1a1dfc677c3-1",
+      "position": {
+        "x": 422.5,
+        "y": 80.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "Ứng dụng bán hàng",
+        "layout": "pending",
+        "shapeType": "roundedRect",
+        "width": 175.39999999999998
+      },
+      "id": "box-1a1dfc677c3-2",
+      "position": {
+        "x": 362.8,
+        "y": 208.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "Cổng thanh toán",
+        "layout": "pending",
+        "shapeType": "netServer",
+        "width": 56.0
+      },
+      "id": "box-1a1dfc677c3-3",
+      "position": {
+        "x": 131.5,
+        "y": 336.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "Kho hàng",
+        "layout": "pending",
+        "shapeType": "cylinder",
+        "width": 120.0
+      },
+      "id": "box-1a1dfc677c3-4",
+      "position": {
+        "x": 287.0,
+        "y": 336.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "Đơn vị vận chuyển",
+        "layout": "pending",
+        "shapeType": "netServer",
+        "width": 56.0
+      },
+      "id": "box-1a1dfc677c3-5",
+      "position": {
+        "x": 514.7,
+        "y": 336.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "color": "#7c3aed",
+        "height": 56.0,
+        "label": "CSDL đơn hàng",
+        "layout": "pending",
+        "shapeType": "cylinder",
+        "width": 142.6
+      },
+      "id": "box-1a1dfc677c3-6",
+      "position": {
+        "x": 678.4,
+        "y": 336.0
+      },
+      "type": "shape",
+      "updated": 1794755688387
+    }
+  ],
+  "edges": [
+    {
+      "data": {
+        "label": "Thông tin đơn hàng",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-0",
+      "source": "box-1a1dfc677c3-1",
+      "sourceHandle": "bottom",
+      "target": "box-1a1dfc677c3-2",
+      "targetHandle": "top",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Kiểm tra tồn kho",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-1",
+      "source": "box-1a1dfc677c3-2",
+      "sourceHandle": "bottom",
+      "target": "box-1a1dfc677c3-4",
+      "targetHandle": "top",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Kết quả tồn kho",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-2",
+      "source": "box-1a1dfc677c3-4",
+      "sourceHandle": "top",
+      "target": "box-1a1dfc677c3-2",
+      "targetHandle": "bottom",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Yêu cầu thanh toán",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-3",
+      "source": "box-1a1dfc677c3-2",
+      "sourceHandle": "left",
+      "target": "box-1a1dfc677c3-3",
+      "targetHandle": "right",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Kết quả thanh toán",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-4",
+      "source": "box-1a1dfc677c3-3",
+      "sourceHandle": "right",
+      "target": "box-1a1dfc677c3-2",
+      "targetHandle": "left",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Lưu đơn hàng",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-5",
+      "source": "box-1a1dfc677c3-2",
+      "sourceHandle": "right",
+      "target": "box-1a1dfc677c3-6",
+      "targetHandle": "left",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Thông tin giao hàng",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-6",
+      "source": "box-1a1dfc677c3-2",
+      "sourceHandle": "bottom",
+      "target": "box-1a1dfc677c3-5",
+      "targetHandle": "top",
+      "type": "step",
+      "updated": 1794755688387
+    },
+    {
+      "data": {
+        "label": "Xác nhận đơn hàng",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "id": "edge-1a1dfc677c3-7",
+      "source": "box-1a1dfc677c3-2",
+      "sourceHandle": "top",
+      "target": "box-1a1dfc677c3-1",
+      "targetHandle": "bottom",
+      "type": "step",
+      "updated": 1794755688387
+    }
+  ]
+}

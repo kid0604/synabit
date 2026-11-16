@@ -26,6 +26,8 @@ const props = defineProps<{
     rotation?: number;
     /** The drawing, when this is an icon (`shapeType: 'glyph'`). */
     glyph?: unknown;
+    /** A row of a table Syn drew: drawn as a line of the table, not a box. */
+    field?: boolean;
   };
 }>();
 
@@ -66,6 +68,23 @@ const labelBelow = computed(() => !!glyph.value || !!shapeDef.value.labelBelow);
 const labelColor = computed(() => (labelBelow.value ? labelOn(null) : labelOn(props.data.fillColor)));
 
 const shapeDef = computed(() => SHAPES_MAP[props.data.shapeType] || SHAPES_MAP['rectangle']);
+
+/**
+ * A table's row, read as a column: its name, its type, and its key. Syn
+ * writes a field as "user_id: uuid FK"; drawn as a box with those words in
+ * the middle, every row of a table was a box of its own, a grid of purple
+ * outlines with the key lost in the type.
+ */
+const field = computed(() => {
+  if (!props.data.field) return null;
+  const label = (props.data.label ?? '').trim();
+  const colon = label.indexOf(':');
+  const [name, rest] = colon < 0 ? [label, ''] : [label.slice(0, colon).trim(), label.slice(colon + 1).trim()];
+  const words = rest.split(/\s+/).filter(Boolean);
+  const keys = words.filter((w) => /^(PK|FK|UK)$/i.test(w.replace(/,$/, ''))).map((w) => w.replace(/,$/, '').toUpperCase());
+  const type = words.filter((w) => !/^(PK|FK|UK)$/i.test(w.replace(/,$/, ''))).join(' ');
+  return { name, type, keys };
+});
 
 // Compensate rx/ry for non-uniform SVG scaling so corners stay circular
 const CORNER_PX = 12; // desired visual corner radius in pixels
@@ -160,6 +179,8 @@ function onResizeEnd(event: any) {
       />
       <component :is="part[0]" v-for="(part, i) in glyph.parts" :key="i" v-bind="part[1]" />
     </svg>
+    <!-- A table's row: a line of the table, with its name, type and key. -->
+    <div v-else-if="field" class="wb-field" :class="{ 'is-selected': selected }" />
     <!-- SVG Shape — all shapes rendered through same SVG pipeline for consistent stroke -->
     <svg v-else viewBox="2 2 96 96" preserveAspectRatio="none" class="wb-shape-svg" style="overflow: visible;">
       <!-- Rounded Rect: use native <rect> with compensated rx/ry for circular corners -->
@@ -228,6 +249,11 @@ function onResizeEnd(event: any) {
         @keydown.escape="isEditing = false"
         class="wb-shape-input"
       />
+      <span v-else-if="field" class="wb-field__words" :style="{ fontSize: labelFontSize }">
+        <span class="wb-field__name" :class="{ 'is-key': field.keys.includes('PK') }">{{ field.name }}</span>
+        <span class="wb-field__type">{{ field.type }}</span>
+        <span v-for="key in field.keys" :key="key" class="wb-field__key">{{ key }}</span>
+      </span>
       <span v-else class="wb-shape-label" :style="{ fontSize: labelFontSize, color: labelColor }">
         {{ data.label || '' }}
       </span>
@@ -266,6 +292,48 @@ function onResizeEnd(event: any) {
 .wb-shape-svg path {
   pointer-events: visibleStroke;
   cursor: grab;
+}
+/* A table's row: a rule above it, and its words across it. */
+.wb-field {
+  position: absolute;
+  inset: 0;
+  border-top: 1px solid color-mix(in srgb, var(--wb-ink, currentColor) 12%, transparent);
+}
+.wb-field.is-selected {
+  outline: 1.5px dashed var(--wb-selection, var(--color-accent));
+  outline-offset: -1px;
+}
+.wb-field__words {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 0 4px;
+  color: var(--wb-ink, currentColor);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.wb-field__name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wb-field__name.is-key {
+  font-weight: 700;
+}
+.wb-field__type {
+  margin-left: auto;
+  font-size: 0.92em;
+  opacity: 0.6;
+}
+.wb-field__key {
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  color: var(--color-accent, #7c3aed);
+  background: color-mix(in srgb, var(--color-accent, #7c3aed) 14%, transparent);
 }
 .wb-shape-label-container {
   position: absolute;

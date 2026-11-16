@@ -3,6 +3,7 @@ import type { WBEdge, WBNode } from './boardFile';
 import type { Box } from './inkLayer';
 import { anchorAt, orthogonalRoute, type LineEnd, type Side } from './routing';
 import { SHAPES_MAP } from './shapes';
+import { GLYPH_SHAPE } from './glyph';
 
 /**
  * Lines routed around the boxes by MSAGL's rectilinear router, and written
@@ -618,6 +619,32 @@ export function outlineOf(
     if (shape.hull) box.hull = shape.hull;
   }
   return box;
+}
+
+/**
+ * The words under a figure or an icon — a person, a server — which the app
+ * draws below its box, out of it (`labelBelow`, ShapeNode.vue): about where
+ * they are, or null for an item with its words inside it, or none.
+ *
+ * Its box is the drawing alone. Laid out from that, the two lines between a
+ * customer and the app under them came out of the person's feet and ran
+ * through "Khách hàng".
+ */
+export function captionOf(n: { type: string; position: { x: number; y: number }; data?: Record<string, any> }): Outline | null {
+  if (n.type !== 'shape') return null;
+  const label = typeof n.data?.label === 'string' ? n.data.label.trim() : '';
+  const below = n.data?.shapeType === GLYPH_SHAPE || !!SHAPES_MAP[n.data?.shapeType]?.labelBelow;
+  const width = Number(n.data?.width) || 0;
+  const height = Number(n.data?.height) || 0;
+  if (!label || !below || !width || !height) return null;
+  // The words have the box's width and 48 more each side, from 4 under it,
+  // and wrap past that; at 13px a letter is about 7 across, a line 18 down.
+  const font = Number(n.data?.fontSize) || 13;
+  const room = width + 96;
+  const text = Math.ceil((label.length * 7 * font) / 13);
+  const lines = Math.ceil(text / room);
+  const across = Math.min(text, room);
+  return { x: n.position.x + (width - across) / 2, y: n.position.y + height, width: across, height: 4 + lines * Math.ceil((font * 18) / 13) };
 }
 
 /**

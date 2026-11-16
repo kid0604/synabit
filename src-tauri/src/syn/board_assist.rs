@@ -359,6 +359,7 @@ fn clean_sketch(answer: &Value) -> Result<crate::syn::board::Sketch, String> {
                 fields,
                 row: place(i, "row"),
                 col: place(i, "col"),
+                width: None,
             })
         })
         .take(MAX_ITEMS)
@@ -514,7 +515,7 @@ mod tests {
             .map(|n| (n["data"]["label"].as_str().unwrap().to_string(), n["data"]["shapeType"].as_str().unwrap().to_string()))
             .collect();
         assert!(shapes.contains(&("Checkout".into(), "umlActor".into())), "{shapes:?}");
-        assert!(shapes.contains(&("Stripe".into(), "rectangle".into())), "{shapes:?}");
+        assert!(shapes.contains(&("Stripe".into(), "roundedRect".into())), "{shapes:?}");
         assert!(shapes.contains(&("Ledger".into(), "cylinder".into())), "{shapes:?}");
         assert_eq!(out["edges"].as_array().unwrap().len(), 2);
     }

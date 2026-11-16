@@ -437,6 +437,11 @@ pub struct SketchItem {
     /// sequence, which participant from the left.
     #[serde(default)]
     pub col: Option<usize>,
+    /// How wide it is drawn, when that is not what its words need: the width
+    /// every box of its kind on the drawing shares (`even_out`). Never read
+    /// from the model.
+    #[serde(skip)]
+    pub width: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -632,9 +637,16 @@ const FRAME_PAD: f64 = 32.0;
 const FRAME_TOP: f64 = 44.0;
 const START: f64 = 80.0;
 
-/// A table's rows, and the margin between them and the frame around them.
+/// A table's rows, and the margin between its longest row and its sides.
 const ROW_H: f64 = 30.0;
 const TABLE_PAD: f64 = 12.0;
+/// A table's name, in a band across its top (FrameNode.vue, `variant: table`).
+const TABLE_HEAD: f64 = 36.0;
+/// A lane's name, in a band down its left side (`variant: lane`).
+const LANE_HEAD: f64 = 40.0;
+/// The widest an evened-out box is drawn: longer words wrap to a second line,
+/// which a box's height holds.
+const EVEN_MAX: f64 = 220.0;
 
 /// A box wide enough for what is written in it.
 fn box_width(label: &str) -> f64 {
@@ -655,6 +667,9 @@ fn size_of(label: &str, shape: Option<&str>, fields: &[String]) -> (f64, f64) {
             Some("diamond" | "decision") => ((words * 1.6).clamp(160.0, 440.0), 88.0),
             Some("ellipse") => ((words * 1.3).clamp(140.0, 380.0), 64.0),
             Some("pill" | "hexagon") => (words + 28.0, BOX_H),
+            // A cloud's words fit inside its puffs: the size of a box, it
+            // came out a flat strip of bumps with the words over its edge.
+            Some("cloud") => ((words * 1.3).clamp(150.0, 380.0), 84.0),
             _ => (words, BOX_H),
         };
     }
@@ -665,12 +680,88 @@ fn size_of(label: &str, shape: Option<&str>, fields: &[String]) -> (f64, f64) {
     (widest.clamp(160.0, 380.0), table_height(fields.len()))
 }
 
+/// How wide the app draws a line's label: `labelSize` in autoRoute.ts.
+fn label_width(text: &str) -> f64 {
+    (text.chars().count() as f64 * 7.0).ceil() + 18.0
+}
+
+/// Clear of a label on each side, along its line: the arrow's head at one
+/// end, a little line at the other.
+const LABEL_CLEAR: f64 = 16.0;
+
 fn item_size(item: &SketchItem) -> (f64, f64) {
-    size_of(&item.label, item.shape.as_deref(), &item.fields)
+    let (w, h) = size_of(&item.label, item.shape.as_deref(), &item.fields);
+    (item.width.unwrap_or(w), h)
+}
+
+/// What a box is, for evening out widths and for its colours: the steps of a
+/// process, where it starts and ends, a question, somewhere data is kept, a
+/// figure. Anything else is drawn as a step.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Role {
+    Step,
+    End,
+    Question,
+    Store,
+    Figure,
+}
+
+fn role_of(kind: &str) -> Role {
+    match kind {
+        "ellipse" | "pill" | "circle" | "terminator" => Role::End,
+        "diamond" | "decision" => Role::Question,
+        "cylinder" | "document" | "multiDocument" | "storedData" | "internalStorage" | "directData" | "tape" => {
+            Role::Store
+        }
+        k if crate::syn::board_shapes::is_figure(k) => Role::Figure,
+        _ => Role::Step,
+    }
+}
+
+/// The board's name for what a sketch item asks to be: a plain box when it
+/// asks for nothing the board has.
+fn kind_of(asked: Option<&str>) -> &'static str {
+    asked.and_then(crate::syn::board_shapes::board_shape).unwrap_or(DEFAULT_SHAPE)
+}
+
+/// Every box of a kind as wide as the widest of them.
+///
+/// Sized to its own words, each step of a flowchart was a different width, and
+/// the column they made ran ragged down the page: draw.io and Miro draw a
+/// process's steps alike. Steps stop at `EVEN_MAX`, and longer words wrap; a
+/// question or a start keeps the widest of its kind whole, its words having
+/// less room inside it than a box. Figures are drawn square, and tables are
+/// as wide as their fields.
+fn even_out(sketch: &Sketch) -> Sketch {
+    let mut widest: std::collections::HashMap<Role, f64> = Default::default();
+    // Boxes, and the drawings that are boxes with a twist; a cloud, a star or
+    // a hexagon pulled out to a box's width is no longer itself.
+    let plain = |item: &SketchItem| {
+        let kind = kind_of(item.shape.as_deref());
+        item.fields.is_empty()
+            && (role_of(kind) != Role::Step
+                || matches!(kind, "rectangle" | "roundedRect" | "process" | "predefinedProcess" | "dataIO" | "parallelogram")
+                || kind.starts_with("bpmnTask"))
+    };
+    for item in sketch.items.iter().filter(|i| plain(i)) {
+        let role = role_of(kind_of(item.shape.as_deref()));
+        let w = item_size(item).0;
+        let w = if role == Role::Step { w.min(EVEN_MAX) } else { w };
+        let at = widest.entry(role).or_insert(w);
+        *at = at.max(w);
+    }
+    let mut even = sketch.clone();
+    for item in even.items.iter_mut().filter(|i| plain(i)) {
+        let role = role_of(kind_of(item.shape.as_deref()));
+        if role != Role::Figure {
+            item.width = widest.get(&role).copied();
+        }
+    }
+    even
 }
 
 fn table_height(fields: usize) -> f64 {
-    FRAME_TOP + ROW_H * fields as f64 + TABLE_PAD
+    TABLE_HEAD + ROW_H * fields as f64
 }
 
 /// The site an item belongs to: everything before the first `/`.
@@ -780,6 +871,7 @@ fn row_height(row: &[&SketchItem]) -> f64 {
 /// through `Canvas`, so a table in a lane is the same table as one in a group.
 pub fn draw(title: &str, sketch: &Sketch, now_ms: i64) -> Result<Board, String> {
     check(sketch)?;
+    let sketch = &even_out(sketch);
     let mut canvas = Canvas::new(now_ms);
     match arrangement(sketch) {
         Arrangement::Layers => layers(&mut canvas, sketch),
@@ -832,10 +924,20 @@ impl Canvas {
         format!("{kind}-{:x}-{}", self.now, self.n)
     }
 
-    /// A group's or a lane's frame.
+    /// A group's frame.
     fn group_frame(&mut self, label: &str, rect: Rect) {
         let id = self.id("frame");
         self.frames.push(frame(id, rect.0, rect.1, rect.2, rect.3, label, self.now));
+    }
+
+    /// A lane: a band with its name in a header down its left side, as
+    /// draw.io draws one, rather than in small grey words above it.
+    fn lane_frame(&mut self, label: &str, rect: Rect) {
+        let id = self.id("frame");
+        let mut lane = frame(id, rect.0, rect.1, rect.2, rect.3, label, self.now);
+        lane.data.insert("variant".into(), json!("lane"));
+        lane.data.insert("color".into(), json!(LANE_COLOUR));
+        self.frames.push(lane);
     }
 
     /// Put an item down with its top-left corner here: a box, or a table.
@@ -936,21 +1038,29 @@ fn table(
     fields: &[String],
     now_ms: i64,
 ) -> Vec<Item> {
-    let mut parts = vec![frame(ids("frame"), x, y, w, table_height(fields.len()), label, now_ms)];
+    let mut head = frame(ids("frame"), x, y, w, table_height(fields.len()), label, now_ms);
+    head.data.insert("variant".into(), json!("table"));
+    head.data.insert("color".into(), json!(BOX_COLOUR));
+    let mut parts = vec![head];
     for (i, field) in fields.iter().enumerate() {
+        // As wide as the table, a hair inside its border, so a line from a
+        // row leaves from the table's side.
         let mut row = shape(
             ids("box"),
-            x + TABLE_PAD,
-            y + FRAME_TOP + ROW_H * i as f64,
-            w - TABLE_PAD * 2.0,
+            x + 1.0,
+            y + TABLE_HEAD + ROW_H * i as f64,
+            w - 2.0,
             ROW_H,
             field.trim(),
-            None,
+            Some("rectangle"),
             now_ms,
         );
         row.data.insert("textAlign".into(), json!("left"));
         row.data.insert("fontSize".into(), json!(13));
         row.data.insert("field".into(), json!(true));
+        // A row is drawn as a line of the table (ShapeNode.vue), in ink.
+        row.data.remove("fillColor");
+        row.data.insert("color".into(), json!(BOX_COLOUR));
         parts.push(row);
     }
     parts
@@ -1136,16 +1246,35 @@ fn lanes(c: &mut Canvas, sketch: &Sketch) {
         let k = col_of(item);
         col_w[k] = col_w[k].max(w);
     }
-    let mut col_x = Vec::with_capacity(columns);
-    let mut x = START + FRAME_PAD;
-    for w in &col_w {
-        col_x.push(x);
-        x += w + GAP_X * 1.5;
+    // Between two columns, room for the label of a line across: the app
+    // draws a label on its line, and in the 72 there were between a question
+    // and the step beside it, "Không" sat on the arrow's head.
+    let mut gap = vec![GAP_X * 1.5; columns.saturating_sub(1)];
+    let named = |name: &str| {
+        let name = name.trim().to_lowercase();
+        sketch.items.iter().find(|i| i.label.trim().to_lowercase() == name)
+    };
+    for link in &sketch.links {
+        let Some(text) = link.label.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { continue };
+        let (Some(a), Some(b)) = (named(&link.from), named(&link.to)) else { continue };
+        let (ka, kb) = (col_of(a), col_of(b));
+        if ka.abs_diff(kb) == 1 {
+            let k = ka.min(kb);
+            gap[k] = gap[k].max(label_width(text) + LABEL_CLEAR * 2.0);
+        }
     }
-    let width = x - GAP_X * 1.5 + FRAME_PAD - START;
+    let mut col_x = Vec::with_capacity(columns);
+    let mut x = START + LANE_HEAD + FRAME_PAD;
+    for (k, w) in col_w.iter().enumerate() {
+        col_x.push(x);
+        x += w + gap.get(k).copied().unwrap_or(0.0);
+    }
+    let width = x + FRAME_PAD - START;
 
     const STACK_GAP: f64 = GAP_Y / 2.0;
-    const LANE_GAP: f64 = 16.0;
+    // One band against the next, as a pool's lanes are: the names are in the
+    // bands, so nothing needs the room between them.
+    const LANE_GAP: f64 = 0.0;
     let mut lane_y = START;
     for (li, name) in names.iter().enumerate() {
         // The first item of every column shares a middle line, so a lane's
@@ -1162,12 +1291,12 @@ fn lanes(c: &mut Canvas, sketch: &Sketch) {
                 })
             })
             .fold(BOX_H, f64::max);
-        let lane_h = FRAME_TOP + tallest + FRAME_PAD;
-        c.group_frame(name, (START, lane_y, width, lane_h));
+        let lane_h = FRAME_PAD + tallest + FRAME_PAD;
+        c.lane_frame(name, (START, lane_y, width, lane_h));
 
         for k in 0..columns {
             let Some(held) = cells.get(&(li, k)) else { continue };
-            let mut y = lane_y + FRAME_TOP;
+            let mut y = lane_y + FRAME_PAD;
             for (at, item) in held.iter().enumerate() {
                 let (w, h) = item_size(item);
                 let top = if at == 0 { y + (first_h - h) / 2.0 } else { y };
@@ -1235,7 +1364,8 @@ fn sequence(c: &mut Canvas, sketch: &Sketch) {
     // Far enough apart for the heads, and then for what is written on the
     // messages between them: a label wider than the gap it spans runs over
     // the lifelines on either side.
-    let widths: Vec<f64> = people.iter().map(|p| box_width(&p.label)).collect();
+    // As wide as they are drawn: evened out (`even_out`), not their words.
+    let widths: Vec<f64> = people.iter().map(|p| item_size(p).0).collect();
     let mut cx: Vec<f64> = Vec::with_capacity(people.len());
     for (i, w) in widths.iter().enumerate() {
         let x = if i == 0 { START + w / 2.0 } else { cx[i - 1] + widths[i - 1] / 2.0 + GAP_X * 2.0 + w / 2.0 };
@@ -1251,7 +1381,8 @@ fn sequence(c: &mut Canvas, sketch: &Sketch) {
         .filter_map(|m| {
             let (a, b) = ends(m)?;
             let words = m.label.as_deref().unwrap_or("").trim().chars().count();
-            (a != b && words > 0).then(|| (a.min(b), a.max(b), words as f64 * 7.4 + 56.0))
+            let (lo, hi) = label_gap(a, b).unwrap_or((a.min(b), a.max(b)));
+            (a != b && words > 0).then_some((lo, hi, words as f64 * 7.4 + 56.0))
         })
         .collect();
     spans.sort_by_key(|(lo, hi, _)| hi - lo);
@@ -1271,7 +1402,14 @@ fn sequence(c: &mut Canvas, sketch: &Sketch) {
     let mut last: Vec<(String, Rect)> = Vec::with_capacity(people.len());
     let mut heads: Vec<String> = Vec::with_capacity(people.len());
     for (i, person) in people.iter().enumerate() {
-        let rect = c.place(person, cx[i] - widths[i] / 2.0, top);
+        // A head is a box. The board's `umlLifeline` draws a line of its own
+        // down from a head a fifth of its height: at a head's height it was a
+        // flat bar with the name across it, over the lifeline drawn here.
+        let mut head = (*person).clone();
+        if kind_of(head.shape.as_deref()) == "umlLifeline" {
+            head.shape = None;
+        }
+        let rect = c.place(&head, cx[i] - widths[i] / 2.0, top);
         let id = c.named[&person.label.trim().to_lowercase()].0.clone();
         heads.push(id.clone());
         last.push((id, rect));
@@ -1280,29 +1418,107 @@ fn sequence(c: &mut Canvas, sketch: &Sketch) {
     const STEP: f64 = 56.0;
     const BAR_W: f64 = 12.0;
     const BAR_H: f64 = 24.0;
+    // ── When each message is said, and which answer which ────
+    // A message back along a call still open — B to A while A's call to B
+    // waits — is that call's answer: drawn dashed with an open head, as UML
+    // draws a reply, whether or not the model said so. Calls left open are
+    // closed by an answer to one further out.
+    struct Said {
+        a: usize,
+        b: usize,
+        y: f64,
+        answers: Option<usize>,
+    }
+    let mut said: Vec<Said> = Vec::new();
+    let mut open: Vec<usize> = Vec::new();
     let mut y = top + BOX_H + 40.0;
     for message in &messages {
         let Some((a, b)) = ends(message) else { continue };
-        let data = line_data(message.label.as_deref(), message.start.as_deref(), message.end.as_deref(), message.dashed);
-        if a == b {
-            // To itself: out of one bar and back into the one below it.
-            let first = bar(c, &heads[a], cx[a], y, BAR_W, BAR_H);
-            lifeline(c, &mut last[a], first.clone());
-            let second = bar(c, &heads[a], cx[a], y + STEP * 0.6, BAR_W, BAR_H);
-            lifeline(c, &mut last[a], second.clone());
-            let mut data = data;
-            data.remove("sides");
-            message_line(c, first.0, "right", second.0, "right", data);
-            y += STEP * 1.6;
-        } else {
-            let from = bar(c, &heads[a], cx[a], y, BAR_W, BAR_H);
-            lifeline(c, &mut last[a], from.clone());
-            let to = bar(c, &heads[b], cx[b], y, BAR_W, BAR_H);
-            lifeline(c, &mut last[b], to.clone());
-            let (out_side, in_side) = if a < b { ("right", "left") } else { ("left", "right") };
-            message_line(c, from.0, out_side, to.0, in_side, data);
-            y += STEP;
+        let i = said.len();
+        let mut answers = None;
+        if a != b {
+            if let Some(k) = open.iter().rposition(|&j| said[j].a == b && said[j].b == a) {
+                answers = Some(open[k]);
+                open.truncate(k);
+            } else {
+                open.push(i);
+            }
         }
+        said.push(Said { a, b, y, answers });
+        y += if a == b { STEP * 1.6 } else { STEP };
+    }
+    let messages: Vec<&SketchLink> = messages.iter().copied().filter(|m| ends(m).is_some()).collect();
+
+    // ── Activations ──────────────────────────────────────────
+    // A participant is busy from a call to its answer, and both ends of it
+    // are: one bar down the lifeline for the whole of it, as UML draws one,
+    // rather than a small bar at every message — a sequence of eight
+    // messages was a lifeline of sixteen little boxes. A message nobody
+    // answers is a short bar at each end.
+    let mut busy: Vec<Vec<(f64, f64)>> = vec![Vec::new(); people.len()];
+    for (i, m) in said.iter().enumerate() {
+        if m.a == m.b || m.answers.is_some() {
+            continue;
+        }
+        let until = said.iter().skip(i + 1).find(|r| r.answers == Some(i)).map_or(m.y, |r| r.y);
+        for p in [m.a, m.b] {
+            busy[p].push((m.y - BAR_H / 2.0, until + BAR_H / 2.0));
+        }
+    }
+    for spans in &mut busy {
+        spans.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (from, to) in spans.drain(..) {
+            match merged.last_mut() {
+                Some(last) if from <= last.1 => last.1 = last.1.max(to),
+                _ => merged.push((from, to)),
+            }
+        }
+        *spans = merged;
+    }
+    let mut bars: Vec<Vec<(String, Rect)>> = Vec::with_capacity(people.len());
+    for (p, spans) in busy.iter().enumerate() {
+        let mut held = Vec::with_capacity(spans.len());
+        for &(from, to) in spans {
+            let made = bar(c, &heads[p], cx[p], (from + to) / 2.0, BAR_W, to - from);
+            lifeline(c, &mut last[p], made.clone());
+            held.push(made);
+        }
+        bars.push(held);
+    }
+    // Where on its bar a message is said: the side, and how far down.
+    let on = |p: usize, y: f64| -> Option<(String, f64)> {
+        bars[p].iter().find(|(_, r)| y >= r.1 - 0.5 && y <= r.1 + r.3 + 0.5).map(|(id, r)| (id.clone(), (((y - r.1) / r.3) * 100_000.0).round() / 100_000.0))
+    };
+
+    for (m, message) in said.iter().zip(&messages) {
+        let (a, b) = (m.a, m.b);
+        let reply = m.answers.is_some();
+        let end = message.end.as_deref().or(if reply { Some("open") } else { None });
+        let data = line_data(message.label.as_deref(), message.start.as_deref(), end, message.dashed || reply);
+        let mut data = data;
+        data.remove("sides");
+        if a == b {
+            // To itself: a call within what it is doing, on a bar of its
+            // own beside the lifeline, out of it and back in lower down.
+            let nudge = BAR_W / 2.0;
+            let first = bar(c, &heads[a], cx[a] + nudge, m.y, BAR_W, BAR_H);
+            let second = bar(c, &heads[a], cx[a] + nudge, m.y + STEP * 0.6, BAR_W, BAR_H);
+            message_line(c, first.0, "right", second.0, "right", data);
+            continue;
+        }
+        let (Some((from, s)), Some((to, t))) = (on(a, m.y), on(b, m.y)) else { continue };
+        let (out_side, in_side) = if a < b { ("right", "left") } else { ("left", "right") };
+        data.insert("sourceAt".into(), json!({ "side": out_side, "t": s }));
+        data.insert("targetAt".into(), json!({ "side": in_side, "t": t }));
+        if let Some((lo, hi)) = label_gap(a, b) {
+            let toward = if a < b { 1.0 } else { -1.0 };
+            let start = cx[a] + toward * BAR_W / 2.0;
+            let end = cx[b] - toward * BAR_W / 2.0;
+            let share = ((cx[lo] + cx[hi]) / 2.0 - start) / (end - start);
+            data.insert("labelAt".into(), json!((share * 1000.0).round() / 1000.0));
+        }
+        message_line(c, from, out_side, to, in_side, data);
     }
 
     // Every lifeline runs to the same depth, and ends there.
@@ -1321,6 +1537,20 @@ fn sequence(c: &mut Canvas, sketch: &Sketch) {
         let right = cx[past - 1] + widths[past - 1] / 2.0 + FRAME_PAD;
         c.group_frame(name, (left, START, right - left, y + FRAME_PAD - START));
     }
+}
+
+/// The stretch of a message its words sit over, when the middle of it will
+/// not do: a message across an even number of gaps has a lifeline at its
+/// middle, and its label sat on that lifeline and hid it. Then the gap on the
+/// sender's side of that lifeline, by participant: `(left, right)`.
+fn label_gap(a: usize, b: usize) -> Option<(usize, usize)> {
+    let (lo, hi) = (a.min(b), a.max(b));
+    let gaps = hi - lo;
+    if gaps < 2 || gaps % 2 == 1 {
+        return None;
+    }
+    let mid = lo + gaps / 2;
+    Some(if a < b { (mid - 1, mid) } else { (mid, mid + 1) })
 }
 
 /// A small bar on a lifeline, centred on it at this height.
@@ -1488,7 +1718,29 @@ fn ranks(sketch: &Sketch) -> std::collections::HashMap<String, usize> {
     names.into_iter().zip(rank).collect()
 }
 
+/// The look of what Syn draws: one palette, coloured by what a thing is, as
+/// draw.io and Miro colour a flowchart — a pale fill of the same hue as the
+/// outline, so the boxes read as things rather than as wire.
+///
+/// The fills are the outline's colour at a tenth or so: an 8-digit hex keeps
+/// its own alpha (ShapeNode.vue), so the same fill is a tint on the light
+/// canvas and on the dark one, and the words stay in the board's ink
+/// (`labelOn`, ink.ts).
 const BOX_COLOUR: &str = "#7c3aed";
+const LANE_COLOUR: &str = "#64748b";
+const DEFAULT_SHAPE: &str = "roundedRect";
+const BORDER: f64 = 1.5;
+
+/// Outline and fill, by role.
+fn look_of(role: Role) -> (&'static str, Option<&'static str>) {
+    match role {
+        Role::Step => (BOX_COLOUR, Some("#7c3aed1a")),
+        Role::End => ("#059669", Some("#0596691f")),
+        Role::Question => ("#d97706", Some("#d977061f")),
+        Role::Store => ("#2563eb", Some("#2563eb1a")),
+        Role::Figure => ("#475569", None),
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn shape(
@@ -1506,17 +1758,22 @@ fn shape(
     // label's width it is no longer the thing, and the label lands across it.
     // The board's own name for the shape: a model's "database" is a cylinder,
     // and a name the board does not have is a plain box (see `board_shapes`).
-    let kind = kind.and_then(crate::syn::board_shapes::board_shape);
-    let (x, w, h) = if kind.is_some_and(crate::syn::board_shapes::is_figure) {
+    let kind = kind_of(kind);
+    let (x, w, h) = if crate::syn::board_shapes::is_figure(kind) {
         let side = h.min(56.0);
         (x + (w - side) / 2.0, side, side)
     } else {
         (x, w, h)
     };
     let mut data = Map::new();
-    data.insert("shapeType".into(), json!(kind.unwrap_or("rectangle")));
+    data.insert("shapeType".into(), json!(kind));
     data.insert("label".into(), json!(label));
-    data.insert("color".into(), json!(BOX_COLOUR));
+    let (stroke, fill) = look_of(role_of(kind));
+    data.insert("color".into(), json!(stroke));
+    if let Some(fill) = fill {
+        data.insert("fillColor".into(), json!(fill));
+    }
+    data.insert("borderWidth".into(), json!(BORDER));
     data.insert("width".into(), json!(w));
     data.insert("height".into(), json!(h));
     Item { id, kind: "shape".into(), position: Point { x, y }, data, updated: Some(now_ms), rest: Map::new() }
@@ -2417,7 +2674,7 @@ mod tests {
                 .nodes
                 .iter()
                 .filter(move |n| {
-                    n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR)
+                    is_box(n)
                         && (n.position.y - y).abs() < 1.0
                 })
                 .count()
@@ -2425,7 +2682,7 @@ mod tests {
         let rows: std::collections::BTreeSet<i64> = board
             .nodes
             .iter()
-            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR))
+            .filter(|n| is_box(n))
             .map(|n| n.position.y as i64)
             .collect();
         assert!(
@@ -2442,7 +2699,7 @@ mod tests {
         let boxes: Vec<&Item> = board
             .nodes
             .iter()
-            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR))
+            .filter(|n| is_box(n))
             .collect();
         for (i, a) in boxes.iter().enumerate() {
             for b in boxes.iter().skip(i + 1) {
@@ -2781,6 +3038,141 @@ mod tests {
         assert!(x("Gửi đề nghị") < x("Duyệt") && x("Duyệt") < x("Chi tiền") && x("Chi tiền") < x("Nhận tiền"));
     }
 
+    /// A question's answer to the step beside it has its label on the line,
+    /// between the two: the columns stand far enough apart for it to fit.
+    #[test]
+    fn lanes_leave_room_for_a_label_between_columns() {
+        let flow = |label: Option<&str>| {
+            sketch(json!({
+                "items": [
+                    { "label": "Kiểm tra", "lane": "Hệ thống" },
+                    { "label": "Còn hàng?", "lane": "Hệ thống", "shape": "diamond" },
+                    { "label": "Báo hết hàng", "lane": "Hệ thống" },
+                    { "label": "Giao hàng", "lane": "Kho" }
+                ],
+                "links": [
+                    { "from": "Kiểm tra", "to": "Còn hàng?" },
+                    { "from": "Còn hàng?", "to": "Báo hết hàng", "label": label },
+                    { "from": "Báo hết hàng", "to": "Giao hàng" }
+                ]
+            }))
+        };
+        let between = |board: &Board, a: &str, b: &str| {
+            let (a, b) = (at(board, a), at(board, b));
+            b.position.x - (a.position.x + a.width())
+        };
+        let label = "Không, hết hàng trong kho";
+        let labelled = draw("t", &flow(Some(label)), NOW).expect("drawn");
+        assert!(between(&labelled, "Còn hàng?", "Báo hết hàng") >= label_width(label) + 2.0 * LABEL_CLEAR);
+        // Only there: a line with no label needs no more than it had.
+        let plain = draw("t", &flow(None), NOW).expect("drawn");
+        assert!((between(&plain, "Còn hàng?", "Báo hết hàng") - GAP_X * 1.5).abs() < 0.01);
+        assert!((between(&labelled, "Kiểm tra", "Còn hàng?") - between(&plain, "Kiểm tra", "Còn hàng?")).abs() < 0.01);
+    }
+
+    /// A thing Syn drew, rather than a frame or a table's row.
+    fn is_box(n: &Item) -> bool {
+        n.kind == "shape" && n.data.get("field").is_none()
+    }
+
+    /// Lanes are a pool's bands: each one's name in a header down its left
+    /// side, one against the next, the steps clear of the header.
+    #[test]
+    fn a_lane_has_its_name_down_its_side() {
+        let flow = sketch(json!({
+            "items": [
+                { "label": "Gửi đề nghị", "lane": "Nhân viên" },
+                { "label": "Duyệt", "lane": "Kế toán" }
+            ],
+            "links": [{ "from": "Gửi đề nghị", "to": "Duyệt" }]
+        }));
+        let board = draw("Tạm ứng", &flow, NOW).expect("drawn");
+        let (staff, accounts) = (at(&board, "Nhân viên"), at(&board, "Kế toán"));
+        for lane in [&staff, &accounts] {
+            assert_eq!(lane.data["variant"], "lane");
+        }
+        assert!((staff.position.y + staff.height() - accounts.position.y).abs() < 0.01, "the lanes stand apart");
+        assert!(at(&board, "Gửi đề nghị").position.x >= staff.position.x + LANE_HEAD + FRAME_PAD);
+    }
+
+    /// The steps of a process alike, as draw.io draws them: as wide as the
+    /// widest, up to a point, past which the words wrap.
+    #[test]
+    fn boxes_of_a_kind_are_as_wide_as_each_other() {
+        let flow = sketch(json!({
+            "items": [
+                { "label": "Gửi" },
+                { "label": "Đánh giá tác động và rủi ro của thay đổi" },
+                { "label": "Duyệt?", "shape": "diamond" },
+                { "label": "Bạn có chắc chắn muốn tiếp tục không?", "shape": "diamond" },
+                { "label": "Khách hàng", "shape": "person" }
+            ],
+            "links": [
+                { "from": "Gửi", "to": "Đánh giá tác động và rủi ro của thay đổi" },
+                { "from": "Đánh giá tác động và rủi ro của thay đổi", "to": "Duyệt?" },
+                { "from": "Duyệt?", "to": "Bạn có chắc chắn muốn tiếp tục không?" }
+            ]
+        }));
+        let board = draw("t", &flow, NOW).expect("drawn");
+        let w = |label: &str| at(&board, label).width();
+        assert_eq!(w("Gửi"), w("Đánh giá tác động và rủi ro của thay đổi"));
+        assert!(w("Gửi") <= EVEN_MAX);
+        assert_eq!(w("Duyệt?"), w("Bạn có chắc chắn muốn tiếp tục không?"));
+        let person = at(&board, "Khách hàng");
+        assert_eq!(person.width(), person.height(), "a figure stays square");
+    }
+
+    /// Coloured by what a thing is — a step, a start or end, a question, a
+    /// store — with a pale fill of the outline's hue; a figure is drawn alone.
+    #[test]
+    fn what_a_thing_is_says_its_colours() {
+        let flow = sketch(json!({
+            "items": [
+                { "label": "Bắt đầu", "shape": "ellipse" },
+                { "label": "Làm" },
+                { "label": "Đủ?", "shape": "diamond" },
+                { "label": "CSDL", "shape": "database" },
+                { "label": "Khách", "shape": "person" }
+            ]
+        }));
+        let board = draw("t", &flow, NOW).expect("drawn");
+        let look = |label: &str| {
+            let n = at(&board, label);
+            (n.data["color"].as_str().unwrap_or("").to_string(), n.data.get("fillColor").and_then(Value::as_str).map(str::to_string))
+        };
+        let colours: std::collections::HashSet<String> =
+            ["Bắt đầu", "Làm", "Đủ?", "CSDL", "Khách"].iter().map(|l| look(l).0).collect();
+        assert_eq!(colours.len(), 5, "each kind its own colour");
+        for label in ["Bắt đầu", "Làm", "Đủ?", "CSDL"] {
+            let (stroke, fill) = look(label);
+            let fill = fill.unwrap_or_else(|| panic!("{label} has no fill"));
+            assert!(fill.starts_with(&stroke) && fill.len() == 9, "{label}: {fill} is not a tint of {stroke}");
+        }
+        assert_eq!(look("Khách").1, None);
+        assert_eq!(at(&board, "Làm").shape(), "roundedRect");
+        assert_eq!(at(&board, "Làm").data["borderWidth"], json!(BORDER));
+    }
+
+    /// A table as draw.io draws one: its name in a band across its top, and
+    /// its rows the full width under it, nothing round them but the table.
+    #[test]
+    fn a_table_has_its_name_on_top_and_rows_across() {
+        let schema = sketch(json!({
+            "items": [{ "label": "orders", "fields": ["id: uuid PK", "user_id: uuid FK"] }]
+        }));
+        let board = draw("t", &schema, NOW).expect("drawn");
+        let table = at(&board, "orders");
+        assert_eq!(table.data["variant"], "table");
+        let rows: Vec<&Item> = board.nodes.iter().filter(|n| n.data.get("field").is_some()).collect();
+        assert_eq!(rows.len(), 2);
+        assert!((rows[0].position.y - (table.position.y + TABLE_HEAD)).abs() < 0.01);
+        assert!((rows[1].position.y + rows[1].height() - (table.position.y + table.height())).abs() < 0.01);
+        for row in rows {
+            assert!(row.width() >= table.width() - 2.0 && row.position.x > table.position.x);
+            assert!(row.position.x + row.width() < table.position.x + table.width());
+        }
+    }
+
     #[test]
     fn lanes_are_all_or_nothing_and_not_with_groups() {
         let some = sketch(json!({ "items": [{ "label": "A", "lane": "X" }, { "label": "B" }] }));
@@ -2790,6 +3182,57 @@ mod tests {
         let both = sketch(json!({ "items": [{ "label": "A", "lane": "X", "group": "G" }] }));
         let err = draw("t", &both, NOW).unwrap_err();
         assert!(err.contains("both a lane and a group"), "{err}");
+    }
+
+    /// A participant asked for as a lifeline is drawn as a head, a box over
+    /// the lifeline drawn under it, and the box is centred on that line.
+    #[test]
+    fn a_participant_is_a_head_over_its_lifeline() {
+        let talk = sketch(json!({
+            "items": [{ "label": "Người dùng", "shape": "umlLifeline" }, { "label": "Auth Service", "shape": "umlLifeline" }],
+            "links": [{ "from": "Người dùng", "to": "Auth Service", "label": "Đăng nhập", "order": 1 }]
+        }));
+        let board = draw("t", &talk, NOW).expect("drawn");
+        for name in ["Người dùng", "Auth Service"] {
+            let head = at(&board, name);
+            assert_eq!(head.shape(), DEFAULT_SHAPE);
+            let middle = head.position.x + head.width() / 2.0;
+            let line = board
+                .edges
+                .iter()
+                .find(|e| e.source == head.id && e.data.get("lifeline").is_some())
+                .expect("a lifeline");
+            let bar = board.nodes.iter().find(|n| n.id == line.target).unwrap();
+            assert!((bar.position.x + bar.width() / 2.0 - middle).abs() < 0.5, "{name}'s head is off its lifeline");
+        }
+    }
+
+    /// A message past a participant has its words in a gap, not on the
+    /// lifeline it passes: across two gaps, the one by the sender, wide enough.
+    #[test]
+    fn a_label_does_not_sit_on_a_lifeline_it_passes() {
+        let talk = sketch(json!({
+            "items": [{ "label": "Order Service" }, { "label": "Payment Service" }, { "label": "Database" }],
+            "links": [
+                { "from": "Order Service", "to": "Database", "label": "Lưu đơn hàng: pending", "order": 1 },
+                { "from": "Database", "to": "Order Service", "label": "Đã lưu", "order": 2 }
+            ]
+        }));
+        let board = draw("t", &talk, NOW).expect("drawn");
+        let middle = |label: &str| {
+            let n = at(&board, label);
+            n.position.x + n.width() / 2.0
+        };
+        let (order, payment, db) = (middle("Order Service"), middle("Payment Service"), middle("Database"));
+        for (words, from, gap) in [("Lưu đơn hàng: pending", order, (order, payment)), ("Đã lưu", db, (payment, db))] {
+            let line = board.edges.iter().find(|e| e.data.get("label") == Some(&json!(words))).unwrap();
+            let share = line.data["labelAt"].as_f64().expect("a place for the words");
+            let to = if from == order { db } else { order };
+            let x = from + (to - from) * share;
+            assert!((x - (gap.0 + gap.1) / 2.0).abs() < 8.0, "{words} at {x}, not between {gap:?}");
+            let room = gap.1 - gap.0 - 12.0;
+            assert!(room >= label_width(words), "{words} does not fit its gap: {room}");
+        }
     }
 
     /// Messages in time: participants side by side, messages read from the
@@ -2833,6 +3276,50 @@ mod tests {
         assert!(read.contains("- App → Kong (POST /order)\n"), "{read}");
         assert!(read.contains("- DB → App (OK) [none – arrow-open] dashed"), "{read}");
         assert!(!read.contains("(unnamed)"), "{read}");
+    }
+
+    /// A call and its answer, as UML draws them: the answer dashed with an
+    /// open head though nobody said so, and the one called busy on a single
+    /// bar from the call to the answer, both messages on it.
+    #[test]
+    fn an_answer_is_dashed_and_the_one_called_is_busy_till_it() {
+        let talk = sketch(json!({
+            "items": [{ "label": "App" }, { "label": "Order" }, { "label": "Pay" }],
+            "links": [
+                { "from": "App", "to": "Order", "label": "Tạo đơn", "order": 1 },
+                { "from": "Order", "to": "Pay", "label": "Thanh toán", "order": 2 },
+                { "from": "Pay", "to": "Order", "label": "Kết quả", "order": 3 },
+                { "from": "Order", "to": "App", "label": "Xong", "order": 4 }
+            ]
+        }));
+        let board = draw("t", &talk, NOW).expect("drawn");
+        let said = messages(&board);
+        let line = |words: &str| *said.iter().find(|e| e.data["label"] == words).unwrap();
+        for answer in ["Kết quả", "Xong"] {
+            assert_eq!(line(answer).data["dashStyle"], "dashed", "{answer}");
+            assert_eq!(line(answer).data["markerEnd"], "arrow-open", "{answer}");
+        }
+        for call in ["Tạo đơn", "Thanh toán"] {
+            assert!(line(call).data.get("dashStyle").is_none(), "{call}");
+        }
+        // Order is busy from "Tạo đơn" to "Xong": one bar, all four on it.
+        let order = at(&board, "Order");
+        let bars: Vec<&Item> = board.nodes.iter().filter(|n| n.data.get("lifelineOf") == Some(&json!(order.id)) && n.height() > 4.0).collect();
+        assert_eq!(bars.len(), 1, "Order's bars: {}", bars.len());
+        for e in &said {
+            let on_order = [(&e.source, "sourceAt"), (&e.target, "targetAt")].into_iter().find(|(id, _)| **id == bars[0].id);
+            let ends_on_order = [e.source.as_str(), e.target.as_str()].iter().any(|id| board.nodes.iter().any(|n| n.id == *id && n.data.get("lifelineOf") == Some(&json!(order.id))));
+            if ends_on_order {
+                let (_, key) = on_order.expect("on Order's one bar");
+                let t = e.data[key]["t"].as_f64().unwrap();
+                assert!(t > 0.0 && t < 1.0, "{}: {t}", e.data["label"]);
+            }
+        }
+        // Down the bar in the order they are said.
+        let t = |words: &str, key: &str| line(words).data[key]["t"].as_f64().unwrap();
+        assert!(t("Tạo đơn", "targetAt") < t("Thanh toán", "sourceAt"));
+        assert!(t("Thanh toán", "sourceAt") < t("Kết quả", "targetAt"));
+        assert!(t("Kết quả", "targetAt") < t("Xong", "sourceAt"));
     }
 
     #[test]
@@ -3113,7 +3600,7 @@ mod tests {
         let boxes: Vec<&Item> = board
             .nodes
             .iter()
-            .filter(|n| n.data.get("color").and_then(Value::as_str) == Some(BOX_COLOUR))
+            .filter(|n| is_box(n))
             .collect();
 
         for (i, a) in boxes.iter().enumerate() {
@@ -3364,7 +3851,7 @@ mod tests {
             { "op": "add", "label": "Idea", "shape": "infoLightbulb" }
         ])), NOW).expect("applied");
         assert_eq!(at(&board, "Orders").shape(), "cylinder");
-        assert_eq!(at(&board, "Thing").shape(), "rectangle");
+        assert_eq!(at(&board, "Thing").shape(), "roundedRect");
         let idea = at(&board, "Idea");
         assert_eq!(idea.width(), idea.height(), "a figure is drawn square");
     }

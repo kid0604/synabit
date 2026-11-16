@@ -1,0 +1,477 @@
+{
+  "title": "ERD mẫu — Quản lý đơn hàng",
+  "nodes": [
+    {
+      "id": "frame-1a1dfbbf6c0-1",
+      "type": "frame",
+      "position": {
+        "x": 80.0,
+        "y": 80.0
+      },
+      "data": {
+        "color": "#7c3aed",
+        "height": 156.0,
+        "label": "Khách hàng",
+        "layout": "pending",
+        "variant": "table",
+        "width": 160.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-2",
+      "type": "shape",
+      "position": {
+        "x": 81.0,
+        "y": 116.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "customer_id: PK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-3",
+      "type": "shape",
+      "position": {
+        "x": 81.0,
+        "y": 146.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "name",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-4",
+      "type": "shape",
+      "position": {
+        "x": 81.0,
+        "y": 176.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "email",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-5",
+      "type": "shape",
+      "position": {
+        "x": 81.0,
+        "y": 206.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "created_at",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "frame-1a1dfbbf6c0-6",
+      "type": "frame",
+      "position": {
+        "x": 288.0,
+        "y": 80.0
+      },
+      "data": {
+        "color": "#7c3aed",
+        "height": 156.0,
+        "label": "Sản phẩm",
+        "layout": "pending",
+        "variant": "table",
+        "width": 160.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-7",
+      "type": "shape",
+      "position": {
+        "x": 289.0,
+        "y": 116.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "product_id: PK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-8",
+      "type": "shape",
+      "position": {
+        "x": 289.0,
+        "y": 146.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "name",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-9",
+      "type": "shape",
+      "position": {
+        "x": 289.0,
+        "y": 176.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "price",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-10",
+      "type": "shape",
+      "position": {
+        "x": 289.0,
+        "y": 206.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "stock_qty",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "frame-1a1dfbbf6c0-11",
+      "type": "frame",
+      "position": {
+        "x": 184.0,
+        "y": 308.0
+      },
+      "data": {
+        "color": "#7c3aed",
+        "height": 186.0,
+        "label": "Đơn hàng",
+        "layout": "pending",
+        "variant": "table",
+        "width": 160.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-12",
+      "type": "shape",
+      "position": {
+        "x": 185.0,
+        "y": 344.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "order_id: PK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-13",
+      "type": "shape",
+      "position": {
+        "x": 185.0,
+        "y": 374.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "customer_id: FK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-14",
+      "type": "shape",
+      "position": {
+        "x": 185.0,
+        "y": 404.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "order_date",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-15",
+      "type": "shape",
+      "position": {
+        "x": 185.0,
+        "y": 434.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "status",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-16",
+      "type": "shape",
+      "position": {
+        "x": 185.0,
+        "y": 464.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "total_amount",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 158.0
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "frame-1a1dfbbf6c0-17",
+      "type": "frame",
+      "position": {
+        "x": 175.39999999999998,
+        "y": 566.0
+      },
+      "data": {
+        "color": "#7c3aed",
+        "height": 156.0,
+        "label": "Chi tiết đơn hàng",
+        "layout": "pending",
+        "variant": "table",
+        "width": 177.20000000000002
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-18",
+      "type": "shape",
+      "position": {
+        "x": 176.39999999999998,
+        "y": 602.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "order_id: PK, FK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 175.20000000000002
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-19",
+      "type": "shape",
+      "position": {
+        "x": 176.39999999999998,
+        "y": 632.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "product_id: PK, FK",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 175.20000000000002
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-20",
+      "type": "shape",
+      "position": {
+        "x": 176.39999999999998,
+        "y": 662.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "quantity",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 175.20000000000002
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "box-1a1dfbbf6c0-21",
+      "type": "shape",
+      "position": {
+        "x": 176.39999999999998,
+        "y": 692.0
+      },
+      "data": {
+        "borderWidth": 1.5,
+        "color": "#7c3aed",
+        "field": true,
+        "fontSize": 13,
+        "height": 30.0,
+        "label": "unit_price",
+        "layout": "pending",
+        "shapeType": "rectangle",
+        "textAlign": "left",
+        "width": 175.20000000000002
+      },
+      "updated": 1794755000000
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-1a1dfbbf6c0-0",
+      "source": "frame-1a1dfbbf6c0-1",
+      "sourceHandle": "bottom",
+      "target": "frame-1a1dfbbf6c0-11",
+      "targetHandle": "top",
+      "type": "step",
+      "data": {
+        "label": "1 — 0..*",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "edge-1a1dfbbf6c0-1",
+      "source": "frame-1a1dfbbf6c0-11",
+      "sourceHandle": "bottom",
+      "target": "frame-1a1dfbbf6c0-17",
+      "targetHandle": "top",
+      "type": "step",
+      "data": {
+        "label": "1 — 1..*",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "updated": 1794755000000
+    },
+    {
+      "id": "edge-1a1dfbbf6c0-2",
+      "source": "frame-1a1dfbbf6c0-6",
+      "sourceHandle": "bottom",
+      "target": "frame-1a1dfbbf6c0-17",
+      "targetHandle": "top",
+      "type": "step",
+      "data": {
+        "label": "1 — 0..*",
+        "markerEnd": "arrow",
+        "routing": "pending",
+        "sides": "auto"
+      },
+      "updated": 1794755000000
+    }
+  ]
+}

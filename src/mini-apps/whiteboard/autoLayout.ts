@@ -2,6 +2,7 @@ import { stampElement } from './boardFile';
 import type { WBEdge, WBNode } from './boardFile';
 import {
   applyRoute,
+  captionOf,
   drawnPath,
   labelSize,
   outlineOf,
@@ -182,6 +183,58 @@ function cornersOf(n: WBNode, lines: WBEdge[], byId: Map<string, WBNode>): Map<s
   return corners;
 }
 
+/**
+ * Which side of a figure's drawing each of its lines ends on, keyed as in
+ * `cornersOf`: never its bottom, where its words are. A line to something
+ * above comes in at the top; the rest at the side the other end is on, and
+ * those straight under it shared between the two sides, so a customer's
+ * order going down and the answer coming back up are not one line.
+ */
+function sidesOf(n: WBNode, lines: WBEdge[], byId: Map<string, WBNode>): Map<string, Side> {
+  const sides = new Map<string, Side>();
+  const at = middle(n);
+  const count = { left: 0, right: 0 };
+  const ends = lines.flatMap((e) =>
+    [true, false]
+      .filter((out) => (out ? e.source : e.target) === n.id)
+      .map((out) => {
+        const other = byId.get(out ? e.target : e.source);
+        const b = other ? middle(other) : at;
+        return { key: `${e.id}${out ? '>' : '<'}`, dx: b.x - at.x, dy: b.y - at.y };
+      }),
+  );
+  for (const { key, dx, dy } of ends) {
+    if (dy <= -sizeOf(n).height / 2) {
+      sides.set(key, 'top');
+      continue;
+    }
+    const side: 'left' | 'right' =
+      Math.abs(dx) >= sizeOf(n).width / 2 ? (dx < 0 ? 'left' : 'right') : count.left <= count.right ? 'left' : 'right';
+    count[side]++;
+    sides.set(key, side);
+  }
+  return sides;
+}
+
+/** A field's name: "order_id: uuid FK" → "order_id". */
+const fieldName = (row: WBNode) => {
+  const label = String(row.data?.label ?? '').trim().toLowerCase();
+  const colon = label.indexOf(':');
+  return (colon < 0 ? label.split(/\s+/)[0] : label.slice(0, colon)).trim();
+};
+
+/**
+ * Which row of a table a line to the table as a whole ends on: the one named
+ * as a row of the table at the other end — a key and the key that points at
+ * it, "order_id" in orders and in order items — or else the first, its key.
+ * Two tables joined to a third by their keys came into its first row, one on
+ * top of the other.
+ */
+function joiningRow(rows: WBNode[], other: WBNode[]): WBNode {
+  const there = new Set(other.map(fieldName));
+  return rows.find((row) => there.has(fieldName(row))) ?? rows[0];
+}
+
 /** How far along a path a point is, as a share of its length: where on it is nearest. */
 export function shareAt(path: Point[], p: Point): number {
   let total = 0;
@@ -226,8 +279,55 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
   const placed = new Set(pieces.map((p) => p.node.id));
   const tables = pieces.some((p) => p.rows.length);
 
+  // A line between two things ELK places: from a row's port if it is a
+  // row's, a corner if it is a pointed shape's, a side of the drawing if it
+  // is a figure's.
+  const known = (id: string) => tableOf.has(id) || placed.has(id);
+  const lines = board.edges.filter((e) => e.source !== e.target && known(e.source) && known(e.target));
+  const captions = new Map<string, Outline>();
+  for (const { node, rows } of pieces) {
+    const caption = rows.length ? null : captionOf(node);
+    if (caption) captions.set(node.id, caption);
+  }
+  const corners = new Map<string, Side>();
+  for (const { node } of pieces) {
+    const own = lines.filter((e) => e.source === node.id || e.target === node.id);
+    if (captions.has(node.id)) for (const [key, side] of sidesOf(node, own, byId)) corners.set(key, side);
+    else if (pointed(node)) for (const [key, side] of cornersOf(node, own, byId)) corners.set(key, side);
+  }
+
+  /** How far into its piece a figure's drawing is: its words can be wider. */
+  const inset = (id: string) => {
+    const caption = captions.get(id);
+    const node = byId.get(id);
+    return caption && node ? Math.max(0, (caption.width - sizeOf(node).width) / 2) : 0;
+  };
+
   const children = pieces.map(({ node, rows }) => {
     const { width, height } = sizeOf(node);
+    const caption = captions.get(node.id);
+    if (caption) {
+      // The drawing and its words, as one: lines end on the drawing's top
+      // or its sides, one place each, and none under it, where the words are.
+      const ox = inset(node.id);
+      const whole = Math.max(width, caption.width);
+      const ends = lines.flatMap((e) =>
+        [true, false]
+          .filter((out) => (out ? e.source : e.target) === node.id)
+          .map((out) => ({ key: `${e.id}${out ? '>' : '<'}`, side: corners.get(`${e.id}${out ? '>' : '<'}`)!, toward: middle(byId.get(out ? e.target : e.source) ?? node) })),
+      );
+      const ports = SIDES.flatMap((side) => {
+        const along = ends
+          .filter((end) => end.side === side)
+          .sort((a, b) => (side === 'top' ? a.toward.x - b.toward.x : a.toward.y - b.toward.y));
+        return along.map((end, i) => {
+          const k = (i + 1) / (along.length + 1);
+          const [x, y] = side === 'top' ? [ox + width * k, 0] : [side === 'left' ? 0 : whole, height * k];
+          return { id: `${node.id}:${end.key}`, width: 0, height: 0, x, y, layoutOptions: { 'elk.port.side': ELK_SIDE[side] } };
+        });
+      });
+      return { id: node.id, width: whole, height: height + caption.height, layoutOptions: { 'elk.portConstraints': 'FIXED_POS' }, ports };
+    }
     if (pointed(node)) {
       const at: Record<Side, [number, number]> = { top: [width / 2, 0], bottom: [width / 2, height], left: [0, height / 2], right: [width, height / 2] };
       return {
@@ -263,20 +363,19 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
     };
   });
 
-  // A line between two things ELK places: from a row's port if it is a
-  // row's, a corner if it is a pointed shape's.
-  const known = (id: string) => tableOf.has(id) || placed.has(id);
-  const lines = board.edges.filter((e) => e.source !== e.target && known(e.source) && known(e.target));
-  const corners = new Map<string, Side>();
-  for (const { node } of pieces) {
-    if (!pointed(node)) continue;
-    const own = lines.filter((e) => e.source === node.id || e.target === node.id);
-    for (const [key, side] of cornersOf(node, own, byId)) corners.set(key, side);
-  }
+  // A line to a table as a whole ends on a row of it, on the side a row's
+  // line would: left to itself ELK put both ends on the tables' tops.
+  const rowsOf = new Map(
+    pieces.filter((p) => p.rows.length).map((p) => [p.node.id, [...p.rows].sort((a, b) => a.position.y - b.position.y)]),
+  );
   const end = (e: WBEdge, out: boolean) => {
     const id = out ? e.source : e.target;
     if (tableOf.has(id)) return portOf(id, out);
-    const corner = corners.get(`${e.id}${out ? '>' : '<'}`);
+    const rows = rowsOf.get(id);
+    if (rows) return portOf(joiningRow(rows, rowsOf.get(out ? e.target : e.source) ?? []).id, out);
+    const key = `${e.id}${out ? '>' : '<'}`;
+    if (captions.has(id)) return `${id}:${key}`;
+    const corner = corners.get(key);
     return corner ? `${id}:${corner}` : id;
   };
   const edges = lines.map((e) => {
@@ -322,14 +421,14 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
   const left = Math.min(...pieces.map((p) => p.node.position.x));
   const top = Math.min(...pieces.map((p) => p.node.position.y));
   const laid = out.children ?? [];
-  const dx = left - Math.min(...laid.map((c) => c.x ?? 0));
+  const dx = left - Math.min(...laid.map((c) => (c.x ?? 0) + inset(c.id)));
   const dy = top - Math.min(...laid.map((c) => c.y ?? 0));
   const at = (p: { x: number; y: number }): Point => ({ x: p.x + dx, y: p.y + dy });
 
   for (const c of laid) {
     const piece = pieces.find((p) => p.node.id === c.id);
     if (!piece) continue;
-    const to = at({ x: c.x ?? 0, y: c.y ?? 0 });
+    const to = at({ x: (c.x ?? 0) + inset(c.id), y: c.y ?? 0 });
     const [mx, my] = [to.x - piece.node.position.x, to.y - piece.node.position.y];
     for (const n of [piece.node, ...piece.rows]) {
       n.position = { x: tidy(n.position.x + mx), y: tidy(n.position.y + my) };
@@ -344,19 +443,39 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
     const box = outlineOf(n);
     if (box) boxes.set(n.id, box);
   }
+  // A figure's words are in the way too, of its own lines as much as any:
+  // a route through them is the router's to do, and a label slides off them.
+  for (const id of captions.keys()) {
+    const caption = captionOf(byId.get(id)!);
+    if (caption) boxes.set(`${id}:words`, caption);
+  }
+  // A line can end on a table as a whole — "orders → users", not a row of
+  // each — and was left out, drawn as a plain step from the frame's middle.
+  const wholeTables = new Map<string, Outline>();
+  for (const { node, rows } of pieces) {
+    const box = rows.length ? outlineOf(node) : null;
+    if (box) wholeTables.set(node.id, box);
+  }
+  const endOf = (id: string) => boxes.get(id) ?? wholeTables.get(id);
   const drawn = new Map((out.edges ?? []).map((e) => [e.id, e]));
   const routed: [WBEdge, Route][] = [];
   const labels: LabelToPlace[] = [];
   for (const line of lines) {
     const e = drawn.get(line.id);
     const section = e?.sections?.[0];
-    const [from, to] = [boxes.get(line.source), boxes.get(line.target)];
+    const [from, to] = [endOf(line.source), endOf(line.target)];
     if (!section || !from || !to || !byId.has(line.source)) continue;
     const path = [section.startPoint, ...(section.bendPoints ?? []), section.endPoint].map(at);
     // A row's port is on its table's side, out past the row's own: the
     // line ends on the row.
     if (tableOf.has(line.source)) path[0] = { x: from.x + from.width, y: path[0].y };
     if (tableOf.has(line.target)) path[path.length - 1] = { x: to.x, y: path[path.length - 1].y };
+    // A figure's side port is on its piece's side, out past the drawing when
+    // the words are wider: the line ends on the drawing.
+    const onDrawing = (p: Point, box: Outline, side: Side | undefined): Point =>
+      side === 'left' ? { x: box.x, y: p.y } : side === 'right' ? { x: box.x + box.width, y: p.y } : p;
+    if (captions.has(line.source)) path[0] = onDrawing(path[0], from, corners.get(`${line.id}>`));
+    if (captions.has(line.target)) path[path.length - 1] = onDrawing(path[path.length - 1], to, corners.get(`${line.id}<`));
     const route = routeOf(path, from, to);
     if (!route || runsThrough(drawnPath(route, from, to), boxes, line)) {
       // Left for the router, from the boxes where they are now.
@@ -370,14 +489,78 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
     if (label?.x !== undefined && label.y !== undefined) {
       const middle = at({ x: label.x + (label.width ?? 0) / 2, y: label.y + (label.height ?? 0) / 2 });
       route.labelAt = shareAt(drawnPath(route, from, to), middle);
-      labels.push({ id: line.id, label: label.text ?? '', path: drawnPath(route, from, to), share: route.labelAt });
     }
     routed.push([line, route]);
+  }
+  straightenPairs(routed, endOf, boxes);
+  for (const [line, route] of routed) {
+    const label = typeof line.data?.label === 'string' ? line.data.label.trim() : '';
+    const [from, to] = [endOf(line.source)!, endOf(line.target)!];
+    if (label) labels.push({ id: line.id, label, path: drawnPath(route, from, to), share: route.labelAt });
   }
   // ELK leaves a label room beside its line; the app draws it on the line.
   const shares = placeLabels(labels, boxes.values());
   for (const [line, route] of routed) {
     applyRoute(line, { ...route, labelAt: shares.get(line.id) ?? route.labelAt });
+  }
+}
+
+/** Room between lines drawn side by side, and between them and a box's corner. */
+const SIDE_BY_SIDE = 20;
+
+/**
+ * Two lines or more between the same two boxes — a data flow's request and
+ * its answer — drawn straight and side by side, when the boxes stand one over
+ * the other (or one beside the other) with room for them across.
+ *
+ * ELK reverses one of a pair to break the cycle, and ends them where its
+ * ports fall: a process and the payment gateway under it were joined by two
+ * lines that crossed, with a label on the crossing. Two straight runs cannot
+ * cross. Kept as ELK drew them when there is not the room, when a run would
+ * go through something, or when a shape's outline pulls the ends together.
+ */
+function straightenPairs(routed: [WBEdge, Route][], endOf: (id: string) => Outline | undefined, boxes: Map<string, Outline>) {
+  const pairs = new Map<string, [WBEdge, Route][]>();
+  for (const entry of routed) {
+    const key = [entry[0].source, entry[0].target].sort().join('\n');
+    pairs.set(key, [...(pairs.get(key) ?? []), entry]);
+  }
+  for (const group of pairs.values()) {
+    if (group.length < 2) continue;
+    const first = group[0][0];
+    const [p, q] = [endOf(first.source), endOf(first.target)];
+    if (!p || !q) continue;
+    const n = group.length;
+    const lo = { x: Math.max(p.x, q.x), y: Math.max(p.y, q.y) };
+    const hi = { x: Math.min(p.x + p.width, q.x + q.width), y: Math.min(p.y + p.height, q.y + q.height) };
+    const stacked = (p.y + p.height <= q.y || q.y + q.height <= p.y) && hi.x - lo.x >= SIDE_BY_SIDE * (n + 1);
+    const abreast = (p.x + p.width <= q.x || q.x + q.width <= p.x) && hi.y - lo.y >= SIDE_BY_SIDE * (n + 1);
+    if (!stacked && !abreast) continue;
+    const next = group.map(([line], k) => {
+      const [from, to] = [endOf(line.source)!, endOf(line.target)!];
+      const share = (k + 1) / (n + 1);
+      if (stacked) {
+        const x = lo.x + (hi.x - lo.x) * share;
+        const down = from.y < to.y;
+        return routeOf([{ x, y: down ? from.y + from.height : from.y }, { x, y: down ? to.y : to.y + to.height }], from, to);
+      }
+      const y = lo.y + (hi.y - lo.y) * share;
+      const right = from.x < to.x;
+      return routeOf([{ x: right ? from.x + from.width : from.x, y }, { x: right ? to.x : to.x + to.width, y }], from, to);
+    });
+    const ok = next.every((route, k) => {
+      if (!route || route.waypoints.length) return false;
+      const line = group[k][0];
+      return !runsThrough(drawnPath(route, endOf(line.source)!, endOf(line.target)!), boxes, line);
+    });
+    // Still apart where they meet their boxes: an outline that lets a line
+    // touch it only at one place would put them on top of each other.
+    const starts = next.map((route, k) => (route ? drawnPath(route, endOf(group[k][0].source)!, endOf(group[k][0].target)!) : []));
+    const apart = starts.every((a, i) => starts.slice(i + 1).every((b) => a.length && b.length && Math.hypot(a[0].x - b[b.length - 1].x, a[0].y - b[b.length - 1].y) >= SIDE_BY_SIDE / 2 && Math.hypot(a[0].x - b[0].x, a[0].y - b[0].y) >= SIDE_BY_SIDE / 2));
+    if (!ok || !apart) continue;
+    next.forEach((route, k) => {
+      group[k][1] = { ...route!, labelAt: 0.5 };
+    });
   }
 }
 
