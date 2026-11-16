@@ -1931,7 +1931,18 @@ function startEditing(id: string) {
 /** Where everything was when a drag began, to know what it moved and by how much. */
 let positionsAtDragStart = new Map<string, { x: number; y: number }>();
 
+/**
+ * Whether items are being dragged: the grid pulls an item into place only
+ * then, as draw.io's and Miro's do. Vue Flow snaps an item to the grid when
+ * it is put on the canvas, too, which moved every box of a board Syn drew by
+ * up to five pixels each, on its own — after its lines were routed to where
+ * it was. The lines came in at a slant, stepped a few pixels short of a box,
+ * and their arrowheads pointed askew.
+ */
+const draggingNodes = ref(false);
+
 function handleNodeDragStart(event: any) {
+  draggingNodes.value = true;
   const { node } = event;
   positionsAtDragStart = new Map(
     (store.currentBoardData.value?.nodes ?? []).map((n: WBNode) => [n.id, { ...n.position }]),
@@ -1951,6 +1962,7 @@ function handleNodeDrag(event: any) {
 }
 
 function handleNodeDragStop(event: any) {
+  draggingNodes.value = false;
   holdObstacles.value = false;
   // The guides first: they may pull the dropped item a few pixels into line,
   // and a mind map's branch has to follow where it ends up.
@@ -2850,7 +2862,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
             store.activeTool.value === 'eraser' && 'wb-cursor-eraser',
           ]"
           :default-viewport="initialViewport"
-          :snap-to-grid="store.snapToGrid.value"
+          :snap-to-grid="store.snapToGrid.value && draggingNodes"
           :snap-grid="[10, 10]"
           :only-render-visible-elements="!isExporting"
           :min-zoom="0.1"
@@ -3235,7 +3247,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 }
 :deep(.vue-flow__edge-path) {
   stroke: var(--color-muted, #8b8b8b);
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 :deep(.vue-flow__edge-path:is(.dark *)) {
   stroke: var(--color-muted-dark, #71717a);

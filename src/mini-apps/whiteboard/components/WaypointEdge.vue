@@ -5,7 +5,7 @@ import * as d3 from 'd3';
 import { markerUrl } from '../edgeMarkers';
 import { paint } from '../ink';
 import { EDGE_GREY } from '../composables/useNodeOperations';
-import { anchor, anchorAt, lineEndOf, orthogonalRoute, roundedPath, sidesFacing, stepThrough, type Side } from '../routing';
+import { anchor, anchorAt, lineEndOf, orthogonalRoute, roundedPath, sidesFacing, squareThrough, type Side } from '../routing';
 import type { Box } from '../inkLayer';
 
 const props = defineProps<{
@@ -190,6 +190,18 @@ const edgePaths = computed(() => {
   const source = fixedEnd('source');
   const target = fixedEnd('target');
   if (waypoints.length === 0) {
+    // Two ends facing each other a pixel or two out of line are one straight
+    // run, not a step with a sliver in the middle.
+    if (type === 'step') {
+      const square = squareThrough(
+        { ...source, box: boxOf(props.sourceNode) },
+        [],
+        { ...target, box: boxOf(props.targetNode) },
+      );
+      if (square.length === 2 && (square[0].x === square[1].x || square[0].y === square[1].y)) {
+        return withLabel(getStraightPath({ sourceX: square[0].x, sourceY: square[0].y, targetX: square[1].x, targetY: square[1].y } as any));
+      }
+    }
     const at = { sourceX: source.x, sourceY: source.y, sourcePosition: source.side, targetX: target.x, targetY: target.y, targetPosition: target.side };
     if (type === 'straight') return withLabel(getStraightPath(at as any));
     if (type === 'step') return withLabel(getSmoothStepPath({ ...at, borderRadius: CORNER } as any));
@@ -217,9 +229,12 @@ const edgePaths = computed(() => {
     const points = allPoints.map(p => [p.x, p.y]);
     p = d3.line()(points as [number, number][]) || '';
   } else if (type === 'step') {
-    // Up or down, then across, between each pair of points — the steps this
-    // always took — with the corners rounded.
-    p = roundedPath(stepThrough(allPoints), CORNER);
+    // Upright and level runs through the bends, square at both ends (see
+    // `squareThrough`), with the corners rounded.
+    p = roundedPath(
+      squareThrough({ ...source, box: boxOf(props.sourceNode) }, waypoints, { ...target, box: boxOf(props.targetNode) }),
+      CORNER,
+    );
   } else {
     const startTp = getTangentPoint(source.x, source.y, source.side);
     const endTp = getTangentPoint(target.x, target.y, target.side);
@@ -334,7 +349,7 @@ function removeWaypoint(index: number) {
   
   <EdgeLabelRenderer v-if="label || data?.label">
     <div
-      class="nodrag nopan absolute text-xs font-semibold px-2 py-1 bg-[--wb-bg] border border-[--wb-border] rounded shadow-sm text-[--wb-text]"
+      class="nodrag nopan absolute wb-edge-label"
       :data-edge-label="id"
       :style="{
         transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
@@ -380,3 +395,26 @@ function removeWaypoint(index: number) {
     />
   </g>
 </template>
+
+<style>
+/*
+ * A line's words, on the board's own paper so the line stops at them, and no
+ * box of their own. They were drawn on `--wb-bg` with a `--wb-border`, which
+ * nothing defined: no background, so the line ran through the words, and a
+ * near-black outline and a shadow round every label.
+ */
+.wb-edge-label {
+  /* Over the lines, which the Whiteboard app stacks above every node
+     (EDGE_Z, useNodeOperations.ts): under them, a line ran through the
+     words whatever was behind them. */
+  z-index: 1000001;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--wb-ink, currentColor);
+  background: var(--wb-paper, #fdfdfc);
+}
+</style>

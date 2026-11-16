@@ -973,9 +973,17 @@ function shapeLabelAt(node: WBNode): { x: number; y: number } {
    dark on the light theme, light on the dark one. */
 .wb-embed-container {
   --wb-ink: #1e1e1e;
+  --wb-edge: var(--color-muted, #8b8b8b);
+  --wb-paper: var(--color-base, #fdfdfc);
 }
 .dark .wb-embed-container {
   --wb-ink: #e4e4e7;
+  --wb-edge: var(--color-muted-dark, #71717a);
+  --wb-paper: var(--color-base-dark, #242424);
+}
+.wb-embed-container .vue-flow__edge-path {
+  stroke: var(--wb-edge);
+  stroke-width: 1.5;
 }
 
 .dark .wb-embed-wrapper.is-selected .wb-embed-container {

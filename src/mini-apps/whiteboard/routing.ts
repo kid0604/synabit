@@ -90,6 +90,87 @@ export function roundedPath(points: Point[], radius = 8): string {
   return d;
 }
 
+/** How far an end slides along its side to meet its line square-on. */
+export const SQUARE_SNAP = 6;
+
+/** A line end: where it is, the side it is on, and the box it is on. */
+export interface SquareEnd extends Point {
+  side: Side;
+  box?: Box | null;
+}
+
+const level = (side: Side) => side === 'left' || side === 'right';
+
+/**
+ * A line through bends, made square: it leaves its first box straight out of
+ * the side it is on, comes into the last one straight in, and is upright and
+ * level all the way.
+ *
+ * The bends are worked out for the boxes where the file has them, and the
+ * ends are drawn on the boxes where the canvas has them: a few pixels apart
+ * after any rounding, and the steps between them, up or down first
+ * (`stepThrough`), put a sliver of a step at each end. The line came in
+ * sideways for its last pixel, and its arrowhead pointed along the sliver.
+ *
+ * So an end within `SQUARE_SNAP` of its first bend's line slides along its
+ * side onto it, as long as it stays on the side; one further off takes a
+ * corner that leaves or arrives the way its side faces. Bends within a pixel
+ * of each other's line are put on it, and a bend in a straight run is
+ * dropped, so no corner is rounded that is not a corner.
+ */
+export function squareThrough(start: SquareEnd, bends: Point[], end: SquareEnd, snap = SQUARE_SNAP): Point[] {
+  const a: Point = { x: start.x, y: start.y };
+  const z: Point = { x: end.x, y: end.y };
+  const mid = bends.map((p) => ({ x: p.x, y: p.y }));
+  const slide = (p: Point, side: Side, box: Box | null | undefined, toward: Point) => {
+    if (level(side)) {
+      const d = toward.y - p.y;
+      if (d !== 0 && Math.abs(d) <= snap && (!box || (toward.y > box.y && toward.y < box.y + box.height))) p.y = toward.y;
+    } else {
+      const d = toward.x - p.x;
+      if (d !== 0 && Math.abs(d) <= snap && (!box || (toward.x > box.x && toward.x < box.x + box.width))) p.x = toward.x;
+    }
+  };
+  // Bends a pixel off each other's line are on it.
+  const all = [a, ...mid, z];
+  // The end moves too, by less than a pixel: moving the bend before it
+  // instead would take that bend off the run before.
+  for (let i = 1; i < all.length; i++) {
+    const [p, q] = [all[i - 1], all[i]];
+    if (Math.abs(q.x - p.x) < 1) q.x = p.x;
+    if (Math.abs(q.y - p.y) < 1) q.y = p.y;
+  }
+  if (mid.length) {
+    slide(a, start.side, start.box, mid[0]);
+    slide(z, end.side, end.box, mid[mid.length - 1]);
+  } else if (level(start.side) === level(end.side)) {
+    // Facing each other, nearly in line: the far end meets the near one.
+    slide(z, end.side, end.box, a);
+  }
+  // Upright and level runs, the ones at the ends the way their sides face.
+  const out: Point[] = [all[0]];
+  for (let i = 1; i < all.length; i++) {
+    const [p, q] = [out[out.length - 1], all[i]];
+    if (p.x !== q.x && p.y !== q.y) {
+      const first = i === 1;
+      const last = i === all.length - 1;
+      let across: boolean;
+      if (first) across = level(start.side);
+      else if (last) across = !level(end.side);
+      else across = false;
+      out.push(across ? { x: q.x, y: p.y } : { x: p.x, y: q.y });
+    }
+    out.push(q);
+  }
+  // No bend in a straight run, and no run of no length.
+  return out.filter((p, i) => {
+    if (i === 0 || i === out.length - 1) return true;
+    const [b, c] = [out[i - 1], out[i + 1]];
+    if (p.x === b.x && p.y === b.y) return false;
+    return !((b.x === p.x && p.x === c.x) || (b.y === p.y && p.y === c.y));
+  });
+}
+
 /**
  * Points joined by upright and level runs: from each point, up or down first,
  * then across. The same steps a stepped line through bends has always taken

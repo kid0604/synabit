@@ -199,7 +199,7 @@ async function done() {
 }
 .wb-inline :deep(.vue-flow__edge-path) {
   stroke: var(--wb-edge);
-  stroke-width: 2;
+  stroke-width: 1.5;
 }
 .wb-inline__problem {
   position: absolute;

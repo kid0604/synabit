@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchor, anchorAt, lineEndOf, orthogonalRoute, roundedPath, sidesFacing, stepThrough, type Point } from '../routing';
+import { anchor, anchorAt, lineEndOf, orthogonalRoute, roundedPath, sidesFacing, squareThrough, stepThrough, type Point } from '../routing';
 import type { Box } from '../inkLayer';
 
 const box = (x: number, y: number, width = 100, height = 60): Box => ({ x, y, width, height });
@@ -83,5 +83,51 @@ describe('a stepped line, drawn', () => {
     expect(stepThrough([{ x: 0, y: 0 }, { x: 50, y: 40 }, { x: 50, y: 90 }])).toEqual([
       { x: 0, y: 0 }, { x: 0, y: 40 }, { x: 50, y: 40 }, { x: 50, y: 90 },
     ]);
+  });
+});
+
+/**
+ * A routed line drawn on boxes a few pixels from where it was routed: it came
+ * into "Xác nhận đã xử lý" sideways for its last pixel, and the arrowhead
+ * pointed along that.
+ */
+describe('squareThrough', () => {
+  const box = { x: 100, y: 200, width: 200, height: 56 };
+  const runs = (pts: Point[]) => pts.slice(1).map((p, i) => [pts[i], p]);
+  const square = (pts: Point[]) => runs(pts).every(([a, b]) => a.x === b.x || a.y === b.y);
+
+  it('slides an end along its side onto the line, so the line comes in straight', () => {
+    const pts = squareThrough({ x: 0, y: 0, side: 'right' }, [{ x: 196, y: 0 }], { x: 200, y: 200, side: 'top', box });
+    expect(pts).toEqual([{ x: 0, y: 0 }, { x: 196, y: 0 }, { x: 196, y: 200 }]);
+  });
+
+  it('comes into a side straight even when the end is too far off to slide', () => {
+    const pts = squareThrough({ x: 0, y: 0, side: 'right' }, [{ x: 150, y: 0 }], { x: 200, y: 200, side: 'top', box });
+    expect(square(pts)).toBe(true);
+    const [a, b] = pts.slice(-2);
+    expect(a.x).toBe(b.x);
+    expect(b).toEqual({ x: 200, y: 200 });
+  });
+
+  it('leaves a side straight out of it', () => {
+    const pts = squareThrough({ x: 300, y: 228, side: 'right', box }, [{ x: 400, y: 100 }, { x: 600, y: 100 }], { x: 600, y: 0, side: 'bottom' });
+    expect(square(pts)).toBe(true);
+    expect(pts[1].y).toBe(228);
+  });
+
+  it('keeps an end on its side', () => {
+    const pts = squareThrough({ x: 0, y: 0, side: 'right' }, [{ x: 305, y: 0 }], { x: 300, y: 200, side: 'top', box });
+    expect(pts[pts.length - 1]).toEqual({ x: 300, y: 200 });
+    expect(square(pts)).toBe(true);
+  });
+
+  it('draws two ends facing each other a pixel or two apart as one straight run', () => {
+    const pts = squareThrough({ x: 0, y: 230, side: 'right' }, [], { x: 100, y: 228, side: 'left', box });
+    expect(pts).toEqual([{ x: 0, y: 230 }, { x: 100, y: 230 }]);
+  });
+
+  it('puts no corner where there is none, and no run of no length', () => {
+    const pts = squareThrough({ x: 0, y: 0, side: 'right' }, [{ x: 50, y: 0.4 }, { x: 100, y: 0 }], { x: 200, y: 0, side: 'left' });
+    expect(pts).toEqual([{ x: 0, y: 0 }, { x: 200, y: 0 }]);
   });
 });
