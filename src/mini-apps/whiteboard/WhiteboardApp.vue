@@ -15,7 +15,7 @@ import ContextMenu, { type ContextMenuItem } from './components/ContextMenu.vue'
 import EdgeMarkerDefs from './components/EdgeMarkerDefs.vue';
 import { isMarker } from './edgeMarkers';
 import { carryWaypoints } from './waypoints';
-import { applyRoute, linesToFollow, outlineOf, routeLines, routePending, waitsForRoute, type Outline, type Route } from './autoRoute';
+import { applyRoute, linesToFollow, outlineOf, pathsOf, routeLines, routePending, waitsForRoute, type Outline, type Route } from './autoRoute';
 import { layOutPending, waitsForLayout } from './autoLayout';
 import { fromDrawio, fromExcalidraw, looksLikeMermaid, type Imported } from './importers';
 import { renderDiagram, diagramId } from '../../shared/mermaid';
@@ -954,9 +954,12 @@ async function tidyLines(edgeIds: Iterable<string>, { asStep = true } = {}) {
     const box = outlineOf({ type: n.type, position: n.computedPosition ?? n.position, data: n.data }, n.dimensions);
     if (box) boxes.set(n.id, box);
   }
+  // The board's other lines stay as they are, and the tidied ones keep off
+  // them as well as off each other (untangle.ts).
+  const others = pathsOf(board.edges.filter((e: WBEdge) => !ids.has(e.id)), boxes);
   let routes: Map<string, Route>;
   try {
-    routes = await routeLines(boxes, lines);
+    routes = await routeLines(boxes, lines, others);
   } catch (err) {
     logger.warn('Could not tidy the lines', err as string);
     // Asked for, it is said; after a move, the lines stay as they were drawn.

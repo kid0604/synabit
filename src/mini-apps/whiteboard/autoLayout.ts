@@ -17,6 +17,7 @@ import {
 } from './autoRoute';
 import type { Side } from './routing';
 import type { ElkNode } from 'elkjs/lib/elk-api';
+import { drawingCost, untangle } from './untangle';
 
 /**
  * A board Syn drew, laid out again by ELK's layered layout when it is first
@@ -86,9 +87,11 @@ const inside = (outer: WBNode, inner: WBNode) => {
 
 /**
  * The board as boxes and tables, in the order Syn ranked them — top to
- * bottom, then left to right — which ELK keeps where it can (model order):
- * a flowchart's loop back to an earlier step stays a loop back, rather than
- * the step it goes to being moved below it.
+ * bottom, then left to right — which ELK keeps where it can (model order) in
+ * its first try: a flowchart's loop back to an earlier step stays a loop
+ * back, rather than the step it goes to being moved below it. The other
+ * tries let go of it, and one of them is kept only for fewer crossings
+ * (`TRIES`).
  */
 function planOf(nodes: WBNode[]): Plan | null {
   const pieces: Piece[] = [];
@@ -261,7 +264,18 @@ export function shareAt(path: Point[], p: Point): number {
 export async function layOutPending(board: { nodes: WBNode[]; edges: WBEdge[] }): Promise<boolean> {
   if (!board.nodes.some(waitsForLayout)) return false;
   const plan = planOf(board.nodes);
-  if (plan) await layOut(board, plan);
+  if (plan) {
+    // Each way of laying it out, on a copy, and the one with the fewest
+    // crossings kept (see `TRIES`); the first of equals, which is Syn's order.
+    let best: { cost: number; tune: Tune } | null = null;
+    for (const tune of TRIES) {
+      const copy = JSON.parse(JSON.stringify({ nodes: board.nodes, edges: board.edges })) as typeof board;
+      await layOut(copy, planOf(copy.nodes)!, tune, false);
+      const cost = costOf(copy);
+      if (!best || cost < best.cost) best = { cost, tune };
+    }
+    await layOut(board, plan, best!.tune, true);
+  }
   for (const n of board.nodes) {
     if (!waitsForLayout(n)) continue;
     const data = { ...n.data };
@@ -272,7 +286,57 @@ export async function layOutPending(board: { nodes: WBNode[]; edges: WBEdge[] })
   return true;
 }
 
-async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
+/** Options for ELK on top of the board's own: one way of laying it out. */
+type Tune = Record<string, string>;
+
+/**
+ * The ways a board is laid out, of which the one with the fewest crossings
+ * is kept.
+ *
+ * First as Syn ordered it (model order), then free of that order, then with
+ * the cycles broken greedily from a few starting points. ELK's crossing
+ * minimisation is a heuristic that starts from a random order, and on the
+ * CMDB board Syn drew the same graph came out with anything from 10 to 23
+ * crossings depending on where it started. Six layouts of a board of twenty
+ * boxes take a few tenths of a second, once, when the board is first opened.
+ */
+const TRIES: Tune[] = [
+  {},
+  { 'elk.layered.considerModelOrder.strategy': 'NONE' },
+  ...[1, 2, 3, 4].map((seed) => ({
+    'elk.layered.considerModelOrder.strategy': 'NONE',
+    'elk.layered.cycleBreaking.strategy': 'GREEDY',
+    'elk.randomSeed': String(seed),
+  })),
+];
+
+/** A line ELK could not route, left for the router: about what a crossing costs. */
+const LEFT_FOR_THE_ROUTER = 800;
+
+/** What a laid-out board costs to read: its lines' crossings first (`drawingCost`). */
+function costOf(board: { nodes: WBNode[]; edges: WBEdge[] }): number {
+  const boxes = new Map<string, Outline>();
+  for (const n of board.nodes) {
+    const box = outlineOf(n);
+    if (box) boxes.set(n.id, box);
+  }
+  const paths: Point[][] = [];
+  let left = 0;
+  for (const e of board.edges) {
+    const [a, b] = [boxes.get(e.source), boxes.get(e.target)];
+    if (!a || !b || e.source === e.target) continue;
+    const at = e.data as { waypoints?: Point[]; sourceAt?: Route['sourceAt']; targetAt?: Route['targetAt'] } | undefined;
+    if (at?.sourceAt && at.targetAt) {
+      paths.push(drawnPath({ waypoints: at.waypoints ?? [], sourceAt: at.sourceAt, targetAt: at.targetAt, labelAt: 0.5 }, a, b));
+    } else {
+      left++;
+      paths.push([{ x: a.x + a.width / 2, y: a.y + a.height / 2 }, { x: b.x + b.width / 2, y: b.y + b.height / 2 }]);
+    }
+  }
+  return drawingCost(paths) + LEFT_FOR_THE_ROUTER * left;
+}
+
+async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan, tune: Tune, finish: boolean) {
   const { default: ELK } = await import('elkjs/lib/elk.bundled.js');
   const { pieces, tableOf } = plan;
   const byId = new Map(board.nodes.map((n) => [n.id, n]));
@@ -410,6 +474,11 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
       // on it, ELK put a jog of four bends in a line to reach its label. The
       // app draws a label on its line, and `placeLabels` slides it clear.
       'elk.edgeLabels.placement': 'CENTER',
+      // Harder at crossings than ELK is by default; a board of Syn's is a few
+      // dozen boxes, and this costs milliseconds.
+      'elk.layered.thoroughness': '50',
+      'elk.layered.crossingMinimization.greedySwitch.type': 'TWO_SIDED',
+      ...tune,
     },
     children,
     edges,
@@ -493,6 +562,17 @@ async function layOut(board: { nodes: WBNode[]; edges: WBEdge[] }, plan: Plan) {
     routed.push([line, route]);
   }
   straightenPairs(routed, endOf, boxes);
+  // A try is judged on ELK's own lines; the one kept is untangled too, as
+  // the router's lines are (untangle.ts). Lines to a table as a whole are
+  // left as ELK drew them: the router knows the table only as its rows.
+  if (finish) {
+    const free = routed.filter(([line]) => boxes.has(line.source) && boxes.has(line.target));
+    const better = untangle(free.map(([line, route]) => ({ id: line.id, source: line.source, target: line.target, route })), boxes);
+    for (const pair of routed) {
+      const route = better.get(pair[0].id);
+      if (route) pair[1] = route;
+    }
+  }
   for (const [line, route] of routed) {
     const label = typeof line.data?.label === 'string' ? line.data.label.trim() : '';
     const [from, to] = [endOf(line.source)!, endOf(line.target)!];

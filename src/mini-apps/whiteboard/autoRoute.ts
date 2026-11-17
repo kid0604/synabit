@@ -4,6 +4,7 @@ import type { Box } from './inkLayer';
 import { anchorAt, orthogonalRoute, type LineEnd, type Side } from './routing';
 import { SHAPES_MAP } from './shapes';
 import { GLYPH_SHAPE } from './glyph';
+import { untangle } from './untangle';
 
 /**
  * Lines routed around the boxes by MSAGL's rectilinear router, and written
@@ -320,10 +321,13 @@ export function routeOf(path: Point[], from: Outline, to: Outline): Route | null
  * in it. A line whose ends are not both among them, or that goes from a box
  * to itself, is left out of the answer.
  *
+ * `around` is the paths of the board's other lines, which stay as they are:
+ * the routed lines keep off them as they keep off each other (`untangle`).
+ *
  * Throws when the router cannot be loaded or fails; the caller keeps what it
  * had.
  */
-export async function routeLines(boxes: Map<string, Outline>, lines: LineToRoute[]): Promise<Map<string, Route>> {
+export async function routeLines(boxes: Map<string, Outline>, lines: LineToRoute[], around: Point[][] = []): Promise<Map<string, Route>> {
   const routes = new Map<string, Route>();
   const wanted = lines.filter((l) => l.source !== l.target && boxes.has(l.source) && boxes.has(l.target));
   if (!wanted.length) return routes;
@@ -362,6 +366,12 @@ export async function routeLines(boxes: Map<string, Outline>, lines: LineToRoute
     }
     routes.set(line.id, route);
   }
+
+  // Then off one another: as few crossings as the boxes allow (untangle.ts).
+  // Lines the router could not route are given a way here too, if one goes
+  // through nothing.
+  const tangled = wanted.map((line) => ({ ...line, route: routes.get(line.id) }));
+  for (const [id, route] of untangle(tangled, boxes, around)) routes.set(id, route);
 
   // Labels slid along their lines off one another (`placeLabels`).
   const labelled: LabelToPlace[] = [];
@@ -572,6 +582,23 @@ export function linesToFollow(edges: WBEdge[], moved: Map<string, { dx: number; 
     .map((e) => e.id);
 }
 
+/**
+ * The paths of lines that say where they go — a route of a router's, or the
+ * bends somebody put in — as the app draws them: what lines being routed
+ * keep off (`untangle`). A line that says nothing, drawn its own way from
+ * wherever its boxes are, is left out.
+ */
+export function pathsOf(edges: WBEdge[], boxes: Map<string, Outline>): Point[][] {
+  const paths: Point[][] = [];
+  for (const e of edges) {
+    const [a, b] = [boxes.get(e.source), boxes.get(e.target)];
+    const d = e.data as { waypoints?: Point[]; sourceAt?: LineEnd; targetAt?: LineEnd } | undefined;
+    if (!a || !b || !d?.sourceAt || !d.targetAt || e.source === e.target) continue;
+    paths.push(drawnPath({ waypoints: d.waypoints ?? [], sourceAt: d.sourceAt, targetAt: d.targetAt, labelAt: 0.5 }, a, b));
+  }
+  return paths;
+}
+
 /** Whether a line is waiting to be routed. */
 export const waitsForRoute = (e: WBEdge): boolean => e.data?.routing === 'pending';
 
@@ -666,7 +693,7 @@ export async function routePending(board: { nodes: WBNode[]; edges: WBEdge[] }):
     const box = outlineOf(n);
     if (box) boxes.set(n.id, box);
   }
-  const routes = await routeLines(boxes, waiting);
+  const routes = await routeLines(boxes, waiting, pathsOf(board.edges.filter((e) => !waitsForRoute(e)), boxes));
   for (const edge of waiting) {
     const route = routes.get(edge.id);
     if (route) {

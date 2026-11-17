@@ -106,7 +106,7 @@ import EdgeMarkerDefs from '../../whiteboard/components/EdgeMarkerDefs.vue';
 import { isMarker } from '../../whiteboard/edgeMarkers';
 import { paint } from '../../whiteboard/ink';
 import { EDGE_GREY } from '../../whiteboard/composables/useNodeOperations';
-import { applyRoute, outlineOf, routeLines, waitsForRoute, type Outline, type Route } from '../../whiteboard/autoRoute';
+import { applyRoute, outlineOf, pathsOf, routeLines, waitsForRoute, type Outline, type Route } from '../../whiteboard/autoRoute';
 import { layOutPending } from '../../whiteboard/autoLayout';
 import { saveBoard, type KeptBoard } from '../keepAsBoard';
 import { edgeForCanvas } from '../boardCanvas';
@@ -187,7 +187,9 @@ async function routeHere(ids: string[]) {
   if (!lines.length) return;
   let routes: Map<string, Route>;
   try {
-    routes = await routeLines(boxesHere(), lines);
+    // Off the lines that stay as they are, too (untangle.ts).
+    const boxes = boxesHere();
+    routes = await routeLines(boxes, lines, pathsOf(edges.value.filter(e => !wanted.has(e.id)), boxes));
   } catch (e) {
     // Drawn as stepped lines that find their own way, as before.
     logger.warn('[Syn] Could not route the board\'s lines', e as string);

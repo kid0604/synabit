@@ -277,3 +277,44 @@ chunk này không gọi `Promise.try`, `URL.parse`, `toHex`, `transferToFixedLen
 - Đã xem bằng mắt flowchart, ERD và data flow trong `WhiteboardApp` chạy trên trình duyệt. Chưa xem board lớn hơn
   khoảng 20 hộp mà không có nhóm.
 
+
+## 11. Không để đường nối cắt nhau, 2026-11-17
+
+Quy tắc: đường do máy vẽ thì không cắt nhau, trừ khi bố cục không cho phép. Mạch in là hình mẫu: trên một lớp,
+hai đường dây không bao giờ cắt nhau. Đường người dùng tự uốn tay thì không bị đụng tới.
+
+**Đã làm:**
+- **Router** (`untangle.ts`, chạy trong `routeLines` sau MSAGL): đường nào cắt hoặc chạy đè lên đường khác thì được
+  route lại.
+  - Mỗi đường thử nhiều cách: mọi cặp cạnh của hai hộp, vài vị trí điểm nối trên mỗi cạnh, và các dạng L, Z, vòng
+    ngoài.
+  - Giữ cách rẻ nhất. Một chỗ cắt tính bằng 1000, một đoạn chồng lên đường khác (cách nhau dưới 6px) tính 1500,
+    một chỗ gấp 30, mỗi pixel chiều dài 0,25.
+  - Mỗi lần đổi chỉ làm tổng chi phí giảm, nên quá trình chắc chắn dừng (tối đa 4 vòng).
+  - Các đường còn lại trên board được truyền vào qua `around` (`pathsOf`): đường mới né chúng nhưng không di chuyển
+    chúng.
+  - Đường MSAGL không route được giờ cũng có đường đi, nếu tìm được cách không xuyên hộp nào.
+- **Layout bằng ELK**: xếp 6 lần rồi giữ lần có ít chỗ cắt nhất (`TRIES`). Lần đầu theo thứ tự Syn đưa vào; nếu
+  chi phí bằng nhau thì lần này thắng. Các lần sau bỏ model order; cycle breaking GREEDY với 4 seed khác nhau.
+  Luôn bật thêm `thoroughness 50` và greedy switch `TWO_SIDED`. Bản thắng được untangle tiếp.
+- **Tool `draw_board`**: dặn Syn liệt kê nhóm và hộp sao cho thứ được nối với nhau đứng cạnh nhau. Thứ tự cột của
+  nhóm là do Syn quyết định và thường có nghĩa (các tầng kiến trúc), nên engine không tự đảo.
+
+**Kết quả trên board thật trong vault:**
+
+| Board | Chỗ cắt trước | Chỗ cắt sau | Đoạn chồng trước | Đoạn chồng sau |
+| --- | ---: | ---: | ---: | ---: |
+| Kiến trúc dịch vụ (7 nhóm, 45 đường), chỉ route lại | 94 | 13 | 8 | 9 |
+| CMDB (20 hộp, 45 đường), chỉ route lại | 18 | 13 | 0 | 0 |
+| CMDB, xếp lại bằng ELK | 23 | 9 | 0 | 0 |
+| "Diagram from Syn" (50 đường), xếp lại | 23 | 4 | – | 4 |
+| Flowchart Change Request, xếp lại | 3 | 0 | 0 | 0 |
+| DFD, ERD, swimlane | 0 | 0 | 0 | 0 |
+
+**Thời gian** đo trong Node, chỉ tốn một lần khi board mới mở lần đầu. Board 45 đường mất khoảng 0,6–1,2 giây, gồm
+cả 6 lần chạy ELK. Khi kéo hộp, chỉ những đường đi theo hộp mới được gỡ rối lại, nên nhanh.
+
+**Còn lại:**
+- Board có nhóm do Rust xếp cột theo thứ tự Syn đưa. Chỗ cắt còn lại trên board kiến trúc chủ yếu là do bố cục này.
+- Đường có thể đi vòng xa để né một chỗ cắt.
+- Đường vẫn chạy ngang qua tiêu đề frame, vì frame không phải vật cản.
