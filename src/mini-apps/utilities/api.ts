@@ -51,6 +51,8 @@ export interface PdfOutput {
 }
 
 export interface Layout {
+  /** Pictures a page: 1, 2 or 4 (`images::Layout::per_page`). */
+  perPage?: 1 | 2 | 4;
   size: 'a4' | 'letter' | 'fit';
   orientation: 'auto' | 'portrait' | 'landscape';
   margin: number;
@@ -195,6 +197,16 @@ export function place(
 /** The corners of the sheet of paper in a photo, top left first, as shares; `null` if none (or off macOS). */
 export function findDocument(width: number, height: number, rgba: Uint8Array): Promise<[number, number][] | null> {
   return invoke<[number, number][] | null>('utility_find_document', rgba, { headers: { 'x-utility-size': `${width}x${height}` } });
+}
+
+/** The faces in a picture, largest first, as shares from its top left: [x, y, w, h]; none off macOS. */
+export function findFaces(width: number, height: number, rgba: Uint8Array): Promise<[number, number, number, number][]> {
+  return invoke<[number, number, number, number][]>('utility_find_faces', rgba, { headers: { 'x-utility-size': `${width}x${height}` } });
+}
+
+/** JPEGs turned without re-encoding: only the orientation they say changes. */
+export function turnJpegs(job: string, files: PerFile[], turn: { quarters: number; flipH: boolean; flipV: boolean }): Promise<Job> {
+  return invoke<Job>('utility_turn_jpegs', { job, files, turn });
 }
 
 /** A page drawn with its black boxes, waiting for `redact`. */

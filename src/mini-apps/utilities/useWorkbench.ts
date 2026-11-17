@@ -24,8 +24,10 @@ import {
   type FindKind, type OfficeStatus, type PaperId, type TextLine, type ToolDef, type ToolId, type VisionAbilities,
 } from './tools';
 import { i18n } from '../../i18n';
-import { INKS, edges, markPicture, valuePicture, type Hidden, type Ink, type Mark } from './marks';
+import { INKS, edges, markPicture, newId, valuePicture, type Hidden, type Ink, type Mark } from './marks';
 import { WHOLE, type Quad } from './straighten';
+import { canvasOf, collageCanvas, cover, dated, encode, idPhotoCanvas, markedCanvas, sheetCanvas, shotAtOf, shrink, turnedCanvas, type Cover } from './canvas';
+import { centredFrame, frameFace, idPixels, withDpi, type CollageLayout, type IdSize, ID_SIZES } from './photo';
 
 export interface Item {
   input: api.Input;
@@ -38,7 +40,7 @@ export interface Item {
   /** Whether a PDF asks for a password; known for the unlock tool. */
   lock?: api.Lock;
   /** Why it cannot be used, when it cannot. */
-  problem?: 'unreadable' | 'locked' | 'wrong-kind';
+  problem?: 'unreadable' | 'unreadable_image' | 'heic' | 'locked' | 'wrong-kind';
 }
 
 export interface PageSlot {
@@ -100,6 +102,8 @@ const options = reactive({
     size: 'a4' as api.Layout['size'],
     orientation: 'auto' as api.Layout['orientation'],
     margin: 18,
+    /** Pictures on a page: both sides of an ID card on one sheet is 2. */
+    perPage: 1 as 1 | 2 | 4,
     /** Photos of pages: cut to the page and made flat. */
     straighten: false,
     /** And made to look scanned: white paper, dark ink. */
@@ -123,7 +127,37 @@ const options = reactive({
   numbers: { position: 4, format: '{n} / {total}', start: 1, skipFirst: false, size: 10 },
   protect: { password: '', confirm: '' },
   unlock: { password: '' },
-  imgcompress: { quality: 0.75, format: 'keep' as 'keep' | ImageFormat },
+  imgcompress: {
+    quality: 0.75,
+    format: 'keep' as 'keep' | ImageFormat,
+    /** At most this many kilobytes each; 0 for no limit. */
+    target: 0,
+  },
+  /** For every tool that redraws a photo: write its date back into the JPEG. */
+  photo: { keepDate: true },
+  imgrotate: { quarters: 1, flipH: false, flipV: false },
+  collage: { layout: 'vertical' as CollageLayout, gap: 20 },
+  idphoto: {
+    size: '3x4' as IdSize,
+    /** `keep`, or the colour behind the person. */
+    backdrop: '#ffffff',
+    /** The cut, in the picture's pixels, and its fixed ratio for the box. */
+    rect: null as Region | null,
+    aspect: '3:4',
+    /** Also a 10 × 15 sheet of copies to print. */
+    sheet: true,
+  },
+  imgblur: {
+    style: 'blur' as Cover,
+    /** Find faces and cover them. */
+    faces: true,
+    /** By input id: the boxes on that picture. */
+    boxes: {} as Record<string, Hidden[]>,
+    /** Pictures whose faces have been looked for. */
+    scanned: {} as Record<string, boolean>,
+    index: 0,
+    selected: null as string | null,
+  },
   resize: { mode: 'percent' as 'percent' | 'fit', percent: 50, width: 1600, height: 1600, enlarge: false },
   crop: { aspect: 'free' as string, rect: null as Region | null },
   imgconvert: { format: 'jpeg' as ImageFormat },
@@ -249,6 +283,59 @@ function findCorners(item: Item): Promise<void> {
   return found;
 }
 
+/** What an ID photo is called, by its size. */
+const SIZE_NAMES: Record<IdSize, string> = { '3x4': 'anh-the-3x4', '4x6': 'anh-the-4x6', '2x3': 'anh-the-2x3', '35x45': 'anh-the-3.5x4.5', '5x5': 'anh-the-5x5' };
+
+/**
+ * Where an ID photo is cut: around the largest face Vision finds, or the
+ * middle of the picture where it finds none (or there is no Vision).
+ */
+async function frameIdPhoto(item: Item) {
+  const p = options.idphoto;
+  const [w, h] = ID_SIZES[p.size];
+  p.aspect = `${w}:${h}`;
+  if (!item.width || !item.height) return;
+  let rect = centredFrame(item.width, item.height, w / h);
+  if (vision.value) {
+    try {
+      const px = pixelsOf(await loadImage(item.input.path), 1600);
+      const [face] = await api.findFaces(px.width, px.height, px.rgba);
+      if (face) rect = frameFace({ x: face[0], y: face[1], w: face[2], h: face[3] }, item.width, item.height, w / h);
+    } catch {
+      // No face to go by: the middle.
+    }
+  }
+  if (usable.value[0]?.input.id === item.input.id) p.rect = rect;
+}
+
+/** The faces in a picture, found once, added as boxes to cover — a little larger than the face. */
+const facing = new Map<string, Promise<void>>();
+function findFaces(item: Item): Promise<void> {
+  const b = options.imgblur;
+  const id = item.input.id;
+  if (b.scanned[id] || !vision.value) return Promise.resolve();
+  let found = facing.get(id);
+  if (!found) {
+    found = (async () => {
+      try {
+        const px = pixelsOf(await loadImage(item.input.path), 1600);
+        const faces = await api.findFaces(px.width, px.height, px.rgba);
+        const boxes = faces.map(([x, y, w, h]) => {
+          const [gx, gy] = [w * 0.2, h * 0.25];
+          const box = { x: Math.max(0, x - gx), y: Math.max(0, y - gy), w: Math.min(1, w + 2 * gx), h: Math.min(1, h + 2 * gy) };
+          return { ...box, w: Math.min(box.w, 1 - box.x), h: Math.min(box.h, 1 - box.y), id: newId('f'), page: 1 };
+        });
+        b.boxes[id] = [...(b.boxes[id] ?? []), ...boxes];
+      } catch {
+        // No faces found is no boxes.
+      }
+      b.scanned[id] = true;
+    })().finally(() => facing.delete(id));
+    facing.set(id, found);
+  }
+  return found;
+}
+
 /** Subject masks already found, by input id, so the preview's work is not done twice. */
 export interface Mask { width: number; height: number; mask: Uint8Array }
 const masks = new Map<string, Promise<Mask>>();
@@ -310,6 +397,19 @@ const ready = computed(() => {
   if (t.id === 'ocr') return options.ocr.pdf || options.ocr.text;
   if (t.id === 'protect') return !!options.protect.password && options.protect.password === options.protect.confirm;
   if (t.id === 'crop') return !!options.crop.rect && options.crop.rect.width >= 1 && options.crop.rect.height >= 1;
+  if (t.id === 'imgcompress') return Number.isFinite(options.imgcompress.target) && options.imgcompress.target >= 0;
+  if (t.id === 'imgrotate') {
+    // Nothing to do: no turn and no mirror, or half a turn mirrored both ways (which is no change).
+    const r = options.imgrotate;
+    const q = ((r.quarters % 4) + 4) % 4;
+    return !((q === 0 && !r.flipH && !r.flipV) || (q === 2 && r.flipH && r.flipV));
+  }
+  if (t.id === 'imgmark') {
+    const w = options.watermark;
+    return w.mode === 'text' ? !!w.text.trim() : !!w.logo;
+  }
+  if (t.id === 'idphoto') return !!options.idphoto.rect;
+  if (t.id === 'imgblur') return usable.value.some((i) => (options.imgblur.boxes[i.input.id]?.length ?? 0) > 0);
   if (t.id === 'sign') return options.sign.marks.length > 0;
   if (t.id === 'fillform') {
     const f = options.fillform;
@@ -352,7 +452,9 @@ async function inspect(item: Item) {
       item.width = img.naturalWidth;
       item.height = img.naturalHeight;
     } catch {
-      item.problem = 'unreadable';
+      // HEIC is read by the WebView only on a Mac; elsewhere say that, not "damaged".
+      const heic = /\.hei[cf]$/i.test(item.input.name) && !/Mac/.test(navigator.userAgent);
+      item.problem = heic ? 'heic' : 'unreadable_image';
     }
   } else if (item.kind === 'pdf') {
     if (tool.value === 'unlock') {
@@ -426,6 +528,12 @@ function resetPageOptions() {
   if (tool.value === 'sign') Object.assign(options.sign, { marks: [], page: 1, selected: null });
   if (tool.value === 'redact') Object.assign(options.redact, { boxes: [], page: 1, selected: null });
   if (tool.value === 'fillform') void loadForm();
+  if (tool.value === 'idphoto') {
+    options.idphoto.rect = null;
+    const first = usable.value.find((i) => i.kind === 'image' && i.width);
+    if (first) void frameIdPhoto(first);
+  }
+  if (tool.value === 'imgblur') options.imgblur.index = Math.min(options.imgblur.index, Math.max(0, usable.value.length - 1));
   const pages = firstPdf.value?.pages ?? 0;
   if (tool.value === 'organize') options.organize.pages = slots(pages);
   if (tool.value === 'split') {
@@ -603,8 +711,22 @@ function perFile(t: ToolId, files: Item[]): api.PerFile[] {
 /** Redraw a picture and add it to the run. */
 async function putPicture(job: string, f: Item, w: number, h: number, format: ImageFormat, quality: number, tool: ToolId, region?: Region) {
   const img = await loadImage(f.input.path);
-  const bytes = await encodeImage(img, w, h, format, quality, region);
+  const shotAt = options.photo.keepDate ? await shotAtOf(f.input.path, f.input.name) : undefined;
+  const bytes = dated(await encodeImage(img, w, h, format, quality, region), format, shotAt);
   await api.putOutput(job, outputName(tool, f.input.name, undefined, extensionFor(format)), bytes);
+}
+
+/**
+ * Where a crop goes on each picture of a batch: the box drawn on the first;
+ * on the others, the same ratio in the middle — or, cut freely, the same box
+ * by share of the picture.
+ */
+function cropFor(f: Item, first: Item): Region {
+  const rect = options.crop.rect!;
+  if (f === first) return { ...rect };
+  if (options.crop.aspect !== 'free') return defaultCrop(f.width!, f.height!, options.crop.aspect);
+  const [sx, sy] = [f.width! / first.width!, f.height! / first.height!];
+  return { x: rect.x * sx, y: rect.y * sy, width: rect.width * sx, height: rect.height * sy };
 }
 
 async function runPdfJob(id: string, inputs: string[], outputs: api.PdfOutput[]) {
@@ -696,8 +818,8 @@ async function run() {
           else jpegs.push((await api.stage(`${stem(f.input.name)}.jpg`, await asJpeg(f.input.path))).id);
           tick();
         }
-        const { size, orientation, margin } = options.img2pdf;
-        result = await api.imagesToPdf(started.id, jpegs, { size, orientation, margin }, outputName('img2pdf', first));
+        const { size, orientation, margin, perPage } = options.img2pdf;
+        result = await api.imagesToPdf(started.id, jpegs, { size, orientation, margin, perPage }, outputName('img2pdf', first));
         break;
       }
       case 'pdf2img': {
@@ -979,7 +1101,122 @@ async function run() {
         result = inPlace.length ? await api.stripMetadata(started.id, perFile(t.id, inPlace)) : await api.getJob(started.id);
         break;
       }
-      case 'imgcompress':
+      case 'imgcompress': {
+        // As small as asked; a picture that does not come out smaller is left out.
+        const c = options.imgcompress;
+        const target = Math.round(c.target * 1024);
+        expect(files.length);
+        const kept: Item[] = [];
+        let over = 0;
+        for (const f of files) {
+          check();
+          const format = c.format === 'keep' ? ownFormat(f.input.name, webp.value) : c.format;
+          const shotAt = options.photo.keepDate ? await shotAtOf(f.input.path, f.input.name) : undefined;
+          // The date goes in after the fitting: room is kept for it (86 bytes of EXIF).
+          const room = target && shotAt && format === 'jpeg' ? Math.max(1, target - 96) : target;
+          const canvas = canvasOf(await loadImage(f.input.path), 12000, format === 'jpeg');
+          const { bytes: fitted, fits } = await shrink(canvas, format, c.quality, room);
+          canvas.width = canvas.height = 0;
+          tick();
+          if (!fits) over++;
+          const bytes = dated(fitted, format, shotAt);
+          if (bytes.length >= f.input.size) continue;
+          await api.putOutput(started.id, outputName('imgcompress', f.input.name, undefined, extensionFor(format)), bytes);
+          kept.push(f);
+        }
+        if (!kept.length) throw new Error('not-smaller');
+        sizeIn = kept.reduce((n, f) => n + f.input.size, 0);
+        const left = files.length - kept.length;
+        if (left) showAppNotice(i18n.global.t('utilities.errors.some_not_smaller_images', { n: left }, left));
+        if (over) showAppNotice(i18n.global.t('utilities.errors.over_target', { n: over, kb: c.target }, over));
+        result = await api.getJob(started.id);
+        break;
+      }
+      case 'imgrotate': {
+        // A JPEG turns by what it says, losslessly in Rust; anything else is redrawn.
+        const turn = { ...options.imgrotate };
+        const jpegs = files.filter((f) => isJpegName(f.input.name));
+        const others = files.filter((f) => !isJpegName(f.input.name));
+        expect(others.length);
+        for (const f of others) {
+          check();
+          const format = ownFormat(f.input.name, webp.value);
+          const canvas = turnedCanvas(await loadImage(f.input.path), turn, format === 'jpeg');
+          await api.putOutput(started.id, outputName('imgrotate', f.input.name, undefined, extensionFor(format)), await encode(canvas, format, 0.95));
+          canvas.width = canvas.height = 0;
+          tick();
+        }
+        result = jpegs.length ? await api.turnJpegs(started.id, perFile('imgrotate', jpegs), turn) : await api.getJob(started.id);
+        break;
+      }
+      case 'imgmark': {
+        const w = options.watermark;
+        const mark = w.mode === 'text' ? textMark(w.text, w.color, w.opacity) : imageMark(await loadImage(w.logo!.path), w.opacity);
+        if (!mark) throw new Error('no watermark');
+        expect(files.length);
+        for (const f of files) {
+          check();
+          const format = ownFormat(f.input.name, webp.value);
+          const canvas = await markedCanvas(await loadImage(f.input.path), mark, w, 12000, format === 'jpeg');
+          const shotAt = options.photo.keepDate ? await shotAtOf(f.input.path, f.input.name) : undefined;
+          await api.putOutput(started.id, outputName('imgmark', f.input.name, undefined, extensionFor(format)), dated(await encode(canvas, format), format, shotAt));
+          canvas.width = canvas.height = 0;
+          tick();
+        }
+        result = await api.getJob(started.id);
+        break;
+      }
+      case 'collage': {
+        expect(1);
+        const canvas = await collageCanvas(files.map((f) => f.input.path), options.collage.layout, options.collage.gap);
+        check();
+        await api.putOutput(started.id, outputName('collage', first, undefined, 'jpg'), await encode(canvas, 'jpeg', 0.92));
+        canvas.width = canvas.height = 0;
+        tick();
+        result = await api.getJob(started.id);
+        break;
+      }
+      case 'idphoto': {
+        const p = options.idphoto;
+        const f = files[0];
+        expect(p.sheet ? 2 : 1);
+        const img = await loadImage(f.input.path);
+        const recolour = p.backdrop !== 'keep' && !!vision.value?.subject;
+        const mask = recolour ? await maskFor(f).catch(() => undefined) : undefined;
+        const photo = idPhotoCanvas(img, p.rect!, idPixels(p.size), recolour ? p.backdrop : null, mask);
+        const name = `${stem(f.input.name)}-${SIZE_NAMES[p.size]}`;
+        await api.putOutput(started.id, `${name}.jpg`, withDpi(await encode(photo, 'jpeg', 0.95), 300));
+        tick();
+        if (p.sheet) {
+          check();
+          const sheet = sheetCanvas(photo);
+          await api.putOutput(started.id, `${name}-to-in-10x15.jpg`, withDpi(await encode(sheet, 'jpeg', 0.95), 300));
+          sheet.width = sheet.height = 0;
+          tick();
+        }
+        photo.width = photo.height = 0;
+        result = await api.getJob(started.id);
+        break;
+      }
+      case 'imgblur': {
+        const b = options.imgblur;
+        expect(files.length);
+        for (const f of files) {
+          check();
+          if (b.faces) await findFaces(f);
+          const boxes = b.boxes[f.input.id] ?? [];
+          if (boxes.length) {
+            const format = ownFormat(f.input.name, webp.value);
+            const canvas = canvasOf(await loadImage(f.input.path), 12000, format === 'jpeg');
+            cover(canvas, boxes, b.style);
+            await api.putOutput(started.id, outputName('imgblur', f.input.name, undefined, extensionFor(format)), await encode(canvas, format));
+            canvas.width = canvas.height = 0;
+          }
+          tick();
+        }
+        result = await api.getJob(started.id);
+        break;
+      }
       case 'resize':
       case 'crop':
       case 'imgconvert': {
@@ -989,12 +1226,9 @@ async function run() {
           const own = ownFormat(f.input.name, webp.value);
           let [w, h] = [f.width!, f.height!];
           let format = own;
-          let quality = 0.92;
+          const quality = 0.92;
           let region: Region | undefined;
-          if (t.id === 'imgcompress') {
-            format = options.imgcompress.format === 'keep' ? own : options.imgcompress.format;
-            quality = options.imgcompress.quality;
-          } else if (t.id === 'imgconvert') {
+          if (t.id === 'imgconvert') {
             format = options.imgconvert.format;
           } else if (t.id === 'resize') {
             const r = options.resize;
@@ -1002,7 +1236,7 @@ async function run() {
               ? [Math.max(1, Math.round((w * r.percent) / 100)), Math.max(1, Math.round((h * r.percent) / 100))]
               : fitWithin(w, h, r.width, r.height, r.enlarge);
           } else {
-            region = { ...options.crop.rect! };
+            region = cropFor(f, files[0]);
             [w, h] = [region.width, region.height];
           }
           await putPicture(started.id, f, w, h, format, quality, t.id, region);
@@ -1094,7 +1328,7 @@ function stopListening() {
 export function useWorkbench() {
   return {
     tool, current, items, usable, firstPdf, phase, progress, job, before, failure, options, unsaved, splitPlan, ready, webp,
-    resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, office, askOffice, installing, installError, installPdf2docx,
+    resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, frameIdPhoto, findFaces, office, askOffice, installing, installError, installPdf2docx,
     openTool, closeTool, addInputs, removeItem, moveItem, sortByName, clearItems, run, cancel, editAgain,
     showJob, chain, refreshUnsaved, noteSaved, listenForProgress, stopListening,
   };

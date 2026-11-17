@@ -172,6 +172,48 @@ pub struct Layout {
     pub orientation: Orientation,
     /// Space around the picture, in points (1/72 inch). Ignored for `Fit`.
     pub margin: f32,
+    /// Pictures on one page: 1, 2 (one above the other, or side by side on
+    /// a landscape page) or 4 (two by two) — both sides of an ID card on one
+    /// sheet. With more than one, `Fit` is A4.
+    #[serde(default = "one")]
+    pub per_page: u8,
+}
+
+fn one() -> u8 {
+    1
+}
+
+/// A box on a page: left, bottom, width, height, in points.
+type Box4 = (f32, f32, f32, f32);
+
+/// The boxes the pictures of one page go in, on a page of `page` size.
+fn cells(page: (f32, f32), margin: f32, per_page: u8) -> Vec<Box4> {
+    let gap = margin.max(12.0);
+    let (x0, y0, w, h) = (margin, margin, page.0 - 2.0 * margin, page.1 - 2.0 * margin);
+    let (cols, rows) = match per_page {
+        4 => (2, 2),
+        2 if page.0 > page.1 => (2, 1),
+        2 => (1, 2),
+        _ => (1, 1),
+    };
+    let cw = (w - gap * (cols - 1) as f32) / cols as f32;
+    let ch = (h - gap * (rows - 1) as f32) / rows as f32;
+    let mut out = Vec::new();
+    // Reading order: left to right, top to bottom (PDF's y is up).
+    for r in 0..rows {
+        for c in 0..cols {
+            out.push((x0 + c as f32 * (cw + gap), y0 + (rows - 1 - r) as f32 * (ch + gap), cw, ch));
+        }
+    }
+    out
+}
+
+/// A picture of this size, as large as it fits in a box, centred.
+fn fit_in(shown: (u32, u32), cell: Box4) -> Box4 {
+    let (w, h) = (shown.0 as f32, shown.1 as f32);
+    let s = (cell.2 / w).min(cell.3 / h);
+    let (fw, fh) = (w * s, h * s);
+    (cell.0 + (cell.2 - fw) / 2.0, cell.1 + (cell.3 - fh) / 2.0, fw, fh)
 }
 
 const A4: (f32, f32) = (595.28, 841.89);
@@ -234,6 +276,12 @@ pub fn jpegs_to_pdf(
     let mut doc = Document::with_version("1.5");
     let pages_id = doc.new_object_id();
     let mut kids = Vec::new();
+    let per_page = match layout.per_page {
+        2 => 2,
+        4 => 4,
+        _ => 1,
+    };
+    let mut images = Vec::with_capacity(pictures.len());
     for (i, (jpeg, bytes)) in pictures.iter().enumerate() {
         if !progress(i, pictures.len()) {
             return Err(PdfError::Cancelled);
@@ -255,21 +303,36 @@ pub fn jpegs_to_pdf(
             dict.set("Decode", [1, 0, 1, 0, 1, 0, 1, 0].iter().map(|&v| Object::Integer(v)).collect::<Vec<_>>());
         }
         // Already compressed; deflating JPEG bytes again only costs time.
-        let image = doc.add_object(Stream::new(dict, bytes.clone()).with_compression(false));
-
-        let (page, (x, y, w, h)) = place(jpeg.shown_size(), layout);
-        let m = orientation_matrix(jpeg.orientation);
-        let drawing = format!(
-            "q {} 0 0 {} {} {} cm {} cm /Im0 Do Q",
-            num(w),
-            num(h),
-            num(x),
-            num(y),
-            m.iter().map(|&v| num(v)).collect::<Vec<_>>().join(" ")
-        );
-        let contents = doc.add_object(Stream::new(Dictionary::new(), drawing.into_bytes()));
+        images.push(doc.add_object(Stream::new(dict, bytes.clone()).with_compression(false)));
+    }
+    for (group, chunk) in pictures.chunks(per_page).enumerate() {
+        let first = group * per_page;
+        // One picture: the page as `place` makes it. Several: a sheet, cut in boxes.
+        let (page, boxes): ((f32, f32), Vec<Box4>) = if per_page == 1 {
+            let (page, at) = place(chunk[0].0.shown_size(), layout);
+            (page, vec![at])
+        } else {
+            let (short, long) = if layout.size == PageSize::Letter { LETTER } else { A4 };
+            let page = if layout.orientation == Orientation::Landscape { (long, short) } else { (short, long) };
+            let margin = layout.margin.clamp(0.0, page.0.min(page.1) / 4.0);
+            let cells = cells(page, margin, per_page as u8);
+            (page, chunk.iter().zip(cells).map(|((jpeg, _), cell)| fit_in(jpeg.shown_size(), cell)).collect())
+        };
+        let mut drawing = String::new();
         let mut xobjects = Dictionary::new();
-        xobjects.set("Im0", Object::Reference(image));
+        for (k, ((jpeg, _), (x, y, w, h))) in chunk.iter().zip(boxes).enumerate() {
+            let m = orientation_matrix(jpeg.orientation);
+            drawing.push_str(&format!(
+                "q {} 0 0 {} {} {} cm {} cm /Im{k} Do Q\n",
+                num(w),
+                num(h),
+                num(x),
+                num(y),
+                m.iter().map(|&v| num(v)).collect::<Vec<_>>().join(" ")
+            ));
+            xobjects.set(format!("Im{k}").into_bytes(), Object::Reference(images[first + k]));
+        }
+        let contents = doc.add_object(Stream::new(Dictionary::new(), drawing.into_bytes()));
         let mut resources = Dictionary::new();
         resources.set("XObject", xobjects);
         let mut page_dict = Dictionary::new();
@@ -374,7 +437,7 @@ mod tests {
 
     #[test]
     fn a_wide_picture_gets_a_landscape_page() {
-        let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 0.0 };
+        let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 0.0, per_page: 1 };
         let (page, (x, y, w, h)) = place((4000, 3000), layout);
         assert_eq!(page, (841.89, 595.28));
         assert!((h - 595.28).abs() < 0.01 && (w - 793.71).abs() < 0.01);
@@ -383,7 +446,7 @@ mod tests {
 
     #[test]
     fn a_margin_is_kept_on_every_side() {
-        let layout = Layout { size: PageSize::Letter, orientation: Orientation::Portrait, margin: 36.0 };
+        let layout = Layout { size: PageSize::Letter, orientation: Orientation::Portrait, margin: 36.0, per_page: 1 };
         let (_, (x, y, w, h)) = place((1000, 1000), layout);
         assert!(x >= 36.0 - 0.01 && y >= 36.0 - 0.01);
         assert!((w - 540.0).abs() < 0.01 && (h - 540.0).abs() < 0.01);
@@ -391,7 +454,7 @@ mod tests {
 
     #[test]
     fn fit_makes_the_page_the_picture() {
-        let layout = Layout { size: PageSize::Fit, orientation: Orientation::Auto, margin: 20.0 };
+        let layout = Layout { size: PageSize::Fit, orientation: Orientation::Auto, margin: 20.0, per_page: 1 };
         assert_eq!(place((1920, 1080), layout), ((1440.0, 810.0), (0.0, 0.0, 1440.0, 810.0)));
     }
 
@@ -424,11 +487,28 @@ mod tests {
         let a = header(800, 600, 3, None, false, false);
         let b = header(600, 800, 1, Some(8), true, false);
         let pictures = vec![(read_jpeg(&a).unwrap(), a), (read_jpeg(&b).unwrap(), b)];
-        let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 18.0 };
+        let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 18.0, per_page: 1 };
         let doc = super::super::pdf::tests::round_trip(jpegs_to_pdf(&pictures, layout, |_, _| true).unwrap());
         assert_eq!(doc.get_pages().len(), 2);
         let first = doc.get_dictionary(doc.get_pages()[&1]).unwrap();
         let size = first.get(b"MediaBox").unwrap().as_array().unwrap()[2].as_float().unwrap();
         assert!((size - 841.89).abs() < 0.01, "a wide picture on a landscape page");
+    }
+
+    #[test]
+    fn two_pictures_share_a_page_one_above_the_other() {
+        let jpeg = |w: u32, h: u32| Jpeg { width: w, height: h, components: 3, adobe_inverted: false, orientation: 1 };
+        let pictures = vec![(jpeg(800, 500), vec![0xFF, 0xD8]), (jpeg(800, 500), vec![0xFF, 0xD8]), (jpeg(500, 800), vec![0xFF, 0xD8])];
+        let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 18.0, per_page: 2 };
+        let doc = jpegs_to_pdf(&pictures, layout, |_, _| true).unwrap();
+        // Three pictures, two a page: two pages.
+        assert_eq!(doc.get_pages().len(), 2);
+        let first = doc.get_pages()[&1];
+        let content = String::from_utf8(doc.get_page_content(first).unwrap()).unwrap();
+        assert!(content.contains("/Im0 Do") && content.contains("/Im1 Do"), "{content}");
+        // The top box is the first picture: its y is the higher one.
+        let ys: Vec<f32> = content.lines().map(|l| l.split(' ').nth(6).unwrap().parse().unwrap()).collect();
+        assert!(ys[0] > ys[1], "{ys:?}");
+        assert_eq!(cells((595.0, 842.0), 18.0, 4).len(), 4);
     }
 }

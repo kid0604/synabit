@@ -327,6 +327,7 @@ Mockup vẽ đủ 28 tool để thấy lưới khi đầy. Bản thật chỉ hi
 | U-3 | Tách nền, Nhận dạng chữ (Vision) |
 | U-4 | Word/Excel/PowerPoint → PDF, PDF → Word, Nén PDF |
 | U-6 | Ký & điền, Điền form PDF, Che thông tin, Cắt lề & khổ trang, nắn ảnh chụp giấy tờ trong Ảnh → PDF; gộp/tách giữ mục lục |
+| U-7 | Ảnh thẻ, Đóng dấu ảnh, Ghép ảnh, Xoay ảnh, Làm mờ ảnh; sửa Nén ảnh, giữ ngày chụp, cắt nhiều ảnh, nhiều ảnh mỗi trang PDF |
 | Sau | Video và âm thanh (ffmpeg trong phòng kín) |
 
 ---
@@ -368,6 +369,7 @@ RMBG-2.0 không dùng (phi thương mại).
 | U-3 | macOS: tách nền và nhận dạng chữ bằng Vision | S |
 | U-4 | macOS 14+: phòng Utilities, môi trường, Office → PDF, PDF → Word, nén PDF | L |
 | U-5 | `run_utility` cho Syn, chỉ tầng A, mọi nền tảng | M |
+| U-7 | Tool ảnh sau khi so với iLoveIMG, PDF24, Squoosh, PowerToys: ảnh thẻ, đóng dấu ảnh, ghép ảnh, xoay ảnh, làm mờ ảnh; Nén ảnh không còn làm file to ra | M |
 | U-6 | Thêm tool PDF sau khi so với iLovePDF và PDF24: ký & điền, điền form, che thông tin, cắt lề & khổ trang, nắn ảnh chụp giấy tờ. Gộp/tách/sắp xếp giữ mục lục, nhãn trang, form, đích có tên, layer | L |
 
 U-1 và U-2 không đụng `syn/machine/`, nên không chờ nhánh `syn-at-the-machine`. U-4 thì chờ.
@@ -542,6 +544,39 @@ lõi PDF/ảnh); mọi điểm dưới đây đã được đối chiếu với 
   - Chưa chạy trong app Tauri thật.
   - Chưa thử form PDF thật từ cơ quan (mới thử form dựng tay) và file PDF/A có cấu trúc thẻ.
   - Chưa thử ảnh chụp giấy tờ thật bằng điện thoại.
+
+**U-7, 2026-11-18 (chưa commit):** so phần ảnh với iLoveIMG (13 tool), PDF24, Squoosh, PowerToys Image Resizer và
+Preview; sửa Nén ảnh và thêm năm tool.
+
+- **Sửa:**
+  - **Nén ảnh không còn làm file to ra:** ảnh không nhẹ hơn được thì giữ nguyên (như Nén PDF). PNG giữ định dạng giờ
+    được giảm màu (median cut, PNG bảng màu viết bằng `CompressionStream`), trước đây canvas chỉ ghi lại PNG đủ màu.
+  - **Nén xuống dưới một dung lượng** (100 KB–2 MB): tìm chất lượng bằng chia đôi, không đủ thì giảm cỡ
+    (`canvas.ts::shrink`).
+  - **Giữ ngày chụp:** Nén, Đổi cỡ, Cắt, Đổi định dạng, Đóng dấu ghi lại ngày chụp vào EXIF của JPEG (`photo.ts::withShotAt`),
+    không ghi GPS. Chừa chỗ cho EXIF khi nén theo dung lượng.
+  - **Cắt ảnh** nhận nhiều ảnh: cùng tỉ lệ thì cắt giữa, cắt tự do thì cùng khung theo tỉ lệ ảnh.
+  - **Thông báo ảnh hỏng** không còn nói "PDF"; ảnh HEIC ngoài macOS báo rõ là chỉ mở được trên Mac.
+- **Thêm:**
+  - **Ảnh thẻ:** Vision tìm khuôn mặt (`vision::find_faces`) để đặt khung 3×4, 4×6, 2×3, 3,5×4,5, 5×5; thay nền trắng hoặc
+    xanh bằng mặt nạ chủ thể; xuất đúng cỡ 300 dpi (ghi vào JFIF) và tờ 10×15 nhiều ảnh có đường cắt.
+  - **Đóng dấu ảnh:** dùng chung tuỳ chọn và cách đặt với Watermark PDF.
+  - **Ghép ảnh:** xếp dọc, ngang, lưới, hoặc trên trang A4 200 dpi (hai mặt CCCD). Ảnh → PDF có thêm 2 hoặc 4 ảnh mỗi
+    trang (`images.rs`).
+  - **Xoay ảnh:** JPEG xoay không mất chất lượng bằng cách sửa thẻ hướng EXIF tại chỗ (`metadata::turn_jpeg`, nhóm 8 hướng
+    tính bằng ma trận 2×2); ảnh khác vẽ lại.
+  - **Làm mờ ảnh:** Vision tìm khuôn mặt, kéo thêm vùng che; làm mờ, ô vuông hoặc ô đen (không dùng `ctx.filter` vì
+    Safari chỉ có từ 18).
+- **Đã kiểm:**
+  - Rust: 89 test Utilities (thêm 3: xoay EXIF, giữ ngày khi xoay, nhiều ảnh mỗi trang).
+  - Front end: thêm 10 test (`photo.spec.ts`), đọc lại PNG bằng `zlib` và ngày chụp bằng `shared/exif.ts`.
+  - Trong trình duyệt với IPC giả lập: nén thật (JPEG 35 → 12,8 KB còn ngày chụp; PNG 99,8 → 8,1 KB, sai lệch trung bình
+    0,69/255; giới hạn 3 KB giữ đúng sau khi sửa lỗi EXIF làm vượt), xoay, đóng dấu, ghép, ảnh thẻ (khung 3:4, 354×472 và
+    tờ 1181×1772, 300 dpi), làm mờ (chỉ vùng che đổi điểm ảnh), cắt nhiều ảnh.
+- **Chưa kiểm:**
+  - Chưa chạy trong app Tauri thật.
+  - Chưa thử Vision tìm mặt trên ảnh chân dung thật (mới giả lập kết quả).
+  - Chưa thử thay nền ảnh thẻ với mặt nạ thật.
 ---
 
 ## 8. Bước 0: cần đo trước

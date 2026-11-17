@@ -7,6 +7,8 @@
 //! - **Subject:** `VNGenerateForegroundInstanceMaskRequest`, macOS 14 or later —
 //!   the same "lift subject" Photos does. The mask comes back at the picture's
 //!   size, one byte a pixel; the WebView puts it in the picture's alpha.
+//! - **Faces:** `VNDetectFaceRectanglesRequest`, where they are — to frame an
+//!   ID photo, or to blur them.
 //! - **A page in a photo:** `VNDetectDocumentSegmentationRequest`, its four
 //!   corners, so a photo of a paper can be straightened into a scan.
 //! - **Text:** `VNRecognizeTextRequest`, with Vietnamese where this macOS
@@ -392,6 +394,30 @@ pub fn find_document(width: u32, height: u32, rgba: Vec<u8>) -> Result<Option<[[
     })
 }
 
+/// The faces in a picture, largest first: each as left, top, width and
+/// height, shares of the picture from its top left.
+pub fn find_faces(width: u32, height: u32, rgba: Vec<u8>) -> Result<Vec<[f64; 4]>, VisionError> {
+    let image = Image::new(width, height, rgba)?;
+    autoreleasepool(|_| {
+        let request = new_request(c"VNDetectFaceRectanglesRequest")?;
+        let handler = handler(&image)?;
+        perform(&handler, &request)?;
+        let mut faces = Vec::new();
+        unsafe {
+            let results: Option<Retained<AnyObject>> = msg_send![&*request, results];
+            let Some(results) = results else { return Ok(faces) };
+            let count: usize = msg_send![&*results, count];
+            for i in 0..count.min(64) {
+                let face: Retained<AnyObject> = msg_send![&*results, objectAtIndex: i];
+                let r: CGRect = msg_send![&*face, boundingBox];
+                faces.push([r.origin.x, 1.0 - r.origin.y - r.size.height, r.size.width, r.size.height]);
+            }
+        }
+        faces.sort_by(|a, b| (b[2] * b[3]).total_cmp(&(a[2] * a[3])));
+        Ok(faces)
+    })
+}
+
 unsafe fn set_accurate(request: &AnyObject) {
     // VNRequestTextRecognitionLevelAccurate
     let _: () = msg_send![request, setRecognitionLevel: 0isize];
@@ -521,7 +547,7 @@ mod tests {
         if let Ok(out) = std::env::var("UTILITIES_SCAN_OUT") {
             use crate::utilities::images::{jpegs_to_pdf, read_jpeg, Layout, Orientation, PageSize};
             let jpeg = std::fs::read(std::env::var("UTILITIES_SCAN_JPEG").unwrap()).unwrap();
-            let layout = Layout { size: PageSize::Fit, orientation: Orientation::Auto, margin: 0.0 };
+            let layout = Layout { size: PageSize::Fit, orientation: Orientation::Auto, margin: 0.0, per_page: 1 };
             let mut doc = jpegs_to_pdf(&[(read_jpeg(&jpeg).unwrap(), jpeg)], layout, |_, _| true).unwrap();
             let pages = [super::super::searchable::PageLines { page: 1, lines }];
             super::super::searchable::add_text_layer(&mut doc, &pages).unwrap();

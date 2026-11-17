@@ -66,6 +66,115 @@ fn orientation_block(orientation: u8) -> Vec<u8> {
     out
 }
 
+/// How a picture is turned: clockwise quarter turns, then mirrored left to
+/// right and top to bottom — as the person sees it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Turn {
+    pub quarters: u8,
+    #[serde(default)]
+    pub flip_h: bool,
+    #[serde(default)]
+    pub flip_v: bool,
+}
+
+/// An EXIF orientation as the 2 × 2 matrix that turns the stored picture
+/// into the one shown (x right, y down): `[a, b, c, d]` maps (x, y) to
+/// (ax + by, cx + dy).
+fn orientation_matrix(orientation: u8) -> [i8; 4] {
+    match orientation {
+        2 => [-1, 0, 0, 1],
+        3 => [-1, 0, 0, -1],
+        4 => [1, 0, 0, -1],
+        5 => [0, 1, 1, 0],
+        6 => [0, -1, 1, 0],
+        7 => [0, -1, -1, 0],
+        8 => [0, 1, -1, 0],
+        _ => [1, 0, 0, 1],
+    }
+}
+
+fn times(a: [i8; 4], b: [i8; 4]) -> [i8; 4] {
+    [a[0] * b[0] + a[1] * b[2], a[0] * b[1] + a[1] * b[3], a[2] * b[0] + a[3] * b[2], a[2] * b[1] + a[3] * b[3]]
+}
+
+/// The orientation a picture shown as `orientation` has once turned.
+pub fn turned_orientation(orientation: u8, turn: Turn) -> u8 {
+    let mut m = orientation_matrix(orientation);
+    for _ in 0..turn.quarters % 4 {
+        m = times(orientation_matrix(6), m);
+    }
+    if turn.flip_h {
+        m = times(orientation_matrix(2), m);
+    }
+    if turn.flip_v {
+        m = times(orientation_matrix(4), m);
+    }
+    (1..=8).find(|&o| orientation_matrix(o) == m).unwrap_or(1)
+}
+
+/// Where the orientation's two bytes are in a JPEG's EXIF, and whether they
+/// are little-endian.
+fn orientation_slot(bytes: &[u8]) -> Option<(usize, bool)> {
+    let mut at = 2;
+    while at + 4 <= bytes.len() && bytes[at] == 0xFF {
+        let marker = bytes[at + 1];
+        if marker == 0xDA || marker == 0xD9 {
+            return None;
+        }
+        let len = u16::from_be_bytes([bytes[at + 2], bytes[at + 3]]) as usize;
+        if len < 2 || at + 2 + len > bytes.len() {
+            return None;
+        }
+        let body = &bytes[at + 4..at + 2 + len];
+        if marker == 0xE1 && body.starts_with(b"Exif\0\0") {
+            let tiff_at = at + 4 + 6;
+            let tiff = &bytes[tiff_at..at + 2 + len];
+            let little = match tiff.get(0..2)? {
+                b"II" => true,
+                b"MM" => false,
+                _ => return None,
+            };
+            let u16_at = |i: usize| tiff.get(i..i + 2).map(|b| if little { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
+            let ifd = tiff.get(4..8).map(|b| {
+                let b = [b[0], b[1], b[2], b[3]];
+                if little { u32::from_le_bytes(b) } else { u32::from_be_bytes(b) }
+            })? as usize;
+            let entries = u16_at(ifd)? as usize;
+            for i in 0..entries.min(256) {
+                let entry = ifd + 2 + i * 12;
+                if u16_at(entry)? == 0x0112 && u16_at(entry + 2)? == 3 {
+                    return Some((tiff_at + entry + 8, little));
+                }
+            }
+            return None;
+        }
+        at += 2 + len;
+    }
+    None
+}
+
+/// A JPEG turned without touching its image data: only the orientation it
+/// says it is shown at changes, so nothing is lost however often it is
+/// turned. Everything else in its EXIF — the date, the camera — stays.
+pub fn turn_jpeg(bytes: &[u8], turn: Turn) -> Result<Vec<u8>, MetadataError> {
+    if !bytes.starts_with(&[0xFF, 0xD8]) {
+        return Err(MetadataError::NotHandled);
+    }
+    let orientation = turned_orientation(orientation_of(bytes), turn);
+    if let Some((slot, little)) = orientation_slot(bytes) {
+        let mut out = bytes.to_vec();
+        let value = orientation as u16;
+        out[slot..slot + 2].copy_from_slice(&if little { value.to_le_bytes() } else { value.to_be_bytes() });
+        return Ok(out);
+    }
+    // No orientation to change: one is added, first, so it is the one read.
+    let mut out = vec![0xFF, 0xD8];
+    out.extend(orientation_block(orientation));
+    out.extend_from_slice(&bytes[2..]);
+    Ok(out)
+}
+
 /// The EXIF orientation, read straight from the APP1 blocks before the image
 /// data, whatever kind of JPEG this is.
 fn orientation_of(bytes: &[u8]) -> u8 {
@@ -337,5 +446,47 @@ mod tests {
     #[test]
     fn other_formats_are_left_to_the_webview() {
         assert_eq!(strip(b"RIFF\0\0\0\0WEBP").err(), Some(MetadataError::NotHandled));
+    }
+
+    #[test]
+    fn turns_compose_like_the_pictures_do() {
+        let right = Turn { quarters: 1, ..Turn::default() };
+        // Upright, turned right once, is shown turned right (6); twice, upside down.
+        assert_eq!(turned_orientation(1, right), 6);
+        assert_eq!(turned_orientation(6, right), 3);
+        assert_eq!(turned_orientation(3, Turn { quarters: 2, ..Turn::default() }), 1);
+        // Four quarter turns, or two mirrors of one kind, change nothing.
+        for o in 1..=8 {
+            assert_eq!(turned_orientation(o, Turn { quarters: 4, ..Turn::default() }), o);
+            assert_eq!(turned_orientation(turned_orientation(o, Turn { flip_h: true, ..Turn::default() }), Turn { flip_h: true, ..Turn::default() }), o);
+        }
+        // Mirrored both ways is half a turn.
+        assert_eq!(turned_orientation(1, Turn { quarters: 0, flip_h: true, flip_v: true }), 3);
+    }
+
+    #[test]
+    fn a_jpeg_is_turned_by_its_orientation_alone() {
+        // EXIF says 6 (turned right), with a date beside it that must stay.
+        let mut tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        tiff.extend([2, 0]);
+        tiff.extend([0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0]);
+        tiff.extend([0x32, 0x01, 2, 0, 4, 0, 0, 0, b'2', b'0', b'2', 0]);
+        tiff.extend([0, 0, 0, 0]);
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend(&tiff);
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        jpeg.extend(((app1.len() + 2) as u16).to_be_bytes());
+        jpeg.extend(&app1);
+        jpeg.extend([0xFF, 0xDA, 0, 2, 1, 2, 3, 0xFF, 0xD9]);
+        let out = turn_jpeg(&jpeg, Turn { quarters: 1, ..Turn::default() }).unwrap();
+        assert_eq!(out.len(), jpeg.len(), "only two bytes change");
+        assert_eq!(orientation_of(&out), 3);
+        assert!(out.windows(3).any(|w| w == b"202"), "the date is still there");
+        assert_eq!(&out[out.len() - 7..], &jpeg[jpeg.len() - 7..], "the image data is untouched");
+
+        // A JPEG with no EXIF gets one, saying only how it is turned.
+        let bare = vec![0xFF, 0xD8, 0xFF, 0xDA, 0, 2, 1, 0xFF, 0xD9];
+        let out = turn_jpeg(&bare, Turn { quarters: 3, ..Turn::default() }).unwrap();
+        assert_eq!(orientation_of(&out), 8);
     }
 }

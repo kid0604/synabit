@@ -1134,6 +1134,8 @@ pub fn run() {
             commands::utilities::utility_subject_mask,
             commands::utilities::utility_recognize,
             commands::utilities::utility_find_document,
+            commands::utilities::utility_find_faces,
+            commands::utilities::utility_turn_jpegs,
             commands::utilities::utility_searchable,
             commands::utilities::utility_pdf_pictures,
             commands::utilities::utility_pdf_picture,

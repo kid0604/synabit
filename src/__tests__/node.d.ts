@@ -35,3 +35,8 @@ declare module 'node:path' {
   export function relative(from: string, to: string): string;
   export function resolve(...parts: string[]): string;
 }
+
+declare module 'node:zlib' {
+  /** For the photo spec: taking apart a PNG the app wrote. */
+  export function inflateSync(data: Uint8Array): Uint8Array;
+}

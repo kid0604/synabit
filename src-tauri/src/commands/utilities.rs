@@ -409,6 +409,26 @@ pub async fn utility_find_document(request: tauri::ipc::Request<'_>) -> AppResul
     }
 }
 
+/// The faces in a picture (RGBA as the body, its size in `x-utility-size`),
+/// largest first, as shares from its top left; none off macOS.
+#[tauri::command]
+pub async fn utility_find_faces(request: tauri::ipc::Request<'_>) -> AppResult<Vec<[f64; 4]>> {
+    #[cfg(target_os = "macos")]
+    {
+        let (w, h) = picture_size(&request)?;
+        let rgba = body(&request)?;
+        tauri::async_runtime::spawn_blocking(move || crate::utilities::vision::find_faces(w, h, rgba))
+            .await
+            .map_err(|e| AppError::General(e.to_string()))?
+            .map_err(vision_error)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = request;
+        Ok(Vec::new())
+    }
+}
+
 /// The text in a picture: RGBA in; lines out, in reading order. Languages,
 /// most likely first, in the `x-utility-languages` header, comma-separated.
 #[tauri::command]
@@ -1141,6 +1161,28 @@ pub async fn utility_strip_metadata(app: tauri::AppHandle, job: String, files: V
             })?;
             let out = ws.output_path(&id, &file.name)?;
             std::fs::write(&out, clean)?;
+            Ok(out)
+        }),
+    )
+    .await
+}
+
+/// Turn JPEGs without re-encoding them: only the orientation they are shown
+/// at changes. Other pictures are the WebView's to redraw.
+#[tauri::command]
+pub async fn utility_turn_jpegs(app: tauri::AppHandle, job: String, files: Vec<PerFile>, turn: metadata::Turn) -> AppResult<Job> {
+    let id = job.clone();
+    per_file(
+        &app,
+        job,
+        files,
+        Box::new(move |ws, file, _| {
+            let path = ws.input_path(&file.input)?;
+            let turned = metadata::turn_jpeg(&std::fs::read(&path)?, turn).map_err(|e| {
+                AppError::General(format!("“{}”: {e}", path.file_name().unwrap_or_default().to_string_lossy()))
+            })?;
+            let out = ws.output_path(&id, &file.name)?;
+            std::fs::write(&out, turned)?;
             Ok(out)
         }),
     )

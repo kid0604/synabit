@@ -964,7 +964,7 @@
       },
       "imgcompress": {
         "name": "Compress images",
-        "desc": "Make JPG, PNG and WebP files smaller",
+        "desc": "Make JPG, PNG and WebP smaller, or each under a size",
         "verb": "Compress 1 image | Compress {n} images",
         "running": "Compressing…"
       },
@@ -976,7 +976,7 @@
       },
       "crop": {
         "name": "Crop image",
-        "desc": "Freely or to 1:1, 4:3, 16:9",
+        "desc": "Freely or to 1:1, 4:3, 16:9, one picture or many",
         "verb": "Crop",
         "running": "Cropping…"
       },
@@ -1051,6 +1051,36 @@
         "desc": "Black out text and take it out of the file for good",
         "verb": "Redact",
         "running": "Redacting…"
+      },
+      "idphoto": {
+        "name": "ID photo",
+        "desc": "3×4, 4×6 and more: framed on the face, white or blue background, a sheet to print",
+        "verb": "Make ID photo",
+        "running": "Making the photo…"
+      },
+      "imgmark": {
+        "name": "Watermark image",
+        "desc": "Stamp words or a logo on pictures, such as \"Copy for application only\"",
+        "verb": "Add watermark | Add watermark to {n} pictures",
+        "running": "Adding the watermark…"
+      },
+      "collage": {
+        "name": "Combine images",
+        "desc": "One above another, side by side, a grid, or both sides of a card on one page",
+        "verb": "Combine {n} pictures",
+        "running": "Putting them together…"
+      },
+      "imgrotate": {
+        "name": "Rotate image",
+        "desc": "Turn or mirror pictures; JPGs lose nothing",
+        "verb": "Rotate | Rotate {n} pictures",
+        "running": "Turning…"
+      },
+      "imgblur": {
+        "name": "Blur image",
+        "desc": "Blur faces and anything else before sharing",
+        "verb": "Blur | Blur {n} pictures",
+        "running": "Covering…"
       }
     },
     "categories": {
@@ -1120,7 +1150,9 @@
       "problem_wrong-kind": "Not a file this tool takes",
       "lock_none": "no password",
       "lock_restrictions": "restrictions only",
-      "lock_password": "needs a password"
+      "lock_password": "needs a password",
+      "problem_unreadable_image": "Cannot be read as a picture",
+      "problem_heic": "HEIC photos open only on a Mac"
     },
     "pages": {
       "page": "Page {n}",
@@ -1221,7 +1253,7 @@
       "text_none": "(no text on this page)",
       "image_quality": "Quality",
       "format_keep": "Keep",
-      "compress_hint": "Lower is smaller. Around 70–80 looks the same to most eyes. PNG stays lossless; choose JPG to shrink it a lot.",
+      "compress_hint": "Lower is smaller. Around 70–80 looks the same to most eyes. A PNG keeps its format with fewer colours. A picture that does not come out smaller is left as it is.",
       "resize_by": "Resize by",
       "resize_percent": "Percentage",
       "resize_fit": "Fit within",
@@ -1276,7 +1308,13 @@
       "paper_a4": "A4",
       "paper_a5": "A5",
       "paper_letter": "Letter",
-      "paper_legal": "Legal"
+      "paper_legal": "Legal",
+      "target": "At most",
+      "target_none": "No limit",
+      "target_kb": "Under {size} each",
+      "keep_date": "Keep the date the photo was taken",
+      "per_page": "Pictures a page",
+      "per_page_n": "{n} a page"
     },
     "progress": {
       "of": "{done} / {total}",
@@ -1340,7 +1378,9 @@
       "some_not_smaller": "1 file was already compact and was left as it is. | {n} files were already compact and were left as they are.",
       "missing_program": "Something this tool needs is not installed any more. Check the tool’s setup.",
       "no_room": "The sealed room is not available on this Mac, so the document was not opened.",
-      "install_failed": "The install did not finish: {reason}"
+      "install_failed": "The install did not finish: {reason}",
+      "some_not_smaller_images": "1 picture did not come out smaller and was left as it is. | {n} pictures did not come out smaller and were left as they are.",
+      "over_target": "1 picture could not get under {kb} KB; it was made as small as it would go. | {n} pictures could not get under {kb} KB; they were made as small as they would go."
     },
     "preview": {
       "applies_to": "Applied to 1 file | Applied to all {n} files"
@@ -1348,7 +1388,9 @@
     "crop": {
       "box": "Crop area",
       "size": "Result: {size} pixels",
-      "keys": "Arrow keys move the box, ⌥ + arrows size it; hold ⇧ for bigger steps"
+      "keys": "Arrow keys move the box, ⌥ + arrows size it; hold ⇧ for bigger steps",
+      "others_same_box": "The other pictures are cut by the same box, scaled to their size.",
+      "others_same_ratio": "The other pictures are cut to the same ratio, in the middle."
     },
     "cutout": {
       "drag": "drag the bar to compare",
@@ -1461,6 +1503,63 @@
       "top_right": "Top right corner",
       "bottom_right": "Bottom right corner",
       "bottom_left": "Bottom left corner"
+    },
+    "imgrotate": {
+      "turn": "Turn",
+      "q1": "Right",
+      "q2": "Half",
+      "q3": "Left",
+      "q0": "None",
+      "flip_h": "Mirror left to right",
+      "flip_v": "Mirror top to bottom",
+      "hint": "JPGs are turned by what they say about themselves, without being redrawn, so they lose nothing."
+    },
+    "imgmark": {
+      "sample": "Sample",
+      "preview": "The first picture with its watermark",
+      "caption": "{name}, as it will come out"
+    },
+    "collage": {
+      "layout": "Layout",
+      "vertical": "One above another",
+      "horizontal": "Side by side",
+      "grid": "Grid",
+      "sheet": "On an A4 page",
+      "gap": "Space between",
+      "gap_0": "None",
+      "gap_20": "Small",
+      "gap_60": "Large",
+      "hint": "Drag the pictures in the list to change their order.",
+      "sheet_hint": "Both sides of an ID card on one A4 page at 200 dpi, ready to print or send.",
+      "preview": "The pictures put together",
+      "caption": "As it will come out, in the order of the list"
+    },
+    "idphoto": {
+      "size": "Size (cm)",
+      "backdrop": "Background",
+      "backdrop_keep": "Keep",
+      "backdrop_white": "White",
+      "backdrop_blue": "Blue",
+      "no_backdrop": "Changing the background needs macOS 14; the photo keeps its own.",
+      "sheet": "Also a 10 × 15 cm sheet of copies to print",
+      "hint": "The frame starts around the face. Drag it, or a corner, to adjust; its shape stays the photo's.",
+      "find_face": "Find the face again",
+      "result": "The ID photo",
+      "caption": "{w} × {h} pixels at 300 dpi",
+      "makes_one": "1 photo, 300 dpi",
+      "makes_two": "1 photo and a 10 × 15 sheet, 300 dpi"
+    },
+    "imgblur": {
+      "style": "Cover with",
+      "style_blur": "Blur",
+      "style_pixel": "Pixels",
+      "style_black": "Black",
+      "black_safest": "Black boxes are the only cover nothing can be read back from.",
+      "faces": "Find faces and cover them",
+      "count": "No boxes yet | 1 box | {n} boxes",
+      "draw_hint": "drag to cover more",
+      "box": "Covered part",
+      "finding": "Finding faces…"
     }
   },
   "things": {

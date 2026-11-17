@@ -12,14 +12,16 @@
 import type { Component } from 'vue';
 import {
   Crop, Eraser, EyeOff, FileDown, FileImage, FileInput, FileOutput, FileSearch, FileStack, FileType, FormInput, Frame, Images, LayoutGrid,
-  ListOrdered, Lock, LockOpen, Minimize2, Repeat, RotateCw, Scaling, ScanText, Scissors, Signature, SquareMinus, Stamp,
+  Grid2x2, ListOrdered, Lock, LockOpen, Minimize2, Repeat, RotateCw, RotateCwSquare, Scaling, ScanFace, ScanText, Scissors, Signature,
+  SquareMinus, SquareUser, Stamp, BadgeCheck,
 } from 'lucide-vue-next';
 
 export type ToolId =
   | 'merge' | 'split' | 'organize' | 'rotate' | 'compress' | 'watermark' | 'numbers' | 'protect' | 'unlock'
   | 'pdfcrop' | 'sign' | 'fillform' | 'redact'
   | 'ocr' | 'office2pdf' | 'pdf2word' | 'img2pdf' | 'pdf2img' | 'pdf2text'
-  | 'removebg' | 'imgtext' | 'imgcompress' | 'resize' | 'crop' | 'imgconvert' | 'exif';
+  | 'removebg' | 'imgtext' | 'imgcompress' | 'resize' | 'crop' | 'imgconvert' | 'exif'
+  | 'idphoto' | 'imgmark' | 'collage' | 'imgrotate' | 'imgblur';
 export type CategoryId = 'pdf' | 'convert' | 'image';
 export type InputKind = 'pdf' | 'image' | 'office';
 
@@ -38,7 +40,7 @@ export interface ToolDef {
    * put in order, the pages of one file, a preview of the first page with what
    * will be drawn on it, or one picture to cut.
    */
-  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout' | 'frame' | 'board' | 'form';
+  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout' | 'frame' | 'board' | 'form' | 'idphoto' | 'imgmark' | 'collage' | 'imgblur';
   /** What it needs of Apple's Vision, on macOS only (`utilities::vision`). */
   needs?: 'subject' | 'text' | 'libreoffice' | 'pdf2docx';
 }
@@ -69,7 +71,12 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'imgtext',  category: 'image',   icon: ScanText,   accepts: 'image', min: 1,         workspace: 'files', needs: 'text' },
   { id: 'imgcompress', category: 'image', icon: Minimize2, accepts: 'image', min: 1,         workspace: 'files' },
   { id: 'resize',   category: 'image',   icon: Scaling,    accepts: 'image', min: 1,         workspace: 'files' },
-  { id: 'crop',     category: 'image',   icon: Crop,       accepts: 'image', min: 1, max: 1, workspace: 'crop' },
+  { id: 'crop',     category: 'image',   icon: Crop,       accepts: 'image', min: 1,         workspace: 'crop' },
+  { id: 'idphoto',  category: 'image',   icon: SquareUser, accepts: 'image', min: 1, max: 1, workspace: 'idphoto' },
+  { id: 'imgmark',  category: 'image',   icon: BadgeCheck, accepts: 'image', min: 1,         workspace: 'imgmark' },
+  { id: 'collage',  category: 'image',   icon: Grid2x2,    accepts: 'image', min: 2,         workspace: 'collage' },
+  { id: 'imgrotate', category: 'image',  icon: RotateCwSquare, accepts: 'image', min: 1,     workspace: 'files' },
+  { id: 'imgblur',  category: 'image',   icon: ScanFace,   accepts: 'image', min: 1,         workspace: 'imgblur' },
   { id: 'imgconvert', category: 'image', icon: Repeat,     accepts: 'image', min: 1,         workspace: 'files' },
   { id: 'exif',     category: 'image',   icon: EyeOff,     accepts: 'image', min: 1,         workspace: 'files' },
 ];
@@ -111,7 +118,7 @@ const SUGGESTION_ORDER: Record<InputKind, ToolId[]> = {
     'protect', 'unlock', 'pdf2img', 'pdf2text',
   ],
   office: ['office2pdf'],
-  image: ['removebg', 'img2pdf', 'imgcompress', 'resize', 'exif', 'imgtext', 'imgconvert', 'crop'],
+  image: ['removebg', 'img2pdf', 'imgcompress', 'resize', 'collage', 'imgmark', 'idphoto', 'imgrotate', 'imgblur', 'exif', 'imgtext', 'imgconvert', 'crop'],
 };
 
 export function suggestionsFor(kind: InputKind, count: number): ToolDef[] {
@@ -216,6 +223,11 @@ const SUFFIX: Record<ToolId, string> = {
   crop: 'cat',
   imgconvert: '',
   exif: 'sach',
+  idphoto: 'anh-the',
+  imgmark: 'dong-dau',
+  collage: 'ghep',
+  imgrotate: 'xoay',
+  imgblur: 'che',
 };
 
 /** A file name's extension, lower case, without the dot. */

@@ -687,7 +687,7 @@ pub(crate) mod tests {
             .collect();
         if !pictures.is_empty() {
             use crate::utilities::images::{jpegs_to_pdf, Layout, Orientation, PageSize};
-            let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 18.0 };
+            let layout = Layout { size: PageSize::A4, orientation: Orientation::Auto, margin: 18.0, per_page: 1 };
             let mut doc = jpegs_to_pdf(&pictures, layout, keep_going).unwrap();
             save(&mut doc, &out.join("images.pdf")).unwrap();
         }

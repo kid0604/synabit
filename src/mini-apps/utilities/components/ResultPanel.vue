@@ -79,7 +79,7 @@ const offered = computed<ToolId[]>(() => {
     return all.filter((id) => id !== tool);
   }
   if (outputs.value.every((o) => isImage(o.name))) {
-    return (['removebg', 'img2pdf', 'imgcompress', 'resize', 'exif', 'imgtext'] as ToolId[]).filter((id) => id !== tool);
+    return (['img2pdf', 'imgcompress', 'imgmark', 'collage', 'removebg', 'resize', 'imgrotate', 'imgblur', 'exif', 'imgtext'] as ToolId[]).filter((id) => id !== tool);
   }
   return [];
 });

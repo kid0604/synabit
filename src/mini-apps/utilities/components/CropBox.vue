@@ -15,7 +15,7 @@ import { fileUrl, type Region } from '../render';
 import { useWorkbench } from '../useWorkbench';
 
 const props = withDefaults(
-  defineProps<{ path?: string; src?: string; width: number; height: number; target?: 'crop' | 'pdfcrop' }>(),
+  defineProps<{ path?: string; src?: string; width: number; height: number; target?: 'crop' | 'pdfcrop' | 'idphoto' }>(),
   { path: undefined, src: undefined, target: 'crop' },
 );
 const { t } = useI18n();

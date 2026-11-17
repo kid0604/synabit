@@ -21,6 +21,11 @@ import SignBoard from './SignBoard.vue';
 import FormBoard from './FormBoard.vue';
 import RedactBoard from './RedactBoard.vue';
 import DocPreview from './DocPreview.vue';
+import IdPhotoBoard from './IdPhotoBoard.vue';
+import ImageMarkPreview from './ImageMarkPreview.vue';
+import CollagePreview from './CollagePreview.vue';
+import BlurBoard from './BlurBoard.vue';
+import { ID_SIZES, type IdSize } from '../photo';
 import SignaturePad from './SignaturePad.vue';
 import { INKS, inkFromPicture, newId, newMark, textWidth, today, type Ink, type Mark, type MarkKind } from '../marks';
 import { findOnPages, loadImage } from '../render';
@@ -69,10 +74,17 @@ const plan = computed(() => {
       const ext = wb.options.removebg.backdrop === 'transparent' ? 'png' : 'jpg';
       return files.length > 1 ? t('utilities.options.makes_images', { n: files.length }, files.length) : outputName('removebg', first, undefined, ext);
     }
+    case 'collage':
+      return outputName('collage', first, undefined, 'jpg');
+    case 'idphoto':
+      return wb.options.idphoto.sheet ? t('utilities.idphoto.makes_two') : t('utilities.idphoto.makes_one');
     case 'imgcompress':
     case 'imgconvert':
     case 'resize':
     case 'crop':
+    case 'imgmark':
+    case 'imgrotate':
+    case 'imgblur':
     case 'exif': {
       if (files.length > 1) return t('utilities.options.makes_images', { n: files.length }, files.length);
       const own = ownFormat(first, wb.webp.value);
@@ -186,6 +198,16 @@ function resetFrameBox() {
   wb.options.pdfcrop.rect = { x: mx, y: my, width: f.width - 2 * mx, height: f.height - 2 * my };
 }
 const paperIds = Object.keys(PAPERS) as PaperId[];
+
+/** Tools that redraw a photo, and so can write its date back. */
+const KEEPS_DATE: ToolId[] = ['imgcompress', 'resize', 'crop', 'imgconvert', 'imgmark'];
+
+function setIdSize(size: IdSize) {
+  wb.options.idphoto.size = size;
+  if (firstImage.value) void wb.frameIdPhoto(firstImage.value);
+}
+
+const blurCount = computed(() => Object.values(wb.options.imgblur.boxes).reduce((n, list) => n + list.length, 0));
 
 // ── Sign and fill ──
 
@@ -373,14 +395,14 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
           <!-- While it runs, the files are out of reach of the keyboard too, not only the mouse. -->
           <div :inert="wb.phase.value === 'running' || undefined">
             <div class="flex items-center gap-2.5 mb-3.5 text-sm text-text-secondary dark:text-text-secondary-dark">
-              <template v-if="tool.workspace === 'files' || tool.workspace === 'frame'">
+              <template v-if="tool.workspace === 'files' || tool.workspace === 'frame' || tool.workspace === 'imgmark' || tool.workspace === 'collage' || tool.workspace === 'imgblur' || (tool.workspace === 'crop' && wb.usable.value.length > 1)">
                 <span>{{ t('utilities.files.count', { n: wb.usable.value.length }, wb.usable.value.length) }}</span>
-                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf'">· {{ t('utilities.files.drag_to_order') }}</span>
+                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'collage'">· {{ t('utilities.files.drag_to_order') }}</span>
                 <span class="flex-1" />
                 <button v-if="wb.items.value.length > 1" type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.sortByName()">{{ t('utilities.files.sort_by_name') }}</button>
                 <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.clearItems()">{{ t('utilities.files.clear') }}</button>
               </template>
-              <template v-else-if="tool.workspace === 'crop' && firstImage">
+              <template v-else-if="(tool.workspace === 'crop' || tool.workspace === 'idphoto') && firstImage">
                 <span class="truncate">{{ firstImage.input.name }}</span>
                 <span class="flex-1" />
                 <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="emit('pick')">
@@ -447,12 +469,34 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
                 <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
               </div>
             </div>
-            <CropBox
-              v-else-if="tool.workspace === 'crop' && firstImage?.width"
-              :path="firstImage.input.path"
-              :width="firstImage.width"
-              :height="firstImage.height!"
-            />
+            <div v-else-if="tool.workspace === 'crop' && firstImage?.width" class="flex flex-wrap gap-6 items-start">
+              <CropBox :path="firstImage.input.path" :width="firstImage.width" :height="firstImage.height!" />
+              <div v-if="wb.usable.value.length > 1" class="flex-1 min-w-[220px]">
+                <p class="text-sm text-text-secondary dark:text-text-secondary-dark mt-0 mb-3">
+                  {{ t(wb.options.crop.aspect === 'free' ? 'utilities.crop.others_same_box' : 'utilities.crop.others_same_ratio') }}
+                </p>
+                <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
+              </div>
+            </div>
+            <IdPhotoBoard v-else-if="tool.workspace === 'idphoto' && firstImage" :item="firstImage" />
+            <div v-else-if="tool.workspace === 'imgmark' && firstImage?.width" class="flex flex-wrap gap-6 items-start">
+              <ImageMarkPreview :item="firstImage" class="flex-1 min-w-[320px]" />
+              <div class="w-[320px]">
+                <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
+              </div>
+            </div>
+            <div v-else-if="tool.workspace === 'collage'" class="flex flex-wrap gap-6 items-start">
+              <CollagePreview class="flex-1 min-w-[300px]" />
+              <div class="w-[320px]">
+                <FileCards :items="wb.items.value" :ordered="true" :can-add="canAdd" @remove="wb.removeItem($event)" @move="(from, to) => wb.moveItem(from, to)" @add="emit('pick')" />
+              </div>
+            </div>
+            <div v-else-if="tool.workspace === 'imgblur'" class="flex flex-wrap gap-6 items-start">
+              <BlurBoard />
+              <div class="w-[300px]">
+                <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
+              </div>
+            </div>
             <FileCards
               v-else-if="tool.workspace === 'files'"
               :items="wb.items.value"
@@ -579,7 +623,13 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
               {{ t(`utilities.options.size_${s}`) }}
             </button>
           </div>
-          <template v-if="wb.options.img2pdf.size !== 'fit'">
+          <p class="utility-sub">{{ t('utilities.options.per_page') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.per_page')">
+            <button v-for="n in ([1, 2, 4] as const)" :key="n" type="button" role="radio" :aria-checked="wb.options.img2pdf.perPage === n" :class="{ on: wb.options.img2pdf.perPage === n }" @click="wb.options.img2pdf.perPage = n">
+              {{ t('utilities.options.per_page_n', { n }) }}
+            </button>
+          </div>
+          <template v-if="wb.options.img2pdf.size !== 'fit' || wb.options.img2pdf.perPage > 1">
             <p class="utility-sub">{{ t('utilities.options.orientation') }}</p>
             <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.orientation')">
               <button v-for="o in (['auto', 'portrait', 'landscape'] as const)" :key="o" type="button" role="radio" :aria-checked="wb.options.img2pdf.orientation === o" :class="{ on: wb.options.img2pdf.orientation === o }" @click="wb.options.img2pdf.orientation = o">
@@ -596,7 +646,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
         </template>
 
         <!-- Watermark -->
-        <template v-else-if="tool.id === 'watermark'">
+        <template v-else-if="tool.id === 'watermark' || tool.id === 'imgmark'">
           <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.mark_kind')">
             <button v-for="m in (['text', 'image'] as const)" :key="m" type="button" role="radio" :aria-checked="wb.options.watermark.mode === m" :class="{ on: wb.options.watermark.mode === m }" @click="wb.options.watermark.mode = m">
               {{ t(`utilities.options.mark_${m}`) }}
@@ -644,8 +694,10 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             </div>
             <div class="flex flex-col gap-2 text-[13px] text-text-secondary dark:text-text-secondary-dark">
               <label class="flex items-center gap-2"><input v-model="wb.options.watermark.tile" type="checkbox" />{{ t('utilities.options.mark_tile') }}</label>
-              <label class="flex items-center gap-2"><input v-model="wb.options.watermark.under" type="checkbox" />{{ t('utilities.options.mark_under') }}</label>
-              <label class="flex items-center gap-2"><input v-model="wb.options.watermark.exceptFirst" type="checkbox" />{{ t('utilities.options.except_first') }}</label>
+              <template v-if="tool.id === 'watermark'">
+                <label class="flex items-center gap-2"><input v-model="wb.options.watermark.under" type="checkbox" />{{ t('utilities.options.mark_under') }}</label>
+                <label class="flex items-center gap-2"><input v-model="wb.options.watermark.exceptFirst" type="checkbox" />{{ t('utilities.options.except_first') }}</label>
+              </template>
             </div>
           </div>
 
@@ -894,7 +946,104 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
               {{ f === 'keep' ? t('utilities.options.format_keep') : f === 'jpeg' ? 'JPG' : 'WebP' }}
             </button>
           </div>
+          <label class="utility-sub block" for="utility-target">{{ t('utilities.options.target') }}</label>
+          <select id="utility-target" v-model.number="wb.options.imgcompress.target" class="utility-field">
+            <option v-for="kb in [0, 100, 200, 500, 1024, 2048]" :key="kb" :value="kb">{{ kb ? t('utilities.options.target_kb', { size: kb >= 1024 ? `${kb / 1024} MB` : `${kb} KB` }) : t('utilities.options.target_none') }}</option>
+          </select>
           <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.options.compress_hint') }}</p>
+        </template>
+
+        <!-- Rotate pictures -->
+        <template v-else-if="tool.id === 'imgrotate'">
+          <p class="utility-sub !mt-0">{{ t('utilities.imgrotate.turn') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.imgrotate.turn')">
+            <button v-for="q in ([1, 2, 3, 0] as const)" :key="q" type="button" role="radio" :aria-checked="wb.options.imgrotate.quarters === q" :class="{ on: wb.options.imgrotate.quarters === q }" @click="wb.options.imgrotate.quarters = q">
+              {{ t(`utilities.imgrotate.q${q}`) }}
+            </button>
+          </div>
+          <label class="flex items-center gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark"><input v-model="wb.options.imgrotate.flipH" type="checkbox" />{{ t('utilities.imgrotate.flip_h') }}</label>
+          <label class="flex items-center gap-2 mt-1.5 text-[13px] text-text-secondary dark:text-text-secondary-dark"><input v-model="wb.options.imgrotate.flipV" type="checkbox" />{{ t('utilities.imgrotate.flip_v') }}</label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.imgrotate.hint') }}</p>
+        </template>
+
+        <!-- Put pictures together -->
+        <template v-else-if="tool.id === 'collage'">
+          <p class="utility-sub !mt-0">{{ t('utilities.collage.layout') }}</p>
+          <div class="grid grid-cols-2 gap-1.5" role="radiogroup" :aria-label="t('utilities.collage.layout')">
+            <button
+              v-for="l in (['vertical', 'horizontal', 'grid', 'sheet'] as const)"
+              :key="l"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.collage.layout === l"
+              class="h-8 rounded-md border text-[13px]"
+              :class="wb.options.collage.layout === l ? 'border-accent text-accent dark:text-accent-dark bg-accent/10' : 'border-border dark:border-border-dark bg-surface dark:bg-surface-dark'"
+              @click="wb.options.collage.layout = l"
+            >{{ t(`utilities.collage.${l}`) }}</button>
+          </div>
+          <p class="utility-sub">{{ t('utilities.collage.gap') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.collage.gap')">
+            <button v-for="g in ([0, 20, 60] as const)" :key="g" type="button" role="radio" :aria-checked="wb.options.collage.gap === g" :class="{ on: wb.options.collage.gap === g }" @click="wb.options.collage.gap = g">
+              {{ t(`utilities.collage.gap_${g}`) }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t(wb.options.collage.layout === 'sheet' ? 'utilities.collage.sheet_hint' : 'utilities.collage.hint') }}</p>
+        </template>
+
+        <!-- ID photo -->
+        <template v-else-if="tool.id === 'idphoto'">
+          <p class="utility-sub !mt-0">{{ t('utilities.idphoto.size') }}</p>
+          <div class="grid grid-cols-3 gap-1.5" role="radiogroup" :aria-label="t('utilities.idphoto.size')">
+            <button
+              v-for="sz in (Object.keys(ID_SIZES) as IdSize[])"
+              :key="sz"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.idphoto.size === sz"
+              class="h-8 rounded-md border text-[13px]"
+              :class="wb.options.idphoto.size === sz ? 'border-accent text-accent dark:text-accent-dark bg-accent/10' : 'border-border dark:border-border-dark bg-surface dark:bg-surface-dark'"
+              @click="setIdSize(sz)"
+            >{{ `${ID_SIZES[sz][0]}×${ID_SIZES[sz][1]}`.replace(/\./g, ',') }}</button>
+          </div>
+          <p class="utility-sub">{{ t('utilities.idphoto.backdrop') }}</p>
+          <div class="flex gap-1.5 items-center" role="radiogroup" :aria-label="t('utilities.idphoto.backdrop')">
+            <button
+              v-for="c in ['keep', '#ffffff', '#3d7cc9']"
+              :key="c"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.idphoto.backdrop === c"
+              :aria-label="t(`utilities.idphoto.backdrop_${c === 'keep' ? 'keep' : c === '#ffffff' ? 'white' : 'blue'}`)"
+              :title="t(`utilities.idphoto.backdrop_${c === 'keep' ? 'keep' : c === '#ffffff' ? 'white' : 'blue'}`)"
+              class="h-7 rounded-md border border-border dark:border-border-dark text-[12px] px-2"
+              :class="[wb.options.idphoto.backdrop === c ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-alt dark:ring-offset-surface-alt-dark' : '', c === 'keep' ? 'bg-surface dark:bg-surface-dark' : 'w-7']"
+              :style="c === 'keep' ? undefined : { background: c }"
+              @click="wb.options.idphoto.backdrop = c"
+            >{{ c === 'keep' ? t('utilities.idphoto.backdrop_keep') : '' }}</button>
+          </div>
+          <p v-if="wb.options.idphoto.backdrop !== 'keep' && !wb.vision.value?.subject" class="text-xs text-warning mt-2 mb-0">{{ t('utilities.idphoto.no_backdrop') }}</p>
+          <label class="flex items-start gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.idphoto.sheet" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.idphoto.sheet') }}</span>
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.idphoto.hint') }}</p>
+        </template>
+
+        <!-- Blur or cover -->
+        <template v-else-if="tool.id === 'imgblur'">
+          <p class="utility-sub !mt-0">{{ t('utilities.imgblur.style') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.imgblur.style')">
+            <button v-for="st in (['blur', 'pixel', 'black'] as const)" :key="st" type="button" role="radio" :aria-checked="wb.options.imgblur.style === st" :class="{ on: wb.options.imgblur.style === st }" @click="wb.options.imgblur.style = st">
+              {{ t(`utilities.imgblur.style_${st}`) }}
+            </button>
+          </div>
+          <p v-if="wb.options.imgblur.style !== 'black'" class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.imgblur.black_safest') }}</p>
+          <label v-if="wb.vision.value" class="flex items-start gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.imgblur.faces" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.imgblur.faces') }}</span>
+          </label>
+          <div class="flex items-center gap-2 mt-3">
+            <p class="m-0 text-[13px] text-text-secondary dark:text-text-secondary-dark flex-1">{{ t('utilities.imgblur.count', { n: blurCount }, blurCount) }}</p>
+            <button v-if="blurCount" type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.options.imgblur.boxes = {}">{{ t('utilities.redact.clear') }}</button>
+          </div>
         </template>
 
         <!-- Resize -->
@@ -1049,6 +1198,9 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
           </div>
           <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.options.png_hint') }}</p>
         </template>
+        <label v-if="KEEPS_DATE.includes(tool.id)" class="flex items-start gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+          <input v-model="wb.options.photo.keepDate" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.options.keep_date') }}</span>
+        </label>
       </section>
 
       <section class="px-[18px] py-4 mt-auto border-t border-border dark:border-border-dark">

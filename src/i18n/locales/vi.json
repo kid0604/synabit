@@ -964,7 +964,7 @@
       },
       "imgcompress": {
         "name": "Nén ảnh",
-        "desc": "JPG, PNG, WebP nhẹ hơn",
+        "desc": "JPG, PNG, WebP nhẹ hơn, hoặc mỗi ảnh dưới một dung lượng",
         "verb": "Nén {n} ảnh",
         "running": "Đang nén…"
       },
@@ -976,7 +976,7 @@
       },
       "crop": {
         "name": "Cắt ảnh",
-        "desc": "Tự do hoặc theo tỉ lệ 1:1, 4:3, 16:9",
+        "desc": "Tự do hoặc theo tỉ lệ 1:1, 4:3, 16:9, một hay nhiều ảnh",
         "verb": "Cắt",
         "running": "Đang cắt…"
       },
@@ -1051,6 +1051,36 @@
         "desc": "Bôi đen chữ và xoá hẳn nó khỏi file",
         "verb": "Che",
         "running": "Đang che…"
+      },
+      "idphoto": {
+        "name": "Ảnh thẻ",
+        "desc": "3×4, 4×6 và cỡ khác: căn theo khuôn mặt, nền trắng hoặc xanh, kèm tờ in",
+        "verb": "Làm ảnh thẻ",
+        "running": "Đang làm ảnh…"
+      },
+      "imgmark": {
+        "name": "Đóng dấu ảnh",
+        "desc": "Đóng chữ hoặc logo lên ảnh, như \"Chỉ dùng để nộp hồ sơ\"",
+        "verb": "Đóng dấu | Đóng dấu {n} ảnh",
+        "running": "Đang đóng dấu…"
+      },
+      "collage": {
+        "name": "Ghép ảnh",
+        "desc": "Xếp dọc, ngang, lưới, hoặc hai mặt giấy tờ trên một trang",
+        "verb": "Ghép {n} ảnh",
+        "running": "Đang ghép…"
+      },
+      "imgrotate": {
+        "name": "Xoay ảnh",
+        "desc": "Xoay hoặc lật ảnh; ảnh JPG không mất chất lượng",
+        "verb": "Xoay | Xoay {n} ảnh",
+        "running": "Đang xoay…"
+      },
+      "imgblur": {
+        "name": "Làm mờ ảnh",
+        "desc": "Làm mờ khuôn mặt và chi tiết khác trước khi gửi",
+        "verb": "Làm mờ | Làm mờ {n} ảnh",
+        "running": "Đang che…"
       }
     },
     "categories": {
@@ -1120,7 +1150,9 @@
       "problem_wrong-kind": "Công cụ này không nhận loại file này",
       "lock_none": "không có mật khẩu",
       "lock_restrictions": "chỉ hạn chế in, chép",
-      "lock_password": "cần mật khẩu"
+      "lock_password": "cần mật khẩu",
+      "problem_unreadable_image": "Không đọc được ảnh này",
+      "problem_heic": "Ảnh HEIC chỉ mở được trên máy Mac"
     },
     "pages": {
       "page": "Trang {n}",
@@ -1221,7 +1253,7 @@
       "text_none": "(trang này không có chữ)",
       "image_quality": "Chất lượng",
       "format_keep": "Giữ nguyên",
-      "compress_hint": "Thấp hơn thì nhẹ hơn. Khoảng 70–80 thì mắt thường khó thấy khác. PNG nén không mất dữ liệu; chọn JPG để nhẹ đi nhiều.",
+      "compress_hint": "Thấp hơn thì nhẹ hơn. Khoảng 70–80 thì mắt thường khó thấy khác. PNG giữ định dạng nhưng bớt màu. Ảnh không nhẹ hơn được thì giữ nguyên.",
       "resize_by": "Đổi theo",
       "resize_percent": "Phần trăm",
       "resize_fit": "Vừa trong",
@@ -1276,7 +1308,13 @@
       "paper_a4": "A4",
       "paper_a5": "A5",
       "paper_letter": "Letter",
-      "paper_legal": "Legal"
+      "paper_legal": "Legal",
+      "target": "Tối đa",
+      "target_none": "Không giới hạn",
+      "target_kb": "Mỗi ảnh dưới {size}",
+      "keep_date": "Giữ ngày chụp của ảnh",
+      "per_page": "Số ảnh mỗi trang",
+      "per_page_n": "{n} ảnh/trang"
     },
     "progress": {
       "of": "{done} / {total}",
@@ -1340,7 +1378,9 @@
       "some_not_smaller": "{n} file đã gọn, giữ nguyên không nén.",
       "missing_program": "Một thứ công cụ này cần không còn được cài. Hãy xem lại phần cài đặt của công cụ.",
       "no_room": "Phòng kín không dùng được trên máy này, nên tài liệu không được mở.",
-      "install_failed": "Chưa cài xong: {reason}"
+      "install_failed": "Chưa cài xong: {reason}",
+      "some_not_smaller_images": "{n} ảnh không nhẹ hơn được nên giữ nguyên.",
+      "over_target": "{n} ảnh không xuống dưới {kb} KB được; đã nén nhỏ nhất có thể."
     },
     "preview": {
       "applies_to": "Áp dụng cho {n} file"
@@ -1348,7 +1388,9 @@
     "crop": {
       "box": "Vùng cắt",
       "size": "Kết quả: {size} px",
-      "keys": "Phím mũi tên dời khung, ⌥ + mũi tên đổi cỡ; giữ ⇧ để bước lớn hơn"
+      "keys": "Phím mũi tên dời khung, ⌥ + mũi tên đổi cỡ; giữ ⇧ để bước lớn hơn",
+      "others_same_box": "Các ảnh khác được cắt theo cùng khung, co giãn theo cỡ của chúng.",
+      "others_same_ratio": "Các ảnh khác được cắt theo cùng tỉ lệ, ở giữa ảnh."
     },
     "cutout": {
       "drag": "kéo thanh giữa để so",
@@ -1461,6 +1503,63 @@
       "top_right": "Góc trên phải",
       "bottom_right": "Góc dưới phải",
       "bottom_left": "Góc dưới trái"
+    },
+    "imgrotate": {
+      "turn": "Xoay",
+      "q1": "Sang phải",
+      "q2": "Nửa vòng",
+      "q3": "Sang trái",
+      "q0": "Không",
+      "flip_h": "Lật ngang",
+      "flip_v": "Lật dọc",
+      "hint": "Ảnh JPG được xoay bằng thông tin hướng của chính nó, không vẽ lại, nên không mất chất lượng."
+    },
+    "imgmark": {
+      "sample": "Mẫu",
+      "preview": "Ảnh đầu tiên với dấu",
+      "caption": "{name}, như khi ra kết quả"
+    },
+    "collage": {
+      "layout": "Cách xếp",
+      "vertical": "Xếp dọc",
+      "horizontal": "Xếp ngang",
+      "grid": "Lưới",
+      "sheet": "Trên trang A4",
+      "gap": "Khoảng cách",
+      "gap_0": "Không",
+      "gap_20": "Nhỏ",
+      "gap_60": "Lớn",
+      "hint": "Kéo ảnh trong danh sách để đổi thứ tự.",
+      "sheet_hint": "Hai mặt CCCD trên một trang A4, 200 dpi, sẵn để in hoặc gửi.",
+      "preview": "Các ảnh đã ghép",
+      "caption": "Như khi ra kết quả, theo thứ tự trong danh sách"
+    },
+    "idphoto": {
+      "size": "Cỡ ảnh (cm)",
+      "backdrop": "Nền",
+      "backdrop_keep": "Giữ nguyên",
+      "backdrop_white": "Trắng",
+      "backdrop_blue": "Xanh",
+      "no_backdrop": "Đổi nền cần macOS 14; ảnh giữ nền gốc.",
+      "sheet": "Kèm một tờ 10 × 15 cm nhiều ảnh để in",
+      "hint": "Khung tự đặt quanh khuôn mặt. Kéo khung hoặc góc để chỉnh; khung luôn giữ đúng tỉ lệ ảnh thẻ.",
+      "find_face": "Tìm lại khuôn mặt",
+      "result": "Ảnh thẻ",
+      "caption": "{w} × {h} điểm ảnh, 300 dpi",
+      "makes_one": "1 ảnh, 300 dpi",
+      "makes_two": "1 ảnh và 1 tờ 10 × 15, 300 dpi"
+    },
+    "imgblur": {
+      "style": "Che bằng",
+      "style_blur": "Làm mờ",
+      "style_pixel": "Ô vuông",
+      "style_black": "Ô đen",
+      "black_safest": "Chỉ ô đen là không thể khôi phục lại chi tiết bên dưới.",
+      "faces": "Tìm khuôn mặt và che",
+      "count": "{n} vùng che",
+      "draw_hint": "kéo để che thêm",
+      "box": "Vùng che",
+      "finding": "Đang tìm khuôn mặt…"
     }
   },
   "things": {

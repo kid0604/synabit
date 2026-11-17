@@ -55,8 +55,12 @@ describe('which files a tool takes', () => {
     expect(suggestionsFor('pdf', 3).map((t) => t.id)).not.toContain('split');
     expect(suggestionsFor('pdf', 1).map((t) => t.id).slice(0, 2)).toEqual(['compress', 'split']);
     expect(suggestionsFor('pdf', 1).map((t) => t.id)).not.toContain('merge');
-    expect(suggestionsFor('image', 2).map((t) => t.id)).not.toContain('crop');
-    expect(suggestionsFor('image', 1).map((t) => t.id)).toContain('crop');
+    // A one-picture tool for one picture only; crop takes a batch now.
+    expect(suggestionsFor('image', 2).map((t) => t.id)).not.toContain('idphoto');
+    expect(suggestionsFor('image', 1).map((t) => t.id)).toContain('idphoto');
+    expect(suggestionsFor('image', 2).map((t) => t.id)).toContain('crop');
+    // Putting pictures together needs two.
+    expect(suggestionsFor('image', 1).map((t) => t.id)).not.toContain('collage');
   });
 
   it('sorts a mixed drop by its larger kind and says what it left out', () => {
