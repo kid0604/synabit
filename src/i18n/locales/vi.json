@@ -1027,6 +1027,30 @@
         "desc": "File .docx sửa được, giữ đoạn, bảng và ảnh khi có thể",
         "verb": "Chuyển | Chuyển {n} file",
         "running": "Đang chuyển…"
+      },
+      "pdfcrop": {
+        "name": "Cắt lề & khổ trang",
+        "desc": "Cắt bỏ lề trắng, cắt theo khung, hoặc đưa về khổ A4",
+        "verb": "Cắt | Cắt {n} file",
+        "running": "Đang cắt…"
+      },
+      "sign": {
+        "name": "Ký & điền",
+        "desc": "Đặt chữ ký, chữ, ngày tháng hay dấu tích lên trang",
+        "verb": "Ký",
+        "running": "Đang ký…"
+      },
+      "fillform": {
+        "name": "Điền form PDF",
+        "desc": "Gõ vào các ô có sẵn của form PDF, hoặc làm phẳng",
+        "verb": "Lưu form đã điền",
+        "running": "Đang điền…"
+      },
+      "redact": {
+        "name": "Che thông tin",
+        "desc": "Bôi đen chữ và xoá hẳn nó khỏi file",
+        "verb": "Che",
+        "running": "Đang che…"
       }
     },
     "categories": {
@@ -1237,7 +1261,22 @@
       "compress_2_hint": "Ảnh {dpi} dpi. Mờ hơn; hợp để gửi qua chat.",
       "compress_pdf_hint": "Chỉ ảnh bị đổi; chữ và hình vẽ giữ nguyên. File ít ảnh thì không nhẹ đi nhiều.",
       "office2pdf_hint": "Mỗi file thành một PDF do LibreOffice dàn trang. Font tài liệu dùng mà máy không có sẽ được thay bằng font gần giống.",
-      "pdf2word_hint": "Tốt với tài liệu chữ. Bố cục phức tạp, nhiều cột và bản scan ra kém hơn; bản scan cần Nhận dạng chữ trước."
+      "pdf2word_hint": "Tốt với tài liệu chữ. Bố cục phức tạp, nhiều cột và bản scan ra kém hơn; bản scan cần Nhận dạng chữ trước.",
+      "merge_bookmarks": "Tạo mục lục theo tên từng file",
+      "merge_bookmarks_hint": "Mục lục riêng của từng file vẫn giữ, nằm dưới tên file đó.",
+      "frame_by": "Cách cắt",
+      "frame_auto": "Cắt lề trắng",
+      "frame_manual": "Tự chọn khung",
+      "frame_size": "Khổ giấy",
+      "frame_margin": "Chừa lại quanh nội dung",
+      "frame_auto_hint": "Mỗi trang được cắt sát nội dung của nó, nên các trang có lề khác nhau đều ra gọn.",
+      "frame_manual_hint": "Kéo khung trên trang đầu. Mọi trang được cắt giống nhau.",
+      "frame_size_hint": "Mỗi trang được thu phóng cho vừa giấy và căn giữa. Không mất phần nào.",
+      "paper": "Khổ giấy",
+      "paper_a4": "A4",
+      "paper_a5": "A5",
+      "paper_letter": "Letter",
+      "paper_legal": "Legal"
     },
     "progress": {
       "of": "{done} / {total}",
@@ -1340,6 +1379,88 @@
       "install": "Cài (khoảng 150 MB)",
       "installing": "Đang cài… mất một hai phút",
       "brew_hint": "Nếu dùng Homebrew: brew install --cask libreoffice"
+    },
+    "frame": {
+      "not_drawn": "Không vẽ được trang này.",
+      "caption_auto": "Trang 1: phần trong khung nét đứt được giữ lại.",
+      "caption_manual": "Trang 1: mọi trang dùng chung khung này.",
+      "caption_size": "Trang 1 trên khổ giấy mới."
+    },
+    "board": {
+      "previous": "Trang trước",
+      "next": "Trang sau",
+      "page": "Trang",
+      "resize": "Kéo để đổi cỡ",
+      "marked_pages": "Có ở trang {pages}"
+    },
+    "sign": {
+      "add": "Thêm",
+      "kind_signature": "Chữ ký",
+      "kind_text": "Chữ",
+      "kind_date": "Ngày",
+      "kind_check": "Dấu tích",
+      "kind_cross": "Dấu chéo",
+      "ink": "Màu mực",
+      "ink_black": "Mực đen",
+      "ink_blue": "Mực xanh",
+      "signatures": "Chữ ký của bạn",
+      "place_this": "Đặt chữ ký {n}",
+      "draw": "Vẽ chữ ký",
+      "from_picture": "Từ ảnh chụp",
+      "not_kept": "Chữ ký chỉ giữ đến khi đóng app, không lưu ở đâu cả.",
+      "words": "Chữ",
+      "empty_text": "Gõ vào đây",
+      "every_page": "Đặt ở mọi trang",
+      "remove": "Xoá",
+      "hint": "Mục mới được đặt giữa trang đang xem. Kéo để dời, kéo góc để đổi cỡ, Delete để xoá.",
+      "pad_title": "Vẽ chữ ký",
+      "pad_hint": "Ký bằng chuột, trackpad hoặc bút.",
+      "pad_area": "Khung ký",
+      "clear": "Vẽ lại",
+      "cancel": "Huỷ",
+      "use": "Dùng chữ ký này"
+    },
+    "form": {
+      "reading": "Đang đọc form…",
+      "none_title": "PDF này không có ô nào để điền",
+      "none_body": "Dùng Ký & điền để đặt chữ, ngày tháng hay dấu tích ở bất kỳ đâu trên trang.",
+      "count": "{n} ô trên {pages} trang. Gõ thẳng vào ô trên trang.",
+      "hint": "Gõ thẳng vào các ô trên trang.",
+      "flatten": "Làm phẳng (ô thành một phần của trang)",
+      "flatten_hint": "Giá trị được vẽ lên trang và form bị gỡ, nên hiện giống nhau ở mọi app và không sửa lại được bằng cách điền tiếp.",
+      "keep_hint": "Giá trị nằm trong các ô và form vẫn điền tiếp được. App mở PDF sẽ vẽ lại chữ bằng font của nó.",
+      "unnamed": "Ô"
+    },
+    "redact": {
+      "find": "Tìm và che",
+      "kind_text": "Chữ",
+      "kind_phone": "Số điện thoại",
+      "kind_email": "Email",
+      "kind_id": "Số CCCD/CMND",
+      "words": "Chữ cần tìm",
+      "find_all": "Che hết",
+      "found": "Tìm thấy {n} chỗ mới",
+      "find_failed": "Không tìm được trong chữ của file.",
+      "boxes": "{n} ô che",
+      "clear": "Bỏ hết",
+      "ocr": "Đọc lại phần chữ còn lại để trang vẫn tìm kiếm được",
+      "clean": "Xoá cả tiêu đề, tác giả và thông tin khác của tài liệu",
+      "hint": "Trang có ô che sẽ thành ảnh của chính nó: chữ dưới ô bị xoá khỏi file, không chỉ bị phủ lên.",
+      "draw_hint": "Kéo trên trang để vẽ ô che.",
+      "box": "Ô che"
+    },
+    "straighten": {
+      "option": "Ảnh chụp giấy tờ: cắt theo trang và làm thẳng",
+      "scan": "Làm như bản scan (giấy trắng, chữ đậm)",
+      "finding": "Đang tìm trang giấy…",
+      "find_again": "Tìm lại",
+      "whole": "Cả ảnh",
+      "hint": "Kéo một góc để chỉnh. macOS tự tìm trang giấy.",
+      "hint_by_hand": "Kéo bốn góc vào bốn góc của trang giấy.",
+      "top_left": "Góc trên trái",
+      "top_right": "Góc trên phải",
+      "bottom_right": "Góc dưới phải",
+      "bottom_left": "Góc dưới trái"
     }
   },
   "things": {

@@ -11,12 +11,13 @@
  */
 import type { Component } from 'vue';
 import {
-  Crop, Eraser, EyeOff, FileDown, FileImage, FileInput, FileOutput, FileSearch, FileStack, FileType, Images, LayoutGrid, ListOrdered,
-  Lock, LockOpen, Minimize2, Repeat, RotateCw, Scaling, ScanText, Scissors, Stamp,
+  Crop, Eraser, EyeOff, FileDown, FileImage, FileInput, FileOutput, FileSearch, FileStack, FileType, FormInput, Frame, Images, LayoutGrid,
+  ListOrdered, Lock, LockOpen, Minimize2, Repeat, RotateCw, Scaling, ScanText, Scissors, Signature, SquareMinus, Stamp,
 } from 'lucide-vue-next';
 
 export type ToolId =
   | 'merge' | 'split' | 'organize' | 'rotate' | 'compress' | 'watermark' | 'numbers' | 'protect' | 'unlock'
+  | 'pdfcrop' | 'sign' | 'fillform' | 'redact'
   | 'ocr' | 'office2pdf' | 'pdf2word' | 'img2pdf' | 'pdf2img' | 'pdf2text'
   | 'removebg' | 'imgtext' | 'imgcompress' | 'resize' | 'crop' | 'imgconvert' | 'exif';
 export type CategoryId = 'pdf' | 'convert' | 'image';
@@ -37,7 +38,7 @@ export interface ToolDef {
    * put in order, the pages of one file, a preview of the first page with what
    * will be drawn on it, or one picture to cut.
    */
-  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout';
+  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout' | 'frame' | 'board' | 'form';
   /** What it needs of Apple's Vision, on macOS only (`utilities::vision`). */
   needs?: 'subject' | 'text' | 'libreoffice' | 'pdf2docx';
 }
@@ -54,6 +55,10 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'numbers',  category: 'pdf',     icon: ListOrdered, accepts: 'pdf',  min: 1,         workspace: 'preview' },
   { id: 'protect',  category: 'pdf',     icon: Lock,       accepts: 'pdf',   min: 1,         workspace: 'files' },
   { id: 'unlock',   category: 'pdf',     icon: LockOpen,   accepts: 'pdf',   min: 1,         workspace: 'files' },
+  { id: 'sign',     category: 'pdf',     icon: Signature,  accepts: 'pdf',   min: 1, max: 1, workspace: 'board' },
+  { id: 'fillform', category: 'pdf',     icon: FormInput,  accepts: 'pdf',   min: 1, max: 1, workspace: 'form' },
+  { id: 'redact',   category: 'pdf',     icon: SquareMinus, accepts: 'pdf',  min: 1, max: 1, workspace: 'board' },
+  { id: 'pdfcrop',  category: 'pdf',     icon: Frame,      accepts: 'pdf',   min: 1,         workspace: 'frame' },
   { id: 'ocr',      category: 'pdf',     icon: FileSearch, accepts: 'pdf',   min: 1,         workspace: 'files', needs: 'text' },
   { id: 'office2pdf', category: 'convert', icon: FileInput, accepts: 'office', min: 1,       workspace: 'files', needs: 'libreoffice' },
   { id: 'pdf2word', category: 'convert', icon: FileOutput, accepts: 'pdf',   min: 1,         workspace: 'files', needs: 'pdf2docx' },
@@ -101,7 +106,10 @@ export function fits(tool: ToolDef, count: number): boolean {
  * them. One PDF does not offer merge; three do not offer split.
  */
 const SUGGESTION_ORDER: Record<InputKind, ToolId[]> = {
-  pdf: ['merge', 'compress', 'split', 'pdf2word', 'watermark', 'numbers', 'organize', 'rotate', 'ocr', 'protect', 'unlock', 'pdf2img', 'pdf2text'],
+  pdf: [
+    'merge', 'compress', 'split', 'sign', 'fillform', 'pdf2word', 'watermark', 'numbers', 'organize', 'rotate', 'redact', 'pdfcrop', 'ocr',
+    'protect', 'unlock', 'pdf2img', 'pdf2text',
+  ],
   office: ['office2pdf'],
   image: ['removebg', 'img2pdf', 'imgcompress', 'resize', 'exif', 'imgtext', 'imgconvert', 'crop'],
 };
@@ -190,6 +198,10 @@ const SUFFIX: Record<ToolId, string> = {
   numbers: 'danh-so',
   protect: 'khoa',
   unlock: 'mo-khoa',
+  pdfcrop: 'cat-le',
+  sign: 'da-ky',
+  fillform: 'da-dien',
+  redact: 'da-che',
   compress: 'nen',
   office2pdf: '',
   pdf2word: '',
@@ -277,6 +289,85 @@ export function fitWithin(width: number, height: number, maxW: number, maxH: num
   let scale = Math.min(maxW / width, maxH / height);
   if (!enlarge) scale = Math.min(scale, 1);
   return [Math.max(1, Math.round(width * scale)), Math.max(1, Math.round(height * scale))];
+}
+
+/** Paper sizes a page can be put on, in points, portrait. */
+export const PAPERS = {
+  a4: [595.28, 841.89],
+  a5: [419.53, 595.28],
+  letter: [612, 792],
+  legal: [612, 1008],
+} as const;
+export type PaperId = keyof typeof PAPERS;
+
+/** A box in a picture's pixels as shares of it: left, top, right, bottom, 0–1. */
+export function shareOf(r: { x: number; y: number; width: number; height: number }, w: number, h: number): [number, number, number, number] {
+  const c = (v: number) => Math.min(1, Math.max(0, v));
+  return [c(r.x / w), c(r.y / h), c((r.x + r.width) / w), c((r.y + r.height) / h)];
+}
+
+/** Whether a share box is (nearly) the whole page, which crops nothing. */
+export function isWhole(share: [number, number, number, number]): boolean {
+  return share[0] <= 0.002 && share[1] <= 0.002 && share[2] >= 0.998 && share[3] >= 0.998;
+}
+
+/**
+ * One character folded for finding: lower case, without its accent, đ as d —
+ * one character in, one out, so a match's place in folded text is its place
+ * in the real text.
+ */
+export function foldChar(c: string): string {
+  if (c === 'đ' || c === 'Đ') return 'd';
+  return (c.normalize('NFD')[0] ?? c).toLowerCase();
+}
+
+export function foldChars(text: string): string {
+  return Array.from(text).map(foldChar).join('');
+}
+
+/** What Redact can look for on the pages. */
+export type FindKind = 'text' | 'phone' | 'email' | 'id';
+
+const PATTERNS: Record<Exclude<FindKind, 'text'>, RegExp> = {
+  // Vietnamese numbers: 0 or +84, then 9 digits, spaced or dotted as people write them.
+  phone: /(?<![\d+])(?:\+84|0)[\s.-]?\d{2,3}(?:[\s.-]?\d{3}){2}(?!\d)/g,
+  email: /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g,
+  // An old ID card's 9 digits, or a citizen card's 12.
+  id: /(?<!\d)(?:\d{12}|\d{9})(?!\d)/g,
+};
+
+/**
+ * Where `kind` (or, for `text`, the words typed) is in a run of folded text:
+ * each match's start and end, in characters.
+ */
+export function finder(kind: FindKind, query: string): (folded: string) => [number, number][] {
+  if (kind === 'text') {
+    const needle = foldChars(query.trim());
+    if (!needle) return () => [];
+    return (folded) => {
+      const out: [number, number][] = [];
+      const chars = Array.from(folded);
+      const n = Array.from(needle);
+      for (let i = 0; i + n.length <= chars.length; i++) {
+        if (n.every((c, k) => chars[i + k] === c)) {
+          out.push([i, i + n.length]);
+          i += n.length - 1;
+        }
+      }
+      return out;
+    };
+  }
+  const pattern = PATTERNS[kind];
+  return (folded) => {
+    const chars = Array.from(folded);
+    // RegExp indexes UTF-16 units; turned back into characters for the boxes.
+    const unitToChar: number[] = [];
+    chars.forEach((c, i) => {
+      for (let u = 0; u < c.length; u++) unitToChar.push(i);
+    });
+    unitToChar.push(chars.length);
+    return [...folded.matchAll(new RegExp(pattern.source, pattern.flags))].map((m) => [unitToChar[m.index!], unitToChar[m.index! + m[0].length]]);
+  };
 }
 
 /** Page numbers as `stamp::Numbering` writes them. */

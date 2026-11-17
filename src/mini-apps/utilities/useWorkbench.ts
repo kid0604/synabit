@@ -16,14 +16,16 @@ import { errorText } from '../../shared/errorText';
 import { showAppNotice } from '../../composables/useAppNotice';
 import {
   asJpeg, canEncode, closePdf, cutOut, encodeCanvas, encodeImage, imageMark, loadImage, openPdf, pageAsImage, pageWords, pagePixels,
-  pdfText, pixelsOf, textMark, type Region,
+  pdfText, pixelsOf, textMark, blackedPage, contentBox, formFields, shownPageSize, straightenedJpeg, type FormField, type Region,
 } from './render';
 import {
   availability, cleansInPlace, everyN, extensionFor, fitWithin, fits, isJpegName, kindOf, linesToText, ocrLanguages, outputName,
-  ownFormat, pageImageName, parseRanges, span, stem, toolById, type ImageFormat, type InputKind, type OfficeStatus, type TextLine,
-  type ToolDef, type ToolId, type VisionAbilities,
+  ownFormat, pageImageName, parseRanges, span, stem, toolById, PAPERS, isWhole, shareOf, type ImageFormat, type InputKind,
+  type FindKind, type OfficeStatus, type PaperId, type TextLine, type ToolDef, type ToolId, type VisionAbilities,
 } from './tools';
 import { i18n } from '../../i18n';
+import { INKS, edges, markPicture, valuePicture, type Hidden, type Ink, type Mark } from './marks';
+import { WHOLE, type Quad } from './straighten';
 
 export interface Item {
   input: api.Input;
@@ -83,6 +85,7 @@ function stopActive() {
 }
 
 const options = reactive({
+  merge: { bookmarks: true },
   split: {
     mode: 'ranges' as 'ranges' | 'every' | 'pick',
     ranges: '',
@@ -93,7 +96,17 @@ const options = reactive({
   organize: { pages: [] as PageSlot[] },
   rotate: { angle: 90 as 90 | 180 | 270 },
   pdf2img: { format: 'png' as 'png' | 'jpeg', dpi: 150 },
-  img2pdf: { size: 'a4' as api.Layout['size'], orientation: 'auto' as api.Layout['orientation'], margin: 18 },
+  img2pdf: {
+    size: 'a4' as api.Layout['size'],
+    orientation: 'auto' as api.Layout['orientation'],
+    margin: 18,
+    /** Photos of pages: cut to the page and made flat. */
+    straighten: false,
+    /** And made to look scanned: white paper, dark ink. */
+    scan: true,
+    /** By input id: the page's corners in each photo. */
+    corners: {} as Record<string, Quad>,
+  },
   watermark: {
     mode: 'text' as 'text' | 'image',
     text: '',
@@ -118,6 +131,47 @@ const options = reactive({
   ocr: { pdf: true, text: false, skipText: true, language: 'vi' as 'vi' | 'auto' },
   imgtext: { language: 'vi' as 'vi' | 'auto' },
   compress: { level: 1 as 0 | 1 | 2 },
+  sign: {
+    marks: [] as Mark[],
+    page: 1,
+    selected: null as string | null,
+    /** Signatures drawn or picked this session, newest first; not kept after. */
+    inks: [] as Ink[],
+    color: INKS[0] as string,
+    /** The shown page's width over its height, for what is placed next. */
+    aspect: 1 / Math.SQRT2,
+  },
+  fillform: {
+    fields: [] as FormField[],
+    /** By field name: text, a list's value, "on"/"" for a checkbox, the chosen button for radios. */
+    values: {} as Record<string, string>,
+    initial: {} as Record<string, string>,
+    page: 1,
+    loaded: false,
+    flatten: false,
+  },
+  redact: {
+    boxes: [] as Hidden[],
+    page: 1,
+    selected: null as string | null,
+    kind: 'text' as FindKind,
+    find: '',
+    /** Read the blacked-out pages again so their other words can still be found. */
+    ocr: true,
+    /** Take the title, author and other document information out as well. */
+    clean: true,
+  },
+  pdfcrop: {
+    mode: 'auto' as 'auto' | 'manual' | 'size',
+    /** For `manual`: the box, in the pixels of the first page drawn as `frame`. */
+    aspect: 'free',
+    rect: null as Region | null,
+    frame: null as { width: number; height: number } | null,
+    /** For `auto`: points left around what is on the page. */
+    margin: 12,
+    paper: 'a4' as PaperId,
+    orientation: 'auto' as api.Layout['orientation'],
+  },
 });
 
 /**
@@ -165,6 +219,34 @@ let visionAsked: Promise<void> | null = null;
 function askVision(): Promise<void> {
   visionAsked ??= api.visionStatus().then((v) => { vision.value = v ?? null; }).catch(() => { vision.value = null; });
   return visionAsked;
+}
+
+/**
+ * The corners of the page in a photo, found once: by Vision where there is
+ * one, else the whole photo, for the person to drag in.
+ */
+const finding = new Map<string, Promise<void>>();
+function findCorners(item: Item): Promise<void> {
+  const id = item.input.id;
+  if (options.img2pdf.corners[id]) return Promise.resolve();
+  let found = finding.get(id);
+  if (!found) {
+    found = (async () => {
+      let quad: Quad = WHOLE;
+      if (vision.value) {
+        try {
+          const px = pixelsOf(await loadImage(item.input.path), 1024);
+          const corners = await api.findDocument(px.width, px.height, px.rgba);
+          if (corners?.length === 4) quad = corners as Quad;
+        } catch {
+          // Not found is the whole photo, to set by hand.
+        }
+      }
+      options.img2pdf.corners[id] ??= quad;
+    })().finally(() => finding.delete(id));
+    finding.set(id, found);
+  }
+  return found;
 }
 
 /** Subject masks already found, by input id, so the preview's work is not done twice. */
@@ -228,6 +310,17 @@ const ready = computed(() => {
   if (t.id === 'ocr') return options.ocr.pdf || options.ocr.text;
   if (t.id === 'protect') return !!options.protect.password && options.protect.password === options.protect.confirm;
   if (t.id === 'crop') return !!options.crop.rect && options.crop.rect.width >= 1 && options.crop.rect.height >= 1;
+  if (t.id === 'sign') return options.sign.marks.length > 0;
+  if (t.id === 'fillform') {
+    const f = options.fillform;
+    return f.loaded && f.fields.length > 0 && (f.flatten || f.fields.some((x) => f.values[x.name] !== f.initial[x.name]));
+  }
+  if (t.id === 'redact') return options.redact.boxes.length > 0;
+  if (t.id === 'pdfcrop') {
+    const c = options.pdfcrop;
+    if (c.mode !== 'manual') return c.mode === 'size' || (Number.isFinite(c.margin) && c.margin >= 0);
+    return !!c.rect && !!c.frame && !isWhole(shareOf(c.rect, c.frame.width, c.frame.height));
+  }
   if (t.id === 'resize') {
     const r = options.resize;
     return r.mode === 'percent' ? positive(r.percent) : positive(r.width) && positive(r.height);
@@ -286,6 +379,32 @@ async function inspect(item: Item) {
   resetPageOptions();
 }
 
+/** What a form box holds when the file is opened, the way the screen keeps it. */
+function heldValue(f: FormField): string {
+  if (f.type === 'checkbox') return f.value && f.value !== 'Off' ? 'on' : '';
+  if (f.type === 'radiobutton') return f.value && f.value !== 'Off' ? f.value : '';
+  return f.value;
+}
+
+/** Read the form of the open PDF, its boxes and what they hold. */
+let formLoad = 0;
+async function loadForm() {
+  const mine = ++formLoad;
+  const f = firstPdf.value;
+  Object.assign(options.fillform, { fields: [], values: {}, initial: {}, page: 1, loaded: false });
+  if (!f?.pages) return;
+  let fields: FormField[] = [];
+  try {
+    fields = await formFields(f.input.path);
+  } catch {
+    // A form pdf.js cannot read is a PDF with nothing to fill in, here.
+  }
+  if (mine !== formLoad || tool.value !== 'fillform') return;
+  const values: Record<string, string> = {};
+  for (const field of fields) if (!(field.name in values) || heldValue(field)) values[field.name] = heldValue(field);
+  Object.assign(options.fillform, { fields, values, initial: { ...values }, page: fields[0]?.page ?? 1, loaded: true });
+}
+
 /** The crop box for a picture and an aspect: the largest that fits, centred. */
 function defaultCrop(width: number, height: number, aspect: string): Region {
   const [a, b] = aspect.split(':').map(Number);
@@ -303,6 +422,10 @@ function resetCrop() {
 
 function resetPageOptions() {
   if (tool.value === 'crop') resetCrop();
+  // What was placed or drawn belongs to the file it was on.
+  if (tool.value === 'sign') Object.assign(options.sign, { marks: [], page: 1, selected: null });
+  if (tool.value === 'redact') Object.assign(options.redact, { boxes: [], page: 1, selected: null });
+  if (tool.value === 'fillform') void loadForm();
   const pages = firstPdf.value?.pages ?? 0;
   if (tool.value === 'organize') options.organize.pages = slots(pages);
   if (tool.value === 'split') {
@@ -524,7 +647,12 @@ async function run() {
     switch (t.id) {
       case 'merge':
         result = await runPdfJob(started.id, ids, [
-          { name: outputName('merge', first), picks: files.map((_, source) => ({ source, pages: null, rotate: 0 })) },
+          {
+            name: outputName('merge', first),
+            picks: files.map((_, source) => ({ source, pages: null, rotate: 0 })),
+            // Each file under a bookmark of its name, its own bookmarks inside.
+            outline: options.merge.bookmarks ? { byFile: files.map((f) => stem(f.input.name)) } : 'keep',
+          },
         ]);
         break;
       case 'split': {
@@ -554,12 +682,17 @@ async function run() {
         );
         break;
       case 'img2pdf': {
-        // A JPEG goes in as it is; anything else is redrawn as one here.
+        // A JPEG goes in as it is; anything else is redrawn as one here, and
+        // a photo of a page is cut to the page and made flat.
+        const { straighten, scan, corners } = options.img2pdf;
         const jpegs: string[] = [];
         expect(files.length);
         for (const f of files) {
           check();
-          if (isJpegName(f.input.name)) jpegs.push(f.input.id);
+          if (straighten) {
+            const flat = await straightenedJpeg(f.input.path, corners[f.input.id] ?? WHOLE, scan);
+            jpegs.push((await api.stage(`${stem(f.input.name)}.jpg`, flat)).id);
+          } else if (isJpegName(f.input.name)) jpegs.push(f.input.id);
           else jpegs.push((await api.stage(`${stem(f.input.name)}.jpg`, await asJpeg(f.input.path))).id);
           tick();
         }
@@ -609,6 +742,115 @@ async function run() {
       case 'unlock':
         result = await api.unlock(started.id, perFile(t.id, files), options.unlock.password);
         break;
+      case 'pdfcrop': {
+        const c = options.pdfcrop;
+        const named = (boxes: api.FramedFile['boxes']) => (f: Item) => ({ ...perFile(t.id, [f])[0], boxes });
+        if (c.mode === 'size') {
+          const [width, height] = PAPERS[c.paper];
+          result = await api.frame(started.id, files.map(named([])), { width, height, orientation: c.orientation });
+        } else if (c.mode === 'manual') {
+          const box = shareOf(c.rect!, c.frame!.width, c.frame!.height);
+          result = await api.frame(started.id, files.map(named([box])), null);
+        } else {
+          // Each page to what is on it, found by drawing it.
+          expect(files.reduce((n, f) => n + (f.pages ?? 0), 0));
+          const framed: api.FramedFile[] = [];
+          for (const f of files) {
+            const boxes: api.FramedFile['boxes'] = [];
+            for (let p = 1; p <= (f.pages ?? 0); p++) {
+              check();
+              boxes.push(await contentBox(f.input.path, p, c.margin));
+              tick();
+            }
+            framed.push(named(boxes)(f));
+          }
+          result = await api.frame(started.id, framed, null);
+        }
+        break;
+      }
+      case 'sign': {
+        // Each mark drawn as the picture it becomes, at the page's own size.
+        const marks = options.sign.marks;
+        expect(marks.length);
+        const sizes = new Map<number, { width: number; height: number }>();
+        const pictures: Uint8Array[] = [];
+        const placed: Parameters<typeof api.place>[2] = [];
+        for (const m of marks) {
+          check();
+          if (!sizes.has(m.page)) sizes.set(m.page, await shownPageSize(files[0].input.path, m.page));
+          const picture = await markPicture(m, sizes.get(m.page)!);
+          pictures.push(picture.rgba);
+          placed.push({ page: m.page, share: edges(m), width: picture.width, height: picture.height });
+          tick();
+        }
+        const pixels = new Uint8Array(pictures.reduce((n, p) => n + p.length, 0));
+        pictures.reduce((at, p) => (pixels.set(p, at), at + p.length), 0);
+        result = await api.place(started.id, perFile(t.id, files), placed, pixels);
+        break;
+      }
+      case 'fillform': {
+        const ff = options.fillform;
+        const value = (f: FormField) => {
+          const v = ff.values[f.name] ?? '';
+          if (f.type === 'checkbox') return v ? 'on' : '';
+          if (f.type === 'radiobutton') return v && v === f.exportValue ? 'on' : '';
+          return v;
+        };
+        const kind = (f: FormField): api.Filled['kind'] =>
+          f.type === 'text' ? 'text' : f.type === 'checkbox' ? 'check' : f.type === 'radiobutton' ? 'radio' : 'choice';
+        const editable = ff.fields.filter((f) => !f.readOnly);
+        if (!ff.flatten) {
+          // Only what changed: an untouched box keeps its own appearance.
+          const changed = editable.filter((f) => ff.values[f.name] !== ff.initial[f.name]);
+          const values = changed.map((f) => ({ widget: f.id, kind: kind(f), value: value(f) }));
+          result = await api.fillForm(started.id, perFile(t.id, files), values, false, [], new Uint8Array());
+          break;
+        }
+        // Flattened: every box that holds something, drawn as it will stay.
+        const sizes = new Map<number, { width: number; height: number }>();
+        const pictures: Uint8Array[] = [];
+        const placed: Parameters<typeof api.place>[2] = [];
+        expect(ff.fields.length);
+        for (const f of ff.fields) {
+          check();
+          const v = value(f);
+          tick();
+          if (!v) continue;
+          if (!sizes.has(f.page)) sizes.set(f.page, await shownPageSize(files[0].input.path, f.page));
+          const label = f.choices?.find((c) => c.value === v)?.label ?? v;
+          const pic = f.type === 'checkbox'
+            ? valuePicture('check', '', f.box, sizes.get(f.page)!)
+            : f.type === 'radiobutton'
+              ? valuePicture('dot', '', f.box, sizes.get(f.page)!)
+              : valuePicture('text', label, f.box, sizes.get(f.page)!, f.multiline);
+          pictures.push(pic.rgba);
+          placed.push({ page: f.page, share: edges(f.box), width: pic.width, height: pic.height });
+        }
+        const pixels = new Uint8Array(pictures.reduce((n, p) => n + p.length, 0));
+        pictures.reduce((at, p) => (pixels.set(p, at), at + p.length), 0);
+        result = await api.fillForm(started.id, perFile(t.id, files), [], true, placed, pixels);
+        break;
+      }
+      case 'redact': {
+        const r = options.redact;
+        const byPage = new Map<number, Hidden[]>();
+        for (const b of r.boxes) byPage.set(b.page, [...(byPage.get(b.page) ?? []), b]);
+        // Read the words left on a blacked-out page only where Vision can.
+        const reading = r.ocr && !!vision.value?.text;
+        const languages = ocrLanguages(vision.value, 'vi');
+        expect(byPage.size);
+        const pages: { page: number; lines: TextLine[] }[] = [];
+        for (const [page, boxes] of [...byPage].sort((a, b) => a[0] - b[0])) {
+          check();
+          const drawn = await blackedPage(files[0].input.path, page, boxes);
+          await api.pagePut(started.id, files[0].input.id, page, drawn.jpeg);
+          const lines = reading ? await api.recognize(drawn.pixels.width, drawn.pixels.height, drawn.pixels.rgba, languages) : [];
+          pages.push({ page, lines });
+          tick();
+        }
+        result = await api.redact(started.id, perFile(t.id, files), pages, r.clean);
+        break;
+      }
       case 'pdf2text': {
         const tr = i18n.global.t;
         expect(files.length);
@@ -852,7 +1094,7 @@ function stopListening() {
 export function useWorkbench() {
   return {
     tool, current, items, usable, firstPdf, phase, progress, job, before, failure, options, unsaved, splitPlan, ready, webp,
-    resetCrop, defaultCrop, vision, askVision, maskFor, office, askOffice, installing, installError, installPdf2docx,
+    resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, office, askOffice, installing, installError, installPdf2docx,
     openTool, closeTool, addInputs, removeItem, moveItem, sortByName, clearItems, run, cancel, editAgain,
     showJob, chain, refreshUnsaved, noteSaved, listenForProgress, stopListening,
   };

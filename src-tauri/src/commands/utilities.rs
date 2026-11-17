@@ -30,7 +30,7 @@ use tauri::{Emitter, Manager};
 use crate::db::DbState;
 use crate::error::{AppError, AppResult};
 use crate::utilities::images::{self, Layout};
-use crate::utilities::{crypt, metadata, stamp};
+use crate::utilities::{crypt, form, frame, metadata, redact, stamp};
 use crate::utilities::pdf::{self, PdfError, Pick};
 use crate::utilities::workspace::{clean_name, unused_path, Input, Job, Output, Workspace, KEEP_FOR};
 
@@ -235,6 +235,10 @@ pub fn utility_cancel(job: String) {
 pub struct PdfOutput {
     pub name: String,
     pub picks: Vec<Pick>,
+    /// How its bookmarks are laid out: the sources' as they were, or under one
+    /// per file (a merge).
+    #[serde(default)]
+    pub outline: pdf::Outline,
 }
 
 /// Make new PDFs from pages of the inputs. `picks[].source` indexes `inputs`.
@@ -268,7 +272,7 @@ pub async fn utility_assemble(
             .sum();
         let mut before = 0;
         for output in &outputs {
-            let mut doc = pdf::assemble(&sources, &output.picks, |done, _| {
+            let mut doc = pdf::assemble(&sources, &output.picks, &output.outline, |done, _| {
                 let _ = emitter.emit("utility-progress", Progress { job: &id, done: before + done, total });
                 !flag.load(Ordering::SeqCst)
             })
@@ -381,6 +385,27 @@ pub async fn utility_subject_mask(request: tauri::ipc::Request<'_>) -> AppResult
     {
         let _ = request;
         Err(AppError::UnsupportedCapability("vision".into()))
+    }
+}
+
+/// The corners of the sheet of paper in a photo (RGBA as the body, its size
+/// in `x-utility-size`), as shares of the picture from its top left; nothing
+/// when there is none, or off macOS.
+#[tauri::command]
+pub async fn utility_find_document(request: tauri::ipc::Request<'_>) -> AppResult<Option<[[f64; 2]; 4]>> {
+    #[cfg(target_os = "macos")]
+    {
+        let (w, h) = picture_size(&request)?;
+        let rgba = body(&request)?;
+        tauri::async_runtime::spawn_blocking(move || crate::utilities::vision::find_document(w, h, rgba))
+            .await
+            .map_err(|e| AppError::General(e.to_string()))?
+            .map_err(vision_error)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = request;
+        Ok(None)
     }
 }
 
@@ -883,6 +908,151 @@ pub async fn utility_watermark(app: tauri::AppHandle, request: tauri::ipc::Reque
     .await
 }
 
+/// One picture for Sign and fill: where it goes and its size; its pixels are
+/// the next `width × height × 4` bytes of the body.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlacedArgs {
+    page: u32,
+    share: [f32; 4],
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PlaceArgs {
+    job: String,
+    files: Vec<PerFile>,
+    marks: Vec<PlacedArgs>,
+}
+
+/// Put the signatures, words and ticks the WebView drew on a PDF's pages.
+/// Their pixels are the body, one after another (RGBA); where each goes is
+/// the `x-utility-args` header, percent-encoded JSON.
+#[tauri::command]
+pub async fn utility_place(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<Job> {
+    let args: PlaceArgs = serde_json::from_str(&header(&request, "x-utility-args")?)?;
+    let items = pictures_in(&body(&request)?, &args.marks)?;
+    let id = args.job.clone();
+    per_file(
+        &app,
+        args.job,
+        args.files,
+        Box::new(move |ws, file, progress| pdf_step(ws, &id, file, "", |doc| stamp::place(doc, &items, &mut *progress))),
+    )
+    .await
+}
+
+/// The pictures in a body, one after another, cut by their sizes.
+fn pictures_in(body: &[u8], marks: &[PlacedArgs]) -> AppResult<Vec<stamp::Placed>> {
+    let mut items = Vec::with_capacity(marks.len());
+    let mut at = 0usize;
+    for mark in marks {
+        let len = (mark.width as usize).checked_mul(mark.height as usize).and_then(|p| p.checked_mul(4));
+        let Some(end) = len.and_then(|l| at.checked_add(l)).filter(|&end| end <= body.len()) else {
+            return Err(AppError::General("the pictures do not match their sizes".into()));
+        };
+        items.push(stamp::Placed {
+            page: mark.page,
+            share: mark.share,
+            picture: stamp::Picture { width: mark.width, height: mark.height, rgba: body[at..end].to_vec() },
+        });
+        at = end;
+    }
+    if at != body.len() {
+        return Err(AppError::General("the pictures do not match their sizes".into()));
+    }
+    Ok(items)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FillArgs {
+    job: String,
+    files: Vec<PerFile>,
+    values: Vec<form::Filled>,
+    /// Burn the values in and take the form away; the pictures of the values
+    /// are then the body, placed by `marks`.
+    #[serde(default)]
+    flatten: bool,
+    #[serde(default)]
+    marks: Vec<PlacedArgs>,
+}
+
+/// Fill in a PDF form: the values into its fields, or, flattened, drawn on
+/// its pages and the form taken off.
+#[tauri::command]
+pub async fn utility_fill_form(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<Job> {
+    let args: FillArgs = serde_json::from_str(&header(&request, "x-utility-args")?)?;
+    let items = if args.flatten { pictures_in(&body(&request)?, &args.marks)? } else { Vec::new() };
+    let (id, values, flatten) = (args.job.clone(), args.values, args.flatten);
+    per_file(
+        &app,
+        args.job,
+        args.files,
+        Box::new(move |ws, file, progress| {
+            pdf_step(ws, &id, file, "", |doc| {
+                if flatten {
+                    stamp::place(doc, &items, &mut *progress)?;
+                    form::strip(doc)
+                } else {
+                    form::fill(doc, &values)
+                }
+            })
+        }),
+    )
+    .await
+}
+
+/// A page drawn by the WebView with its black boxes painted in, waiting for
+/// [`utility_redact`]. Job, input and page number come in headers.
+#[tauri::command]
+pub async fn utility_page_put(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<()> {
+    let job = header(&request, "x-utility-job")?;
+    let input = header(&request, "x-utility-input")?;
+    let page: u32 = header(&request, "x-utility-page")?.parse().map_err(|_| AppError::General("bad page number".into()))?;
+    let bytes = body(&request)?;
+    let dir = workspace(&app)?.pending_dir(&job, &input)?;
+    tauri::async_runtime::spawn_blocking(move || std::fs::write(dir.join(format!("page-{page}.jpg")), bytes))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))??;
+    Ok(())
+}
+
+/// A page Redact replaces, and the words read back from its picture.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RedactedPage {
+    pub page: u32,
+    #[serde(default)]
+    pub lines: Vec<crate::utilities::searchable::Line>,
+}
+
+/// Replace the pages put with [`utility_page_put`] by those pictures, and
+/// drop what nothing points at any more. With `clean`, the document's title,
+/// author and the like go too.
+#[tauri::command]
+pub async fn utility_redact(app: tauri::AppHandle, job: String, files: Vec<PerFile>, pages: Vec<RedactedPage>, clean: bool) -> AppResult<Job> {
+    let id = job.clone();
+    per_file(
+        &app,
+        job,
+        files,
+        Box::new(move |ws, file, progress| {
+            let pending = ws.pending_dir(&id, &file.input)?;
+            let mut blacked = Vec::with_capacity(pages.len());
+            for page in &pages {
+                let jpeg = std::fs::read(pending.join(format!("page-{}.jpg", page.page)))
+                    .map_err(|_| AppError::General(format!("page {} was not drawn", page.page)))?;
+                blacked.push(redact::Blacked { page: page.page, jpeg, lines: page.lines.clone() });
+            }
+            pdf_step(ws, &id, file, "", |doc| redact::redact(doc, &blacked, clean, &mut *progress))
+        }),
+    )
+    .await
+}
+
 /// Number the pages of each input.
 #[tauri::command]
 pub async fn utility_number_pages(app: tauri::AppHandle, job: String, files: Vec<PerFile>, numbering: stamp::Numbering) -> AppResult<Job> {
@@ -892,6 +1062,37 @@ pub async fn utility_number_pages(app: tauri::AppHandle, job: String, files: Vec
         job,
         files,
         Box::new(move |ws, file, progress| pdf_step(ws, &id, file, "", |doc| stamp::number_pages(doc, &numbering, &mut *progress))),
+    )
+    .await
+}
+
+/// One PDF to crop, with its boxes: one for every page, or one per page.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FramedFile {
+    pub input: String,
+    pub name: String,
+    #[serde(default)]
+    pub boxes: Vec<Option<frame::Share>>,
+}
+
+/// Crop each input's pages to their boxes, or, given `paper`, put every page
+/// on paper of that size.
+#[tauri::command]
+pub async fn utility_frame(app: tauri::AppHandle, job: String, files: Vec<FramedFile>, paper: Option<frame::Paper>) -> AppResult<Job> {
+    let id = job.clone();
+    let boxes: HashMap<String, Vec<Option<frame::Share>>> = files.iter().map(|f| (f.input.clone(), f.boxes.clone())).collect();
+    let per: Vec<PerFile> = files.into_iter().map(|f| PerFile { input: f.input, name: f.name }).collect();
+    per_file(
+        &app,
+        job,
+        per,
+        Box::new(move |ws, file, progress| {
+            pdf_step(ws, &id, file, "", |doc| match paper {
+                Some(paper) => frame::resize(doc, paper, &mut *progress),
+                None => frame::crop(doc, boxes.get(&file.input).map(Vec::as_slice).unwrap_or(&[]), &mut *progress),
+            })
+        }),
     )
     .await
 }

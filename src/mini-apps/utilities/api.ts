@@ -46,6 +46,8 @@ export interface Pick {
 export interface PdfOutput {
   name: string;
   picks: Pick[];
+  /** Bookmarks: each source's as they were, or under one per file (`pdf::Outline`). */
+  outline?: 'keep' | { byFile: string[] };
 }
 
 export interface Layout {
@@ -177,6 +179,62 @@ export function watermark(
 
 export function numberPages(job: string, files: PerFile[], numbering: Numbering): Promise<Job> {
   return invoke<Job>('utility_number_pages', { job, files, numbering });
+}
+
+/** Pictures to put on a PDF's pages: where each goes, and its pixels one after another. */
+export function place(
+  job: string,
+  files: PerFile[],
+  marks: { page: number; share: [number, number, number, number]; width: number; height: number }[],
+  pixels: Uint8Array,
+): Promise<Job> {
+  const args = { job, files, marks };
+  return invoke<Job>('utility_place', pixels, { headers: { 'x-utility-args': encodeURIComponent(JSON.stringify(args)) } });
+}
+
+/** The corners of the sheet of paper in a photo, top left first, as shares; `null` if none (or off macOS). */
+export function findDocument(width: number, height: number, rgba: Uint8Array): Promise<[number, number][] | null> {
+  return invoke<[number, number][] | null>('utility_find_document', rgba, { headers: { 'x-utility-size': `${width}x${height}` } });
+}
+
+/** A page drawn with its black boxes, waiting for `redact`. */
+export function pagePut(job: string, input: string, page: number, jpeg: Uint8Array): Promise<void> {
+  return invoke('utility_page_put', jpeg, { headers: { 'x-utility-job': job, 'x-utility-input': input, 'x-utility-page': String(page) } });
+}
+
+/** Replace the pages put with `pagePut` by those pictures; `clean` takes the document information out too. */
+export function redact(job: string, files: PerFile[], pages: { page: number; lines: TextLine[] }[], clean: boolean): Promise<Job> {
+  return invoke<Job>('utility_redact', { job, files, pages, clean });
+}
+
+/** One form box's value for Rust (`form::Filled`). */
+export interface Filled {
+  widget: string;
+  kind: 'text' | 'check' | 'radio' | 'choice';
+  value: string;
+}
+
+/** Fill in a form: the values into its fields, or flattened, their pictures placed and the form taken off. */
+export function fillForm(
+  job: string,
+  files: PerFile[],
+  values: Filled[],
+  flatten: boolean,
+  marks: Parameters<typeof place>[2],
+  pixels: Uint8Array,
+): Promise<Job> {
+  const args = { job, files, values, flatten, marks };
+  return invoke<Job>('utility_fill_form', pixels, { headers: { 'x-utility-args': encodeURIComponent(JSON.stringify(args)) } });
+}
+
+/** One PDF to crop: its boxes, one for every page or one per page (`null` leaves a page). */
+export interface FramedFile extends PerFile {
+  boxes: ([number, number, number, number] | null)[];
+}
+
+/** Crop each file's pages, or with `paper`, put every page on paper of that size. */
+export function frame(job: string, files: FramedFile[], paper: { width: number; height: number; orientation: Layout['orientation'] } | null): Promise<Job> {
+  return invoke<Job>('utility_frame', { job, files, paper });
 }
 
 export function protect(job: string, files: PerFile[], password: string): Promise<Job> {

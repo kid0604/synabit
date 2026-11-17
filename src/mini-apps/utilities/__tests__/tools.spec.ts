@@ -227,3 +227,27 @@ describe('U-4 helpers', () => {
     expect(outputName('compress', 'scan.pdf')).toBe('scan-nen.pdf');
   });
 });
+
+describe('what Redact finds', async () => {
+  const { finder, foldChars } = await import('../tools');
+  const found = (kind: Parameters<typeof finder>[0], query: string, text: string) => {
+    const folded = foldChars(text);
+    return finder(kind, query)(folded).map(([a, b]) => Array.from(text).slice(a, b).join(''));
+  };
+
+  it('finds words however they are accented or capitalised, in place', () => {
+    expect(found('text', 'nguyen van a', 'Họ tên: NGUYỄN VĂN A, sinh năm 1990')).toEqual(['NGUYỄN VĂN A']);
+    expect(found('text', 'Đà Nẵng', 'Đà Nẵng và da nang')).toEqual(['Đà Nẵng', 'da nang']);
+    expect(found('text', '   ', 'anything')).toEqual([]);
+  });
+
+  it('finds phone numbers as people write them, and not inside longer numbers', () => {
+    expect(found('phone', '', 'Gọi 0912 345 678 hoặc +84 912.345.678')).toEqual(['0912 345 678', '+84 912.345.678']);
+    expect(found('phone', '', 'Mã 1234567890123')).toEqual([]);
+  });
+
+  it('finds emails and ID numbers', () => {
+    expect(found('email', '', 'Liên hệ: An.Nguyen@vi-du.vn.')).toEqual(['An.Nguyen@vi-du.vn']);
+    expect(found('id', '', 'CCCD 001090012345, CMND 123456789, số 12345678901234')).toEqual(['001090012345', '123456789']);
+  });
+});

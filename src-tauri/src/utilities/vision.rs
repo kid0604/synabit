@@ -7,6 +7,8 @@
 //! - **Subject:** `VNGenerateForegroundInstanceMaskRequest`, macOS 14 or later —
 //!   the same "lift subject" Photos does. The mask comes back at the picture's
 //!   size, one byte a pixel; the WebView puts it in the picture's alpha.
+//! - **A page in a photo:** `VNDetectDocumentSegmentationRequest`, its four
+//!   corners, so a photo of a paper can be straightened into a scan.
 //! - **Text:** `VNRecognizeTextRequest`, with Vietnamese where this macOS
 //!   offers it. Lines come back with where they sit on the page, which is what
 //!   `searchable` needs to make a scan searchable.
@@ -352,6 +354,44 @@ unsafe fn read_mask(buffer: *mut CVBuffer, width: usize, height: usize) -> Resul
     Ok(out)
 }
 
+/// The four corners of a sheet of paper in a photo, as shares of the picture
+/// from its top left: top left, top right, bottom right, bottom left. `None`
+/// when there is no page to be seen.
+///
+/// `VNDetectDocumentSegmentationRequest` (macOS 12) is made for this; where it
+/// is missing, `VNDetectRectanglesRequest` finds the largest rectangle.
+pub fn find_document(width: u32, height: u32, rgba: Vec<u8>) -> Result<Option<[[f64; 2]; 4]>, VisionError> {
+    let image = Image::new(width, height, rgba)?;
+    autoreleasepool(|_| {
+        let request = match new_request(c"VNDetectDocumentSegmentationRequest") {
+            Ok(r) => r,
+            Err(_) => {
+                let r = new_request(c"VNDetectRectanglesRequest")?;
+                unsafe {
+                    let _: () = msg_send![&*r, setMaximumObservations: 1usize];
+                    let _: () = msg_send![&*r, setMinimumSize: 0.25f32];
+                    let _: () = msg_send![&*r, setMinimumAspectRatio: 0.2f32];
+                    let _: () = msg_send![&*r, setQuadratureTolerance: 25f32];
+                }
+                r
+            }
+        };
+        let handler = handler(&image)?;
+        perform(&handler, &request)?;
+        let Some(found) = first_result(&request) else { return Ok(None) };
+        unsafe {
+            let corners: [CGPoint; 4] = [
+                msg_send![&*found, topLeft],
+                msg_send![&*found, topRight],
+                msg_send![&*found, bottomRight],
+                msg_send![&*found, bottomLeft],
+            ];
+            // Vision's origin is the bottom left; the screen's is the top left.
+            Ok(Some(corners.map(|p| [p.x.clamp(0.0, 1.0), 1.0 - p.y.clamp(0.0, 1.0)])))
+        }
+    })
+}
+
 unsafe fn set_accurate(request: &AnyObject) {
     // VNRequestTextRecognitionLevelAccurate
     let _: () = msg_send![request, setRecognitionLevel: 0isize];
@@ -410,6 +450,41 @@ mod tests {
     #[test]
     fn a_picture_of_the_wrong_size_is_refused() {
         assert!(Image::new(2, 2, vec![0; 3]).is_err());
+    }
+
+    /// A white sheet, turned a little, on a dark table, with lines of "text".
+    fn photo_of_a_page() -> (u32, u32, Vec<u8>, [[f64; 2]; 4]) {
+        let (w, h) = (600u32, 800u32);
+        let corners = [[0.22, 0.12], [0.80, 0.18], [0.74, 0.88], [0.16, 0.82]];
+        let inside = |x: f64, y: f64| {
+            // Inside the quadrilateral: on the same side of every edge.
+            (0..4).all(|i| {
+                let (a, b) = (corners[i], corners[(i + 1) % 4]);
+                (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]) >= 0.0
+            })
+        };
+        let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let (fx, fy) = (x as f64 / w as f64, y as f64 / h as f64);
+                let v: u8 = if inside(fx, fy) {
+                    if (y / 14) % 3 == 0 && (x / 9) % 7 != 0 { 40 } else { 245 }
+                } else {
+                    60
+                };
+                rgba.extend_from_slice(&[v, v, v.saturating_sub(10), 255]);
+            }
+        }
+        (w, h, rgba, corners)
+    }
+
+    #[test]
+    fn a_sheet_of_paper_is_found_in_a_photo() {
+        let (w, h, rgba, corners) = photo_of_a_page();
+        let found = find_document(w, h, rgba).unwrap().expect("a page");
+        for (got, want) in found.iter().zip(corners) {
+            assert!((got[0] - want[0]).abs() < 0.06 && (got[1] - want[1]).abs() < 0.06, "{found:?} vs {corners:?}");
+        }
     }
 
     #[test]

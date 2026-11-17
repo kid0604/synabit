@@ -5,7 +5,8 @@
  * move the box and ⌥ + arrows size it (⇧ for bigger steps), so it works
  * without a mouse.
  *
- * The box lives in the picture's own pixels (`options.crop.rect`); this only
+ * The box lives in the picture's own pixels (`options.crop.rect`, or
+ * `options.pdfcrop.rect` for a PDF page drawn as a picture, `src`); this only
  * draws it scaled to fit the screen.
  */
 import { computed, ref } from 'vue';
@@ -13,7 +14,10 @@ import { useI18n } from 'vue-i18n';
 import { fileUrl, type Region } from '../render';
 import { useWorkbench } from '../useWorkbench';
 
-const props = defineProps<{ path: string; width: number; height: number }>();
+const props = withDefaults(
+  defineProps<{ path?: string; src?: string; width: number; height: number; target?: 'crop' | 'pdfcrop' }>(),
+  { path: undefined, src: undefined, target: 'crop' },
+);
 const { t } = useI18n();
 const wb = useWorkbench();
 
@@ -22,7 +26,11 @@ const MAX_H = 460;
 const scale = computed(() => Math.min(MAX_W / props.width, MAX_H / props.height, 1));
 const shown = computed(() => ({ width: props.width * scale.value, height: props.height * scale.value }));
 
-const rect = computed(() => wb.options.crop.rect);
+/** The options this box edits: the image crop's, or the PDF crop's. */
+const opts = computed(() => wb.options[props.target]);
+const picture = computed(() => props.src ?? (props.path ? fileUrl(props.path) : ''));
+
+const rect = computed(() => opts.value.rect);
 const box = computed(() => {
   const r = rect.value;
   if (!r) return null;
@@ -31,7 +39,7 @@ const box = computed(() => {
 });
 
 const ratio = computed(() => {
-  const [a, b] = wb.options.crop.aspect.split(':').map(Number);
+  const [a, b] = opts.value.aspect.split(':').map(Number);
   return a && b ? a / b : null;
 });
 
@@ -63,7 +71,7 @@ function move(e: PointerEvent) {
   const dy = (e.clientY - d.startY) / scale.value;
   const f = d.from;
   if (d.grip === 'move') {
-    wb.options.crop.rect = clampRect({ ...f, x: f.x + dx, y: f.y + dy });
+    opts.value.rect = clampRect({ ...f, x: f.x + dx, y: f.y + dy });
     return;
   }
   const left = d.grip === 'nw' || d.grip === 'sw';
@@ -81,7 +89,7 @@ function move(e: PointerEvent) {
     width = Math.min(width, height * ratio.value);
     height = width / ratio.value;
   }
-  wb.options.crop.rect = {
+  opts.value.rect = {
     x: left ? f.x + f.width - width : f.x,
     y: top ? f.y + f.height - height : f.y,
     width,
@@ -102,7 +110,7 @@ function nudge(e: KeyboardEvent) {
   if (!m) return;
   e.preventDefault();
   if (!e.altKey) {
-    wb.options.crop.rect = clampRect({ ...r, x: r.x + m[0], y: r.y + m[1] });
+    opts.value.rect = clampRect({ ...r, x: r.x + m[0], y: r.y + m[1] });
     return;
   }
   // ⌥ sizes it instead, from the bottom right corner, keeping any ratio.
@@ -113,7 +121,7 @@ function nudge(e: KeyboardEvent) {
     else width = height * ratio.value;
     if (r.x + width > props.width || r.y + height > props.height) return;
   }
-  wb.options.crop.rect = { ...r, width, height };
+  opts.value.rect = { ...r, width, height };
 }
 
 const size = computed(() => (rect.value ? `${Math.round(rect.value.width)} × ${Math.round(rect.value.height)}` : ''));
@@ -122,7 +130,7 @@ const size = computed(() => (rect.value ? `${Math.round(rect.value.width)} × ${
 <template>
   <div class="flex flex-col items-start gap-2">
     <div class="relative select-none touch-none overflow-hidden" :style="{ width: `${shown.width}px`, height: `${shown.height}px` }">
-      <img :src="fileUrl(path)" alt="" class="block w-full h-full rounded-sm" draggable="false" />
+      <img :src="picture" alt="" class="block w-full h-full rounded-sm" draggable="false" />
       <template v-if="box">
         <div
           role="slider"
@@ -160,7 +168,7 @@ const size = computed(() => (rect.value ? `${Math.round(rect.value.width)} × ${
         </div>
       </template>
     </div>
-    <p class="text-sm text-text-secondary dark:text-text-secondary-dark tabular-nums m-0">{{ t('utilities.crop.size', { size }) }}</p>
+    <p v-if="target === 'crop'" class="text-sm text-text-secondary dark:text-text-secondary-dark tabular-nums m-0">{{ t('utilities.crop.size', { size }) }}</p>
     <p class="text-xs text-muted dark:text-muted-dark m-0">{{ t('utilities.crop.keys') }}</p>
   </div>
 </template>

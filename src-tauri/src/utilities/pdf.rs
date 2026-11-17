@@ -25,16 +25,18 @@
 //! page moved under a new parent loses them, and comes out blank or the wrong
 //! size. They are copied down onto the page before it moves.
 //!
-//! # What is not kept
+//! # What hangs off the catalog
 //!
-//! The outline (bookmarks), forms, the structure tree and named destinations
-//! hang off the catalog, not off pages, so a new document starts without
-//! them. Keeping bookmarks in a merge is listed for later in the design.
+//! Bookmarks, page labels, form fields, named destinations and layers belong
+//! to the catalog, not to pages; `catalog` carries them over for the pages that
+//! came along. The structure tree (tags) is not kept.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use lopdf::{Dictionary, Document, Object, ObjectId};
+
+pub use super::catalog::Outline;
 
 /// Why a PDF could not be used.
 #[derive(Debug, thiserror::Error)]
@@ -118,6 +120,7 @@ pub fn turned(current: i64, delta: i32) -> i64 {
 pub fn assemble(
     sources: &[Document],
     picks: &[Pick],
+    outline: &Outline,
     mut progress: impl FnMut(usize, usize) -> bool,
 ) -> Result<Document, PdfError> {
     // Resolve the picks into one flat list of pages first, so a bad page
@@ -197,6 +200,19 @@ pub fn assemble(
     let mut catalog = Dictionary::new();
     catalog.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog.set("Pages", Object::Reference(pages_id));
+    let order: Vec<(usize, ObjectId)> = wanted.iter().map(|&(source, id, _)| (source, id)).collect();
+    super::catalog::carry(
+        super::catalog::Placed {
+            sources,
+            copiers: &mut copiers,
+            pages_of: &placed_by_source,
+            order: &order,
+            pages_id,
+        },
+        &mut target,
+        &mut catalog,
+        outline,
+    );
     let catalog_id = target.add_object(catalog);
     target.trailer.set("Root", Object::Reference(catalog_id));
 
@@ -282,19 +298,24 @@ fn flattened_page(doc: &Document, id: ObjectId) -> Result<Dictionary, PdfError> 
 
 /// Copies objects from one source into the target, each at most once.
 #[derive(Default)]
-struct Copier {
+pub(super) struct Copier {
     /// Source id → target id, for every object already copied or queued.
     mapped: HashMap<ObjectId, ObjectId>,
 }
 
 impl Copier {
+    /// Where an object of the source went, if it was copied.
+    pub(super) fn mapped(&self, old: ObjectId) -> Option<ObjectId> {
+        self.mapped.get(&old).copied()
+    }
+
     /// `object` with every reference it reaches copied into `target`.
     ///
     /// References to pages go to the page's place in the new document if it
     /// has one (`placed`), and become `null` if it does not. A reference to the
     /// source's page tree becomes the new one, so a page's `/Parent` — or an
     /// annotation's — never pulls in the old tree.
-    fn copy(
+    pub(super) fn copy(
         &mut self,
         doc: &Document,
         target: &mut Document,
@@ -510,14 +531,14 @@ pub(crate) mod tests {
     #[test]
     fn merging_keeps_every_page_in_order() {
         let sources = [sample(3, "a"), sample(2, "b")];
-        let out = round_trip(assemble(&sources, &[all(0), all(1)], keep_going).unwrap());
+        let out = round_trip(assemble(&sources, &[all(0), all(1)], &Outline::Keep, keep_going).unwrap());
         assert_eq!(labels(&out), ["a-1", "a-2", "a-3", "b-1", "b-2"]);
     }
 
     #[test]
     fn a_moved_page_keeps_what_it_inherited() {
         let sources = [sample(2, "a")];
-        let out = round_trip(assemble(&sources, &[all(0)], keep_going).unwrap());
+        let out = round_trip(assemble(&sources, &[all(0)], &Outline::Keep, keep_going).unwrap());
         for (_, id) in out.get_pages() {
             let page = out.get_dictionary(id).unwrap();
             let size: Vec<f32> =
@@ -536,7 +557,7 @@ pub(crate) mod tests {
     fn splitting_copies_only_the_pages_asked_for() {
         let sources = [sample(10, "a")];
         let part = Pick { source: 0, pages: Some(vec![4, 5]), rotate: 0 };
-        let out = round_trip(assemble(&sources, &[part], keep_going).unwrap());
+        let out = round_trip(assemble(&sources, &[part], &Outline::Keep, keep_going).unwrap());
         assert_eq!(labels(&out), ["a-4", "a-5"]);
         // Two pages, two content streams, one font, one resource dictionary,
         // the tree and the catalog — not the eight other pages. (The
@@ -552,7 +573,7 @@ pub(crate) mod tests {
             Pick { source: 0, pages: Some(vec![3]), rotate: 90 },
             Pick { source: 0, pages: Some(vec![1]), rotate: -90 },
         ];
-        let out = round_trip(assemble(&sources, &picks, keep_going).unwrap());
+        let out = round_trip(assemble(&sources, &picks, &Outline::Keep, keep_going).unwrap());
         assert_eq!(labels(&out), ["a-3", "a-1"]);
         assert_eq!(rotation(&out, 1), 90);
         assert_eq!(rotation(&out, 2), 270);
@@ -570,7 +591,7 @@ pub(crate) mod tests {
     fn the_same_page_twice_is_two_pages() {
         let sources = [sample(2, "a")];
         let picks = [Pick { source: 0, pages: Some(vec![1, 1]), rotate: 0 }];
-        let out = round_trip(assemble(&sources, &picks, keep_going).unwrap());
+        let out = round_trip(assemble(&sources, &picks, &Outline::Keep, keep_going).unwrap());
         assert_eq!(labels(&out), ["a-1", "a-1"]);
     }
 
@@ -588,7 +609,7 @@ pub(crate) mod tests {
         });
         doc.get_dictionary_mut(first).unwrap().set("Annots", vec![Object::Reference(link)]);
 
-        let out = round_trip(assemble(&[doc], &[Pick { source: 0, pages: Some(vec![1]), rotate: 0 }], keep_going).unwrap());
+        let out = round_trip(assemble(&[doc], &[Pick { source: 0, pages: Some(vec![1]), rotate: 0 }], &Outline::Keep, keep_going).unwrap());
         assert_eq!(labels(&out), ["a-1"]);
         let page_count = out
             .objects
@@ -602,7 +623,7 @@ pub(crate) mod tests {
     fn a_page_that_does_not_exist_is_refused() {
         let sources = [sample(2, "a")];
         let picks = [Pick { source: 0, pages: Some(vec![3]), rotate: 0 }];
-        match assemble(&sources, &picks, keep_going) {
+        match assemble(&sources, &picks, &Outline::Keep, keep_going) {
             Err(PdfError::NoSuchPage { page: 3, count: 2 }) => {}
             other => panic!("{:?}", other.map(|_| ())),
         }
@@ -612,7 +633,7 @@ pub(crate) mod tests {
     fn nothing_picked_is_refused() {
         let sources = [sample(2, "a")];
         assert!(matches!(
-            assemble(&sources, &[Pick { source: 0, pages: Some(vec![]), rotate: 0 }], keep_going),
+            assemble(&sources, &[Pick { source: 0, pages: Some(vec![]), rotate: 0 }], &Outline::Keep, keep_going),
             Err(PdfError::Empty)
         ));
     }
@@ -620,7 +641,7 @@ pub(crate) mod tests {
     #[test]
     fn stopping_stops() {
         let sources = [sample(5, "a")];
-        let result = assemble(&sources, &[all(0)], |done, _| done < 2);
+        let result = assemble(&sources, &[all(0)], &Outline::Keep, |done, _| done < 2);
         assert!(matches!(result, Err(PdfError::Cancelled)));
     }
 
@@ -642,13 +663,13 @@ pub(crate) mod tests {
         let started = std::time::Instant::now();
         let sources: Vec<_> = paths.iter().map(|p| open(p).unwrap()).collect();
         let picks: Vec<_> = (0..sources.len()).map(all).collect();
-        let mut merged = assemble(&sources, &picks, keep_going).unwrap();
+        let mut merged = assemble(&sources, &picks, &Outline::Keep, keep_going).unwrap();
         let total = page_count(&merged);
         save(&mut merged, &out.join("merged.pdf")).unwrap();
         let half = total / 2;
         for (name, pages) in [("first-half.pdf", (1..=half).collect::<Vec<_>>()), ("second-half.pdf", (half + 1..=total).collect())] {
             let reopened = open(&out.join("merged.pdf")).unwrap();
-            let mut part = assemble(&[reopened], &[Pick { source: 0, pages: Some(pages), rotate: 90 }], keep_going).unwrap();
+            let mut part = assemble(&[reopened], &[Pick { source: 0, pages: Some(pages), rotate: 90 }], &Outline::Keep, keep_going).unwrap();
             save(&mut part, &out.join(name)).unwrap();
         }
         println!("{} files, {total} pages, {:?}", paths.len(), started.elapsed());

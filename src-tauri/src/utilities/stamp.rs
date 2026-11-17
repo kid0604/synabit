@@ -1,4 +1,5 @@
-//! Things drawn on top of existing pages: a watermark, page numbers.
+//! Things drawn on top of existing pages: a watermark, page numbers, and the
+//! signatures, words and ticks of Sign and fill.
 //!
 //! # A watermark is a picture
 //!
@@ -313,6 +314,40 @@ pub fn watermark(
     Ok(())
 }
 
+/// A picture to put on one page, in a box given as shares of the page as it
+/// is shown: left, top, right, bottom, 0–1 from the top left.
+pub struct Placed {
+    /// 1-based.
+    pub page: u32,
+    pub share: [f32; 4],
+    pub picture: Picture,
+}
+
+/// Put pictures on pages, each filling its box: a signature, a line of text,
+/// a date, a tick, drawn by the WebView in the system font.
+pub fn place(doc: &mut Document, items: &[Placed], mut progress: impl FnMut(usize, usize) -> bool) -> Result<(), PdfError> {
+    let numbered = doc.get_pages();
+    for (i, item) in items.iter().enumerate() {
+        if !progress(i, items.len()) {
+            return Err(PdfError::Cancelled);
+        }
+        let page = *numbered.get(&item.page).ok_or(PdfError::NoSuchPage { page: item.page, count: numbered.len() as u32 })?;
+        let [l, t, r, b] = item.share.map(|v| v.clamp(0.0, 1.0));
+        if r - l <= 0.0 || b - t <= 0.0 {
+            continue;
+        }
+        let image = add_picture(doc, &item.picture)?;
+        let seen = seen(doc, page);
+        let (pw, ph) = seen.size();
+        let (x, y, w, h) = (l * pw, (1.0 - b) * ph, (r - l) * pw, (b - t) * ph);
+        let name = add_resource(doc, page, b"XObject", "SynabitPlaced", image)?;
+        let drawing = format!("q {}\n{} /{name} Do\nQ\n", cm(seen.matrix()), cm([w, 0.0, 0.0, h, x, y]));
+        add_drawing(doc, page, drawing, false)?;
+    }
+    progress(items.len(), items.len());
+    Ok(())
+}
+
 /// Page object ids for 1-based numbers; every page when `pages` is empty.
 fn targets(doc: &Document, pages: &[u32]) -> Result<Vec<ObjectId>, PdfError> {
     let all = doc.get_pages();
@@ -526,5 +561,22 @@ mod tests {
     fn a_number_format_outside_latin_is_refused() {
         assert!(number_text("Trang {n}", 3, 9).is_ok());
         assert!(number_text("Tr\u{1ea1}ng {n}", 3, 9).is_err());
+    }
+
+    #[test]
+    fn a_signature_lands_in_its_box_on_its_page() {
+        let mut doc = sample(2, "p");
+        let picture = Picture { width: 2, height: 1, rgba: vec![0, 0, 0, 255, 0, 0, 0, 0] };
+        let items = [Placed { page: 2, share: [0.5, 0.75, 0.9, 0.85], picture }];
+        place(&mut doc, &items, |_, _| true).unwrap();
+        let doc = round_trip(doc);
+        assert_eq!(labels(&doc), ["p-1", "p-2"]);
+        let page2 = doc.get_pages()[&2];
+        let content = String::from_utf8(doc.get_page_content(page2).unwrap()).unwrap();
+        // A4 is 595 × 842: 40% of the width, 10% of the height, 15% up from the bottom.
+        assert!(content.contains("238 0 0 84.2 297.5 126.3 cm /SynabitPlaced Do"), "{content}");
+        let page1 = doc.get_pages()[&1];
+        assert!(!String::from_utf8(doc.get_page_content(page1).unwrap()).unwrap().contains("SynabitPlaced"));
+        assert!(place(&mut round_trip(sample(1, "p")), &[Placed { page: 3, share: [0.0, 0.0, 1.0, 1.0], picture: Picture { width: 1, height: 1, rgba: vec![0; 4] } }], |_, _| true).is_err());
     }
 }

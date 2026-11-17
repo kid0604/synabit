@@ -1027,6 +1027,30 @@
         "desc": "An editable .docx, keeping paragraphs, tables and pictures where it can",
         "verb": "Convert | Convert {n} files",
         "running": "Converting…"
+      },
+      "pdfcrop": {
+        "name": "Crop & page size",
+        "desc": "Trim the margins, cut pages to a box, or put them on A4",
+        "verb": "Crop | Crop {n} files",
+        "running": "Cropping…"
+      },
+      "sign": {
+        "name": "Sign & fill",
+        "desc": "Put your signature, words, a date or ticks on the pages",
+        "verb": "Sign",
+        "running": "Signing…"
+      },
+      "fillform": {
+        "name": "Fill form",
+        "desc": "Type into a PDF form's own fields, or flatten it",
+        "verb": "Save filled form",
+        "running": "Filling in…"
+      },
+      "redact": {
+        "name": "Redact",
+        "desc": "Black out text and take it out of the file for good",
+        "verb": "Redact",
+        "running": "Redacting…"
       }
     },
     "categories": {
@@ -1237,7 +1261,22 @@
       "compress_2_hint": "Pictures at {dpi} dpi. Softer; good for sending by chat.",
       "compress_pdf_hint": "Only pictures are changed; text and drawings stay exactly as they are. A file with few pictures will not get much smaller.",
       "office2pdf_hint": "Each file becomes a PDF laid out by LibreOffice. Fonts the document uses but this Mac lacks are replaced by similar ones.",
-      "pdf2word_hint": "Works well for text documents. Complex layouts, many columns and scans come out less faithfully; a scan needs Recognise text first."
+      "pdf2word_hint": "Works well for text documents. Complex layouts, many columns and scans come out less faithfully; a scan needs Recognise text first.",
+      "merge_bookmarks": "Bookmark each file by its name",
+      "merge_bookmarks_hint": "Each file's own bookmarks stay, under its name.",
+      "frame_by": "How to crop",
+      "frame_auto": "Trim margins",
+      "frame_manual": "By hand",
+      "frame_size": "Page size",
+      "frame_margin": "Space left around the content",
+      "frame_auto_hint": "Each page is cut to what is on it, so pages with different margins all come out tight.",
+      "frame_manual_hint": "Drag the box on the first page. Every page is cut the same way.",
+      "frame_size_hint": "Each page is scaled to fit the paper and centred. Nothing is cut off.",
+      "paper": "Paper",
+      "paper_a4": "A4",
+      "paper_a5": "A5",
+      "paper_letter": "Letter",
+      "paper_legal": "Legal"
     },
     "progress": {
       "of": "{done} / {total}",
@@ -1340,6 +1379,88 @@
       "install": "Install (about 150 MB)",
       "installing": "Installing… this takes a minute or two",
       "brew_hint": "With Homebrew: brew install --cask libreoffice"
+    },
+    "frame": {
+      "not_drawn": "This page could not be drawn.",
+      "caption_auto": "Page 1: the dashed box is what is kept.",
+      "caption_manual": "Page 1: the same box is used on every page.",
+      "caption_size": "Page 1 on the new paper."
+    },
+    "board": {
+      "previous": "Previous page",
+      "next": "Next page",
+      "page": "Page",
+      "resize": "Drag to resize",
+      "marked_pages": "On pages {pages}"
+    },
+    "sign": {
+      "add": "Add",
+      "kind_signature": "Signature",
+      "kind_text": "Text",
+      "kind_date": "Date",
+      "kind_check": "Tick",
+      "kind_cross": "Cross",
+      "ink": "Ink",
+      "ink_black": "Black ink",
+      "ink_blue": "Blue ink",
+      "signatures": "Your signatures",
+      "place_this": "Place signature {n}",
+      "draw": "Draw a signature",
+      "from_picture": "From a photo",
+      "not_kept": "Signatures are kept until you close the app, not saved anywhere.",
+      "words": "Words",
+      "empty_text": "Type here",
+      "every_page": "On every page",
+      "remove": "Remove",
+      "hint": "Things are added in the middle of the page you are on. Drag to move, the corner to resize, Delete to remove.",
+      "pad_title": "Draw your signature",
+      "pad_hint": "Sign with the mouse, the trackpad or a pen.",
+      "pad_area": "Signature pad",
+      "clear": "Clear",
+      "cancel": "Cancel",
+      "use": "Use this signature"
+    },
+    "form": {
+      "reading": "Reading the form…",
+      "none_title": "This PDF has no fields to fill in",
+      "none_body": "Use Sign & fill to put words, a date or ticks anywhere on its pages.",
+      "count": "{n} fields on {pages} pages. Type straight into them on the page.",
+      "hint": "Type straight into the fields on the page.",
+      "flatten": "Flatten (the fields become part of the page)",
+      "flatten_hint": "The values are drawn onto the pages and the form is removed, so they look the same in every app and cannot be changed by filling in again.",
+      "keep_hint": "The values go into the fields and the form stays fillable. Apps redraw the values in their own font.",
+      "unnamed": "Field"
+    },
+    "redact": {
+      "find": "Find and black out",
+      "kind_text": "Words",
+      "kind_phone": "Phone numbers",
+      "kind_email": "Emails",
+      "kind_id": "ID numbers",
+      "words": "Words to find",
+      "find_all": "Black out all",
+      "found": "Nothing new found | 1 place found | {n} places found",
+      "find_failed": "The text could not be searched.",
+      "boxes": "No boxes yet | 1 box | {n} boxes",
+      "clear": "Remove all",
+      "ocr": "Read the remaining words again, so the page can still be searched",
+      "clean": "Also remove the title, author and other document information",
+      "hint": "Pages with a box become pictures of themselves: what is under a box is removed from the file, not only covered.",
+      "draw_hint": "Drag on the page to draw a box.",
+      "box": "Black box"
+    },
+    "straighten": {
+      "option": "Photos of pages: cut to the page and straighten",
+      "scan": "Make it look scanned (white paper, dark ink)",
+      "finding": "Finding the page…",
+      "find_again": "Find again",
+      "whole": "Whole photo",
+      "hint": "Drag a corner to adjust. The page is found by macOS.",
+      "hint_by_hand": "Drag the four corners onto the corners of the page.",
+      "top_left": "Top left corner",
+      "top_right": "Top right corner",
+      "bottom_right": "Bottom right corner",
+      "bottom_left": "Bottom left corner"
     }
   },
   "things": {

@@ -87,7 +87,11 @@ lối vào của nó.
 | PDF → văn bản | A | `file_text.rs` (đã có) | Cùng đường đọc chữ mà Files dùng để index |
 | Cắt ảnh, xoá thông tin ảnh | B | canvas, `shared/exif.ts` (đã có) | Vẽ lại qua canvas là bỏ hết EXIF; HEIC giữ hướng ảnh trước khi bỏ |
 | Nhận dạng chữ (PDF scan) | C | Vision, `VNRecognizeTextRequest` | Chưa kiểm tiếng Việt được hỗ trợ từ macOS nào |
-| Ký tên | A + B | `perfect-freehand` (đã có) + `stamp.rs` | Chữ ký vẽ ra ảnh rồi đóng như watermark ảnh. Chữ ký lưu lại thì để trong Safe? Chưa quyết |
+| Ký & điền | A + B | `perfect-freehand` (đã có) + `stamp::place` | Chữ ký, chữ, ngày, dấu tích vẽ ra ảnh rồi đặt lên trang. Chữ ký chỉ giữ trong phiên, không lưu (U-6) |
+| Điền form PDF | A + B | pdf.js `getFieldObjects` + `form.rs` | Giá trị vào ô, `NeedAppearances`; làm phẳng thì vẽ giá trị ra ảnh rồi gỡ form (U-6) |
+| Che thông tin | A + B | pdf.js + `redact.rs` | Trang có ô che thành ảnh của chính nó, dọn object mồ côi; đọc lại chữ bằng Vision (U-6) |
+| Cắt lề & khổ trang | A + B | `frame.rs` | `CropBox`, hoặc thu phóng lên khổ giấy mới (U-6) |
+| Ảnh chụp giấy tờ → PDF thẳng | B + C | Vision `VNDetectDocumentSegmentationRequest` + `straighten.ts` | Tuỳ chọn của Ảnh → PDF; ngoài macOS kéo góc bằng tay (U-6) |
 | Video và âm thanh | D | ffmpeg trong phòng kín | Phòng kín đã chạy được ffmpeg (Phụ lục A của `syn-at-the-machine`) |
 
 Tầng nào rẻ thì dùng tầng đó, theo thứ tự A → B → C → D. Tầng A chạy ở mọi nơi kể cả Android, không cần mạng, không
@@ -322,7 +326,8 @@ Mockup vẽ đủ 28 tool để thấy lưới khi đầy. Bản thật chỉ hi
 | U-2 | Watermark, Đánh số trang, Khoá / Mở khoá, PDF → Văn bản, Nén ảnh, Đổi cỡ, Cắt, Đổi định dạng ảnh, Xoá thông tin ảnh |
 | U-3 | Tách nền, Nhận dạng chữ (Vision) |
 | U-4 | Word/Excel/PowerPoint → PDF, PDF → Word, Nén PDF |
-| Sau | Ký tên, Video và âm thanh (ffmpeg trong phòng kín) |
+| U-6 | Ký & điền, Điền form PDF, Che thông tin, Cắt lề & khổ trang, nắn ảnh chụp giấy tờ trong Ảnh → PDF; gộp/tách giữ mục lục |
+| Sau | Video và âm thanh (ffmpeg trong phòng kín) |
 
 ---
 
@@ -363,6 +368,7 @@ RMBG-2.0 không dùng (phi thương mại).
 | U-3 | macOS: tách nền và nhận dạng chữ bằng Vision | S |
 | U-4 | macOS 14+: phòng Utilities, môi trường, Office → PDF, PDF → Word, nén PDF | L |
 | U-5 | `run_utility` cho Syn, chỉ tầng A, mọi nền tảng | M |
+| U-6 | Thêm tool PDF sau khi so với iLovePDF và PDF24: ký & điền, điền form, che thông tin, cắt lề & khổ trang, nắn ảnh chụp giấy tờ. Gộp/tách/sắp xếp giữ mục lục, nhãn trang, form, đích có tên, layer | L |
 
 U-1 và U-2 không đụng `syn/machine/`, nên không chờ nhánh `syn-at-the-machine`. U-4 thì chờ.
 
@@ -501,6 +507,41 @@ lõi PDF/ảnh); mọi điểm dưới đây đã được đối chiếu với 
 - **Còn lại (nhỏ):** thông báo lỗi Office→PDF và ảnh hỏng, dấu âm ở "nhẹ hơn", `MediaBox` thừa kế khi nén, focus
   sau khi chạy, file độc hại cố ý (lồng sâu, zip bomb, watermark lặp vô hạn), EXIF/GPS trong Ảnh→PDF.
 
+
+**U-6, 2026-11-17 (chưa commit):** so danh mục PDF với iLovePDF (31 tool) và PDF24 (khoảng 70), làm năm tool còn thiếu
+đáng làm nhất, và sửa việc gộp/tách làm mất những gì treo ở catalog.
+
+- **Gộp, tách, sắp xếp** giờ giữ mục lục, nhãn trang (i, ii, 1, 2…), ô form (tên trùng giữa hai file được đổi tên),
+  đích có tên mà link dùng, và trạng thái tắt của layer (`catalog.rs`). Gộp có tuỳ chọn mỗi file một mục mang tên file.
+- **Cắt lề & khổ trang** (`frame.rs`, `PageFrame.vue`): cắt lề trắng theo từng trang (vẽ trang ra để tìm), tự chọn một
+  khung cho mọi trang, hoặc đưa mọi trang lên A4/A5/Letter/Legal, thu phóng và căn giữa, chú thích đi theo.
+- **Ký & điền** (`marks.ts`, `SignBoard.vue`, `SignaturePad.vue`, `stamp::place`): chữ ký vẽ tay (perfect-freehand) hoặc
+  từ ảnh chụp chữ ký trên giấy (giấy thành trong suốt), chữ, ngày, dấu tích/chéo; kéo, đổi cỡ, phím mũi tên; đặt ở mọi
+  trang. Mọi thứ vẽ ra ảnh bằng font hệ thống nên tiếng Việt đúng. Chữ ký chỉ giữ trong phiên.
+- **Điền form PDF** (`form.rs`, `FormBoard.vue`): ô form đọc bằng pdf.js, ô nhập đặt ngay trên trang; giữ form thì ghi
+  `/V`, `/AS` và `NeedAppearances` (app đọc PDF vẽ lại chữ); làm phẳng thì vẽ giá trị ra ảnh, đặt lên trang, gỡ widget và
+  form. Ô bằng chữ chỉ gửi những ô đã đổi.
+- **Che thông tin** (`redact.rs`, `RedactBoard.vue`): kéo để vẽ ô che, hoặc tìm và che chữ, số điện thoại, email, số
+  CCCD/CMND (không phân biệt dấu, tìm qua nhiều mảnh chữ trên một dòng). Trang có ô che thành ảnh 200 dpi của chính nó,
+  object không còn ai trỏ tới bị dọn (chữ cũ không còn trong file); có thể đọc lại chữ còn lại bằng Vision và xoá thông
+  tin tài liệu.
+- **Ảnh chụp giấy tờ** (`straighten.ts`, `DocPreview.vue`, `vision::find_document`): tuỳ chọn trong Ảnh → PDF; Vision tìm
+  bốn góc, kéo góc để chỉnh, nắn phối cảnh bằng homography, tuỳ chọn làm như bản scan (cân màu theo giấy).
+- **Đã kiểm:**
+  - Rust: 86 test của Utilities (thêm 20); Vision tìm đúng bốn góc trên ảnh dựng sẵn.
+  - Front end: thêm 7 test (mẫu tìm, nắn ảnh); cả bộ chỉ còn lỗi cũ ở `designFloor.spec.ts`.
+  - Trong trình duyệt với pdf.js thật và IPC giả lập: từng màn vẽ đúng, kéo/đổi cỡ được, dữ liệu gửi sang Rust đúng
+    (số byte ảnh, vị trí ô, id widget). Form điền bằng Rust từ đúng dữ liệu màn gửi, pdf.js đọc lại đủ giá trị và vẽ
+    đúng chữ Việt.
+- **Sửa khi kiểm:**
+  - `text-base` ở dự án này là màu nền, không phải cỡ chữ.
+  - `<dialog>` cần `m-auto` vì Tailwind đặt margin 0.
+  - Tìm chữ phải đọc cả dòng, vì PDF xuất từ Word cắt chữ thành mảnh một hai ký tự.
+  - Trang trên khổ giấy mới phải đặt tuyệt đối trong khung giấy.
+- **Chưa kiểm:**
+  - Chưa chạy trong app Tauri thật.
+  - Chưa thử form PDF thật từ cơ quan (mới thử form dựng tay) và file PDF/A có cấu trúc thẻ.
+  - Chưa thử ảnh chụp giấy tờ thật bằng điện thoại.
 ---
 
 ## 8. Bước 0: cần đo trước

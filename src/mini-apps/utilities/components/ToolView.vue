@@ -6,19 +6,30 @@
  */
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Download, ExternalLink, Eye, EyeOff, FolderOpen, Info, Loader2, RefreshCw, TriangleAlert, Upload } from 'lucide-vue-next';
+import {
+  Calendar, Check, Copy, Download, ExternalLink, Eye, EyeOff, FolderOpen, ImagePlus, Info, Loader2, PenLine, RefreshCw, Signature, Trash2,
+  TriangleAlert, Type, Upload, X,
+} from 'lucide-vue-next';
 import FileCards from './FileCards.vue';
 import PageGrid from './PageGrid.vue';
 import ResultPanel from './ResultPanel.vue';
 import MarkPreview from './MarkPreview.vue';
 import CropBox from './CropBox.vue';
 import CutoutPreview from './CutoutPreview.vue';
+import PageFrame from './PageFrame.vue';
+import SignBoard from './SignBoard.vue';
+import FormBoard from './FormBoard.vue';
+import RedactBoard from './RedactBoard.vue';
+import DocPreview from './DocPreview.vue';
+import SignaturePad from './SignaturePad.vue';
+import { INKS, inkFromPicture, newId, newMark, textWidth, today, type Ink, type Mark, type MarkKind } from '../marks';
+import { findOnPages, loadImage } from '../render';
 import * as api from '../api';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { COMPRESS_LEVELS } from '../useWorkbench';
 import { logger } from '../../../utils/logger';
 import { useWorkbench } from '../useWorkbench';
-import { NUMBER_FORMATS, availability, cleansInPlace, extensionFor, fits, numberText, outputName, ownFormat, previewMayRefuse, type ToolId } from '../tools';
+import { NUMBER_FORMATS, PAPERS, availability, finder, cleansInPlace, extensionFor, fits, numberText, outputName, ownFormat, previewMayRefuse, type FindKind, type PaperId, type ToolId } from '../tools';
 import type { Job } from '../api';
 
 const emit = defineEmits<{ (e: 'pick'): void; (e: 'chain', tool: ToolId): void; (e: 'discarded'): void }>();
@@ -167,6 +178,116 @@ function setAspect(aspect: string) {
   wb.resetCrop();
 }
 
+/** Back to the box the crop tool starts with, a little in from the edges. */
+function resetFrameBox() {
+  const f = wb.options.pdfcrop.frame;
+  if (!f) return;
+  const [mx, my] = [f.width * 0.06, f.height * 0.06];
+  wb.options.pdfcrop.rect = { x: mx, y: my, width: f.width - 2 * mx, height: f.height - 2 * my };
+}
+const paperIds = Object.keys(PAPERS) as PaperId[];
+
+// ── Sign and fill ──
+
+const sign = wb.options.sign;
+const { locale } = useI18n();
+const padOpen = ref(false);
+const selectedMark = computed(() => sign.marks.find((m) => m.id === sign.selected) ?? null);
+
+function put(mark: Mark) {
+  sign.marks.push(mark);
+  sign.selected = mark.id;
+}
+
+function addMark(kind: Exclude<MarkKind, 'signature'>) {
+  const text = kind === 'date' ? today(locale.value) : '';
+  put(newMark(kind, sign.page, sign.aspect, { text, color: sign.color }));
+}
+
+function placeInk(ink: Ink) {
+  put(newMark('signature', sign.page, sign.aspect, { color: sign.color, ink }));
+}
+
+function addSignature() {
+  if (sign.inks.length) placeInk(sign.inks[0]);
+  else padOpen.value = true;
+}
+
+function inkDrawn(ink: Ink) {
+  padOpen.value = false;
+  sign.inks.unshift(ink);
+  placeInk(ink);
+}
+
+/** A signature on paper, photographed or scanned: the paper made clear. */
+async function pickInkPicture() {
+  try {
+    const [picked] = await api.pickInputs(['image'], false);
+    if (!picked) return;
+    const ink = await inkFromPicture(await loadImage(picked.path), null);
+    if (!ink) return;
+    sign.inks.unshift(ink);
+    placeInk(ink);
+  } catch (e) {
+    logger.error('[utilities] reading a signature picture failed', e);
+  }
+}
+
+function setInk(color: string) {
+  sign.color = color;
+  const m = selectedMark.value;
+  if (m && m.kind !== 'signature') m.color = color;
+}
+
+/** A line of text is as wide as its words. */
+function refit(m: Mark) {
+  m.w = Math.min(1 - m.x, textWidth(m.text, m.h, m.aspect));
+}
+
+/** The picked mark on every page, where it is on this one: initials on each page. */
+function onEveryPage() {
+  const m = selectedMark.value;
+  const pages = wb.firstPdf.value?.pages ?? 0;
+  if (!m) return;
+  for (let p = 1; p <= pages; p++) {
+    if (p !== m.page && !sign.marks.some((x) => x.page === p && x.x === m.x && x.y === m.y && x.kind === m.kind)) {
+      sign.marks.push({ ...m, id: newId('m'), page: p });
+    }
+  }
+}
+
+// ── Redact ──
+
+const red = wb.options.redact;
+const finding = ref(false);
+const foundNote = ref('');
+
+/** Black out every match on every page, and go to the first. */
+async function findAll() {
+  const pdf = wb.firstPdf.value;
+  if (!pdf) return;
+  finding.value = true;
+  foundNote.value = '';
+  try {
+    const found = await findOnPages(pdf.input.path, finder(red.kind, red.find));
+    // Two searches finding one place do not make two boxes.
+    const fresh = found.filter((f) => !red.boxes.some((b) => b.page === f.page && Math.abs(b.x - f.x) < 0.002 && Math.abs(b.y - f.y) < 0.002));
+    red.boxes.push(...fresh.map((f) => ({ ...f, id: newId('r') })));
+    foundNote.value = t('utilities.redact.found', { n: fresh.length }, fresh.length);
+    if (fresh.length) red.page = fresh[0].page;
+  } catch (e) {
+    logger.error('[utilities] finding text to redact failed', e);
+    foundNote.value = t('utilities.redact.find_failed');
+  } finally {
+    finding.value = false;
+  }
+}
+
+function removeMark() {
+  sign.marks = sign.marks.filter((m) => m.id !== sign.selected);
+  sign.selected = null;
+}
+
 /** Images a compression would make, with formats this WebView can write. */
 const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as const) : (['jpeg', 'png'] as const)));
 </script>
@@ -252,7 +373,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
           <!-- While it runs, the files are out of reach of the keyboard too, not only the mouse. -->
           <div :inert="wb.phase.value === 'running' || undefined">
             <div class="flex items-center gap-2.5 mb-3.5 text-sm text-text-secondary dark:text-text-secondary-dark">
-              <template v-if="tool.workspace === 'files'">
+              <template v-if="tool.workspace === 'files' || tool.workspace === 'frame'">
                 <span>{{ t('utilities.files.count', { n: wb.usable.value.length }, wb.usable.value.length) }}</span>
                 <span v-if="tool.id === 'merge' || tool.id === 'img2pdf'">· {{ t('utilities.files.drag_to_order') }}</span>
                 <span class="flex-1" />
@@ -293,6 +414,33 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
                 <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
               </div>
             </div>
+            <div v-else-if="tool.workspace === 'frame' && wb.firstPdf.value?.pages" class="flex flex-wrap gap-6 items-start">
+              <PageFrame />
+              <div class="flex-1 min-w-[180px]">
+                <p class="text-sm text-text-secondary dark:text-text-secondary-dark mt-0 mb-3">
+                  {{ t('utilities.preview.applies_to', { n: wb.usable.value.length }, wb.usable.value.length) }}
+                </p>
+                <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
+              </div>
+            </div>
+            <SignBoard v-else-if="tool.id === 'sign' && wb.firstPdf.value?.pages" />
+            <div v-else-if="tool.id === 'img2pdf' && wb.options.img2pdf.straighten" class="flex flex-wrap gap-6 items-start">
+              <DocPreview :items="wb.usable.value.filter((i) => i.kind === 'image' && i.width)" class="flex-1 min-w-[320px]" />
+              <div class="w-[320px]">
+                <FileCards :items="wb.items.value" :ordered="true" :can-add="canAdd" @remove="wb.removeItem($event)" @move="(from, to) => wb.moveItem(from, to)" @add="emit('pick')" />
+              </div>
+            </div>
+            <RedactBoard v-else-if="tool.id === 'redact' && wb.firstPdf.value?.pages" />
+            <template v-else-if="tool.id === 'fillform' && wb.firstPdf.value?.pages">
+              <FormBoard v-if="wb.options.fillform.fields.length" />
+              <div v-else-if="wb.options.fillform.loaded" class="max-w-[520px] rounded-2xl border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5">
+                <p class="m-0 font-semibold text-text dark:text-text-dark">{{ t('utilities.form.none_title') }}</p>
+                <p class="mt-1.5 mb-0 text-sm text-text-secondary dark:text-text-secondary-dark">{{ t('utilities.form.none_body') }}</p>
+              </div>
+              <p v-else class="text-sm text-text-secondary dark:text-text-secondary-dark flex items-center gap-2 m-0">
+                <Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" />{{ t('utilities.form.reading') }}
+              </p>
+            </template>
             <div v-else-if="tool.workspace === 'cutout'" class="flex flex-wrap gap-6 items-start">
               <CutoutPreview :items="wb.usable.value.filter((i) => i.kind === 'image' && i.width)" class="flex-1 min-w-[320px]" />
               <div class="w-[320px]">
@@ -373,7 +521,13 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
         <h3 class="utility-label">{{ t('utilities.options.title') }}</h3>
 
         <!-- Merge -->
-        <p v-if="tool.id === 'merge'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t('utilities.options.merge_hint') }}</p>
+        <template v-if="tool.id === 'merge'">
+          <p class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t('utilities.options.merge_hint') }}</p>
+          <label class="flex items-center gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.merge.bookmarks" type="checkbox" />{{ t('utilities.options.merge_bookmarks') }}
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-1.5 mb-0">{{ t('utilities.options.merge_bookmarks_hint') }}</p>
+        </template>
 
         <!-- Split -->
         <template v-else-if="tool.id === 'split'">
@@ -413,6 +567,12 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
 
         <!-- Images to PDF -->
         <template v-else-if="tool.id === 'img2pdf'">
+          <label class="flex items-start gap-2 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.img2pdf.straighten" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.straighten.option') }}</span>
+          </label>
+          <label v-if="wb.options.img2pdf.straighten" class="flex items-start gap-2 mt-2 ml-5 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.img2pdf.scan" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.straighten.scan') }}</span>
+          </label>
           <p class="utility-sub">{{ t('utilities.options.page_size') }}</p>
           <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.page_size')">
             <button v-for="s in (['a4', 'letter', 'fit'] as const)" :key="s" type="button" role="radio" :aria-checked="wb.options.img2pdf.size === s" :class="{ on: wb.options.img2pdf.size === s }" @click="wb.options.img2pdf.size = s">
@@ -565,6 +725,157 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             <input v-model="wb.options.unlock.password" type="password" autocomplete="off" class="utility-field mt-1" />
           </label>
           <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.options.unlock_hint') }}</p>
+        </template>
+
+        <!-- Redact -->
+        <template v-else-if="tool.id === 'redact'">
+          <p class="utility-sub !mt-0">{{ t('utilities.redact.find') }}</p>
+          <div class="grid grid-cols-2 gap-1.5" role="radiogroup" :aria-label="t('utilities.redact.find')">
+            <button
+              v-for="k in (['text', 'phone', 'email', 'id'] as FindKind[])"
+              :key="k"
+              type="button"
+              role="radio"
+              :aria-checked="red.kind === k"
+              class="h-8 rounded-md border text-[13px]"
+              :class="red.kind === k ? 'border-accent text-accent dark:text-accent-dark bg-accent/10' : 'border-border dark:border-border-dark bg-surface dark:bg-surface-dark'"
+              @click="red.kind = k"
+            >{{ t(`utilities.redact.kind_${k}`) }}</button>
+          </div>
+          <input v-if="red.kind === 'text'" v-model="red.find" class="utility-field mt-2" :aria-label="t('utilities.redact.words')" :placeholder="t('utilities.redact.words')" @keydown.enter.prevent="findAll" />
+          <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] mt-2" :disabled="finding || (red.kind === 'text' && !red.find.trim())" @click="findAll">
+            <Loader2 v-if="finding" class="w-4 h-4 animate-spin" aria-hidden="true" />{{ t('utilities.redact.find_all') }}
+          </button>
+          <p v-if="foundNote" role="status" class="text-xs text-text-secondary dark:text-text-secondary-dark mt-1.5 mb-0">{{ foundNote }}</p>
+
+          <div class="flex items-center gap-2 mt-4">
+            <p class="m-0 text-[13px] text-text-secondary dark:text-text-secondary-dark flex-1">{{ t('utilities.redact.boxes', { n: red.boxes.length }, red.boxes.length) }}</p>
+            <button v-if="red.boxes.length" type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="red.boxes = []; red.selected = null">{{ t('utilities.redact.clear') }}</button>
+          </div>
+          <label v-if="wb.vision.value?.text" class="flex items-start gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="red.ocr" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.redact.ocr') }}</span>
+          </label>
+          <label class="flex items-start gap-2 mt-2 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="red.clean" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.redact.clean') }}</span>
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-3 mb-0">{{ t('utilities.redact.hint') }}</p>
+        </template>
+
+        <!-- Fill form -->
+        <template v-else-if="tool.id === 'fillform'">
+          <p class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">
+            {{ wb.options.fillform.fields.length
+              ? t('utilities.form.count', { n: wb.options.fillform.fields.length, pages: new Set(wb.options.fillform.fields.map((f) => f.page)).size })
+              : t('utilities.form.hint') }}
+          </p>
+          <label class="flex items-start gap-2 mt-3 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.fillform.flatten" type="checkbox" class="mt-0.5" />
+            <span>{{ t('utilities.form.flatten') }}</span>
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-1.5 mb-0">{{ t(wb.options.fillform.flatten ? 'utilities.form.flatten_hint' : 'utilities.form.keep_hint') }}</p>
+        </template>
+
+        <!-- Sign and fill -->
+        <template v-else-if="tool.id === 'sign'">
+          <p class="utility-sub !mt-0">{{ t('utilities.sign.add') }}</p>
+          <div class="grid grid-cols-2 gap-1.5">
+            <button type="button" class="btn-secondary !h-9 !px-2.5 !text-[13px] !justify-start" @click="addSignature"><Signature class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.kind_signature') }}</button>
+            <button type="button" class="btn-secondary !h-9 !px-2.5 !text-[13px] !justify-start" @click="addMark('text')"><Type class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.kind_text') }}</button>
+            <button type="button" class="btn-secondary !h-9 !px-2.5 !text-[13px] !justify-start" @click="addMark('date')"><Calendar class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.kind_date') }}</button>
+            <div class="flex gap-1.5">
+              <button type="button" class="btn-secondary !h-9 flex-1 !px-0" :aria-label="t('utilities.sign.kind_check')" :title="t('utilities.sign.kind_check')" @click="addMark('check')"><Check class="w-4 h-4" aria-hidden="true" /></button>
+              <button type="button" class="btn-secondary !h-9 flex-1 !px-0" :aria-label="t('utilities.sign.kind_cross')" :title="t('utilities.sign.kind_cross')" @click="addMark('cross')"><X class="w-4 h-4" aria-hidden="true" /></button>
+            </div>
+          </div>
+
+          <p class="utility-sub">{{ t('utilities.sign.ink') }}</p>
+          <div class="flex gap-1.5" role="radiogroup" :aria-label="t('utilities.sign.ink')">
+            <button
+              v-for="c in INKS"
+              :key="c"
+              type="button"
+              role="radio"
+              :aria-checked="sign.color === c"
+              :aria-label="t(c === INKS[0] ? 'utilities.sign.ink_black' : 'utilities.sign.ink_blue')"
+              class="w-7 h-7 rounded-md border border-border dark:border-border-dark"
+              :class="sign.color === c ? 'ring-2 ring-accent ring-offset-2 ring-offset-surface-alt dark:ring-offset-surface-alt-dark' : ''"
+              :style="{ background: c }"
+              @click="setInk(c)"
+            />
+          </div>
+
+          <p class="utility-sub">{{ t('utilities.sign.signatures') }}</p>
+          <div v-if="sign.inks.length" class="flex flex-wrap gap-1.5 mb-2">
+            <button
+              v-for="(ink, i) in sign.inks"
+              :key="i"
+              type="button"
+              class="h-12 w-[88px] rounded-md border border-border dark:border-border-dark bg-white grid place-items-center p-1"
+              :aria-label="t('utilities.sign.place_this', { n: i + 1 })"
+              @click="placeInk(ink)"
+            >
+              <img :src="ink.url" alt="" class="max-h-full max-w-full object-contain" />
+            </button>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px]" @click="padOpen = true"><PenLine class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.draw') }}</button>
+            <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px]" @click="pickInkPicture"><ImagePlus class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.from_picture') }}</button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-1.5 mb-0">{{ t('utilities.sign.not_kept') }}</p>
+
+          <template v-if="selectedMark">
+            <p class="utility-sub">{{ t(`utilities.sign.kind_${selectedMark.kind}`) }}</p>
+            <input
+              v-if="selectedMark.kind === 'text' || selectedMark.kind === 'date'"
+              v-model="selectedMark.text"
+              class="utility-field"
+              :aria-label="t('utilities.sign.words')"
+              :placeholder="t('utilities.sign.empty_text')"
+              @input="refit(selectedMark)"
+            />
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px]" :disabled="(wb.firstPdf.value?.pages ?? 1) < 2" @click="onEveryPage"><Copy class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.every_page') }}</button>
+              <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] text-danger" @click="removeMark"><Trash2 class="w-4 h-4" aria-hidden="true" />{{ t('utilities.sign.remove') }}</button>
+            </div>
+          </template>
+          <p class="text-xs text-muted dark:text-muted-dark mt-3 mb-0">{{ t('utilities.sign.hint') }}</p>
+          <SignaturePad v-if="padOpen" :color="sign.color" @done="inkDrawn" @close="padOpen = false" />
+        </template>
+
+        <!-- Crop pages, page size -->
+        <template v-else-if="tool.id === 'pdfcrop'">
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.frame_by')">
+            <button v-for="m in (['auto', 'manual', 'size'] as const)" :key="m" type="button" role="radio" :aria-checked="wb.options.pdfcrop.mode === m" :class="{ on: wb.options.pdfcrop.mode === m }" @click="wb.options.pdfcrop.mode = m">
+              {{ t(`utilities.options.frame_${m}`) }}
+            </button>
+          </div>
+          <template v-if="wb.options.pdfcrop.mode === 'auto'">
+            <label class="utility-sub block" for="utility-frame-margin">{{ t('utilities.options.frame_margin') }}</label>
+            <div class="flex items-center gap-2.5">
+              <input id="utility-frame-margin" v-model.number="wb.options.pdfcrop.margin" type="range" min="0" max="48" step="2" class="flex-1 accent-accent" />
+              <span class="w-12 text-right text-[13px] tabular-nums">{{ wb.options.pdfcrop.margin }} pt</span>
+            </div>
+            <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.options.frame_auto_hint') }}</p>
+          </template>
+          <template v-else-if="wb.options.pdfcrop.mode === 'manual'">
+            <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.options.frame_manual_hint') }}</p>
+            <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] mt-3" @click="resetFrameBox">{{ t('utilities.options.crop_reset') }}</button>
+          </template>
+          <template v-else>
+            <p class="utility-sub">{{ t('utilities.options.paper') }}</p>
+            <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.paper')">
+              <button v-for="p in paperIds" :key="p" type="button" role="radio" :aria-checked="wb.options.pdfcrop.paper === p" :class="{ on: wb.options.pdfcrop.paper === p }" @click="wb.options.pdfcrop.paper = p">
+                {{ t(`utilities.options.paper_${p}`) }}
+              </button>
+            </div>
+            <p class="utility-sub">{{ t('utilities.options.orientation') }}</p>
+            <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.orientation')">
+              <button v-for="o in (['auto', 'portrait', 'landscape'] as const)" :key="o" type="button" role="radio" :aria-checked="wb.options.pdfcrop.orientation === o" :class="{ on: wb.options.pdfcrop.orientation === o }" @click="wb.options.pdfcrop.orientation = o">
+                {{ t(`utilities.options.orientation_${o}`) }}
+              </button>
+            </div>
+            <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.options.frame_size_hint') }}</p>
+          </template>
         </template>
 
         <!-- PDF to text -->
