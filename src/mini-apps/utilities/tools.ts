@@ -13,7 +13,7 @@ import type { Component } from 'vue';
 import {
   Crop, Eraser, EyeOff, FileDown, FileImage, FileInput, FileOutput, FileSearch, FileStack, FileType, FormInput, Frame, Images, LayoutGrid,
   Grid2x2, ListOrdered, Lock, LockOpen, Minimize2, Repeat, RotateCw, RotateCwSquare, Scaling, ScanFace, ScanText, Scissors, Signature,
-  SquareMinus, SquareUser, Stamp, BadgeCheck,
+  SquareMinus, SquareUser, Stamp, BadgeCheck, Shrink, Repeat2, Clapperboard, AudioLines, ShieldOff, Combine, ImagePlay, VolumeX, GalleryHorizontalEnd,
 } from 'lucide-vue-next';
 
 export type ToolId =
@@ -21,9 +21,10 @@ export type ToolId =
   | 'pdfcrop' | 'sign' | 'fillform' | 'redact'
   | 'ocr' | 'office2pdf' | 'pdf2word' | 'img2pdf' | 'pdf2img' | 'pdf2text'
   | 'removebg' | 'imgtext' | 'imgcompress' | 'resize' | 'crop' | 'imgconvert' | 'exif'
-  | 'idphoto' | 'imgmark' | 'collage' | 'imgrotate' | 'imgblur';
-export type CategoryId = 'pdf' | 'convert' | 'image';
-export type InputKind = 'pdf' | 'image' | 'office';
+  | 'idphoto' | 'imgmark' | 'collage' | 'imgrotate' | 'imgblur'
+  | 'vidcompress' | 'vidconvert' | 'vidtrim' | 'vidaudio' | 'vidstrip' | 'vidmerge' | 'vidgif' | 'vidrotate' | 'vidmute' | 'vidframes';
+export type CategoryId = 'pdf' | 'convert' | 'image' | 'video';
+export type InputKind = 'pdf' | 'image' | 'office' | 'video';
 
 export interface ToolDef {
   id: ToolId;
@@ -40,12 +41,15 @@ export interface ToolDef {
    * put in order, the pages of one file, a preview of the first page with what
    * will be drawn on it, or one picture to cut.
    */
-  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout' | 'frame' | 'board' | 'form' | 'idphoto' | 'imgmark' | 'collage' | 'imgblur';
-  /** What it needs of Apple's Vision, on macOS only (`utilities::vision`). */
-  needs?: 'subject' | 'text' | 'libreoffice' | 'pdf2docx';
+  workspace: 'files' | 'pages' | 'preview' | 'crop' | 'cutout' | 'frame' | 'board' | 'form' | 'idphoto' | 'imgmark' | 'collage' | 'imgblur' | 'clip';
+  /**
+   * What it needs that is not always there, on macOS only: Apple's Vision
+   * (`utilities::vision`), or a program the sealed room runs.
+   */
+  needs?: 'subject' | 'text' | 'libreoffice' | 'pdf2docx' | 'ffmpeg';
 }
 
-export const CATEGORIES: readonly CategoryId[] = ['pdf', 'convert', 'image'];
+export const CATEGORIES: readonly CategoryId[] = ['pdf', 'convert', 'image', 'video'];
 
 export const TOOLS: readonly ToolDef[] = [
   { id: 'merge',    category: 'pdf',     icon: FileStack,  accepts: 'pdf',   min: 2,         workspace: 'files' },
@@ -79,6 +83,16 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'imgblur',  category: 'image',   icon: ScanFace,   accepts: 'image', min: 1,         workspace: 'imgblur' },
   { id: 'imgconvert', category: 'image', icon: Repeat,     accepts: 'image', min: 1,         workspace: 'files' },
   { id: 'exif',     category: 'image',   icon: EyeOff,     accepts: 'image', min: 1,         workspace: 'files' },
+  { id: 'vidcompress', category: 'video', icon: Shrink,    accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidtrim',  category: 'video',   icon: Clapperboard, accepts: 'video', min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
+  { id: 'vidconvert', category: 'video', icon: Repeat2,    accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidaudio', category: 'video',   icon: AudioLines, accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidmerge', category: 'video',   icon: Combine,    accepts: 'video', min: 2,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidgif',   category: 'video',   icon: ImagePlay,  accepts: 'video', min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
+  { id: 'vidrotate', category: 'video',  icon: RotateCwSquare, accepts: 'video', min: 1,     workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidmute',  category: 'video',   icon: VolumeX,    accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidframes', category: 'video',  icon: GalleryHorizontalEnd, accepts: 'video', min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
+  { id: 'vidstrip', category: 'video',   icon: ShieldOff,  accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
 ];
 
 export function toolById(id: string | null | undefined): ToolDef | undefined {
@@ -87,6 +101,8 @@ export function toolById(id: string | null | undefined): ToolDef | undefined {
 
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'jfif', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tif', 'tiff'];
 const OFFICE_EXTENSIONS = ['docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods', 'csv', 'pptx', 'ppt', 'odp'];
+/** As `utilities::video::EXTENSIONS`. */
+export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', '3gp', 'mts', 'm2ts', 'ts', 'wmv', 'flv', 'mpg', 'mpeg'];
 
 /** What kind of file a name is, or null for one no tool takes. */
 export function kindOf(name: string): InputKind | null {
@@ -94,6 +110,7 @@ export function kindOf(name: string): InputKind | null {
   if (ext === 'pdf') return 'pdf';
   if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
   if (OFFICE_EXTENSIONS.includes(ext)) return 'office';
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
   return null;
 }
 
@@ -119,6 +136,7 @@ const SUGGESTION_ORDER: Record<InputKind, ToolId[]> = {
   ],
   office: ['office2pdf'],
   image: ['removebg', 'img2pdf', 'imgcompress', 'resize', 'collage', 'imgmark', 'idphoto', 'imgrotate', 'imgblur', 'exif', 'imgtext', 'imgconvert', 'crop'],
+  video: ['vidcompress', 'vidtrim', 'vidmerge', 'vidaudio', 'vidconvert', 'vidgif', 'vidrotate', 'vidmute', 'vidframes', 'vidstrip'],
 };
 
 export function suggestionsFor(kind: InputKind, count: number): ToolDef[] {
@@ -131,7 +149,7 @@ export function suggestionsFor(kind: InputKind, count: number): ToolDef[] {
  */
 export function sortDrop<T extends { name: string }>(files: T[]): { kind: InputKind | null; taken: T[]; left: T[] } {
   // Ties go to the earlier kind in this list.
-  const groups = (['pdf', 'image', 'office'] as const).map((kind) => ({ kind, files: files.filter((f) => kindOf(f.name) === kind) }));
+  const groups = (['pdf', 'image', 'video', 'office'] as const).map((kind) => ({ kind, files: files.filter((f) => kindOf(f.name) === kind) }));
   const best = groups.reduce((a, b) => (b.files.length > a.files.length ? b : a));
   if (!best.files.length) return { kind: null, taken: [], left: files };
   return { kind: best.kind, taken: best.files, left: files.filter((f) => !best.files.includes(f)) };
@@ -228,6 +246,16 @@ const SUFFIX: Record<ToolId, string> = {
   collage: 'ghep',
   imgrotate: 'xoay',
   imgblur: 'che',
+  vidcompress: 'nen',
+  vidconvert: '',
+  vidtrim: 'cat',
+  vidaudio: '',
+  vidstrip: 'sach',
+  vidmerge: 'gop',
+  vidgif: '',
+  vidrotate: 'xoay',
+  vidmute: 'tat-tieng',
+  vidframes: '',
 };
 
 /** A file name's extension, lower case, without the dot. */
@@ -247,7 +275,7 @@ export function outputName(tool: ToolId, firstInput: string, part?: number, ext?
   if (tool === 'office2pdf') return `${base}.pdf`;
   if (tool === 'pdf2word') return `${base}.docx`;
   if (tool === 'split') return `${base}-${SUFFIX.split}-${part ?? 1}.pdf`;
-  if (toolById(tool)?.category === 'image') {
+  if (toolById(tool)?.category === 'image' || toolById(tool)?.category === 'video') {
     const out = ext ?? extension(firstInput);
     return SUFFIX[tool] ? `${base}-${SUFFIX[tool]}.${out}` : `${base}.${out}`;
   }
@@ -443,6 +471,7 @@ export interface OfficeStatus {
   room: boolean;
   libreoffice: boolean;
   pdf2docx: boolean;
+  ffmpeg: boolean;
 }
 
 /**
@@ -490,4 +519,91 @@ export function linesToText(lines: TextLine[]): string {
     previous = line;
   }
   return out;
+}
+
+/** What ffprobe said about a file (`utilities::video::Probe`). */
+export interface VideoProbe {
+  duration: number;
+  bytes: number;
+  format: string;
+  video: { codec: string; width: number; height: number; rotation: number; fps: number; pixFmt: string; bitrate: number | null } | null;
+  audio: { codec: string; channels: number; rate: number; bitrate: number | null } | null;
+  subtitles: string[];
+}
+
+/** Width and height as the picture is seen, turned as the file says. */
+export function shownSize(v: NonNullable<VideoProbe['video']>): [number, number] {
+  return ((v.rotation % 180) + 180) % 180 === 90 ? [v.height, v.width] : [v.width, v.height];
+}
+
+/** 75.5 seconds as 1:15.5; an hour or more as 1:02:03. */
+export function clock(seconds: number, tenths = true): string {
+  const s = Math.max(0, seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = s % 60;
+  const sec = tenths ? (Math.floor(rest * 10) / 10).toFixed(1).padStart(4, '0') : String(Math.floor(rest)).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+}
+
+/** "1:15.5", "75.5", "1:02:03" or "0:05" back to seconds; NaN when it is none of those. */
+export function parseClock(text: string): number {
+  const parts = text.trim().replace(',', '.').split(':');
+  if (!parts.length || parts.length > 3 || parts.some((p) => !/^\d+(\.\d*)?$/.test(p))) return NaN;
+  return parts.reduce((total, p) => total * 60 + Number(p), 0);
+}
+
+/** The extension a video run keeps when it writes the file's own container. */
+function ownVideoExt(name: string): string {
+  const ext = extension(name);
+  return VIDEO_EXTENSIONS.includes(ext) ? ext : 'mkv';
+}
+
+/**
+ * The extension a video tool's result gets, as `utilities::video::plan`
+ * decides it, so the screen can name it before the run.
+ */
+export function videoExt(
+  tool: ToolId,
+  name: string,
+  o: { convert: string; trimExact: boolean; audio: string; framesPng: boolean },
+): string {
+  switch (tool) {
+    case 'vidcompress':
+      return 'mp4';
+    case 'vidconvert':
+      return o.convert;
+    case 'vidtrim':
+      return o.trimExact ? 'mp4' : ownVideoExt(name);
+    case 'vidaudio':
+      return o.audio;
+    case 'vidgif':
+      return 'gif';
+    case 'vidframes':
+      return o.framesPng ? 'png' : 'jpg';
+    case 'vidrotate': {
+      const own = ownVideoExt(name);
+      return ['mp4', 'mov', 'm4v', '3gp', 'webm', 'mkv'].includes(own) ? own : 'mp4';
+    }
+    default:
+      return ownVideoExt(name);
+  }
+}
+
+/** The most pictures "one every N seconds" makes, as `utilities::video::MOST_FRAMES`. */
+export const MOST_FRAMES = 500;
+
+/** The longest GIF, in seconds, as `utilities::video::LONGEST_GIF`. */
+export const LONGEST_GIF = 60;
+
+/** Common sizes a file has to fit under, in MB: a chat app's, a mail's. */
+export const VIDEO_TARGETS = [8, 16, 25, 50, 100] as const;
+
+/**
+ * The least size a target can be for this length, in MB, as `plan` refuses:
+ * 150 kbit/s of picture, the sound, and 3 % for the container.
+ */
+export function leastTarget(seconds: number, hasAudio: boolean, small: boolean): number {
+  const sound = hasAudio ? (small ? 96 : 128) : 0;
+  return Math.ceil(((150 + sound) * seconds) / 8000 / 0.97 * 10) / 10;
 }

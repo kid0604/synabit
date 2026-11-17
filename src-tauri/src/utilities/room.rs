@@ -66,9 +66,9 @@ fn limits(minutes: u64) -> Limits {
 /// Emptying waits for whatever is still running in it to end, which can take
 /// seconds, so it happens on a blocking thread: done here, on the async
 /// runtime, it held up every other command the app was answering.
-struct Borrowed {
-    rooms: Arc<Rooms>,
-    cell: crate::syn::machine::cell::Cell,
+pub struct Borrowed {
+    pub(super) rooms: Arc<Rooms>,
+    pub(super) cell: crate::syn::machine::cell::Cell,
 }
 
 impl Drop for Borrowed {
@@ -81,14 +81,14 @@ impl Drop for Borrowed {
     }
 }
 
-async fn borrow(rooms: &Arc<Rooms>, name: &str) -> Result<Borrowed, RoomError> {
+pub(super) async fn borrow(rooms: &Arc<Rooms>, name: &str) -> Result<Borrowed, RoomError> {
     let cell = rooms.open(name).await.map_err(|e| RoomError::Unavailable(e.to_string()))?;
     Ok(Borrowed { rooms: rooms.clone(), cell })
 }
 
 /// File work — a document copied in, a result read out, up to a gigabyte —
 /// off the async runtime.
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, RoomError> + Send + 'static) -> Result<T, RoomError> {
+pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, RoomError> + Send + 'static) -> Result<T, RoomError> {
     tauri::async_runtime::spawn_blocking(work).await.map_err(|e| RoomError::Io(e.to_string()))?
 }
 
@@ -122,11 +122,11 @@ fn safe_extension(path: &Path) -> String {
 
 /// One argument for `/bin/sh`, in single quotes, with any quote in it closed,
 /// escaped and reopened.
-fn quoted(text: &str) -> String {
+pub(super) fn quoted(text: &str) -> String {
     format!("'{}'", text.replace('\'', "'\\''"))
 }
 
-fn tail(text: &str) -> String {
+pub(super) fn tail(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(12)..].join("\n")
 }

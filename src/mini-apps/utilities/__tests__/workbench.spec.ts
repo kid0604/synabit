@@ -24,6 +24,12 @@ vi.mock('../api', () => ({
   putOutput: vi.fn(() => Promise.resolve({ name: 'x.txt', size: 1, path: '/x.txt' })),
   searchable: vi.fn(),
   getJob: vi.fn(),
+  officeStatus: vi.fn(() => Promise.resolve({ room: true, libreoffice: false, pdf2docx: false, ffmpeg: true })),
+  videoProbe: vi.fn(() =>
+    Promise.resolve({ duration: 12.5, bytes: 1000, format: 'mov', video: { codec: 'h264', width: 1920, height: 1080, rotation: -90, fps: 30, pixFmt: 'yuv420p', bitrate: null }, audio: null, subtitles: [] }),
+  ),
+  video: vi.fn(),
+  videoMerge: vi.fn(),
 }));
 
 vi.mock('../render', () => ({
@@ -215,5 +221,59 @@ describe('the unsaved list', () => {
     await wb.refreshUnsaved();
     expect(wb.unsaved.value.map((j) => j.id)).toEqual(['older']);
     wb.cancel();
+  });
+});
+
+describe('a video', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetWorkbench();
+  });
+  afterEach(() => resetWorkbench());
+
+  it('is looked at once ffmpeg is known to be there, and its cut starts as the whole of it', async () => {
+    const wb = useWorkbench();
+    wb.openTool('vidtrim', [input('clip.mov')]);
+    await settle();
+    // Not yet known whether ffmpeg is here: the file waits.
+    expect(api.videoProbe).not.toHaveBeenCalled();
+    await wb.askOffice();
+    await settle();
+    expect(api.videoProbe).toHaveBeenCalledWith('clipmov');
+    expect(wb.options.vidtrim).toMatchObject({ start: 0, end: 12.5 });
+    // The whole video is no cut.
+    expect(wb.ready.value).toBe(false);
+    wb.options.vidtrim.start = 2;
+    expect(wb.ready.value).toBe(true);
+  });
+
+  it('runs with the settings as Rust takes them, and names the result for what it becomes', async () => {
+    const wb = useWorkbench();
+    await wb.askOffice();
+    wb.openTool('vidcompress', [input('Đám cưới.mov')]);
+    await settle();
+    wb.options.vidcompress.bySize = true;
+    wb.options.vidcompress.targetMb = 0.1;
+    expect(wb.ready.value).toBe(false);
+    wb.options.vidcompress.targetMb = 16;
+    expect(wb.ready.value).toBe(true);
+    api.newJob.mockResolvedValue(job('j1'));
+    api.video.mockResolvedValue({ ...job('j1'), outputs: [{ name: 'Đám cưới-nen.mp4', size: 500, path: '/o' }] });
+    await wb.run();
+    expect(api.video).toHaveBeenCalledWith('j1', [{ input: 'mcimov', name: 'Đám cưới-nen.mp4' }], {
+      tool: 'compress', height: 1080, codec: 'h264', quality: 'balanced', targetMb: 16,
+    });
+    expect(wb.phase.value).toBe('done');
+  });
+
+  it('says a size too small for its length in words', async () => {
+    const wb = useWorkbench();
+    await wb.askOffice();
+    wb.openTool('vidmute', [input('a.mp4')]);
+    await settle();
+    api.newJob.mockResolvedValue(job('j2'));
+    api.video.mockRejectedValue('video-too-small: 4.2');
+    await wb.run();
+    expect(wb.failure.value).toEqual({ key: 'utilities.errors.video_too_small', values: { mb: (4.2).toLocaleString('en') } });
   });
 });

@@ -1081,6 +1081,66 @@
         "desc": "Blur faces and anything else before sharing",
         "verb": "Blur | Blur {n} pictures",
         "running": "Covering…"
+      },
+      "vidcompress": {
+        "name": "Compress video",
+        "desc": "Smaller, at a quality or under a size: for mail and chat",
+        "verb": "Compress | Compress {n} videos",
+        "running": "Compressing… a long video takes a while"
+      },
+      "vidtrim": {
+        "name": "Cut video",
+        "desc": "Keep the part you want; fast, or exact to the frame",
+        "verb": "Cut",
+        "running": "Cutting…"
+      },
+      "vidconvert": {
+        "name": "Convert video",
+        "desc": "MP4, MOV, MKV or WebM, copied as it is where it can be",
+        "verb": "Convert | Convert {n} videos",
+        "running": "Converting…"
+      },
+      "vidaudio": {
+        "name": "Video to audio",
+        "desc": "Take the sound out as M4A, MP3 or WAV",
+        "verb": "Take the sound | Take the sound of {n} videos",
+        "running": "Taking out the sound…"
+      },
+      "vidmerge": {
+        "name": "Join videos",
+        "desc": "One after another in one file; as they are when they match",
+        "verb": "Join | Join {n} videos",
+        "running": "Joining…"
+      },
+      "vidgif": {
+        "name": "Video to GIF",
+        "desc": "A few seconds as a GIF that plays anywhere",
+        "verb": "Make the GIF",
+        "running": "Making the GIF…"
+      },
+      "vidrotate": {
+        "name": "Rotate video",
+        "desc": "Turn a sideways video; MP4 and MOV lose nothing",
+        "verb": "Rotate | Rotate {n} videos",
+        "running": "Turning…"
+      },
+      "vidmute": {
+        "name": "Mute video",
+        "desc": "Take the sound away, picture untouched",
+        "verb": "Mute | Mute {n} videos",
+        "running": "Taking the sound away…"
+      },
+      "vidframes": {
+        "name": "Video to pictures",
+        "desc": "One frame as a picture, or one every few seconds",
+        "verb": "Take the pictures",
+        "running": "Taking pictures…"
+      },
+      "vidstrip": {
+        "name": "Clean video info",
+        "desc": "Remove the place, dates and device a video carries",
+        "verb": "Clean | Clean {n} videos",
+        "running": "Cleaning…"
       }
     },
     "categories": {
@@ -1095,12 +1155,17 @@
       "image": {
         "name": "Images",
         "note": "Compress, resize, crop and clean"
+      },
+      "video": {
+        "name": "Video",
+        "note": "Compress, cut, convert and join"
       }
     },
     "accepts": {
       "pdf": "PDF files",
       "image": "images",
-      "office": "Office documents"
+      "office": "Office documents",
+      "video": "videos"
     },
     "sidebar": {
       "label": "Utilities",
@@ -1152,7 +1217,9 @@
       "lock_restrictions": "restrictions only",
       "lock_password": "needs a password",
       "problem_unreadable_image": "Cannot be read as a picture",
-      "problem_heic": "HEIC photos open only on a Mac"
+      "problem_heic": "HEIC photos open only on a Mac",
+      "problem_unreadable_video": "Cannot be read as a video",
+      "problem_no_audio": "Has no sound"
     },
     "pages": {
       "page": "Page {n}",
@@ -1365,7 +1432,8 @@
       "left_out": "1 file of another kind was left out. | {n} files of another kind were left out.",
       "none_fit": "No tool takes this many files of this kind.",
       "keys": "↑↓ to choose · ↵ to open · a number opens that row",
-      "title_office": "What to do with this document? | What to do with these {n} documents?"
+      "title_office": "What to do with this document? | What to do with these {n} documents?",
+      "title_video": "What to do with this video? | What to do with these {n} videos?"
     },
     "errors": {
       "locked": "“{name}” is protected by a password. Open it with Unlock PDF first.",
@@ -1380,7 +1448,14 @@
       "no_room": "The sealed room is not available on this Mac, so the document was not opened.",
       "install_failed": "The install did not finish: {reason}",
       "some_not_smaller_images": "1 picture did not come out smaller and was left as it is. | {n} pictures did not come out smaller and were left as they are.",
-      "over_target": "1 picture could not get under {kb} KB; it was made as small as it would go. | {n} pictures could not get under {kb} KB; they were made as small as they would go."
+      "over_target": "1 picture could not get under {kb} KB; it was made as small as it would go. | {n} pictures could not get under {kb} KB; they were made as small as they would go.",
+      "video_too_small": "That size is too small for this length: it needs at least {mb} MB. Choose a larger size, or cut the video first.",
+      "video_no_audio": "This video has no sound to take out.",
+      "video_no_video": "One of the files has no picture.",
+      "video_bad_range": "The part chosen is not inside the video.",
+      "video_too_long": "A GIF can be at most a minute long. Choose a shorter part.",
+      "video_busy": "Three long jobs are already running in the sealed room. Try again when one has finished.",
+      "video_failed": "“{name}” could not be read, or the result could not be made. It may be damaged, or in a form ffmpeg does not know."
     },
     "preview": {
       "applies_to": "Applied to 1 file | Applied to all {n} files"
@@ -1420,7 +1495,13 @@
       "check_again": "Check again",
       "install": "Install (about 150 MB)",
       "installing": "Installing… this takes a minute or two",
-      "brew_hint": "With Homebrew: brew install --cask libreoffice"
+      "brew_hint": "With Homebrew: brew install --cask libreoffice",
+      "ffmpeg_title": "{tool} needs ffmpeg",
+      "ffmpeg_body": "The video tools use ffmpeg, the free program nearly every video app is built on. Synabit does not ship it; Homebrew installs it with one command in Terminal. Then come back and check again.",
+      "sealed_video": "Videos are worked on in Synabit’s sealed room: no network, and nothing of yours but the video, read only. A malicious file cannot reach anything.",
+      "copy": "Copy",
+      "copied": "Copied",
+      "get_homebrew": "Get Homebrew"
     },
     "frame": {
       "not_drawn": "This page could not be drawn.",
@@ -1560,6 +1641,68 @@
       "draw_hint": "drag to cover more",
       "box": "Covered part",
       "finding": "Finding faces…"
+    },
+    "clip": {
+      "play": "Play",
+      "pause": "Pause",
+      "no_play": "This kind of file cannot play here; the picture shows the frame at the playhead.",
+      "start": "Start",
+      "end": "End",
+      "at": "Picture at",
+      "here": "Here",
+      "length": "Length {length}"
+    },
+    "video": {
+      "aim": "Aim",
+      "by_quality": "Quality",
+      "by_size": "Size",
+      "quality": "Quality",
+      "quality_high": "High",
+      "quality_balanced": "Balanced",
+      "quality_small": "Smallest",
+      "target": "Under",
+      "target_8": "8 MB",
+      "target_16": "16 MB (WhatsApp)",
+      "target_25": "25 MB (Gmail)",
+      "target_50": "50 MB",
+      "target_100": "100 MB",
+      "target_other": "Other…",
+      "target_mb": "Size in MB",
+      "target_least": "At least {mb} MB for this length.",
+      "size": "Picture size",
+      "size_keep": "As it is",
+      "size_p": "{p}p at most",
+      "codec": "Format",
+      "codec_h264_hint": "H.264 plays everywhere: phones, computers, browsers, TVs.",
+      "codec_hevc_hint": "HEVC is about half the size for the same quality, and plays on Apple devices and recent ones; slower to make.",
+      "convert_mp4_hint": "MP4 plays almost everywhere.",
+      "convert_mov_hint": "MOV is QuickTime’s, for Apple apps and editing.",
+      "convert_mkv_hint": "MKV holds any picture, sound and subtitles; for players like VLC.",
+      "convert_webm_hint": "WebM is the web’s open format; encoding to it is slow.",
+      "convert_hint": "Where the picture already fits the new format it is copied as it is: fast, and nothing is lost.",
+      "exact": "Exact to the frame",
+      "fast_hint": "Cut as it is: in seconds and nothing lost, but the start moves to the nearest key frame, up to a few seconds earlier.",
+      "exact_hint": "Encoded again: starts exactly where chosen, takes longer, and comes out as MP4.",
+      "audio_m4a_hint": "M4A (AAC): small and good; the sound is copied as it is when it already is AAC.",
+      "audio_mp3_hint": "MP3 plays on anything.",
+      "audio_wav_hint": "WAV is uncompressed: large, for editing.",
+      "gif_width": "Width",
+      "gif_fps": "Frames a second",
+      "gif_hint": "A GIF is large for what it shows: a few seconds, narrow, is best. At most a minute.",
+      "turn_right": "Right 90°",
+      "turn_left": "Left 90°",
+      "turn_half": "180°",
+      "rotate_hint": "MP4 and MOV are only marked to be shown turned: instant and nothing lost. Other formats are encoded again.",
+      "frames_mode": "Pictures",
+      "frames_every": "Every few seconds",
+      "frames_at": "One frame",
+      "every": "Every",
+      "seconds": "seconds",
+      "at_hint": "Move the handle under the video to the moment you want.",
+      "frames_hint": "At most {n} pictures.",
+      "vidmerge_hint": "Videos are joined in the order shown. Videos of the same kind and size are joined as they are; otherwise each is fitted into the first one’s frame and encoded again.",
+      "vidstrip_hint": "Picture and sound are copied as they are. Removed: the place it was filmed, dates, device and app names, titles and chapters. How it is turned is kept.",
+      "vidmute_hint": "The sound is removed; the picture is copied as it is, so nothing else changes."
     }
   },
   "things": {

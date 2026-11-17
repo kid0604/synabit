@@ -328,7 +328,7 @@ Mockup vẽ đủ 28 tool để thấy lưới khi đầy. Bản thật chỉ hi
 | U-4 | Word/Excel/PowerPoint → PDF, PDF → Word, Nén PDF |
 | U-6 | Ký & điền, Điền form PDF, Che thông tin, Cắt lề & khổ trang, nắn ảnh chụp giấy tờ trong Ảnh → PDF; gộp/tách giữ mục lục |
 | U-7 | Ảnh thẻ, Đóng dấu ảnh, Ghép ảnh, Xoay ảnh, Làm mờ ảnh; sửa Nén ảnh, giữ ngày chụp, cắt nhiều ảnh, nhiều ảnh mỗi trang PDF |
-| Sau | Video và âm thanh (ffmpeg trong phòng kín) |
+| U-8 | Video (ffmpeg trong phòng kín): Nén, Cắt, Đổi định dạng, Tách âm thanh, Ghép, Video → GIF, Xoay, Tắt tiếng, Video → ảnh, Xoá thông tin |
 
 ---
 
@@ -371,6 +371,7 @@ RMBG-2.0 không dùng (phi thương mại).
 | U-5 | `run_utility` cho Syn, chỉ tầng A, mọi nền tảng | M |
 | U-7 | Tool ảnh sau khi so với iLoveIMG, PDF24, Squoosh, PowerToys: ảnh thẻ, đóng dấu ảnh, ghép ảnh, xoay ảnh, làm mờ ảnh; Nén ảnh không còn làm file to ra | M |
 | U-6 | Thêm tool PDF sau khi so với iLovePDF và PDF24: ký & điền, điền form, che thông tin, cắt lề & khổ trang, nắn ảnh chụp giấy tờ. Gộp/tách/sắp xếp giữ mục lục, nhãn trang, form, đích có tên, layer | L |
+| U-8 | macOS 14+: mười tool video bằng ffmpeg (Homebrew) chạy trong phòng kín, đọc file qua cửa chỉ đọc, chạy như job có tiến độ và dừng được | L |
 
 U-1 và U-2 không đụng `syn/machine/`, nên không chờ nhánh `syn-at-the-machine`. U-4 thì chờ.
 
@@ -577,6 +578,54 @@ Preview; sửa Nén ảnh và thêm năm tool.
   - Chưa chạy trong app Tauri thật.
   - Chưa thử Vision tìm mặt trên ảnh chân dung thật (mới giả lập kết quả).
   - Chưa thử thay nền ảnh thẻ với mặt nạ thật.
+
+**U-8, 2026-11-18 (chưa commit):** video, so với HandBrake, Permute, Shutter Encoder, QuickTime, các trang như
+ezgif, Clideo, 123apps. ffmpeg chạy trong phòng kín thay cho `avconvert` của macOS: một công cụ cho cả mười tool, đọc
+được gần mọi định dạng, và vì nó đọc file lạ nên nó chạy ở nơi một file độc hại không với tới gì.
+
+- **Phòng kín, dùng cho Utilities chứ không cho Syn:**
+  - Phòng được dựng khi app mở (`commands::machine::setup`), không phụ thuộc công tắc Syn, không có model nào.
+  - ffmpeg đọc file qua một **cửa chỉ đọc** (`Cell::with_doors`): thư mục riêng của file trong workspace
+    (`in/<id>/`), nên cửa chỉ cho thấy đúng một file. Không chép video vào phòng.
+  - Mọi tham số ffmpeg do Rust viết (`video::plan`); màn hình chỉ chọn trong vài lựa chọn cố định (`video::Task`).
+    Input có tiền tố `file:` để tên file không bị đọc như giao thức.
+  - Chạy như **job** (`Rooms::start_job`): giới hạn 8 giờ, tiến độ đọc từ `time=` của ffmpeg, dừng thì cả nhóm tiến
+    trình bị giết. Luôn có người chờ job nên khi xong không báo vào hội thoại; `tell_about_job` bỏ qua scope
+    `utilities` cho chắc.
+  - Kết quả chép ra bằng descriptor (`inside::copy_out`, mới): kiểm tra như `read` (file thường, một tên, không theo
+    link), nhưng chép từng khúc, vì video có thể vài GB.
+  - Dùng chung giới hạn của phòng: ba job một lúc (quá thì báo "phòng đang bận"), trần đĩa 20 GB mỗi phòng.
+- **Tool:**
+  - **Nén video:** theo chất lượng (CRF) hoặc **dưới một dung lượng** (8, 16, 25, 50, 100 MB hay tự nhập; hai lượt,
+    tính bitrate từ độ dài, chừa âm thanh và 3% container, báo dung lượng tối thiểu nếu chọn nhỏ quá). Cạnh ngắn tối
+    đa 480–1440p theo hình *đang hiển thị* (video dọc của iPhone không bị bóp sai). H.264 hoặc HEVC (`hvc1`, giữ 10
+    bit). File không nhỏ đi thì bỏ, như Nén PDF.
+  - **Cắt video:** thanh thời gian kéo được, phím mũi tên (Shift: một giây), gõ giờ `1:15.5`, nút "Tại đây". Cắt
+    nhanh giữ nguyên dữ liệu (lùi về key frame) hoặc chính xác từng khung (nén lại ra MP4).
+  - **Đổi định dạng:** MP4, MOV, MKV, WebM; chép nguyên hình/tiếng khi container nhận được, không thì nén lại.
+  - **Tách âm thanh:** M4A (chép nguyên nếu đã là AAC), MP3, WAV.
+  - **Ghép video:** cùng loại, cùng cỡ thì nối nguyên (concat demuxer); khác thì đặt vào khung video đầu, chèn lặng
+    cho file không có tiếng, rồi nén lại.
+  - **Video → GIF:** palette riêng cho đoạn đó, tối đa một phút, 320/480/640 px, 10/15/24 hình/giây.
+  - **Xoay video:** MP4/MOV chỉ sửa ma trận hiển thị (`-display_rotation`, cộng với hướng sẵn có), tức thì, không mất
+    gì; định dạng khác thì nén lại.
+  - **Tắt tiếng**, **Xoá thông tin** (vị trí, ngày, thiết bị, tiêu đề, chương, track dữ liệu của iPhone; giữ hướng
+    xoay), **Video → ảnh** (một khung, hoặc mỗi N giây, tối đa 500 ảnh).
+  - File WebView không phát được (MKV, AVI…) thì màn cắt hiện khung hình do ffmpeg lấy trong phòng.
+  - Thả video vào cửa sổ: gửi từng khúc 32 MB (`x-utility-append`), không giữ cả file trong WebView.
+  - Chưa có ffmpeg: thẻ hướng dẫn `brew install ffmpeg` (chép lệnh, không tự chạy), Kiểm tra lại.
+- **Đã kiểm:**
+  - Rust: 15 test dựng tham số; `video::real::real_ffmpeg` (bị `ignore`) chạy cả mười tool bằng ffmpeg 8.1 thật
+    trong phòng kín, trong thư mục có dấu cách và dấu nháy: xoá thông tin bỏ được vị trí, tiêu đề, ngày và giữ hướng
+    −90°; nén theo dung lượng 0,5 MB ra 474 KB; xoay MP4 thành 180° không nén lại; ghép nguyên và ghép nén lại; dừng
+    giữa chừng thì job dừng.
+  - Front end: 9 test mới (tên kết quả, giờ, dung lượng tối thiểu, chạy với đúng tham số, báo lỗi dung lượng).
+  - Trong trình duyệt với IPC giả lập: cắt (kéo, phím, gõ giờ), nén theo dung lượng, thẻ cài ffmpeg, AVI không phát
+    được thì hiện khung hình từ phòng.
+- **Chưa kiểm:**
+  - Chưa chạy trong app Tauri thật (asset protocol phát video, tua trong WKWebView).
+  - Chưa thử video iPhone thật (HEVC 10 bit HDR, track vị trí) và file vài GB.
+
 ---
 
 ## 8. Bước 0: cần đo trước

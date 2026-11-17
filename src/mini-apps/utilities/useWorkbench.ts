@@ -22,6 +22,7 @@ import {
   availability, cleansInPlace, everyN, extensionFor, fitWithin, fits, isJpegName, kindOf, linesToText, ocrLanguages, outputName,
   ownFormat, pageImageName, parseRanges, span, stem, toolById, PAPERS, isWhole, shareOf, type ImageFormat, type InputKind,
   type FindKind, type OfficeStatus, type PaperId, type TextLine, type ToolDef, type ToolId, type VisionAbilities,
+  type VideoProbe, videoExt, leastTarget, LONGEST_GIF,
 } from './tools';
 import { i18n } from '../../i18n';
 import { INKS, edges, markPicture, newId, valuePicture, type Hidden, type Ink, type Mark } from './marks';
@@ -39,8 +40,10 @@ export interface Item {
   height?: number;
   /** Whether a PDF asks for a password; known for the unlock tool. */
   lock?: api.Lock;
+  /** What ffprobe said of a video, once it has looked (in a sealed room). */
+  probe?: VideoProbe;
   /** Why it cannot be used, when it cannot. */
-  problem?: 'unreadable' | 'unreadable_image' | 'heic' | 'locked' | 'wrong-kind';
+  problem?: 'unreadable' | 'unreadable_image' | 'heic' | 'locked' | 'wrong-kind' | 'unreadable_video' | 'no_audio';
 }
 
 export interface PageSlot {
@@ -165,6 +168,21 @@ const options = reactive({
   ocr: { pdf: true, text: false, skipText: true, language: 'vi' as 'vi' | 'auto' },
   imgtext: { language: 'vi' as 'vi' | 'auto' },
   compress: { level: 1 as 0 | 1 | 2 },
+  vidcompress: {
+    /** Shorter side at most this; 0 keeps the size. */
+    height: 1080 as 0 | 480 | 720 | 1080 | 1440,
+    codec: 'h264' as 'h264' | 'hevc',
+    quality: 'balanced' as 'high' | 'balanced' | 'small',
+    /** Aim at a size rather than a quality. */
+    bySize: false,
+    targetMb: 25,
+  },
+  vidconvert: { format: 'mp4' as 'mp4' | 'mov' | 'mkv' | 'webm' },
+  vidtrim: { start: 0, end: 0, exact: false },
+  vidaudio: { format: 'm4a' as 'm4a' | 'mp3' | 'wav' },
+  vidrotate: { turn: 'right' as 'right' | 'left' | 'half' },
+  vidframes: { mode: 'every' as 'every' | 'at', every: 5, at: 0, png: false },
+  vidgif: { start: 0, end: 0, width: 480, fps: 12 },
   sign: {
     marks: [] as Mark[],
     page: 1,
@@ -221,7 +239,14 @@ export const COMPRESS_LEVELS = [
 /** What the room-backed tools have here; asked again after an install. */
 const office = ref<OfficeStatus | null | undefined>(undefined);
 function askOffice(): Promise<void> {
-  return api.officeStatus().then((o) => { office.value = o ?? null; }).catch(() => { office.value = null; });
+  return api
+    .officeStatus()
+    .then((o) => {
+      office.value = o ?? null;
+      // Videos added before ffmpeg was installed are looked at now.
+      if (o?.ffmpeg) for (const i of items.value) if (i.kind === 'video' && !i.probe && !i.problem) void inspect(i);
+    })
+    .catch(() => { office.value = null; });
 }
 
 /**
@@ -388,6 +413,8 @@ const ready = computed(() => {
   if (!fits(t, usable.value.length)) return false;
   if (t.id !== 'unlock' && usable.value.some((i) => i.kind === 'pdf' && !i.pages)) return false;
   if (usable.value.some((i) => i.kind === 'image' && !i.width)) return false;
+  if (usable.value.some((i) => i.kind === 'video' && !i.probe)) return false;
+  if (t.category === 'video') return videoReady(t.id);
   if (t.id === 'split') return splitPlan.value.parts.length > 0 && !splitPlan.value.bad;
   if (t.id === 'organize') return options.organize.pages.length > 0;
   if (t.id === 'watermark') {
@@ -432,6 +459,36 @@ const ready = computed(() => {
   return true;
 });
 
+/** Whether a video tool's settings make sense for the files it has. */
+function videoReady(id: ToolId): boolean {
+  const first = usable.value[0]?.probe;
+  if (!first) return false;
+  const duration = first.duration;
+  const inRange = (start: number, end: number) => Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end - start >= 0.1 && end <= duration + 0.5;
+  switch (id) {
+    case 'vidtrim': {
+      const o = options.vidtrim;
+      // The whole file is no cut at all.
+      return inRange(o.start, o.end) && !(o.start <= 0.05 && o.end >= duration - 0.05);
+    }
+    case 'vidgif': {
+      const o = options.vidgif;
+      return inRange(o.start, o.end) && o.end - o.start <= LONGEST_GIF;
+    }
+    case 'vidframes': {
+      const o = options.vidframes;
+      return o.mode === 'at' ? Number.isFinite(o.at) && o.at >= 0 && o.at <= duration : positive(o.every) && o.every >= 0.1;
+    }
+    case 'vidcompress': {
+      const o = options.vidcompress;
+      if (!o.bySize) return true;
+      return positive(o.targetMb) && usable.value.every((i) => o.targetMb >= leastTarget(i.probe!.duration, !!i.probe!.audio, o.quality === 'small'));
+    }
+    default:
+      return true;
+  }
+}
+
 /** Whether the WebView can write WebP, which decides whether it is offered. */
 const webp = computed(() => canEncode('image/webp'));
 
@@ -455,6 +512,17 @@ async function inspect(item: Item) {
       // HEIC is read by the WebView only on a Mac; elsewhere say that, not "damaged".
       const heic = /\.hei[cf]$/i.test(item.input.name) && !/Mac/.test(navigator.userAgent);
       item.problem = heic ? 'heic' : 'unreadable_image';
+    }
+  } else if (item.kind === 'video') {
+    // Looked at by ffprobe in a sealed room; until ffmpeg is here, the setup
+    // card says so and this waits (`askOffice`).
+    if (!office.value?.ffmpeg) return;
+    try {
+      item.probe = await api.videoProbe(item.input.id);
+      if (!item.probe.video && tool.value !== 'vidaudio') item.problem = 'unreadable_video';
+      else if (!item.probe.audio && tool.value === 'vidaudio') item.problem = 'no_audio';
+    } catch {
+      item.problem = 'unreadable_video';
     }
   } else if (item.kind === 'pdf') {
     if (tool.value === 'unlock') {
@@ -534,6 +602,7 @@ function resetPageOptions() {
     if (first) void frameIdPhoto(first);
   }
   if (tool.value === 'imgblur') options.imgblur.index = Math.min(options.imgblur.index, Math.max(0, usable.value.length - 1));
+  resetClip();
   const pages = firstPdf.value?.pages ?? 0;
   if (tool.value === 'organize') options.organize.pages = slots(pages);
   if (tool.value === 'split') {
@@ -544,9 +613,26 @@ function resetPageOptions() {
   }
 }
 
+/**
+ * A cut, a GIF or a frame starts over when the video changes, and only then:
+ * the whole video to cut from, its first five seconds as a GIF, one second
+ * in as a frame.
+ */
+let clipOf: string | null = null;
+function resetClip() {
+  const first = usable.value.find((i) => i.kind === 'video' && i.probe);
+  if (!first || first.input.id === clipOf) return;
+  clipOf = first.input.id;
+  const d = first.probe!.duration;
+  Object.assign(options.vidtrim, { start: 0, end: d });
+  Object.assign(options.vidgif, { start: 0, end: Math.min(d, 5) });
+  options.vidframes.at = Math.min(1, d);
+}
+
 /** What belongs to one tool's screen and not the next. */
 function forgetScreen() {
   stopActive();
+  clipOf = null;
   for (const i of items.value) if (i.kind === 'pdf') void closePdf(i.input.path);
   masks.clear();
   options.protect.password = options.protect.confirm = '';
@@ -640,7 +726,13 @@ function explain(e: unknown): { key: string; values?: Record<string, unknown> } 
   if (/cancelled/.test(text)) return null;
   if (/no-subject/.test(text)) return { key: 'utilities.errors.no_subject' };
   if (/not-smaller/.test(text)) return { key: 'utilities.errors.not_smaller' };
-  if (/missing-(libreoffice|pdf2docx)/.test(text)) return { key: 'utilities.errors.missing_program' };
+  if (/missing-(libreoffice|pdf2docx|ffmpeg)/.test(text)) return { key: 'utilities.errors.missing_program' };
+  const small = text.match(/video-too-small: ([\d.]+)/);
+  if (small) return { key: 'utilities.errors.video_too_small', values: { mb: Number(small[1]).toLocaleString(i18n.global.locale.value) } };
+  const video = text.match(/video-(no-audio|no-video|bad-range|too-long|busy)/);
+  if (video) return { key: `utilities.errors.video_${video[1].replace('-', '_')}` };
+  const failed = text.match(/video-failed: “(.+?)”/);
+  if (failed) return { key: 'utilities.errors.video_failed', values: { name: failed[1] } };
   if (/no-room/.test(text)) return { key: 'utilities.errors.no_room' };
   if (/install-failed/.test(text)) return { key: 'utilities.errors.install_failed', values: { reason: text } };
   const named = text.match(/(locked|unreadable): “(.+?)”/);
@@ -706,6 +798,44 @@ async function shrinkPicture(bytes: Uint8Array, p: api.PdfPicture, most: number,
 /** Each file and the name its result gets. */
 function perFile(t: ToolId, files: Item[]): api.PerFile[] {
   return files.map((f) => ({ input: f.input.id, name: outputName(t, f.input.name) }));
+}
+
+/** What a video result is called before Rust names it for good. */
+function videoExtFor(id: ToolId, name: string): string {
+  return videoExt(id, name, {
+    convert: options.vidconvert.format,
+    trimExact: options.vidtrim.exact,
+    audio: options.vidaudio.format,
+    framesPng: options.vidframes.png,
+  });
+}
+
+/** The settings of a video tool, as `utilities::video::Task` takes them. */
+function videoTask(id: ToolId): api.VideoTask {
+  switch (id) {
+    case 'vidcompress': {
+      const o = options.vidcompress;
+      return { tool: 'compress', height: o.height || null, codec: o.codec, quality: o.quality, targetMb: o.bySize ? o.targetMb : null };
+    }
+    case 'vidconvert':
+      return { tool: 'convert', format: options.vidconvert.format };
+    case 'vidtrim':
+      return { tool: 'trim', ...options.vidtrim };
+    case 'vidaudio':
+      return { tool: 'audio', format: options.vidaudio.format };
+    case 'vidrotate':
+      return { tool: 'rotate', turn: options.vidrotate.turn };
+    case 'vidmute':
+      return { tool: 'mute' };
+    case 'vidframes': {
+      const o = options.vidframes;
+      return { tool: 'frames', every: o.mode === 'every' ? o.every : null, at: o.mode === 'at' ? o.at : null, png: o.png };
+    }
+    case 'vidgif':
+      return { tool: 'gif', ...options.vidgif };
+    default:
+      return { tool: 'strip' };
+  }
 }
 
 /** Redraw a picture and add it to the run. */
@@ -1013,6 +1143,27 @@ async function run() {
       case 'pdf2word':
         result = await api.pdfToWord(started.id, perFile(t.id, files));
         break;
+      case 'vidmerge':
+        result = await api.videoMerge(started.id, ids, outputName(t.id, first, undefined, videoExtFor(t.id, first)));
+        break;
+      case 'vidcompress':
+      case 'vidconvert':
+      case 'vidtrim':
+      case 'vidaudio':
+      case 'vidstrip':
+      case 'vidgif':
+      case 'vidrotate':
+      case 'vidmute':
+      case 'vidframes': {
+        const names = files.map((f) => ({ input: f.input.id, name: outputName(t.id, f.input.name, undefined, videoExtFor(t.id, f.input.name)) }));
+        result = await api.video(started.id, names, videoTask(t.id));
+        // Left out because it came out no smaller: said, as for PDFs.
+        const kept = files.length - result.outputs.length;
+        if (t.id === 'vidcompress' && kept > 0) showAppNotice(i18n.global.t('utilities.errors.some_not_smaller', { n: kept }, kept));
+        if (t.id === 'vidcompress' && kept > 0) sizeIn = undefined;
+        if (t.id !== 'vidcompress' && t.id !== 'vidtrim') sizeIn = undefined;
+        break;
+      }
       case 'removebg': {
         const { backdrop, trim } = options.removebg;
         const format = backdrop === 'transparent' ? 'png' : 'jpeg';
@@ -1328,7 +1479,7 @@ function stopListening() {
 export function useWorkbench() {
   return {
     tool, current, items, usable, firstPdf, phase, progress, job, before, failure, options, unsaved, splitPlan, ready, webp,
-    resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, frameIdPhoto, findFaces, office, askOffice, installing, installError, installPdf2docx,
+    videoExtFor, resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, frameIdPhoto, findFaces, office, askOffice, installing, installError, installPdf2docx,
     openTool, closeTool, addInputs, removeItem, moveItem, sortByName, clearItems, run, cancel, editAgain,
     showJob, chain, refreshUnsaved, noteSaved, listenForProgress, stopListening,
   };

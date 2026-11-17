@@ -25,6 +25,7 @@ import IdPhotoBoard from './IdPhotoBoard.vue';
 import ImageMarkPreview from './ImageMarkPreview.vue';
 import CollagePreview from './CollagePreview.vue';
 import BlurBoard from './BlurBoard.vue';
+import ClipBoard from './ClipBoard.vue';
 import { ID_SIZES, type IdSize } from '../photo';
 import SignaturePad from './SignaturePad.vue';
 import { INKS, inkFromPicture, newId, newMark, textWidth, today, type Ink, type Mark, type MarkKind } from '../marks';
@@ -34,7 +35,10 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 import { COMPRESS_LEVELS } from '../useWorkbench';
 import { logger } from '../../../utils/logger';
 import { useWorkbench } from '../useWorkbench';
-import { NUMBER_FORMATS, PAPERS, availability, finder, cleansInPlace, extensionFor, fits, numberText, outputName, ownFormat, previewMayRefuse, type FindKind, type PaperId, type ToolId } from '../tools';
+import {
+  NUMBER_FORMATS, PAPERS, VIDEO_TARGETS, availability, clock, finder, cleansInPlace, extensionFor, fits, leastTarget, numberText, outputName, ownFormat, previewMayRefuse,
+  MOST_FRAMES, type FindKind, type PaperId, type ToolId,
+} from '../tools';
 import type { Job } from '../api';
 
 const emit = defineEmits<{ (e: 'pick'): void; (e: 'chain', tool: ToolId): void; (e: 'discarded'): void }>();
@@ -96,6 +100,25 @@ const plan = computed(() => {
       const keepsKind = tool.value.id === 'exif' && cleansInPlace(first);
       return outputName(tool.value.id, first, undefined, keepsKind ? undefined : extensionFor(format));
     }
+    case 'vidframes': {
+      const o = wb.options.vidframes;
+      if (o.mode === 'at') return outputName('vidframes', first, undefined, o.png ? 'png' : 'jpg');
+      const n = Math.min(MOST_FRAMES, Math.floor((files[0].probe?.duration ?? 0) / Math.max(0.1, o.every)) + 1);
+      return t('utilities.options.makes_images', { n }, n);
+    }
+    case 'vidmerge':
+      return outputName('vidmerge', first, undefined, wb.videoExtFor('vidmerge', first));
+    case 'vidcompress':
+    case 'vidconvert':
+    case 'vidtrim':
+    case 'vidaudio':
+    case 'vidstrip':
+    case 'vidgif':
+    case 'vidrotate':
+    case 'vidmute':
+      return files.length > 1
+        ? t('utilities.options.makes_files', { n: files.length }, files.length)
+        : outputName(tool.value.id, first, undefined, wb.videoExtFor(tool.value.id, first));
     default:
       return files.length > 1 && tool.value.id !== 'merge' && tool.value.id !== 'img2pdf'
         ? t('utilities.options.makes_files', { n: files.length }, files.length)
@@ -169,6 +192,30 @@ async function checkAgain() {
 function openDownload() {
   void openUrl('https://www.libreoffice.org/download/download-libreoffice/').catch(logger.error);
 }
+
+/** ffmpeg comes from Homebrew; the command is copied for Terminal, never run from here. */
+const BREW_FFMPEG = 'brew install ffmpeg';
+const copied = ref(false);
+async function copyBrew() {
+  try {
+    await navigator.clipboard.writeText(BREW_FFMPEG);
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1500);
+  } catch (e) {
+    logger.error('[utilities] copying the command failed', e);
+  }
+}
+function openHomebrew() {
+  void openUrl('https://brew.sh').catch(logger.error);
+}
+
+const firstVideo = computed(() => wb.usable.value.find((i) => i.kind === 'video'));
+
+/** The least a size target can be for the files in, in MB. */
+const leastMb = computed(() =>
+  Math.max(0, ...wb.usable.value.filter((i) => i.probe).map((i) => leastTarget(i.probe!.duration, !!i.probe!.audio, wb.options.vidcompress.quality === 'small'))),
+);
+const customTarget = computed(() => !(VIDEO_TARGETS as readonly number[]).includes(wb.options.vidcompress.targetMb));
 
 const firstImage = computed(() => wb.usable.value.find((i) => i.kind === 'image'));
 
@@ -332,7 +379,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
           </h2>
           <p class="text-text-secondary dark:text-text-secondary-dark leading-relaxed mt-3 mb-0">{{ t(`utilities.setup.${tool.needs}_body`) }}</p>
           <p class="mt-3 mb-0 flex gap-2.5 rounded-lg bg-surface-hover dark:bg-surface-hover-dark px-3 py-2.5 text-[13px] text-text-secondary dark:text-text-secondary-dark">
-            <Info class="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />{{ t('utilities.setup.sealed') }}
+            <Info class="w-4 h-4 shrink-0 mt-0.5" aria-hidden="true" />{{ t(tool.needs === 'ffmpeg' ? 'utilities.setup.sealed_video' : 'utilities.setup.sealed') }}
           </p>
           <div class="flex flex-wrap gap-2 mt-4">
             <template v-if="tool.needs === 'libreoffice'">
@@ -340,6 +387,18 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
               <button type="button" class="btn-secondary" :disabled="checking" @click="checkAgain">
                 <Loader2 v-if="checking" class="w-4 h-4 animate-spin" aria-hidden="true" /><RefreshCw v-else class="w-4 h-4" aria-hidden="true" />{{ t('utilities.setup.check_again') }}
               </button>
+            </template>
+            <template v-else-if="tool.needs === 'ffmpeg'">
+              <div class="w-full flex items-center gap-2 rounded-lg border border-border dark:border-border-dark bg-surface-alt dark:bg-surface-alt-dark pl-3 pr-1.5 py-1.5">
+                <code class="flex-1 text-[13px] font-mono text-text dark:text-text-dark">{{ BREW_FFMPEG }}</code>
+                <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px]" @click="copyBrew">
+                  <Check v-if="copied" class="w-4 h-4" aria-hidden="true" /><Copy v-else class="w-4 h-4" aria-hidden="true" />{{ copied ? t('utilities.setup.copied') : t('utilities.setup.copy') }}
+                </button>
+              </div>
+              <button type="button" class="btn-secondary" :disabled="checking" @click="checkAgain">
+                <Loader2 v-if="checking" class="w-4 h-4 animate-spin" aria-hidden="true" /><RefreshCw v-else class="w-4 h-4" aria-hidden="true" />{{ t('utilities.setup.check_again') }}
+              </button>
+              <button type="button" class="btn-secondary" @click="openHomebrew"><ExternalLink class="w-4 h-4" aria-hidden="true" />{{ t('utilities.setup.get_homebrew') }}</button>
             </template>
             <button v-else type="button" class="btn-primary" :disabled="wb.installing.value" @click="wb.installPdf2docx">
               <Loader2 v-if="wb.installing.value" class="w-4 h-4 animate-spin" aria-hidden="true" /><Download v-else class="w-4 h-4" aria-hidden="true" />
@@ -397,13 +456,20 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             <div class="flex items-center gap-2.5 mb-3.5 text-sm text-text-secondary dark:text-text-secondary-dark">
               <template v-if="tool.workspace === 'files' || tool.workspace === 'frame' || tool.workspace === 'imgmark' || tool.workspace === 'collage' || tool.workspace === 'imgblur' || (tool.workspace === 'crop' && wb.usable.value.length > 1)">
                 <span>{{ t('utilities.files.count', { n: wb.usable.value.length }, wb.usable.value.length) }}</span>
-                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'collage'">· {{ t('utilities.files.drag_to_order') }}</span>
+                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'collage' || tool.id === 'vidmerge'">· {{ t('utilities.files.drag_to_order') }}</span>
                 <span class="flex-1" />
                 <button v-if="wb.items.value.length > 1" type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.sortByName()">{{ t('utilities.files.sort_by_name') }}</button>
                 <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.clearItems()">{{ t('utilities.files.clear') }}</button>
               </template>
               <template v-else-if="(tool.workspace === 'crop' || tool.workspace === 'idphoto') && firstImage">
                 <span class="truncate">{{ firstImage.input.name }}</span>
+                <span class="flex-1" />
+                <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="emit('pick')">
+                  <FolderOpen class="w-4 h-4" aria-hidden="true" />{{ t('utilities.files.other_file') }}
+                </button>
+              </template>
+              <template v-else-if="tool.workspace === 'clip' && firstVideo">
+                <span class="truncate">{{ firstVideo.input.name }}<template v-if="firstVideo.probe"> · {{ clock(firstVideo.probe.duration, false) }}</template></span>
                 <span class="flex-1" />
                 <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="emit('pick')">
                   <FolderOpen class="w-4 h-4" aria-hidden="true" />{{ t('utilities.files.other_file') }}
@@ -497,10 +563,14 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
                 <FileCards :items="wb.items.value" :ordered="false" :can-add="canAdd" @remove="wb.removeItem($event)" @add="emit('pick')" />
               </div>
             </div>
+            <template v-else-if="tool.workspace === 'clip'">
+              <p v-if="firstVideo?.problem" class="text-sm text-danger m-0">{{ t(`utilities.files.problem_${firstVideo.problem}`) }}</p>
+              <ClipBoard v-else />
+            </template>
             <FileCards
               v-else-if="tool.workspace === 'files'"
               :items="wb.items.value"
-              :ordered="tool.id === 'merge' || tool.id === 'img2pdf'"
+              :ordered="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'vidmerge'"
               :can-add="canAdd"
               @remove="wb.removeItem($event)"
               @move="(from, to) => wb.moveItem(from, to)"
@@ -546,7 +616,11 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             <div class="h-full rounded-full bg-accent transition-[width] duration-200" :style="{ width: `${percent}%` }" />
           </div>
           <div class="flex items-center justify-between text-[13px] text-text-secondary dark:text-text-secondary-dark">
-            <span class="tabular-nums">{{ wb.progress.total ? t('utilities.progress.of', { done: wb.progress.done, total: wb.progress.total }) : t('utilities.progress.starting') }}</span>
+            <span class="tabular-nums">{{
+              !wb.progress.total ? t('utilities.progress.starting')
+              : tool.category === 'video' ? `${percent}%`
+              : t('utilities.progress.of', { done: wb.progress.done, total: wb.progress.total })
+            }}</span>
             <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.cancel()">{{ t('utilities.progress.cancel') }}</button>
           </div>
         </div>
@@ -1117,6 +1191,117 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
           </div>
           <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.options.compress_pdf_hint') }}</p>
         </template>
+
+        <!-- Video -->
+        <template v-else-if="tool.id === 'vidcompress'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.video.aim')">
+            <button v-for="by in [false, true]" :key="String(by)" type="button" role="radio" :aria-checked="wb.options.vidcompress.bySize === by" :class="{ on: wb.options.vidcompress.bySize === by }" @click="wb.options.vidcompress.bySize = by">
+              {{ t(by ? 'utilities.video.by_size' : 'utilities.video.by_quality') }}
+            </button>
+          </div>
+          <template v-if="!wb.options.vidcompress.bySize">
+            <p class="utility-sub">{{ t('utilities.video.quality') }}</p>
+            <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.video.quality')">
+              <button v-for="q in (['high', 'balanced', 'small'] as const)" :key="q" type="button" role="radio" :aria-checked="wb.options.vidcompress.quality === q" :class="{ on: wb.options.vidcompress.quality === q }" @click="wb.options.vidcompress.quality = q">
+                {{ t(`utilities.video.quality_${q}`) }}
+              </button>
+            </div>
+          </template>
+          <template v-else>
+            <label class="utility-sub block" for="utility-vid-target">{{ t('utilities.video.target') }}</label>
+            <div class="flex gap-2">
+              <select id="utility-vid-target" class="utility-field flex-1" :value="customTarget ? 0 : wb.options.vidcompress.targetMb" @change="(e) => { const v = Number((e.target as HTMLSelectElement).value); if (v) wb.options.vidcompress.targetMb = v; else wb.options.vidcompress.targetMb = Math.max(1, Math.ceil(leastMb)); }">
+                <option v-for="mb in VIDEO_TARGETS" :key="mb" :value="mb">{{ t(`utilities.video.target_${mb}`) }}</option>
+                <option :value="0">{{ t('utilities.video.target_other') }}</option>
+              </select>
+              <input v-if="customTarget" v-model.number="wb.options.vidcompress.targetMb" type="number" min="0.5" step="0.5" class="utility-field !w-[84px]" :aria-label="t('utilities.video.target_mb')" />
+            </div>
+            <p class="text-xs mt-1.5 mb-0" :class="wb.options.vidcompress.targetMb < leastMb ? 'text-danger' : 'text-muted dark:text-muted-dark'">
+              {{ t('utilities.video.target_least', { mb: leastMb.toLocaleString(locale) }) }}
+            </p>
+          </template>
+          <label class="utility-sub block" for="utility-vid-height">{{ t('utilities.video.size') }}</label>
+          <select id="utility-vid-height" v-model.number="wb.options.vidcompress.height" class="utility-field">
+            <option v-for="h in [0, 1440, 1080, 720, 480]" :key="h" :value="h">{{ h ? t('utilities.video.size_p', { p: h }) : t('utilities.video.size_keep') }}</option>
+          </select>
+          <p class="utility-sub">{{ t('utilities.video.codec') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.video.codec')">
+            <button v-for="c in (['h264', 'hevc'] as const)" :key="c" type="button" role="radio" :aria-checked="wb.options.vidcompress.codec === c" :class="{ on: wb.options.vidcompress.codec === c }" @click="wb.options.vidcompress.codec = c">
+              {{ c === 'h264' ? 'H.264' : 'HEVC' }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t(`utilities.video.codec_${wb.options.vidcompress.codec}_hint`) }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidconvert'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.options.format')">
+            <button v-for="f in (['mp4', 'mov', 'mkv', 'webm'] as const)" :key="f" type="button" role="radio" :aria-checked="wb.options.vidconvert.format === f" :class="{ on: wb.options.vidconvert.format === f }" @click="wb.options.vidconvert.format = f">
+              {{ f.toUpperCase() }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t(`utilities.video.convert_${wb.options.vidconvert.format}_hint`) }}</p>
+          <p class="text-xs text-muted dark:text-muted-dark mt-1.5 mb-0">{{ t('utilities.video.convert_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidtrim'">
+          <label class="flex items-start gap-2 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <input v-model="wb.options.vidtrim.exact" type="checkbox" class="mt-0.5" /><span>{{ t('utilities.video.exact') }}</span>
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t(wb.options.vidtrim.exact ? 'utilities.video.exact_hint' : 'utilities.video.fast_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidaudio'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.options.format')">
+            <button v-for="f in (['m4a', 'mp3', 'wav'] as const)" :key="f" type="button" role="radio" :aria-checked="wb.options.vidaudio.format === f" :class="{ on: wb.options.vidaudio.format === f }" @click="wb.options.vidaudio.format = f">
+              {{ f.toUpperCase() }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t(`utilities.video.audio_${wb.options.vidaudio.format}_hint`) }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidgif'">
+          <p class="utility-sub !mt-0">{{ t('utilities.video.gif_width') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.video.gif_width')">
+            <button v-for="w in [320, 480, 640]" :key="w" type="button" role="radio" :aria-checked="wb.options.vidgif.width === w" :class="{ on: wb.options.vidgif.width === w }" @click="wb.options.vidgif.width = w">{{ w }}px</button>
+          </div>
+          <p class="utility-sub">{{ t('utilities.video.gif_fps') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.video.gif_fps')">
+            <button v-for="f in [10, 15, 24]" :key="f" type="button" role="radio" :aria-checked="wb.options.vidgif.fps === f" :class="{ on: wb.options.vidgif.fps === f }" @click="wb.options.vidgif.fps = f">{{ f }}</button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.video.gif_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidrotate'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.imgrotate.turn')">
+            <button v-for="r in (['right', 'left', 'half'] as const)" :key="r" type="button" role="radio" :aria-checked="wb.options.vidrotate.turn === r" :class="{ on: wb.options.vidrotate.turn === r }" @click="wb.options.vidrotate.turn = r">
+              {{ t(`utilities.video.turn_${r}`) }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.video.rotate_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'vidframes'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.video.frames_mode')">
+            <button v-for="m in (['every', 'at'] as const)" :key="m" type="button" role="radio" :aria-checked="wb.options.vidframes.mode === m" :class="{ on: wb.options.vidframes.mode === m }" @click="wb.options.vidframes.mode = m">
+              {{ t(`utilities.video.frames_${m}`) }}
+            </button>
+          </div>
+          <label v-if="wb.options.vidframes.mode === 'every'" class="utility-sub flex items-center gap-2">
+            <span>{{ t('utilities.video.every') }}</span>
+            <input v-model.number="wb.options.vidframes.every" type="number" min="0.1" step="0.5" class="utility-field !w-[76px]" />
+            <span>{{ t('utilities.video.seconds') }}</span>
+          </label>
+          <p v-else class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t('utilities.video.at_hint') }}</p>
+          <p class="utility-sub">{{ t('utilities.options.format') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.options.format')">
+            <button v-for="png in [false, true]" :key="String(png)" type="button" role="radio" :aria-checked="wb.options.vidframes.png === png" :class="{ on: wb.options.vidframes.png === png }" @click="wb.options.vidframes.png = png">
+              {{ png ? 'PNG' : 'JPG' }}
+            </button>
+          </div>
+          <p v-if="wb.options.vidframes.mode === 'every'" class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.video.frames_hint', { n: MOST_FRAMES }) }}</p>
+        </template>
+
+        <p v-else-if="tool.id === 'vidmerge' || tool.id === 'vidstrip' || tool.id === 'vidmute'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t(`utilities.video.${tool.id}_hint`) }}</p>
 
         <!-- Office to PDF, PDF to Word -->
         <p v-else-if="tool.id === 'office2pdf' || tool.id === 'pdf2word'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t(`utilities.options.${tool.id}_hint`) }}</p>

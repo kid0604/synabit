@@ -10,8 +10,9 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ArrowLeft, ArrowRight, Lock, Plus, TriangleAlert, X } from 'lucide-vue-next';
 import PdfThumb from './PdfThumb.vue';
+import VideoThumb from './VideoThumb.vue';
 import { fileUrl } from '../render';
-import { formatSize } from '../tools';
+import { clock, formatSize, shownSize } from '../tools';
 import type { Item } from '../useWorkbench';
 
 const props = defineProps<{ items: Item[]; ordered: boolean; canAdd: boolean }>();
@@ -55,6 +56,10 @@ function caption(item: Item): string {
   const parts = [size];
   if (item.pages) parts.unshift(t('utilities.files.pages', { n: item.pages }, item.pages));
   if (item.width) parts.unshift(`${item.width} × ${item.height}`);
+  if (item.probe) {
+    if (item.probe.video) parts.unshift(shownSize(item.probe.video).join(' × '));
+    parts.unshift(clock(item.probe.duration, false));
+  }
   if (item.lock) parts.push(t(`utilities.files.lock_${item.lock}`));
   return parts.join(' · ');
 }
@@ -98,6 +103,8 @@ function caption(item: Item): string {
           <TriangleAlert v-else class="w-6 h-6" aria-hidden="true" />
         </div>
         <PdfThumb v-else-if="item.kind === 'pdf'" :path="item.input.path" :width="128" />
+        <VideoThumb v-else-if="item.kind === 'video' && item.probe" :input="item.input.id" :at="Math.min(1, item.probe.duration / 3)" />
+        <div v-else-if="item.kind === 'video'" class="w-full aspect-video rounded-sm bg-surface-hover dark:bg-surface-hover-dark animate-pulse" aria-hidden="true" />
         <img
           v-else
           :src="fileUrl(item.input.path)"

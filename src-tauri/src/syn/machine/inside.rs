@@ -96,6 +96,18 @@ pub fn read(cell: &Cell, relative: &Path, max: u64) -> Result<(Vec<u8>, bool), R
     Ok((bytes, more))
 }
 
+/// A file copied out of the room into `to`, at most `max` bytes, streamed: a
+/// video a room made can be gigabytes, which [`read`] would hold in memory.
+/// The same checks as reading. Returns how many bytes were copied.
+pub fn copy_out(cell: &Cell, relative: &Path, to: &mut File, max: u64) -> Result<u64, Refused> {
+    let file = open_file(cell, relative)?;
+    let copied = std::io::copy(&mut file.take(max + 1), to)?;
+    if copied > max {
+        return Err(Refused::TooLarge { max });
+    }
+    Ok(copied)
+}
+
 /// Writes a whole file, making the folders on the way. Over a file already there
 /// only if it is a regular one with one name: it is opened first and checked, and
 /// only then emptied, so a hard link to something else is never cut short.

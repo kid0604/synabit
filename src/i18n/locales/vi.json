@@ -1081,6 +1081,66 @@
         "desc": "Làm mờ khuôn mặt và chi tiết khác trước khi gửi",
         "verb": "Làm mờ | Làm mờ {n} ảnh",
         "running": "Đang che…"
+      },
+      "vidcompress": {
+        "name": "Nén video",
+        "desc": "Nhỏ hơn, theo chất lượng hoặc dưới một dung lượng: để gửi mail, chat",
+        "verb": "Nén | Nén {n} video",
+        "running": "Đang nén… video dài sẽ mất một lúc"
+      },
+      "vidtrim": {
+        "name": "Cắt video",
+        "desc": "Giữ đoạn bạn cần; cắt nhanh, hoặc chính xác từng khung hình",
+        "verb": "Cắt",
+        "running": "Đang cắt…"
+      },
+      "vidconvert": {
+        "name": "Đổi định dạng video",
+        "desc": "MP4, MOV, MKV hoặc WebM, giữ nguyên dữ liệu khi được",
+        "verb": "Đổi định dạng | Đổi định dạng {n} video",
+        "running": "Đang chuyển…"
+      },
+      "vidaudio": {
+        "name": "Tách âm thanh",
+        "desc": "Lấy tiếng ra thành M4A, MP3 hoặc WAV",
+        "verb": "Tách âm thanh | Tách âm thanh {n} video",
+        "running": "Đang tách âm thanh…"
+      },
+      "vidmerge": {
+        "name": "Ghép video",
+        "desc": "Nối tiếp nhau thành một file; giữ nguyên khi cùng loại",
+        "verb": "Ghép | Ghép {n} video",
+        "running": "Đang ghép…"
+      },
+      "vidgif": {
+        "name": "Video sang GIF",
+        "desc": "Vài giây thành ảnh GIF xem được ở mọi nơi",
+        "verb": "Tạo GIF",
+        "running": "Đang tạo GIF…"
+      },
+      "vidrotate": {
+        "name": "Xoay video",
+        "desc": "Xoay video bị nghiêng; MP4 và MOV không mất chất lượng",
+        "verb": "Xoay | Xoay {n} video",
+        "running": "Đang xoay…"
+      },
+      "vidmute": {
+        "name": "Tắt tiếng video",
+        "desc": "Bỏ âm thanh, giữ nguyên hình",
+        "verb": "Tắt tiếng | Tắt tiếng {n} video",
+        "running": "Đang bỏ âm thanh…"
+      },
+      "vidframes": {
+        "name": "Video sang ảnh",
+        "desc": "Một khung hình thành ảnh, hoặc mỗi vài giây một ảnh",
+        "verb": "Lấy ảnh",
+        "running": "Đang lấy ảnh…"
+      },
+      "vidstrip": {
+        "name": "Xoá thông tin video",
+        "desc": "Bỏ vị trí, ngày giờ và thiết bị video mang theo",
+        "verb": "Xoá thông tin | Xoá thông tin {n} video",
+        "running": "Đang làm sạch…"
       }
     },
     "categories": {
@@ -1095,12 +1155,17 @@
       "image": {
         "name": "Ảnh",
         "note": "Nén, đổi cỡ, cắt và làm sạch"
+      },
+      "video": {
+        "name": "Video",
+        "note": "Nén, cắt, đổi định dạng và ghép"
       }
     },
     "accepts": {
       "pdf": "file PDF",
       "image": "ảnh",
-      "office": "tài liệu Office"
+      "office": "tài liệu Office",
+      "video": "video"
     },
     "sidebar": {
       "label": "Tiện ích",
@@ -1152,7 +1217,9 @@
       "lock_restrictions": "chỉ hạn chế in, chép",
       "lock_password": "cần mật khẩu",
       "problem_unreadable_image": "Không đọc được ảnh này",
-      "problem_heic": "Ảnh HEIC chỉ mở được trên máy Mac"
+      "problem_heic": "Ảnh HEIC chỉ mở được trên máy Mac",
+      "problem_unreadable_video": "Không đọc được như một video",
+      "problem_no_audio": "Không có âm thanh"
     },
     "pages": {
       "page": "Trang {n}",
@@ -1365,7 +1432,8 @@
       "left_out": "Đã bỏ ra {n} file khác loại.",
       "none_fit": "Không công cụ nào nhận chừng này file loại này.",
       "keys": "↑↓ để chọn · ↵ để mở · gõ số để mở dòng đó",
-      "title_office": "Làm gì với {n} tài liệu này?"
+      "title_office": "Làm gì với {n} tài liệu này?",
+      "title_video": "Làm gì với {n} video này?"
     },
     "errors": {
       "locked": "“{name}” có mật khẩu. Hãy mở khoá bằng Mở khoá PDF trước.",
@@ -1380,7 +1448,14 @@
       "no_room": "Phòng kín không dùng được trên máy này, nên tài liệu không được mở.",
       "install_failed": "Chưa cài xong: {reason}",
       "some_not_smaller_images": "{n} ảnh không nhẹ hơn được nên giữ nguyên.",
-      "over_target": "{n} ảnh không xuống dưới {kb} KB được; đã nén nhỏ nhất có thể."
+      "over_target": "{n} ảnh không xuống dưới {kb} KB được; đã nén nhỏ nhất có thể.",
+      "video_too_small": "Dung lượng này quá nhỏ so với độ dài: cần ít nhất {mb} MB. Hãy chọn lớn hơn, hoặc cắt bớt video trước.",
+      "video_no_audio": "Video này không có âm thanh để tách.",
+      "video_no_video": "Có file không có hình.",
+      "video_bad_range": "Đoạn đã chọn không nằm trong video.",
+      "video_too_long": "GIF dài tối đa một phút. Hãy chọn đoạn ngắn hơn.",
+      "video_busy": "Phòng kín đang chạy ba việc dài. Thử lại khi một việc xong.",
+      "video_failed": "Không đọc được “{name}”, hoặc không tạo được kết quả. File có thể bị hỏng, hoặc ở dạng ffmpeg không biết."
     },
     "preview": {
       "applies_to": "Áp dụng cho {n} file"
@@ -1420,7 +1495,13 @@
       "check_again": "Kiểm tra lại",
       "install": "Cài (khoảng 150 MB)",
       "installing": "Đang cài… mất một hai phút",
-      "brew_hint": "Nếu dùng Homebrew: brew install --cask libreoffice"
+      "brew_hint": "Nếu dùng Homebrew: brew install --cask libreoffice",
+      "ffmpeg_title": "{tool} cần ffmpeg",
+      "ffmpeg_body": "Các công cụ video dùng ffmpeg, chương trình miễn phí mà gần như mọi app video đều dựa vào. Synabit không chở theo; Homebrew cài nó bằng một lệnh trong Terminal. Xong thì quay lại bấm Kiểm tra lại.",
+      "sealed_video": "Video được xử lý trong phòng kín của Synabit: không có mạng, không thấy gì của bạn ngoài chính video, và chỉ được đọc. Một file độc hại không chạm được vào gì.",
+      "copy": "Chép",
+      "copied": "Đã chép",
+      "get_homebrew": "Cài Homebrew"
     },
     "frame": {
       "not_drawn": "Không vẽ được trang này.",
@@ -1560,6 +1641,68 @@
       "draw_hint": "kéo để che thêm",
       "box": "Vùng che",
       "finding": "Đang tìm khuôn mặt…"
+    },
+    "clip": {
+      "play": "Phát",
+      "pause": "Dừng",
+      "no_play": "Loại file này không phát được ở đây; hình hiện khung hình tại vị trí đang chọn.",
+      "start": "Đầu",
+      "end": "Cuối",
+      "at": "Lấy ảnh tại",
+      "here": "Tại đây",
+      "length": "Dài {length}"
+    },
+    "video": {
+      "aim": "Mục tiêu",
+      "by_quality": "Chất lượng",
+      "by_size": "Dung lượng",
+      "quality": "Chất lượng",
+      "quality_high": "Cao",
+      "quality_balanced": "Vừa",
+      "quality_small": "Nhỏ nhất",
+      "target": "Dưới",
+      "target_8": "8 MB",
+      "target_16": "16 MB (WhatsApp)",
+      "target_25": "25 MB (Gmail)",
+      "target_50": "50 MB",
+      "target_100": "100 MB",
+      "target_other": "Khác…",
+      "target_mb": "Dung lượng tính bằng MB",
+      "target_least": "Ít nhất {mb} MB cho độ dài này.",
+      "size": "Kích thước hình",
+      "size_keep": "Giữ nguyên",
+      "size_p": "Tối đa {p}p",
+      "codec": "Định dạng",
+      "codec_h264_hint": "H.264 phát được ở mọi nơi: điện thoại, máy tính, trình duyệt, TV.",
+      "codec_hevc_hint": "HEVC nhỏ khoảng một nửa với cùng chất lượng, phát trên thiết bị Apple và máy đời mới; nén chậm hơn.",
+      "convert_mp4_hint": "MP4 phát được gần như ở mọi nơi.",
+      "convert_mov_hint": "MOV là định dạng của QuickTime, cho app Apple và dựng phim.",
+      "convert_mkv_hint": "MKV chứa được mọi loại hình, tiếng và phụ đề; cho trình phát như VLC.",
+      "convert_webm_hint": "WebM là định dạng mở của web; chuyển sang khá chậm.",
+      "convert_hint": "Khi hình đã hợp với định dạng mới, nó được chép nguyên: nhanh và không mất gì.",
+      "exact": "Chính xác từng khung hình",
+      "fast_hint": "Cắt nguyên dữ liệu: vài giây là xong và không mất gì, nhưng điểm đầu lùi về khung hình chính gần nhất, có thể sớm hơn vài giây.",
+      "exact_hint": "Nén lại: bắt đầu đúng chỗ đã chọn, lâu hơn, và ra file MP4.",
+      "audio_m4a_hint": "M4A (AAC): nhỏ và tốt; nếu tiếng vốn là AAC thì được chép nguyên.",
+      "audio_mp3_hint": "MP3 phát được trên mọi thứ.",
+      "audio_wav_hint": "WAV không nén: nặng, dùng để biên tập.",
+      "gif_width": "Chiều rộng",
+      "gif_fps": "Khung hình mỗi giây",
+      "gif_hint": "GIF rất nặng so với nội dung: vài giây, khổ hẹp là đẹp nhất. Tối đa một phút.",
+      "turn_right": "Phải 90°",
+      "turn_left": "Trái 90°",
+      "turn_half": "180°",
+      "rotate_hint": "MP4 và MOV chỉ được đánh dấu để hiển thị xoay: tức thì và không mất gì. Định dạng khác sẽ được nén lại.",
+      "frames_mode": "Ảnh",
+      "frames_every": "Mỗi vài giây",
+      "frames_at": "Một khung hình",
+      "every": "Mỗi",
+      "seconds": "giây",
+      "at_hint": "Kéo nút dưới video tới đúng lúc bạn muốn.",
+      "frames_hint": "Tối đa {n} ảnh.",
+      "vidmerge_hint": "Video được nối theo thứ tự đang hiện. Video cùng loại, cùng cỡ được nối nguyên; nếu khác, mỗi video được đặt vào khung của video đầu và nén lại.",
+      "vidstrip_hint": "Hình và tiếng được chép nguyên. Bị xoá: nơi quay, ngày giờ, tên thiết bị và app, tiêu đề và chương. Hướng xoay được giữ.",
+      "vidmute_hint": "Âm thanh bị bỏ; hình được chép nguyên nên không gì khác thay đổi."
     }
   },
   "things": {

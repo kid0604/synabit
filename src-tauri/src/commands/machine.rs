@@ -55,6 +55,11 @@ pub fn setup(app: &AppHandle) {
 /// shown on the screen, and how it ended.
 fn tell_about_job(app: &AppHandle, job: &crate::syn::machine::jobs::Job) {
     use crate::syn::machine::jobs::{Ended, JobView};
+    // Utilities' video work: the screen that started it is waiting on it, and
+    // it is no conversation's to be told of.
+    if job.scope == "utilities" {
+        return;
+    }
     let vault = app
         .try_state::<crate::chat_engine::ChatEngineState>()
         .and_then(|state| state.active_vault_path.lock().ok().and_then(|v| v.clone()));

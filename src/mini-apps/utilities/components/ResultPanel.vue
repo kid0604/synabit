@@ -9,11 +9,11 @@
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Check, Clock, Copy, Download, ExternalLink, FileText, FolderInput, FolderOpen, Save, Trash2 } from 'lucide-vue-next';
+import { Check, Clock, Copy, Download, ExternalLink, FileText, Film, FolderInput, FolderOpen, Music, Save, Trash2 } from 'lucide-vue-next';
 import PdfThumb from './PdfThumb.vue';
 import * as api from '../api';
 import { closePdf, fileUrl } from '../render';
-import { availability, formatSize, toolById, type ToolId } from '../tools';
+import { availability, formatSize, kindOf, toolById, type ToolId } from '../tools';
 import { useWorkbench } from '../useWorkbench';
 import { useAppStore } from '../../../stores/useAppStore';
 import { showAppNotice } from '../../../composables/useAppNotice';
@@ -36,6 +36,8 @@ const single = computed(() => outputs.value.length === 1);
 const first = computed(() => outputs.value[0]);
 const isPdf = (name: string) => name.toLowerCase().endsWith('.pdf');
 const isImage = (name: string) => /\.(jpe?g|png|webp|gif)$/i.test(name);
+const isVideo = (name: string) => kindOf(name) === 'video';
+const isAudio = (name: string) => /\.(m4a|mp3|wav)$/i.test(name);
 const smaller = computed(() => {
   if (!props.before || !['imgcompress', 'compress'].includes(props.job.tool)) return null;
   const change = Math.round((1 - total.value / props.before) * 100);
@@ -80,6 +82,12 @@ const offered = computed<ToolId[]>(() => {
   }
   if (outputs.value.every((o) => isImage(o.name))) {
     return (['img2pdf', 'imgcompress', 'imgmark', 'collage', 'removebg', 'resize', 'imgrotate', 'imgblur', 'exif', 'imgtext'] as ToolId[]).filter((id) => id !== tool);
+  }
+  if (outputs.value.every((o) => isVideo(o.name))) {
+    const all: ToolId[] = outputs.value.length > 1
+      ? ['vidmerge', 'vidcompress', 'vidstrip', 'vidmute']
+      : ['vidcompress', 'vidtrim', 'vidgif', 'vidaudio', 'vidstrip', 'vidconvert'];
+    return all.filter((id) => id !== tool);
   }
   return [];
 });
@@ -219,6 +227,9 @@ const throwAway = () =>
     <div v-if="single && first" class="flex gap-5 rounded-2xl border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-4">
       <PdfThumb v-if="isPdf(first.name)" :path="first.path" :width="150" />
       <img v-else-if="isImage(first.name)" :src="fileUrl(first.path)" alt="" class="w-[180px] max-h-[220px] object-contain rounded-md border border-border dark:border-border-dark" />
+      <!-- MP4 and QuickTime play here; a format the WebView cannot play shows its controls greyed, which says as much. -->
+      <video v-else-if="isVideo(first.name)" :src="fileUrl(first.path)" controls preload="metadata" class="w-[320px] max-h-[240px] rounded-md bg-black" />
+      <audio v-else-if="isAudio(first.name)" :src="fileUrl(first.path)" controls preload="metadata" class="w-[280px] self-center" />
       <span v-else class="w-[150px] h-[190px] grid place-items-center rounded-md border border-border dark:border-border-dark bg-surface-hover dark:bg-surface-hover-dark text-muted">
         <FileText class="w-10 h-10" aria-hidden="true" />
       </span>
@@ -273,6 +284,8 @@ const throwAway = () =>
         <li v-for="o in outputs" :key="o.name" class="flex items-center gap-3 rounded-xl border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-3 py-2">
           <PdfThumb v-if="isPdf(o.name)" :path="o.path" :width="34" />
           <img v-else-if="isImage(o.name)" :src="fileUrl(o.path)" alt="" loading="lazy" class="w-[34px] h-[44px] object-cover rounded-sm border border-border dark:border-border-dark" />
+          <Film v-else-if="isVideo(o.name)" class="w-[34px] h-6 text-muted" aria-hidden="true" />
+          <Music v-else-if="isAudio(o.name)" class="w-[34px] h-6 text-muted" aria-hidden="true" />
           <FileText v-else class="w-[34px] h-6 text-muted" aria-hidden="true" />
           <span class="flex-1 min-w-0 truncate font-medium text-sm text-text dark:text-text-dark">{{ o.name }}</span>
           <span class="text-xs text-muted dark:text-muted-dark tabular-nums">{{ formatSize(o.size, locale) }}</span>

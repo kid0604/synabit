@@ -142,6 +142,7 @@ fn filters(kinds: &[String]) -> Vec<crate::app_shell::dialogs::Filter> {
                 "Images",
                 &["jpg", "jpeg", "jfif", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff"],
             )),
+            "video" => Some(Filter::new("Video", crate::utilities::video::EXTENSIONS)),
             _ => None,
         })
         .collect()
@@ -202,13 +203,18 @@ fn body(request: &tauri::ipc::Request<'_>) -> AppResult<Vec<u8>> {
 
 /// Keep a file the WebView holds the bytes of — dropped on the window, or a
 /// picture it made into a JPEG. The name comes in the `x-utility-name`
-/// header, percent-encoded.
+/// header, percent-encoded. With `x-utility-append` (an input's id) instead,
+/// the bytes are the next part of that file: a video comes in parts.
 #[tauri::command]
 pub async fn utility_stage(app: tauri::AppHandle, request: tauri::ipc::Request<'_>) -> AppResult<Input> {
-    let name = header(&request, "x-utility-name")?;
+    let append = header(&request, "x-utility-append").ok();
+    let name = if append.is_some() { String::new() } else { header(&request, "x-utility-name")? };
     let bytes = body(&request)?;
     let ws = workspace(&app)?;
-    tauri::async_runtime::spawn_blocking(move || ws.add_bytes(&name, &bytes))
+    tauri::async_runtime::spawn_blocking(move || match append {
+        Some(id) => ws.append_bytes(&id, &bytes),
+        None => ws.add_bytes(&name, &bytes),
+    })
         .await
         .map_err(|e| AppError::General(e.to_string()))?
 }
@@ -596,6 +602,8 @@ pub struct OfficeStatus {
     pub room: bool,
     pub libreoffice: bool,
     pub pdf2docx: bool,
+    /// Homebrew's ffmpeg and ffprobe, for the video tools.
+    pub ffmpeg: bool,
 }
 
 #[cfg(target_os = "macos")]
@@ -627,6 +635,7 @@ pub fn utility_office_status(app: tauri::AppHandle) -> OfficeStatus {
             room: major >= 14 && rooms.is_some(),
             libreoffice: crate::utilities::room::libreoffice().is_some(),
             pdf2docx: rooms.as_deref().and_then(pdf2docx_bin).is_some(),
+            ffmpeg: crate::utilities::video::programs().is_some(),
         }
     }
     #[cfg(not(target_os = "macos"))]
@@ -794,6 +803,225 @@ pub async fn utility_pdf_to_word(app: tauri::AppHandle, job: String, files: Vec<
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, job, files);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+// ── Video, by ffmpeg in a sealed room ─────────────────────────────────────
+
+#[cfg(target_os = "macos")]
+fn video_error(name: &str, e: crate::utilities::room::RoomError) -> AppError {
+    use crate::utilities::room::RoomError;
+    match e {
+        RoomError::Missing(what) => AppError::General(format!("missing-{what}")),
+        RoomError::Unavailable(why) if why.starts_with("busy") => AppError::General(format!("video-busy: {why}")),
+        RoomError::Unavailable(why) => AppError::General(format!("no-room: {why}")),
+        RoomError::Io(why) if why == "cancelled" => AppError::General("cancelled".into()),
+        RoomError::Failed(said) => {
+            log::warn!("[utilities] ffmpeg on {name} failed: {said}");
+            AppError::General(format!("video-failed: “{name}” could not be read or made"))
+        }
+        RoomError::Io(e) => AppError::General(e),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn plan_error(e: crate::utilities::video::PlanError) -> AppError {
+    AppError::General(format!("video-{e}"))
+}
+
+/// A room's name for a short look at a file, from the screen, with no job.
+#[cfg(target_os = "macos")]
+fn glance_room() -> String {
+    format!("v-{:08x}", rand::random::<u32>())
+}
+
+/// `name` with the extension a plan makes.
+#[cfg(target_os = "macos")]
+fn renamed(name: &str, ext: &str) -> String {
+    let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "video".into());
+    format!("{stem}.{ext}")
+}
+
+/// What a video holds: length, size, codecs, how it is turned. In a room, as
+/// anything that parses the file is.
+#[tauri::command]
+pub async fn utility_video_probe(app: tauri::AppHandle, input: String) -> AppResult<crate::utilities::video::Probe> {
+    #[cfg(target_os = "macos")]
+    {
+        let rooms = machine(&app)?;
+        let path = workspace(&app)?.input_path(&input)?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        crate::utilities::video::probe(&rooms, &glance_room(), &path).await.map_err(|e| video_error(&name, e))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, input);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+/// One frame of a video as a JPEG at most `width` wide, for a file the WebView
+/// cannot play (MKV, AVI and the like).
+#[tauri::command]
+pub async fn utility_video_picture(app: tauri::AppHandle, input: String, at: f64, width: u32) -> AppResult<tauri::ipc::Response> {
+    #[cfg(target_os = "macos")]
+    {
+        let rooms = machine(&app)?;
+        let path = workspace(&app)?.input_path(&input)?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        let width = width.clamp(64, 1280);
+        let at = if at.is_finite() { at.max(0.0) } else { 0.0 };
+        let jpeg = crate::utilities::video::picture(&rooms, &glance_room(), &path, at, width).await.map_err(|e| video_error(&name, e))?;
+        Ok(tauri::ipc::Response::new(jpeg))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, input, at, width);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+/// Copies what a room made into the job's folder, under `name` (and, for
+/// several pictures, `name` with a number). Not yet outputs: the caller adds
+/// those it keeps.
+#[cfg(target_os = "macos")]
+async fn keep_video(
+    ws: &Workspace,
+    job: &str,
+    name: &str,
+    room: &crate::utilities::room::Borrowed,
+    plan: &crate::utilities::video::Plan,
+) -> AppResult<Vec<PathBuf>> {
+    use crate::utilities::video::Made;
+    let dir = ws.output_path(job, &renamed(name, &plan.ext))?;
+    let (first, many) = (dir.clone(), plan.made == Made::Numbered);
+    let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "video".into());
+    let folder = first.parent().map(Path::to_path_buf).unwrap_or_default();
+    let ext = plan.ext.clone();
+    let written = crate::utilities::video::take(room, plan, move |n| {
+        if many {
+            unused_path(&folder, &clean_name(&format!("{stem}-{n:04}.{ext}")))
+        } else {
+            first.clone()
+        }
+    })
+    .await
+    .map_err(|e| video_error(name, e))?;
+    Ok(written)
+}
+
+/// One video tool over each file in turn, by ffmpeg in a sealed room. A
+/// compressed file that comes out no smaller is left out, as a PDF is.
+#[tauri::command]
+pub async fn utility_video(app: tauri::AppHandle, job: String, files: Vec<PerFile>, task: crate::utilities::video::Task) -> AppResult<Job> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::utilities::video;
+        let rooms = machine(&app)?;
+        video::programs().ok_or_else(|| AppError::General("missing-ffmpeg".into()))?;
+        let run = Running::start(&app, &job)?;
+        let ws = workspace(&app)?;
+        let total = files.len();
+        let flag = run.flag.clone();
+        let result: AppResult<Job> = async {
+            let mut left_out: Option<String> = None;
+            for (i, file) in files.iter().enumerate() {
+                if run.stopped() {
+                    return Err(AppError::General("cancelled".into()));
+                }
+                let _ = app.emit("utility-progress", Progress { job: &job, done: i * 100, total: total * 100 });
+                let path = ws.input_path(&file.input)?;
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let room = room_name(&job, i);
+                let probe = video::probe(&rooms, &format!("{room}p"), &path).await.map_err(|e| video_error(&name, e))?;
+                let (_, real) = video::door_of(&path).map_err(|e| video_error(&name, e))?;
+                let plan = video::plan(&task, &real.to_string_lossy(), &ext, &probe).map_err(plan_error)?;
+                let (emitter, id) = (app.clone(), job.clone());
+                let progress = move |share: f64| {
+                    let _ = emitter.emit("utility-progress", Progress { job: &id, done: i * 100 + (share * 100.0) as usize, total: total * 100 });
+                };
+                let stop = || flag.load(Ordering::SeqCst);
+                let made = video::run(&rooms, &room, std::slice::from_ref(&path), &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
+                let written = keep_video(&ws, &job, &file.name, &made, &plan).await?;
+                drop(made);
+                if matches!(task, video::Task::Compress { target_mb: None, .. }) {
+                    let size = written.first().and_then(|w| std::fs::metadata(w).ok()).map(|m| m.len()).unwrap_or(0);
+                    if size >= probe.bytes && probe.bytes > 0 {
+                        for w in &written {
+                            let _ = std::fs::remove_file(w);
+                        }
+                        left_out.get_or_insert(format!("{LEFT_OUT}: “{name}” is already as small as these settings make it"));
+                        continue;
+                    }
+                }
+                for w in &written {
+                    ws.add_output(&job, w)?;
+                }
+            }
+            if let Some(why) = left_out {
+                if ws.job(&job)?.outputs.is_empty() {
+                    return Err(AppError::General(why));
+                }
+            }
+            let _ = app.emit("utility-progress", Progress { job: &job, done: total * 100, total: total * 100 });
+            let inputs: Vec<String> = files.iter().map(|f| f.input.clone()).collect();
+            ws.note_origin(&job, &inputs)
+        }
+        .await;
+        run.finish(result)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, job, files, task);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+/// Videos one after another, in the order given, as one file named for the
+/// first (`name`).
+#[tauri::command]
+pub async fn utility_video_merge(app: tauri::AppHandle, job: String, inputs: Vec<String>, name: String) -> AppResult<Job> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::utilities::video;
+        let rooms = machine(&app)?;
+        video::programs().ok_or_else(|| AppError::General("missing-ffmpeg".into()))?;
+        let run = Running::start(&app, &job)?;
+        let ws = workspace(&app)?;
+        let flag = run.flag.clone();
+        let result: AppResult<Job> = async {
+            let mut paths = Vec::new();
+            let mut probed = Vec::new();
+            for (i, input) in inputs.iter().enumerate() {
+                let path = ws.input_path(input)?;
+                let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let probe = video::probe(&rooms, &format!("{}p", room_name(&job, i)), &path).await.map_err(|e| video_error(&file, e))?;
+                let (_, real) = video::door_of(&path).map_err(|e| video_error(&file, e))?;
+                probed.push((real.to_string_lossy().into_owned(), ext, probe));
+                paths.push(path);
+            }
+            let plan = video::plan_merge(&probed).map_err(plan_error)?;
+            let (emitter, id) = (app.clone(), job.clone());
+            let progress = move |share: f64| {
+                let _ = emitter.emit("utility-progress", Progress { job: &id, done: (share * 100.0) as usize, total: 100 });
+            };
+            let stop = || flag.load(Ordering::SeqCst);
+            let made = video::run(&rooms, &room_name(&job, 0), &paths, &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
+            for w in keep_video(&ws, &job, &name, &made, &plan).await? {
+                ws.add_output(&job, &w)?;
+            }
+            let _ = app.emit("utility-progress", Progress { job: &job, done: 100, total: 100 });
+            ws.note_origin(&job, &inputs)
+        }
+        .await;
+        run.finish(result)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, job, inputs, name);
         Err(AppError::UnsupportedCapability("room".into()))
     }
 }

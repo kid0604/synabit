@@ -10,7 +10,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { pickFolder, pickSavePath } from '../../shared/pickedPath';
-import type { InputKind, OfficeStatus, TextLine, VisionAbilities } from './tools';
+import type { InputKind, OfficeStatus, TextLine, VideoProbe, VisionAbilities } from './tools';
 
 export interface Input {
   id: string;
@@ -65,6 +65,22 @@ export function pickInputs(kinds: InputKind[], multiple: boolean): Promise<Input
 /** Hand over bytes the window holds: a dropped file, a redrawn picture. */
 export function stage(name: string, bytes: Uint8Array): Promise<Input> {
   return invoke<Input>('utility_stage', bytes, { headers: { 'x-utility-name': encodeURIComponent(name) } });
+}
+
+/** How much of a file goes over at once: a video is never in memory whole. */
+const PART = 32 << 20;
+
+/**
+ * Hand over a file dropped on the window, in parts when it is large: the
+ * WebView reads 32 MB at a time and Rust adds each to the copy it keeps.
+ */
+export async function stageFile(file: File): Promise<Input> {
+  let input = await stage(file.name, new Uint8Array(await file.slice(0, PART).arrayBuffer()));
+  for (let at = PART; at < file.size; at += PART) {
+    const bytes = new Uint8Array(await file.slice(at, at + PART).arrayBuffer());
+    input = await invoke<Input>('utility_stage', bytes, { headers: { 'x-utility-append': input.id } });
+  }
+  return input;
 }
 
 export function newJob(tool: string): Promise<Job> {
@@ -341,4 +357,36 @@ export function installPdf2docx(): Promise<void> {
 
 export function pdfToWord(job: string, files: PerFile[]): Promise<Job> {
   return invoke<Job>('utility_pdf_to_word', { job, files });
+}
+
+// ── Video (ffmpeg in a sealed room) ──
+
+export function videoProbe(input: string): Promise<VideoProbe> {
+  return invoke<VideoProbe>('utility_video_probe', { input });
+}
+
+/** One frame as a JPEG, for a file the WebView cannot play. */
+export async function videoPicture(input: string, at: number, width: number): Promise<Blob> {
+  const out = await invoke<ArrayBuffer | number[]>('utility_video_picture', { input, at, width });
+  return new Blob([out instanceof ArrayBuffer ? out : Uint8Array.from(out)], { type: 'image/jpeg' });
+}
+
+/** A tool and its settings, as `utilities::video::Task` takes them. */
+export type VideoTask =
+  | { tool: 'compress'; height: number | null; codec: 'h264' | 'hevc'; quality: 'high' | 'balanced' | 'small'; targetMb: number | null }
+  | { tool: 'convert'; format: 'mp4' | 'mov' | 'mkv' | 'webm' }
+  | { tool: 'trim'; start: number; end: number; exact: boolean }
+  | { tool: 'audio'; format: 'm4a' | 'mp3' | 'wav' }
+  | { tool: 'strip' }
+  | { tool: 'rotate'; turn: 'right' | 'left' | 'half' }
+  | { tool: 'mute' }
+  | { tool: 'frames'; every: number | null; at: number | null; png: boolean }
+  | { tool: 'gif'; start: number; end: number; width: number; fps: number };
+
+export function video(job: string, files: PerFile[], task: VideoTask): Promise<Job> {
+  return invoke<Job>('utility_video', { job, files, task });
+}
+
+export function videoMerge(job: string, inputs: string[], name: string): Promise<Job> {
+  return invoke<Job>('utility_video_merge', { job, inputs, name });
 }

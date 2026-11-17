@@ -4,7 +4,7 @@ import vi from '../../../i18n/locales/vi.json';
 import {
   CATEGORIES, NUMBER_FORMATS, TOOLS, availability, cleansInPlace, linesToText, ocrLanguages, everyN, fitWithin, fits, fold, isJpegName, kindOf, markCentres,
   matches, numberText, outputName, ownFormat, pageImageName, parseRanges, previewMayRefuse, sortDrop, span,
-  suggestionsFor, toolById, turnedBox,
+  suggestionsFor, toolById, turnedBox, clock, parseClock, videoExt, leastTarget, shownSize, LONGEST_GIF,
 } from '../tools';
 import { toolsForFiles } from '../handoff';
 
@@ -219,9 +219,9 @@ describe('U-4 helpers', () => {
   it('says what a room-backed tool is waiting for', () => {
     const office2pdf = toolById('office2pdf')!;
     expect(availability(office2pdf, null, null)).toBe('not-mac');
-    expect(availability(office2pdf, mac, { room: false, libreoffice: true, pdf2docx: true })).toBe('old-mac');
-    expect(availability(office2pdf, mac, { room: true, libreoffice: false, pdf2docx: true })).toBe('needs-install');
-    expect(availability(office2pdf, mac, { room: true, libreoffice: true, pdf2docx: false })).toBe('ready');
+    expect(availability(office2pdf, mac, { room: false, libreoffice: true, pdf2docx: true, ffmpeg: true })).toBe('old-mac');
+    expect(availability(office2pdf, mac, { room: true, libreoffice: false, pdf2docx: true, ffmpeg: true })).toBe('needs-install');
+    expect(availability(office2pdf, mac, { room: true, libreoffice: true, pdf2docx: false, ffmpeg: true })).toBe('ready');
     expect(availability(toolById('compress')!, null, null)).toBe('ready');
   });
 
@@ -253,5 +253,63 @@ describe('what Redact finds', async () => {
   it('finds emails and ID numbers', () => {
     expect(found('email', '', 'Liên hệ: An.Nguyen@vi-du.vn.')).toEqual(['An.Nguyen@vi-du.vn']);
     expect(found('id', '', 'CCCD 001090012345, CMND 123456789, số 12345678901234')).toEqual(['001090012345', '123456789']);
+  });
+});
+
+describe('video', () => {
+  const o = { convert: 'webm', trimExact: false, audio: 'mp3', framesPng: false };
+
+  it('knows a video by its name, and offers video tools for it', () => {
+    expect(kindOf('Quay lại.MOV')).toBe('video');
+    expect(kindOf('clip.mkv')).toBe('video');
+    expect(sortDrop([{ name: 'a.mp4' }, { name: 'b.mov' }, { name: 'c.pdf' }]).kind).toBe('video');
+    expect(suggestionsFor('video', 1)[0].id).toBe('vidcompress');
+    expect(suggestionsFor('video', 1).map((t) => t.id)).not.toContain('vidmerge');
+    expect(suggestionsFor('video', 3).map((t) => t.id)).toContain('vidmerge');
+    expect(suggestionsFor('video', 3).map((t) => t.id)).not.toContain('vidtrim');
+  });
+
+  it('waits for ffmpeg, and says so', () => {
+    const mac = { subject: true, text: true, languages: [] };
+    const tool = toolById('vidcompress')!;
+    expect(availability(tool, mac, { room: true, libreoffice: false, pdf2docx: false, ffmpeg: false })).toBe('needs-install');
+    expect(availability(tool, mac, { room: true, libreoffice: false, pdf2docx: false, ffmpeg: true })).toBe('ready');
+    expect(availability(tool, null, null)).toBe('not-mac');
+  });
+
+  it('names a result for what it becomes, as Rust will', () => {
+    expect(outputName('vidcompress', 'Đám cưới.mov', undefined, videoExt('vidcompress', 'Đám cưới.mov', o))).toBe('Đám cưới-nen.mp4');
+    expect(outputName('vidconvert', 'a.mov', undefined, videoExt('vidconvert', 'a.mov', o))).toBe('a.webm');
+    expect(videoExt('vidtrim', 'a.MOV', o)).toBe('mov');
+    expect(videoExt('vidtrim', 'a.mov', { ...o, trimExact: true })).toBe('mp4');
+    expect(videoExt('vidaudio', 'a.mov', o)).toBe('mp3');
+    expect(videoExt('vidrotate', 'a.avi', o)).toBe('mp4');
+    expect(videoExt('vidrotate', 'a.webm', o)).toBe('webm');
+    expect(videoExt('vidstrip', 'a.flv', o)).toBe('flv');
+    expect(videoExt('vidgif', 'a.mov', o)).toBe('gif');
+    expect(outputName('vidmute', 'a.mp4', undefined, 'mp4')).toBe('a-tat-tieng.mp4');
+  });
+
+  it('reads and writes times as people type them', () => {
+    expect(clock(75.55)).toBe('1:15.5');
+    expect(clock(3723, false)).toBe('1:02:03');
+    expect(clock(5)).toBe('0:05.0');
+    expect(parseClock('1:15.5')).toBeCloseTo(75.5);
+    expect(parseClock('75,5')).toBeCloseTo(75.5);
+    expect(parseClock('1:02:03')).toBe(3723);
+    expect(parseClock('abc')).toBeNaN();
+    expect(parseClock('1::2')).toBeNaN();
+    expect(LONGEST_GIF).toBe(60);
+  });
+
+  it('knows the least size a target can be, as Rust refuses', () => {
+    // 12.5 s with sound: (150 + 128) × 12.5 / 8000 / 0.97, up to a tenth.
+    expect(leastTarget(12.5, true, false)).toBe(0.5);
+    expect(leastTarget(600, false, false)).toBe(11.6);
+  });
+
+  it('turns an upright phone video the way it is seen', () => {
+    expect(shownSize({ codec: 'hevc', width: 1920, height: 1080, rotation: -90, fps: 30, pixFmt: '', bitrate: null })).toEqual([1080, 1920]);
+    expect(shownSize({ codec: 'h264', width: 1920, height: 1080, rotation: 180, fps: 30, pixFmt: '', bitrate: null })).toEqual([1920, 1080]);
   });
 });

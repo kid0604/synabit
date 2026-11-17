@@ -148,7 +148,7 @@ async function addToTool(inputs: api.Input[]) {
 async function pick() {
   try {
     if (tool.value) await addToTool(await api.pickInputs([tool.value.accepts], tool.value.max !== 1));
-    else await offer(await api.pickInputs(['pdf', 'image', 'office'], true));
+    else await offer(await api.pickInputs(['pdf', 'image', 'video', 'office'], true));
   } catch (e) {
     logger.error('[utilities] picking files failed', e);
     showAppNotice(t('utilities.errors.other', { reason: errorText(e) }), 'error');
@@ -186,7 +186,9 @@ async function onDrop(e: DragEvent) {
   if (busy()) return;
   const files = Array.from(e.dataTransfer?.files ?? []);
   try {
-    const inputs = await Promise.all(files.map(async (f) => api.stage(f.name, new Uint8Array(await f.arrayBuffer()))));
+    // One after another, in parts: a few videos at once would otherwise all be in memory.
+    const inputs: api.Input[] = [];
+    for (const f of files) inputs.push(await api.stageFile(f));
     if (tool.value && wb.phase.value !== 'done') await addToTool(inputs);
     else await offer(inputs);
   } catch (err) {
@@ -453,6 +455,9 @@ onBeforeUnmount(() => {
 .utility-tint-image { background: color-mix(in oklab, #7c3aed 13%, transparent); color: #6d28d9; }
 .dark .utility-tint-image { color: #a78bfa; }
 .utility-dot-image { background: #7c3aed; }
+.utility-tint-video { background: color-mix(in oklab, #0d9488 13%, transparent); color: #0f766e; }
+.dark .utility-tint-video { color: #2dd4bf; }
+.utility-dot-video { background: #0d9488; }
 
 .utility-section {
   padding: 12px 12px 2px 20px;

@@ -206,6 +206,17 @@ impl Workspace {
         Ok(Input { id, name, size: bytes.len() as u64, path: dest.to_string_lossy().into_owned() })
     }
 
+    /// More of a file [`Self::add_bytes`] began: a large one comes in parts,
+    /// so the WebView never holds a whole video at once.
+    pub fn append_bytes(&self, id: &str, bytes: &[u8]) -> AppResult<Input> {
+        use std::io::Write;
+        let path = self.input_path(id)?;
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path)?;
+        file.write_all(bytes)?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        Ok(Input { id: id.to_string(), name, size: file_size(&path), path: path.to_string_lossy().into_owned() })
+    }
+
     /// The file behind an input id.
     pub fn input_path(&self, id: &str) -> AppResult<PathBuf> {
         let dir = self.input_dir(id)?;
@@ -334,6 +345,17 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_large_file_comes_in_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = Workspace::new(dir.path().join("ws"));
+        let first = ws.add_bytes("clip.mov", b"abc").unwrap();
+        let whole = ws.append_bytes(&first.id, b"def").unwrap();
+        assert_eq!((whole.size, whole.name.as_str()), (6, "clip.mov"));
+        assert_eq!(std::fs::read(ws.input_path(&first.id).unwrap()).unwrap(), b"abcdef");
+        assert!(ws.append_bytes("../x", b"").is_err());
+    }
 
     #[test]
     fn a_name_cannot_climb_out() {

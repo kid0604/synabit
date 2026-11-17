@@ -17,6 +17,7 @@
 //! - [`metadata`] takes EXIF and the like out of pictures without re-encoding.
 //! - [`searchable`] lays recognised text over a scan, invisible.
 //! - [`redact`] blacks out parts of pages and takes what was under them out.
+//! - [`video`] plans ffmpeg runs; on macOS it runs them in a sealed room.
 //! - `vision` (macOS) finds a photo's subject and the text in a scan.
 //! - [`workspace`] is where inputs and results wait, and how they are named.
 
@@ -35,4 +36,5 @@ pub mod searchable;
 pub mod stamp;
 #[cfg(target_os = "macos")]
 pub mod vision;
+pub mod video;
 pub mod workspace;
