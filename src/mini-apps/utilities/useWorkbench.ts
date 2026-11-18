@@ -22,7 +22,7 @@ import {
   availability, cleansInPlace, everyN, extensionFor, fitWithin, fits, isJpegName, kindOf, linesToText, ocrLanguages, outputName,
   ownFormat, pageImageName, parseRanges, span, stem, toolById, PAPERS, isWhole, shareOf, type ImageFormat, type InputKind,
   type FindKind, type OfficeStatus, type PaperId, type TextLine, type ToolDef, type ToolId, type VisionAbilities,
-  type VideoProbe, videoExt, leastTarget, LONGEST_GIF,
+  type VideoProbe, videoExt, audioExt, leastTarget, takes, LONGEST_GIF, LONGEST_RINGTONE,
 } from './tools';
 import { i18n } from '../../i18n';
 import { INKS, edges, markPicture, newId, valuePicture, type Hidden, type Ink, type Mark } from './marks';
@@ -43,7 +43,7 @@ export interface Item {
   /** What ffprobe said of a video, once it has looked (in a sealed room). */
   probe?: VideoProbe;
   /** Why it cannot be used, when it cannot. */
-  problem?: 'unreadable' | 'unreadable_image' | 'heic' | 'locked' | 'wrong-kind' | 'unreadable_video' | 'no_audio';
+  problem?: 'unreadable' | 'unreadable_image' | 'heic' | 'locked' | 'wrong-kind' | 'unreadable_video' | 'no_audio' | 'audio_only';
 }
 
 export interface PageSlot {
@@ -179,7 +179,16 @@ const options = reactive({
   },
   vidconvert: { format: 'mp4' as 'mp4' | 'mov' | 'mkv' | 'webm' },
   vidtrim: { start: 0, end: 0, exact: false },
-  vidaudio: { format: 'm4a' as 'm4a' | 'mp3' | 'wav' },
+  vidaudio: { format: 'm4a' as 'm4a' | 'mp3' | 'wav' | 'flac' | 'opus' },
+  audconvert: { format: 'mp3' as 'mp3' | 'm4a' | 'opus' | 'flac' | 'alac' | 'wav', level: 'medium' as 'high' | 'medium' | 'small' },
+  audtrim: { start: 0, end: 0, fadeIn: 0, fadeOut: 0 },
+  audmerge: { crossfade: 0 },
+  /** Shared by the audio tool and the video one (`vidloud`). */
+  audloud: { mode: 'podcast' as 'podcast' | 'music' | 'speech' | 'gain', gain: 6 },
+  auddenoise: { strength: 'medium' as 'light' | 'medium' | 'strong' },
+  audsilence: { pause: 1 },
+  audspeed: { factor: 1.5 },
+  audring: { start: 0, end: 0 },
   vidrotate: { turn: 'right' as 'right' | 'left' | 'half' },
   vidframes: { mode: 'every' as 'every' | 'at', every: 5, at: 0, png: false },
   vidgif: { start: 0, end: 0, width: 480, fps: 12 },
@@ -244,7 +253,7 @@ function askOffice(): Promise<void> {
     .then((o) => {
       office.value = o ?? null;
       // Videos added before ffmpeg was installed are looked at now.
-      if (o?.ffmpeg) for (const i of items.value) if (i.kind === 'video' && !i.probe && !i.problem) void inspect(i);
+      if (o?.ffmpeg) for (const i of items.value) if ((i.kind === 'video' || i.kind === 'audio') && !i.probe && !i.problem) void inspect(i);
     })
     .catch(() => { office.value = null; });
 }
@@ -413,8 +422,8 @@ const ready = computed(() => {
   if (!fits(t, usable.value.length)) return false;
   if (t.id !== 'unlock' && usable.value.some((i) => i.kind === 'pdf' && !i.pages)) return false;
   if (usable.value.some((i) => i.kind === 'image' && !i.width)) return false;
-  if (usable.value.some((i) => i.kind === 'video' && !i.probe)) return false;
-  if (t.category === 'video') return videoReady(t.id);
+  if (usable.value.some((i) => (i.kind === 'video' || i.kind === 'audio') && !i.probe)) return false;
+  if (t.category === 'video' || t.category === 'audio') return videoReady(t.id);
   if (t.id === 'split') return splitPlan.value.parts.length > 0 && !splitPlan.value.bad;
   if (t.id === 'organize') return options.organize.pages.length > 0;
   if (t.id === 'watermark') {
@@ -459,7 +468,7 @@ const ready = computed(() => {
   return true;
 });
 
-/** Whether a video tool's settings make sense for the files it has. */
+/** Whether a video or audio tool's settings make sense for the files it has. */
 function videoReady(id: ToolId): boolean {
   const first = usable.value[0]?.probe;
   if (!first) return false;
@@ -479,6 +488,21 @@ function videoReady(id: ToolId): boolean {
       const o = options.vidframes;
       return o.mode === 'at' ? Number.isFinite(o.at) && o.at >= 0 && o.at <= duration : positive(o.every) && o.every >= 0.1;
     }
+    case 'audtrim': {
+      const o = options.audtrim;
+      return inRange(o.start, o.end) && !(o.start <= 0.05 && o.end >= duration - 0.05) && o.fadeIn >= 0 && o.fadeOut >= 0;
+    }
+    case 'audring': {
+      const o = options.audring;
+      return inRange(o.start, o.end) && o.end - o.start <= LONGEST_RINGTONE;
+    }
+    case 'audloud':
+    case 'vidloud':
+      return options.audloud.mode !== 'gain' || (Number.isFinite(options.audloud.gain) && Math.abs(options.audloud.gain) >= 0.1);
+    case 'audsilence':
+      return positive(options.audsilence.pause) && options.audsilence.pause >= 0.2;
+    case 'audmerge':
+      return Number.isFinite(options.audmerge.crossfade) && options.audmerge.crossfade >= 0;
     case 'vidcompress': {
       const o = options.vidcompress;
       if (!o.bySize) return true;
@@ -513,14 +537,18 @@ async function inspect(item: Item) {
       const heic = /\.hei[cf]$/i.test(item.input.name) && !/Mac/.test(navigator.userAgent);
       item.problem = heic ? 'heic' : 'unreadable_image';
     }
-  } else if (item.kind === 'video') {
+  } else if (item.kind === 'video' || item.kind === 'audio') {
     // Looked at by ffprobe in a sealed room; until ffmpeg is here, the setup
     // card says so and this waits (`askOffice`).
     if (!office.value?.ffmpeg) return;
     try {
-      item.probe = await api.videoProbe(item.input.id);
-      if (!item.probe.video && tool.value !== 'vidaudio') item.problem = 'unreadable_video';
-      else if (!item.probe.audio && tool.value === 'vidaudio') item.problem = 'no_audio';
+      const probe = await api.videoProbe(item.input.id);
+      item.probe = probe;
+      const forSound = current.value?.category === 'audio' || tool.value === 'vidaudio';
+      if (forSound && !probe.audio) item.problem = probe.video ? 'no_audio' : 'unreadable_video';
+      // A voice note in a .webm or .mp4 has no picture: say what it is, not that it is broken.
+      else if (!forSound && !probe.video) item.problem = probe.audio ? 'audio_only' : 'unreadable_video';
+      else if (tool.value === 'vidloud' && !probe.audio) item.problem = 'no_audio';
     } catch {
       item.problem = 'unreadable_video';
     }
@@ -620,11 +648,13 @@ function resetPageOptions() {
  */
 let clipOf: string | null = null;
 function resetClip() {
-  const first = usable.value.find((i) => i.kind === 'video' && i.probe);
+  const first = usable.value.find((i) => (i.kind === 'video' || i.kind === 'audio') && i.probe);
   if (!first || first.input.id === clipOf) return;
   clipOf = first.input.id;
   const d = first.probe!.duration;
   Object.assign(options.vidtrim, { start: 0, end: d });
+  Object.assign(options.audtrim, { start: 0, end: d });
+  Object.assign(options.audring, { start: 0, end: Math.min(d, 30) });
   Object.assign(options.vidgif, { start: 0, end: Math.min(d, 5) });
   options.vidframes.at = Math.min(1, d);
 }
@@ -669,7 +699,7 @@ function addInputs(inputs: api.Input[]): number {
   let room = t.max === undefined ? Infinity : t.max - usable.value.length;
   // A one-file tool given a new file swaps it in — only a file it takes: one
   // of the wrong kind is refused and the file already open stays.
-  if (t.max === 1 && inputs.some((i) => kindOf(i.name) === t.accepts)) {
+  if (t.max === 1 && inputs.some((i) => takes(t, kindOf(i.name)))) {
     for (const i of items.value) if (i.kind === 'pdf') void closePdf(i.input.path);
     items.value = [];
     room = 1;
@@ -678,7 +708,7 @@ function addInputs(inputs: api.Input[]): number {
   const added: Item[] = [];
   for (const input of inputs) {
     const kind = kindOf(input.name);
-    if (kind !== t.accepts || room <= 0) {
+    if (!takes(t, kind) || room <= 0) {
       refused++;
       continue;
     }
@@ -729,7 +759,7 @@ function explain(e: unknown): { key: string; values?: Record<string, unknown> } 
   if (/missing-(libreoffice|pdf2docx|ffmpeg)/.test(text)) return { key: 'utilities.errors.missing_program' };
   const small = text.match(/video-too-small: ([\d.]+)/);
   if (small) return { key: 'utilities.errors.video_too_small', values: { mb: Number(small[1]).toLocaleString(i18n.global.locale.value) } };
-  const video = text.match(/video-(no-audio|no-video|bad-range|too-long|busy)/);
+  const video = text.match(/video-(no-audio|no-video|bad-range|too-long|busy|silent)/);
   if (video) return { key: `utilities.errors.video_${video[1].replace('-', '_')}` };
   const failed = text.match(/video-failed: “(.+?)”/);
   if (failed) return { key: 'utilities.errors.video_failed', values: { name: failed[1] } };
@@ -808,6 +838,31 @@ function videoExtFor(id: ToolId, name: string): string {
     audio: options.vidaudio.format,
     framesPng: options.vidframes.png,
   });
+}
+
+/** What an audio result is called before Rust names it for good. */
+function audioExtFor(id: ToolId, name: string): string {
+  return audioExt(id, name, options.audconvert.format);
+}
+
+/** The settings of an audio tool, as `utilities::audio::AudioTask` takes them. */
+function audioTask(id: ToolId): api.AudioTask {
+  switch (id) {
+    case 'audconvert':
+      return { tool: 'convert', ...options.audconvert };
+    case 'audtrim':
+      return { tool: 'trim', ...options.audtrim };
+    case 'auddenoise':
+      return { tool: 'denoise', strength: options.auddenoise.strength };
+    case 'audsilence':
+      return { tool: 'silence', pause: options.audsilence.pause };
+    case 'audspeed':
+      return { tool: 'speed', factor: options.audspeed.factor };
+    case 'audring':
+      return { tool: 'ringtone', ...options.audring };
+    default:
+      return { tool: 'loudness', ...options.audloud };
+  }
 }
 
 /** The settings of a video tool, as `utilities::video::Task` takes them. */
@@ -1143,6 +1198,24 @@ async function run() {
       case 'pdf2word':
         result = await api.pdfToWord(started.id, perFile(t.id, files));
         break;
+      case 'audmerge':
+        result = await api.audioMerge(started.id, ids, outputName(t.id, first, undefined, audioExtFor(t.id, first)), options.audmerge.crossfade);
+        sizeIn = undefined;
+        break;
+      case 'vidloud':
+      case 'audconvert':
+      case 'audtrim':
+      case 'audloud':
+      case 'auddenoise':
+      case 'audsilence':
+      case 'audspeed':
+      case 'audring': {
+        const ext = (f: Item) => (t.id === 'vidloud' ? videoExtFor(t.id, f.input.name) : audioExtFor(t.id, f.input.name));
+        const names = files.map((f) => ({ input: f.input.id, name: outputName(t.id, f.input.name, undefined, ext(f)) }));
+        result = await api.audio(started.id, names, audioTask(t.id), t.id === 'vidloud');
+        if (t.id !== 'audconvert') sizeIn = undefined;
+        break;
+      }
       case 'vidmerge':
         result = await api.videoMerge(started.id, ids, outputName(t.id, first, undefined, videoExtFor(t.id, first)));
         break;
@@ -1479,7 +1552,7 @@ function stopListening() {
 export function useWorkbench() {
   return {
     tool, current, items, usable, firstPdf, phase, progress, job, before, failure, options, unsaved, splitPlan, ready, webp,
-    videoExtFor, resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, frameIdPhoto, findFaces, office, askOffice, installing, installError, installPdf2docx,
+    videoExtFor, audioExtFor, resetCrop, defaultCrop, vision, askVision, maskFor, findCorners, frameIdPhoto, findFaces, office, askOffice, installing, installError, installPdf2docx,
     openTool, closeTool, addInputs, removeItem, moveItem, sortByName, clearItems, run, cancel, editAgain,
     showJob, chain, refreshUnsaved, noteSaved, listenForProgress, stopListening,
   };

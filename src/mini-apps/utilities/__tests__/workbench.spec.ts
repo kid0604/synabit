@@ -30,6 +30,8 @@ vi.mock('../api', () => ({
   ),
   video: vi.fn(),
   videoMerge: vi.fn(),
+  audio: vi.fn(),
+  audioMerge: vi.fn(),
 }));
 
 vi.mock('../render', () => ({
@@ -275,5 +277,56 @@ describe('a video', () => {
     api.video.mockRejectedValue('video-too-small: 4.2');
     await wb.run();
     expect(wb.failure.value).toEqual({ key: 'utilities.errors.video_too_small', values: { mb: (4.2).toLocaleString('en') } });
+  });
+});
+
+describe('sound', () => {
+  const voice = { duration: 90, bytes: 1000, format: 'matroska,webm', video: null, audio: { codec: 'opus', channels: 1, rate: 48000, bitrate: 32000 }, subtitles: [] };
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetWorkbench();
+  });
+  afterEach(() => resetWorkbench());
+
+  it('a voice note in a .webm is said to be sound only in a video tool, and taken by an audio tool', async () => {
+    const wb = useWorkbench();
+    await wb.askOffice();
+    api.videoProbe.mockResolvedValue(voice);
+    wb.openTool('vidcompress', [input('note.webm')]);
+    await settle();
+    expect(wb.items.value[0].problem).toBe('audio_only');
+    wb.openTool('audloud', [input('note.webm')]);
+    await settle();
+    expect(wb.items.value[0].problem).toBeUndefined();
+    expect(wb.ready.value).toBe(true);
+    api.newJob.mockResolvedValue(job('j3'));
+    api.audio.mockResolvedValue({ ...job('j3'), outputs: [{ name: 'note-chuan-am.m4a', size: 1, path: '/o' }] });
+    await wb.run();
+    expect(api.audio).toHaveBeenCalledWith('j3', [{ input: 'notewebm', name: 'note-chuan-am.m4a' }], { tool: 'loudness', mode: 'podcast', gain: 6 }, false);
+  });
+
+  it('a ringtone starts at most 30 seconds long and may not pass 40', async () => {
+    const wb = useWorkbench();
+    await wb.askOffice();
+    api.videoProbe.mockResolvedValue(voice);
+    wb.openTool('audring', [input('song.mp3')]);
+    await settle();
+    expect(wb.options.audring).toMatchObject({ start: 0, end: 30 });
+    expect(wb.ready.value).toBe(true);
+    wb.options.audring.end = 45;
+    expect(wb.ready.value).toBe(false);
+  });
+
+  it('loudness for a video keeps the picture', async () => {
+    const wb = useWorkbench();
+    await wb.askOffice();
+    api.videoProbe.mockResolvedValue({ ...voice, video: { codec: 'h264', width: 640, height: 360, rotation: 0, fps: 30, pixFmt: 'yuv420p', bitrate: null } });
+    wb.openTool('vidloud', [input('talk.mov')]);
+    await settle();
+    wb.options.audloud.mode = 'speech';
+    api.newJob.mockResolvedValue(job('j4'));
+    api.audio.mockResolvedValue({ ...job('j4'), outputs: [] });
+    await wb.run();
+    expect(api.audio).toHaveBeenCalledWith('j4', [{ input: 'talkmov', name: 'talk-chuan-am.mov' }], { tool: 'loudness', mode: 'speech', gain: 6 }, true);
   });
 });

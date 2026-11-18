@@ -329,6 +329,8 @@ Mockup vẽ đủ 28 tool để thấy lưới khi đầy. Bản thật chỉ hi
 | U-6 | Ký & điền, Điền form PDF, Che thông tin, Cắt lề & khổ trang, nắn ảnh chụp giấy tờ trong Ảnh → PDF; gộp/tách giữ mục lục |
 | U-7 | Ảnh thẻ, Đóng dấu ảnh, Ghép ảnh, Xoay ảnh, Làm mờ ảnh; sửa Nén ảnh, giữ ngày chụp, cắt nhiều ảnh, nhiều ảnh mỗi trang PDF |
 | U-8 | Video (ffmpeg trong phòng kín): Nén, Cắt, Đổi định dạng, Tách âm thanh, Ghép, Video → GIF, Xoay, Tắt tiếng, Video → ảnh, Xoá thông tin |
+| U-9 | Âm thanh (cùng phòng): Đổi định dạng, Cắt, Ghép, Chuẩn hoá âm lượng, Lọc ồn, Rút ngắn khoảng lặng, Đổi tốc độ, Nhạc chuông iPhone; Chỉnh tiếng video |
+| Sau | Chép lời bằng whisper.cpp trong phòng kín (đo trước tốc độ CPU và tiếng Việt) |
 
 ---
 
@@ -372,6 +374,7 @@ RMBG-2.0 không dùng (phi thương mại).
 | U-7 | Tool ảnh sau khi so với iLoveIMG, PDF24, Squoosh, PowerToys: ảnh thẻ, đóng dấu ảnh, ghép ảnh, xoay ảnh, làm mờ ảnh; Nén ảnh không còn làm file to ra | M |
 | U-6 | Thêm tool PDF sau khi so với iLovePDF và PDF24: ký & điền, điền form, che thông tin, cắt lề & khổ trang, nắn ảnh chụp giấy tờ. Gộp/tách/sắp xếp giữ mục lục, nhãn trang, form, đích có tên, layer | L |
 | U-8 | macOS 14+: mười tool video bằng ffmpeg (Homebrew) chạy trong phòng kín, đọc file qua cửa chỉ đọc, chạy như job có tiến độ và dừng được | L |
+| U-9 | Tám tool âm thanh và Chỉnh tiếng video, cùng máy chạy với U-8; sóng âm trên màn cắt | M |
 
 U-1 và U-2 không đụng `syn/machine/`, nên không chờ nhánh `syn-at-the-machine`. U-4 thì chờ.
 
@@ -625,6 +628,48 @@ ezgif, Clideo, 123apps. ffmpeg chạy trong phòng kín thay cho `avconvert` c�
 - **Chưa kiểm:**
   - Chưa chạy trong app Tauri thật (asset protocol phát video, tua trong WKWebView).
   - Chưa thử video iPhone thật (HEVC 10 bit HDR, track vị trí) và file vài GB.
+
+
+**U-9, 2026-11-18 (chưa commit):** âm thanh, so với 123apps, Audacity, Auphonic, Adobe Podcast, XLD/fre:ac, Permute
+và MacWhisper. Trước đó Utilities không nhận file âm thanh nào.
+
+- **Cách chạy:** y như video (`audio.rs` chỉ lập tham số, phòng và job là của `video.rs`). Tool âm thanh nhận cả file
+  video và làm việc trên track tiếng đầu tiên. Kết quả giữ loại file của nó khi ffmpeg ghi lại được (MP3, FLAC, WAV,
+  AIFF, Opus/Ogg); WMA, AMR, tiếng của video thì ra M4A.
+- **Tool:**
+  - **Đổi định dạng:** MP3, M4A, Opus, FLAC, ALAC, WAV, ba mức chất lượng; đã đúng định dạng và không nặng hơn mức chọn
+    thì chép nguyên.
+  - **Cắt:** sóng âm do ffmpeg giải ra trong phòng (khoảng 4 triệu mẫu mono, gộp thành 600 cột), cùng thanh thời gian
+    với Cắt video; to dần, nhỏ dần. Không có fade thì chép nguyên.
+  - **Ghép:** cùng loại thì nối nguyên; khác hoặc có crossfade thì đưa về 48 kHz stereo, nối bằng `acrossfade`.
+  - **Chuẩn hoá âm lượng:** podcast −16 LUFS, nhạc −14 LUFS bằng `loudnorm` hai lượt: lượt đầu chỉ đo (in JSON ở mức
+    `info`), lượt sau chỉnh một mức cố định (`linear=true`). Giọng đều bằng `speechnorm`; to/nhỏ hơn theo dB, có
+    `alimiter` chống vỡ. Dùng chung cho video (**Chỉnh tiếng video**: hình chép nguyên).
+  - **Lọc ồn:** `highpass` 80 Hz rồi `afftdn` (6/12/20 dB). `arnndn` cần file model nên chưa dùng.
+  - **Rút ngắn khoảng lặng:** mọi khoảng lặng dài hơn X giây còn X giây (`silenceremove` để lọt `stop_duration` đầu
+    của mỗi quãng; đã đo).
+  - **Đổi tốc độ:** 0,5×–2×, giữ cao độ (`atempo`).
+  - **Nhạc chuông iPhone:** tối đa 40 giây, AAC trong `.m4r` (`-f ipod`), to dần/nhỏ dần.
+- **Sửa:**
+  - `.ts` không còn là video: trong vault đó là TypeScript, và menu Tiện ích của Files từng gợi ý "Nén video" cho nó.
+    Máy quay ghi `.mts`/`.m2ts`, vẫn nhận.
+  - File chỉ có tiếng mang đuôi video (ghi chú giọng nói `.webm` của QuickCap) mở trong tool video được báo "chỉ có
+    tiếng", không còn "không đọc được", và tool âm thanh nhận nó.
+  - Nén video chép nguyên tiếng AAC đã nhẹ hơn mức nén. Tách âm thanh thêm FLAC và Opus.
+  - Thả file lớn vào cửa sổ đã gửi từng khúc (U-8), nên file âm thanh dài cũng không nằm cả trong WebView.
+- **Chép lời (chưa làm, cần quyết định):** macOS 26.5 trên máy này không chép lời tiếng Việt tại chỗ:
+  `SFSpeechRecognizer` vi-VN chỉ chạy qua máy chủ Apple, `SpeechTranscriber` không có tiếng Việt. Hướng khả thi là
+  whisper.cpp (`brew install whisper-cpp`) trong phòng kín, model tải một lần qua phòng mạng chỉ mở HuggingFace; phải
+  đo tốc độ khi chỉ có CPU và độ đúng tiếng Việt.
+- **Đã kiểm:**
+  - Rust: 9 test lập tham số; `audio::real::real_audio` (bị `ignore`) chạy cả tám tool và ghép bằng ffmpeg 8.1 thật
+    trong phòng: podcast ra đúng −16,0 LUFS, khoảng lặng 3 giây còn 1 giây, 2× ra 5,5 giây từ 11 giây, nhạc chuông là
+    AAC trong `.m4r`, sóng âm thấy rõ quãng lặng. Test thật của video vẫn qua.
+  - Front end: 6 test mới (nhận loại file, `.ts`, tên kết quả, ghi chú `.webm`, nhạc chuông 40 giây, Chỉnh tiếng
+    video giữ hình).
+  - Trong trình duyệt với IPC giả lập: màn cắt có sóng âm, phát được, phím và fade; màn chuẩn hoá; kết quả phát được
+    và gợi ý tool âm thanh tiếp.
+- **Chưa kiểm:** chưa chạy trong app Tauri thật; chưa thử bản ghi giọng nói thật có tiếng ồn thật.
 
 ---
 

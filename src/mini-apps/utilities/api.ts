@@ -376,7 +376,7 @@ export type VideoTask =
   | { tool: 'compress'; height: number | null; codec: 'h264' | 'hevc'; quality: 'high' | 'balanced' | 'small'; targetMb: number | null }
   | { tool: 'convert'; format: 'mp4' | 'mov' | 'mkv' | 'webm' }
   | { tool: 'trim'; start: number; end: number; exact: boolean }
-  | { tool: 'audio'; format: 'm4a' | 'mp3' | 'wav' }
+  | { tool: 'audio'; format: 'm4a' | 'mp3' | 'wav' | 'flac' | 'opus' }
   | { tool: 'strip' }
   | { tool: 'rotate'; turn: 'right' | 'left' | 'half' }
   | { tool: 'mute' }
@@ -389,4 +389,30 @@ export function video(job: string, files: PerFile[], task: VideoTask): Promise<J
 
 export function videoMerge(job: string, inputs: string[], name: string): Promise<Job> {
   return invoke<Job>('utility_video_merge', { job, inputs, name });
+}
+
+// ── Audio (the same room) ──
+
+/** As `utilities::audio::AudioTask`. */
+export type AudioTask =
+  | { tool: 'convert'; format: 'mp3' | 'm4a' | 'opus' | 'flac' | 'alac' | 'wav'; level: 'high' | 'medium' | 'small' }
+  | { tool: 'trim'; start: number; end: number; fadeIn: number; fadeOut: number }
+  | { tool: 'loudness'; mode: 'podcast' | 'music' | 'speech' | 'gain'; gain: number }
+  | { tool: 'denoise'; strength: 'light' | 'medium' | 'strong' }
+  | { tool: 'silence'; pause: number }
+  | { tool: 'speed'; factor: number }
+  | { tool: 'ringtone'; start: number; end: number };
+
+/** `keepPicture`: a video stays a video (loudness for video). */
+export function audio(job: string, files: PerFile[], task: AudioTask, keepPicture: boolean): Promise<Job> {
+  return invoke<Job>('utility_audio', { job, files, task, keepPicture });
+}
+
+export function audioMerge(job: string, inputs: string[], name: string, crossfade: number): Promise<Job> {
+  return invoke<Job>('utility_audio_merge', { job, inputs, name, crossfade });
+}
+
+/** A file's sound as `buckets` peaks from 0 to 1. */
+export function audioWaveform(input: string, duration: number, buckets: number): Promise<{ peaks: number[] }> {
+  return invoke('utility_audio_waveform', { input, duration, buckets });
 }

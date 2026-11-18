@@ -143,6 +143,7 @@ fn filters(kinds: &[String]) -> Vec<crate::app_shell::dialogs::Filter> {
                 &["jpg", "jpeg", "jfif", "png", "heic", "heif", "webp", "gif", "bmp", "tif", "tiff"],
             )),
             "video" => Some(Filter::new("Video", crate::utilities::video::EXTENSIONS)),
+            "audio" => Some(Filter::new("Audio", crate::utilities::audio::EXTENSIONS)),
             _ => None,
         })
         .collect()
@@ -943,7 +944,7 @@ pub async fn utility_video(app: tauri::AppHandle, job: String, files: Vec<PerFil
                     let _ = emitter.emit("utility-progress", Progress { job: &id, done: i * 100 + (share * 100.0) as usize, total: total * 100 });
                 };
                 let stop = || flag.load(Ordering::SeqCst);
-                let made = video::run(&rooms, &room, std::slice::from_ref(&path), &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
+                let (made, _) = video::run(&rooms, &room, std::slice::from_ref(&path), &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
                 let written = keep_video(&ws, &job, &file.name, &made, &plan).await?;
                 drop(made);
                 if matches!(task, video::Task::Compress { target_mb: None, .. }) {
@@ -1009,7 +1010,7 @@ pub async fn utility_video_merge(app: tauri::AppHandle, job: String, inputs: Vec
                 let _ = emitter.emit("utility-progress", Progress { job: &id, done: (share * 100.0) as usize, total: 100 });
             };
             let stop = || flag.load(Ordering::SeqCst);
-            let made = video::run(&rooms, &room_name(&job, 0), &paths, &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
+            let (made, _) = video::run(&rooms, &room_name(&job, 0), &paths, &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
             for w in keep_video(&ws, &job, &name, &made, &plan).await? {
                 ws.add_output(&job, &w)?;
             }
@@ -1022,6 +1023,148 @@ pub async fn utility_video_merge(app: tauri::AppHandle, job: String, inputs: Vec
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, job, inputs, name);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+// ── Audio, by ffmpeg in the same room ─────────────────────────────────────
+
+/// A file's sound as a waveform of `buckets` peaks (0–1), for the cut screen.
+#[tauri::command]
+pub async fn utility_audio_waveform(app: tauri::AppHandle, input: String, duration: f64, buckets: usize) -> AppResult<crate::utilities::audio::Waveform> {
+    #[cfg(target_os = "macos")]
+    {
+        let rooms = machine(&app)?;
+        let path = workspace(&app)?.input_path(&input)?;
+        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        crate::utilities::audio::waveform(&rooms, &glance_room(), &path, duration, buckets).await.map_err(|e| video_error(&name, e))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, input, duration, buckets);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+/// One audio tool over each file in turn, by ffmpeg in a sealed room. Video
+/// files give their sound; `keep_picture` (loudness for video) keeps the
+/// picture too. Loudness to a target measures each file first, in a room of
+/// its own, as the first half of the file's progress.
+#[tauri::command]
+pub async fn utility_audio(
+    app: tauri::AppHandle,
+    job: String,
+    files: Vec<PerFile>,
+    task: crate::utilities::audio::AudioTask,
+    keep_picture: bool,
+) -> AppResult<Job> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::utilities::{audio, video};
+        let rooms = machine(&app)?;
+        video::programs().ok_or_else(|| AppError::General("missing-ffmpeg".into()))?;
+        let run = Running::start(&app, &job)?;
+        let ws = workspace(&app)?;
+        let total = files.len();
+        let flag = run.flag.clone();
+        let result: AppResult<Job> = async {
+            for (i, file) in files.iter().enumerate() {
+                if run.stopped() {
+                    return Err(AppError::General("cancelled".into()));
+                }
+                let _ = app.emit("utility-progress", Progress { job: &job, done: i * 100, total: total * 100 });
+                let path = ws.input_path(&file.input)?;
+                let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let room = room_name(&job, i);
+                let probe = video::probe(&rooms, &format!("{room}p"), &path).await.map_err(|e| video_error(&name, e))?;
+                let (_, real) = video::door_of(&path).map_err(|e| video_error(&name, e))?;
+                let input = real.to_string_lossy().into_owned();
+                let stop = || flag.load(Ordering::SeqCst);
+                // From `from` to `to` of this file's share of the bar.
+                let share = |from: f64, to: f64| {
+                    let (emitter, id) = (app.clone(), job.clone());
+                    move |done: f64| {
+                        let within = from + (to - from) * done;
+                        let _ = emitter.emit("utility-progress", Progress { job: &id, done: i * 100 + (within * 100.0) as usize, total: total * 100 });
+                    }
+                };
+                let measured = if audio::needs_measure(&task) {
+                    let plan = audio::measure(&task, &input, &probe).map_err(plan_error)?;
+                    let (_, said) = video::run(&rooms, &format!("{room}m"), std::slice::from_ref(&path), &plan, &share(0.0, 0.5), &stop)
+                        .await
+                        .map_err(|e| video_error(&name, e))?;
+                    Some(audio::parse_measured(&said).ok_or_else(|| {
+                        log::warn!("[utilities] no loudness measurement for {name}: {said}");
+                        AppError::General(format!("video-failed: “{name}” could not be measured"))
+                    })?)
+                } else {
+                    None
+                };
+                let plan = audio::plan(&task, &input, &ext, &probe, keep_picture, measured.as_ref()).map_err(plan_error)?;
+                let from = if measured.is_some() { 0.5 } else { 0.0 };
+                let (made, _) = video::run(&rooms, &room, std::slice::from_ref(&path), &plan, &share(from, 1.0), &stop).await.map_err(|e| video_error(&name, e))?;
+                for w in keep_video(&ws, &job, &file.name, &made, &plan).await? {
+                    ws.add_output(&job, &w)?;
+                }
+            }
+            let _ = app.emit("utility-progress", Progress { job: &job, done: total * 100, total: total * 100 });
+            let inputs: Vec<String> = files.iter().map(|f| f.input.clone()).collect();
+            ws.note_origin(&job, &inputs)
+        }
+        .await;
+        run.finish(result)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, job, files, task, keep_picture);
+        Err(AppError::UnsupportedCapability("room".into()))
+    }
+}
+
+/// Sound files one after another, in the order given, as one file named for
+/// the first (`name`), each running into the next over `crossfade` seconds.
+#[tauri::command]
+pub async fn utility_audio_merge(app: tauri::AppHandle, job: String, inputs: Vec<String>, name: String, crossfade: f64) -> AppResult<Job> {
+    #[cfg(target_os = "macos")]
+    {
+        use crate::utilities::{audio, video};
+        let rooms = machine(&app)?;
+        video::programs().ok_or_else(|| AppError::General("missing-ffmpeg".into()))?;
+        let run = Running::start(&app, &job)?;
+        let ws = workspace(&app)?;
+        let flag = run.flag.clone();
+        let result: AppResult<Job> = async {
+            let mut paths = Vec::new();
+            let mut probed = Vec::new();
+            for (i, input) in inputs.iter().enumerate() {
+                let path = ws.input_path(input)?;
+                let file = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+                let probe = video::probe(&rooms, &format!("{}p", room_name(&job, i)), &path).await.map_err(|e| video_error(&file, e))?;
+                let (_, real) = video::door_of(&path).map_err(|e| video_error(&file, e))?;
+                probed.push((real.to_string_lossy().into_owned(), ext, probe));
+                paths.push(path);
+            }
+            let plan = audio::plan_merge(&probed, crossfade).map_err(plan_error)?;
+            let (emitter, id) = (app.clone(), job.clone());
+            let progress = move |share: f64| {
+                let _ = emitter.emit("utility-progress", Progress { job: &id, done: (share * 100.0) as usize, total: 100 });
+            };
+            let stop = || flag.load(Ordering::SeqCst);
+            let (made, _) = video::run(&rooms, &room_name(&job, 0), &paths, &plan, &progress, &stop).await.map_err(|e| video_error(&name, e))?;
+            for w in keep_video(&ws, &job, &name, &made, &plan).await? {
+                ws.add_output(&job, &w)?;
+            }
+            let _ = app.emit("utility-progress", Progress { job: &job, done: 100, total: 100 });
+            ws.note_origin(&job, &inputs)
+        }
+        .await;
+        run.finish(result)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, job, inputs, name, crossfade);
         Err(AppError::UnsupportedCapability("room".into()))
     }
 }

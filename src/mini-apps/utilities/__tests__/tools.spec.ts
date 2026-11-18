@@ -4,7 +4,7 @@ import vi from '../../../i18n/locales/vi.json';
 import {
   CATEGORIES, NUMBER_FORMATS, TOOLS, availability, cleansInPlace, linesToText, ocrLanguages, everyN, fitWithin, fits, fold, isJpegName, kindOf, markCentres,
   matches, numberText, outputName, ownFormat, pageImageName, parseRanges, previewMayRefuse, sortDrop, span,
-  suggestionsFor, toolById, turnedBox, clock, parseClock, videoExt, leastTarget, shownSize, LONGEST_GIF,
+  suggestionsFor, toolById, turnedBox, clock, parseClock, videoExt, leastTarget, shownSize, LONGEST_GIF, audioExt, takes,
 } from '../tools';
 import { toolsForFiles } from '../handoff';
 
@@ -311,5 +311,37 @@ describe('video', () => {
   it('turns an upright phone video the way it is seen', () => {
     expect(shownSize({ codec: 'hevc', width: 1920, height: 1080, rotation: -90, fps: 30, pixFmt: '', bitrate: null })).toEqual([1080, 1920]);
     expect(shownSize({ codec: 'h264', width: 1920, height: 1080, rotation: 180, fps: 30, pixFmt: '', bitrate: null })).toEqual([1920, 1080]);
+  });
+});
+
+describe('audio', () => {
+  it('knows a sound file, and a .ts file is code, not video', () => {
+    expect(kindOf('Ghi âm.m4a')).toBe('audio');
+    expect(kindOf('song.FLAC')).toBe('audio');
+    expect(kindOf('main.ts')).toBeNull();
+    expect(kindOf('clip.mts')).toBe('video');
+    expect(sortDrop([{ name: 'a.mp3' }, { name: 'b.wav' }, { name: 'c.mp4' }]).kind).toBe('audio');
+    expect(suggestionsFor('audio', 1)[0].id).toBe('audconvert');
+    expect(suggestionsFor('audio', 2).map((t) => t.id)).toContain('audmerge');
+    expect(suggestionsFor('audio', 2).map((t) => t.id)).not.toContain('audring');
+  });
+
+  it('lets the audio tools take a video’s sound, and not the other way round', () => {
+    expect(takes(toolById('audloud')!, 'video')).toBe(true);
+    expect(takes(toolById('audloud')!, 'audio')).toBe(true);
+    expect(takes(toolById('vidcompress')!, 'audio')).toBe(false);
+    expect(takes(toolById('audloud')!, null)).toBe(false);
+  });
+
+  it('names a result for what Rust will make', () => {
+    expect(audioExt('audtrim', 'a.mp3', 'mp3')).toBe('mp3');
+    expect(audioExt('audtrim', 'a.wma', 'mp3')).toBe('m4a');
+    expect(audioExt('auddenoise', 'clip.mov', 'mp3')).toBe('m4a');
+    expect(audioExt('audloud', 'a.aif', 'mp3')).toBe('aiff');
+    expect(audioExt('audconvert', 'a.mp3', 'alac')).toBe('m4a');
+    expect(audioExt('audring', 'Bài hát.mp3', 'mp3')).toBe('m4r');
+    expect(outputName('audring', 'Bài hát.mp3', undefined, 'm4r')).toBe('Bài hát.m4r');
+    expect(outputName('audsilence', 'hop.m4a', undefined, 'm4a')).toBe('hop-bo-lang.m4a');
+    expect(videoExt('vidloud', 'a.mov', { convert: 'mp4', trimExact: false, audio: 'm4a', framesPng: false })).toBe('mov');
   });
 });

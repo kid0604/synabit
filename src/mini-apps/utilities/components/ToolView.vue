@@ -37,7 +37,7 @@ import { logger } from '../../../utils/logger';
 import { useWorkbench } from '../useWorkbench';
 import {
   NUMBER_FORMATS, PAPERS, VIDEO_TARGETS, availability, clock, finder, cleansInPlace, extensionFor, fits, leastTarget, numberText, outputName, ownFormat, previewMayRefuse,
-  MOST_FRAMES, type FindKind, type PaperId, type ToolId,
+  MOST_FRAMES, LONGEST_RINGTONE, type FindKind, type PaperId, type ToolId,
 } from '../tools';
 import type { Job } from '../api';
 
@@ -108,6 +108,18 @@ const plan = computed(() => {
     }
     case 'vidmerge':
       return outputName('vidmerge', first, undefined, wb.videoExtFor('vidmerge', first));
+    case 'audmerge':
+      return outputName('audmerge', first, undefined, wb.audioExtFor('audmerge', first));
+    case 'audconvert':
+    case 'audtrim':
+    case 'audloud':
+    case 'auddenoise':
+    case 'audsilence':
+    case 'audspeed':
+    case 'audring':
+      return files.length > 1
+        ? t('utilities.options.makes_files', { n: files.length }, files.length)
+        : outputName(tool.value.id, first, undefined, wb.audioExtFor(tool.value.id, first));
     case 'vidcompress':
     case 'vidconvert':
     case 'vidtrim':
@@ -116,6 +128,7 @@ const plan = computed(() => {
     case 'vidgif':
     case 'vidrotate':
     case 'vidmute':
+    case 'vidloud':
       return files.length > 1
         ? t('utilities.options.makes_files', { n: files.length }, files.length)
         : outputName(tool.value.id, first, undefined, wb.videoExtFor(tool.value.id, first));
@@ -209,7 +222,8 @@ function openHomebrew() {
   void openUrl('https://brew.sh').catch(logger.error);
 }
 
-const firstVideo = computed(() => wb.usable.value.find((i) => i.kind === 'video'));
+/** The file a clip screen shows: a video, or a sound file. */
+const firstVideo = computed(() => wb.items.value.find((i) => i.kind === 'video' || i.kind === 'audio'));
 
 /** The least a size target can be for the files in, in MB. */
 const leastMb = computed(() =>
@@ -456,7 +470,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             <div class="flex items-center gap-2.5 mb-3.5 text-sm text-text-secondary dark:text-text-secondary-dark">
               <template v-if="tool.workspace === 'files' || tool.workspace === 'frame' || tool.workspace === 'imgmark' || tool.workspace === 'collage' || tool.workspace === 'imgblur' || (tool.workspace === 'crop' && wb.usable.value.length > 1)">
                 <span>{{ t('utilities.files.count', { n: wb.usable.value.length }, wb.usable.value.length) }}</span>
-                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'collage' || tool.id === 'vidmerge'">· {{ t('utilities.files.drag_to_order') }}</span>
+                <span v-if="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'collage' || tool.id === 'vidmerge' || tool.id === 'audmerge'">· {{ t('utilities.files.drag_to_order') }}</span>
                 <span class="flex-1" />
                 <button v-if="wb.items.value.length > 1" type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.sortByName()">{{ t('utilities.files.sort_by_name') }}</button>
                 <button type="button" class="btn-secondary !h-[30px] !px-2.5 !text-[13px] !border-transparent" @click="wb.clearItems()">{{ t('utilities.files.clear') }}</button>
@@ -570,7 +584,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
             <FileCards
               v-else-if="tool.workspace === 'files'"
               :items="wb.items.value"
-              :ordered="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'vidmerge'"
+              :ordered="tool.id === 'merge' || tool.id === 'img2pdf' || tool.id === 'vidmerge' || tool.id === 'audmerge'"
               :can-add="canAdd"
               @remove="wb.removeItem($event)"
               @move="(from, to) => wb.moveItem(from, to)"
@@ -1252,7 +1266,7 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
 
         <template v-else-if="tool.id === 'vidaudio'">
           <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.options.format')">
-            <button v-for="f in (['m4a', 'mp3', 'wav'] as const)" :key="f" type="button" role="radio" :aria-checked="wb.options.vidaudio.format === f" :class="{ on: wb.options.vidaudio.format === f }" @click="wb.options.vidaudio.format = f">
+            <button v-for="f in (['m4a', 'mp3', 'opus', 'flac', 'wav'] as const)" :key="f" type="button" role="radio" :aria-checked="wb.options.vidaudio.format === f" :class="{ on: wb.options.vidaudio.format === f }" @click="wb.options.vidaudio.format = f">
               {{ f.toUpperCase() }}
             </button>
           </div>
@@ -1302,6 +1316,111 @@ const formats = computed(() => (wb.webp.value ? (['jpeg', 'png', 'webp'] as cons
         </template>
 
         <p v-else-if="tool.id === 'vidmerge' || tool.id === 'vidstrip' || tool.id === 'vidmute'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t(`utilities.video.${tool.id}_hint`) }}</p>
+
+        <!-- Audio, and loudness for video -->
+        <template v-else-if="tool.id === 'audconvert'">
+          <div class="grid grid-cols-3 gap-1.5" role="radiogroup" :aria-label="t('utilities.options.format')">
+            <button
+              v-for="f in (['mp3', 'm4a', 'opus', 'flac', 'alac', 'wav'] as const)"
+              :key="f"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.audconvert.format === f"
+              class="h-8 rounded-md border text-[13px]"
+              :class="wb.options.audconvert.format === f ? 'border-accent text-accent dark:text-accent-dark bg-accent/10' : 'border-border dark:border-border-dark bg-surface dark:bg-surface-dark'"
+              @click="wb.options.audconvert.format = f"
+            >{{ f.toUpperCase() }}</button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2 mb-0">{{ t(`utilities.audio.format_${wb.options.audconvert.format}_hint`) }}</p>
+          <template v-if="['mp3', 'm4a', 'opus'].includes(wb.options.audconvert.format)">
+            <p class="utility-sub">{{ t('utilities.video.quality') }}</p>
+            <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.video.quality')">
+              <button v-for="l in (['high', 'medium', 'small'] as const)" :key="l" type="button" role="radio" :aria-checked="wb.options.audconvert.level === l" :class="{ on: wb.options.audconvert.level === l }" @click="wb.options.audconvert.level = l">
+                {{ t(`utilities.audio.level_${l}`) }}
+              </button>
+            </div>
+          </template>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.convert_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'audtrim'">
+          <p class="utility-sub !mt-0">{{ t('utilities.audio.fades') }}</p>
+          <label v-for="f in (['fadeIn', 'fadeOut'] as const)" :key="f" class="flex items-center gap-2 mt-1.5 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+            <span class="w-24">{{ t(`utilities.audio.${f === 'fadeIn' ? 'fade_in' : 'fade_out'}`) }}</span>
+            <select v-model.number="wb.options.audtrim[f]" class="utility-field flex-1">
+              <option v-for="d in [0, 0.5, 1, 2, 3, 5]" :key="d" :value="d">{{ d ? t('utilities.audio.seconds_n', { n: d.toLocaleString(locale) }) : t('utilities.audio.no_fade') }}</option>
+            </select>
+          </label>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.trim_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'audmerge'">
+          <label class="utility-sub !mt-0 block" for="utility-crossfade">{{ t('utilities.audio.crossfade') }}</label>
+          <select id="utility-crossfade" v-model.number="wb.options.audmerge.crossfade" class="utility-field">
+            <option v-for="d in [0, 1, 2, 3, 5]" :key="d" :value="d">{{ d ? t('utilities.audio.seconds_n', { n: d }) : t('utilities.audio.no_crossfade') }}</option>
+          </select>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.merge_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'audloud' || tool.id === 'vidloud'">
+          <div class="flex flex-col gap-2" role="radiogroup" :aria-label="t('utilities.audio.loudness')">
+            <button
+              v-for="m in (['podcast', 'music', 'speech', 'gain'] as const)"
+              :key="m"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.audloud.mode === m"
+              class="text-left rounded-[9px] border px-3 py-2.5 bg-surface dark:bg-surface-dark"
+              :class="wb.options.audloud.mode === m ? 'border-accent ring-1 ring-accent' : 'border-border dark:border-border-dark'"
+              @click="wb.options.audloud.mode = m"
+            >
+              <span class="block font-semibold text-sm text-text dark:text-text-dark">{{ t(`utilities.audio.loud_${m}`) }}</span>
+              <span class="block text-[12.5px] text-text-secondary dark:text-text-secondary-dark mt-0.5">{{ t(`utilities.audio.loud_${m}_hint`) }}</span>
+            </button>
+          </div>
+          <div v-if="wb.options.audloud.mode === 'gain'" class="flex items-center gap-2.5 mt-3">
+            <input v-model.number="wb.options.audloud.gain" type="range" min="-20" max="20" step="1" class="flex-1 accent-accent" :aria-label="t('utilities.audio.gain')" />
+            <span class="w-14 text-right text-[13px] tabular-nums">{{ wb.options.audloud.gain > 0 ? '+' : '' }}{{ wb.options.audloud.gain }} dB</span>
+          </div>
+          <p v-if="tool.id === 'vidloud'" class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.vidloud_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'auddenoise'">
+          <div class="utility-seg !mt-0" role="radiogroup" :aria-label="t('utilities.audio.strength')">
+            <button v-for="st in (['light', 'medium', 'strong'] as const)" :key="st" type="button" role="radio" :aria-checked="wb.options.auddenoise.strength === st" :class="{ on: wb.options.auddenoise.strength === st }" @click="wb.options.auddenoise.strength = st">
+              {{ t(`utilities.audio.strength_${st}`) }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.denoise_hint') }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'audsilence'">
+          <p class="utility-sub !mt-0">{{ t('utilities.audio.pause') }}</p>
+          <div class="utility-seg" role="radiogroup" :aria-label="t('utilities.audio.pause')">
+            <button v-for="p in [0.5, 1, 2]" :key="p" type="button" role="radio" :aria-checked="wb.options.audsilence.pause === p" :class="{ on: wb.options.audsilence.pause === p }" @click="wb.options.audsilence.pause = p">
+              {{ t('utilities.audio.seconds_n', { n: p.toLocaleString(locale) }) }}
+            </button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.silence_hint', { n: wb.options.audsilence.pause.toLocaleString(locale) }) }}</p>
+        </template>
+
+        <template v-else-if="tool.id === 'audspeed'">
+          <div class="grid grid-cols-3 gap-1.5" role="radiogroup" :aria-label="t('utilities.audio.speed')">
+            <button
+              v-for="f in [0.5, 0.75, 1.25, 1.5, 1.75, 2]"
+              :key="f"
+              type="button"
+              role="radio"
+              :aria-checked="wb.options.audspeed.factor === f"
+              class="h-8 rounded-md border text-[13px] tabular-nums"
+              :class="wb.options.audspeed.factor === f ? 'border-accent text-accent dark:text-accent-dark bg-accent/10' : 'border-border dark:border-border-dark bg-surface dark:bg-surface-dark'"
+              @click="wb.options.audspeed.factor = f"
+            >{{ f.toLocaleString(locale) }}×</button>
+          </div>
+          <p class="text-xs text-muted dark:text-muted-dark mt-2.5 mb-0">{{ t('utilities.audio.speed_hint') }}</p>
+        </template>
+
+        <p v-else-if="tool.id === 'audring'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t('utilities.audio.ring_hint', { n: LONGEST_RINGTONE }) }}</p>
 
         <!-- Office to PDF, PDF to Word -->
         <p v-else-if="tool.id === 'office2pdf' || tool.id === 'pdf2word'" class="text-[13px] text-text-secondary dark:text-text-secondary-dark m-0">{{ t(`utilities.options.${tool.id}_hint`) }}</p>

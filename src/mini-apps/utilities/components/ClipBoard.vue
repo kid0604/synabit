@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
- * One video and a stretch of it: the part to keep (cut), the part to make a
- * GIF of, or the moment to take a picture at (frames).
+ * One video or sound file and a stretch of it: the part to keep (cut), the
+ * part to make a GIF or a ringtone of, or the moment to take a picture at
+ * (frames). A sound file is shown as its waveform, made by ffmpeg in the room.
  *
  * The WebView plays MP4 and QuickTime itself, so those are watched as they
  * are. Anything else (MKV, AVI, WMV…) cannot play here; for those the frame at
@@ -16,27 +17,61 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Pause, Play } from 'lucide-vue-next';
 import { fileUrl } from '../render';
-import { videoPicture } from '../api';
-import { clock, parseClock, LONGEST_GIF } from '../tools';
+import { audioWaveform, videoPicture } from '../api';
+import { clock, parseClock, LONGEST_GIF, LONGEST_RINGTONE } from '../tools';
 import { useWorkbench } from '../useWorkbench';
 
 const { t } = useI18n();
 const wb = useWorkbench();
 
-const item = computed(() => wb.usable.value.find((i) => i.kind === 'video' && i.probe));
+const item = computed(() => wb.usable.value.find((i) => (i.kind === 'video' || i.kind === 'audio') && i.probe));
 const duration = computed(() => item.value?.probe?.duration ?? 0);
+/** Shown as sound: an audio tool, or a file with no picture. */
+const sound = computed(() => wb.current.value?.category === 'audio' || !item.value?.probe?.video);
 
-/** Which numbers the bar moves: a stretch for cut and GIF, a moment for a frame. */
+/** Which numbers the bar moves: a stretch for cut, GIF and ringtone, a moment for a frame. */
 const range = computed<{ start: number; end: number } | null>(() => {
   if (wb.tool.value === 'vidtrim') return wb.options.vidtrim;
   if (wb.tool.value === 'vidgif') return wb.options.vidgif;
+  if (wb.tool.value === 'audtrim') return wb.options.audtrim;
+  if (wb.tool.value === 'audring') return wb.options.audring;
   return null;
+});
+const longest = computed(() => (wb.tool.value === 'vidgif' ? LONGEST_GIF : wb.tool.value === 'audring' ? LONGEST_RINGTONE : Infinity));
+
+/** The sound's waveform, once per file. */
+const BUCKETS = 600;
+const waves = new Map<string, Promise<number[]>>();
+const peaks = ref<number[] | null>(null);
+watch(
+  [item, sound],
+  async ([it, isSound]) => {
+    peaks.value = null;
+    if (!it?.probe || !isSound) return;
+    const id = it.input.id;
+    let made = waves.get(id);
+    if (!made) {
+      made = audioWaveform(id, it.probe.duration, BUCKETS).then((w) => w.peaks);
+      waves.set(id, made);
+      made.catch(() => waves.delete(id));
+    }
+    const got = await made.catch(() => null);
+    if (item.value?.input.id === id) peaks.value = got;
+  },
+  { immediate: true },
+);
+/** Bars a little louder than linear, so a quiet voice still shows. */
+const bars = computed(() => {
+  const p = peaks.value;
+  if (!p?.length) return '';
+  const top = Math.max(...p, 0.01);
+  return p.map((v, i) => { const h = Math.max(0.02, Math.sqrt(v / top)) * 46; return `M${i + 0.5} ${24 - h / 2}v${h}`; }).join('');
 });
 const moment = computed(() => wb.tool.value === 'vidframes' && wb.options.vidframes.mode === 'at');
 
 // ── The picture ──
 
-const player = ref<HTMLVideoElement | null>(null);
+const player = ref<HTMLMediaElement | null>(null);
 /** False once the WebView says it cannot play this file. */
 const plays = ref(true);
 const playing = ref(false);
@@ -85,7 +120,7 @@ watch(
   [plays, position, item],
   ([canPlay, at, it]) => {
     clearTimeout(stillTimer);
-    if (canPlay || !it) return;
+    if (canPlay || !it || sound.value) return;
     const mine = ++stillSerial;
     stillTimer = setTimeout(async () => {
       try {
@@ -127,13 +162,13 @@ function move(handle: Handle, to: number) {
     wb.options.vidframes.at = at;
   } else if (range.value) {
     const r = range.value;
-    const longest = wb.tool.value === 'vidgif' ? LONGEST_GIF : Infinity;
+    const most = longest.value;
     if (handle === 'start') {
       r.start = Math.min(at, r.end - 0.1);
-      if (r.end - r.start > longest) r.end = r.start + longest;
+      if (r.end - r.start > most) r.end = r.start + most;
     } else {
       r.end = Math.max(at, r.start + 0.1);
-      if (r.end - r.start > longest) r.start = r.end - longest;
+      if (r.end - r.start > most) r.start = r.end - most;
     }
   }
   seek(handle === 'at' ? wb.options.vidframes.at : handle === 'start' ? range.value!.start : range.value!.end);
@@ -189,7 +224,18 @@ const length = computed(() => (range.value ? range.value.end - range.value.start
 
 <template>
   <div v-if="item" class="flex flex-col gap-3 max-w-[760px]">
-    <div class="relative rounded-lg overflow-hidden bg-black grid place-items-center aspect-video">
+    <audio
+      v-if="sound && plays"
+      ref="player"
+      :src="fileUrl(item.input.path)"
+      preload="auto"
+      @loadedmetadata="seek(position)"
+      @timeupdate="onTime"
+      @play="playing = true"
+      @pause="playing = false"
+      @error="plays = false"
+    />
+    <div v-if="!sound" class="relative rounded-lg overflow-hidden bg-black grid place-items-center aspect-video">
       <video
         v-if="plays"
         ref="player"
@@ -220,18 +266,23 @@ const length = computed(() => (range.value ? range.value.end - range.value.start
         <Pause v-if="playing" class="w-4 h-4" aria-hidden="true" /><Play v-else class="w-4 h-4" aria-hidden="true" />
       </button>
       <span class="text-[13px] tabular-nums text-text-secondary dark:text-text-secondary-dark">{{ clock(position) }} / {{ clock(duration) }}</span>
-      <span v-if="!plays" class="text-xs text-muted dark:text-muted-dark">{{ t('utilities.clip.no_play') }}</span>
+      <span v-if="!plays" class="text-xs text-muted dark:text-muted-dark">{{ t(sound ? 'utilities.clip.no_play_sound' : 'utilities.clip.no_play') }}</span>
     </div>
 
     <!-- The bar: the whole video, the stretch or moment chosen, and where the playhead is. -->
     <div
       ref="bar"
-      class="relative h-11 rounded-md bg-surface-hover dark:bg-surface-hover-dark cursor-pointer select-none touch-none"
+      class="relative rounded-md bg-surface-hover dark:bg-surface-hover-dark cursor-pointer select-none touch-none"
+      :class="sound ? 'h-28' : 'h-11'"
       @pointerdown="onDown($event, 'seek')"
       @pointermove="onMove"
       @pointerup="onUp"
       @pointercancel="onUp"
     >
+      <svg v-if="sound && bars" class="absolute inset-0 w-full h-full text-text-secondary dark:text-text-secondary-dark pointer-events-none" :viewBox="`0 0 ${BUCKETS} 48`" preserveAspectRatio="none" aria-hidden="true">
+        <path :d="bars" stroke="currentColor" stroke-width="0.6" fill="none" />
+      </svg>
+      <div v-else-if="sound" class="absolute inset-0 animate-pulse rounded-md bg-surface-hover dark:bg-surface-hover-dark" aria-hidden="true" />
       <template v-if="range">
         <div class="absolute inset-y-0 bg-accent/25 border-y-2 border-accent" :style="{ left: share(range.start), width: `calc(${share(range.end)} - ${share(range.start)})` }" />
         <button

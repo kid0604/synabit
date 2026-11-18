@@ -1141,6 +1141,60 @@
         "desc": "Remove the place, dates and device a video carries",
         "verb": "Clean | Clean {n} videos",
         "running": "Cleaning…"
+      },
+      "vidloud": {
+        "name": "Even out video sound",
+        "desc": "Make a video’s sound louder, quieter or even; the picture is untouched",
+        "verb": "Even out | Even out {n} videos",
+        "running": "Working on the sound…"
+      },
+      "audconvert": {
+        "name": "Convert audio",
+        "desc": "MP3, M4A, Opus, FLAC, ALAC or WAV; smaller, or lossless",
+        "verb": "Convert | Convert {n} files",
+        "running": "Converting…"
+      },
+      "audtrim": {
+        "name": "Cut audio",
+        "desc": "Keep the part you want, with a fade in and out",
+        "verb": "Cut",
+        "running": "Cutting…"
+      },
+      "audmerge": {
+        "name": "Join audio",
+        "desc": "One after another in one file, with a crossfade if you like",
+        "verb": "Join | Join {n} files",
+        "running": "Joining…"
+      },
+      "audloud": {
+        "name": "Even out loudness",
+        "desc": "Podcast or music loudness, an even voice, or simply louder",
+        "verb": "Even out | Even out {n} files",
+        "running": "Measuring and evening out…"
+      },
+      "auddenoise": {
+        "name": "Reduce noise",
+        "desc": "Take hiss and hum out from under a voice",
+        "verb": "Reduce noise | Reduce noise in {n} files",
+        "running": "Reducing noise…"
+      },
+      "audsilence": {
+        "name": "Shorten pauses",
+        "desc": "Long silences in a recording cut down",
+        "verb": "Shorten pauses | Shorten pauses in {n} files",
+        "running": "Shortening pauses…"
+      },
+      "audspeed": {
+        "name": "Change speed",
+        "desc": "Faster or slower, the voice still sounds like itself",
+        "verb": "Change speed | Change speed of {n} files",
+        "running": "Changing speed…"
+      },
+      "audring": {
+        "name": "iPhone ringtone",
+        "desc": "A part of a song as a ringtone file (.m4r)",
+        "verb": "Make the ringtone",
+        "running": "Making the ringtone…"
       }
     },
     "categories": {
@@ -1159,13 +1213,18 @@
       "video": {
         "name": "Video",
         "note": "Compress, cut, convert and join"
+      },
+      "audio": {
+        "name": "Audio",
+        "note": "Convert, cut, join and clean up sound"
       }
     },
     "accepts": {
       "pdf": "PDF files",
       "image": "images",
       "office": "Office documents",
-      "video": "videos"
+      "video": "videos",
+      "audio": "audio files"
     },
     "sidebar": {
       "label": "Utilities",
@@ -1219,7 +1278,8 @@
       "problem_unreadable_image": "Cannot be read as a picture",
       "problem_heic": "HEIC photos open only on a Mac",
       "problem_unreadable_video": "Cannot be read as a video",
-      "problem_no_audio": "Has no sound"
+      "problem_no_audio": "Has no sound",
+      "problem_audio_only": "Sound only, no picture: use an Audio tool"
     },
     "pages": {
       "page": "Page {n}",
@@ -1433,7 +1493,8 @@
       "none_fit": "No tool takes this many files of this kind.",
       "keys": "↑↓ to choose · ↵ to open · a number opens that row",
       "title_office": "What to do with this document? | What to do with these {n} documents?",
-      "title_video": "What to do with this video? | What to do with these {n} videos?"
+      "title_video": "What to do with this video? | What to do with these {n} videos?",
+      "title_audio": "What to do with this audio file? | What to do with these {n} audio files?"
     },
     "errors": {
       "locked": "“{name}” is protected by a password. Open it with Unlock PDF first.",
@@ -1455,7 +1516,8 @@
       "video_bad_range": "The part chosen is not inside the video.",
       "video_too_long": "A GIF can be at most a minute long. Choose a shorter part.",
       "video_busy": "Three long jobs are already running in the sealed room. Try again when one has finished.",
-      "video_failed": "“{name}” could not be read, or the result could not be made. It may be damaged, or in a form ffmpeg does not know."
+      "video_failed": "“{name}” could not be read, or the result could not be made. It may be damaged, or in a form ffmpeg does not know.",
+      "video_silent": "The sound is silent throughout, so there is nothing to even out."
     },
     "preview": {
       "applies_to": "Applied to 1 file | Applied to all {n} files"
@@ -1650,7 +1712,8 @@
       "end": "End",
       "at": "Picture at",
       "here": "Here",
-      "length": "Length {length}"
+      "length": "Length {length}",
+      "no_play_sound": "This kind of file cannot play here; the waveform still shows where to cut."
     },
     "video": {
       "aim": "Aim",
@@ -1702,7 +1765,51 @@
       "frames_hint": "At most {n} pictures.",
       "vidmerge_hint": "Videos are joined in the order shown. Videos of the same kind and size are joined as they are; otherwise each is fitted into the first one’s frame and encoded again.",
       "vidstrip_hint": "Picture and sound are copied as they are. Removed: the place it was filmed, dates, device and app names, titles and chapters. How it is turned is kept.",
-      "vidmute_hint": "The sound is removed; the picture is copied as it is, so nothing else changes."
+      "vidmute_hint": "The sound is removed; the picture is copied as it is, so nothing else changes.",
+      "audio_flac_hint": "FLAC is lossless: larger, with nothing taken out.",
+      "audio_opus_hint": "Opus is the smallest for the same quality; older players may not know it."
+    },
+    "audio": {
+      "format_mp3_hint": "MP3 plays on anything.",
+      "format_m4a_hint": "M4A (AAC): smaller than MP3 for the same quality; what Apple devices use.",
+      "format_opus_hint": "Opus: the smallest for the same quality; older players may not know it.",
+      "format_flac_hint": "FLAC: lossless, about half the size of WAV.",
+      "format_alac_hint": "ALAC (Apple Lossless): lossless, plays in Music and on iPhone.",
+      "format_wav_hint": "WAV: uncompressed, large; for editing.",
+      "level_high": "High",
+      "level_medium": "Medium",
+      "level_small": "Small",
+      "convert_hint": "A file already in that format and no heavier than asked is copied as it is: encoding it again would only lose.",
+      "fades": "Fades",
+      "fade_in": "Fade in",
+      "fade_out": "Fade out",
+      "seconds_n": "{n} s",
+      "no_fade": "None",
+      "trim_hint": "Without fades the part is cut as it is: nothing lost. With fades it is encoded again in the same format.",
+      "crossfade": "Between files",
+      "no_crossfade": "Straight on",
+      "merge_hint": "Files are joined in the order shown. Files of the same kind are joined as they are; otherwise they are made into the first one’s format.",
+      "loudness": "Loudness",
+      "loud_podcast": "Podcast, speech",
+      "loud_podcast_hint": "−16 LUFS, what podcast apps and Spotify ask for. Measured first, then one even change.",
+      "loud_music": "Music",
+      "loud_music_hint": "−14 LUFS, where streaming services play music.",
+      "loud_speech": "Even voice",
+      "loud_speech_hint": "Quiet and loud parts of a voice brought together: a lecture, a meeting.",
+      "loud_gain": "Louder or quieter",
+      "loud_gain_hint": "By as many decibels as you choose; peaks are kept from clipping.",
+      "gain": "Gain in decibels",
+      "vidloud_hint": "The picture is copied as it is; only the sound is made again.",
+      "strength": "Strength",
+      "strength_light": "Light",
+      "strength_medium": "Medium",
+      "strength_strong": "Strong",
+      "denoise_hint": "Best on steady noise under a voice: a fan, hiss, hum. Strong can make a voice sound thin.",
+      "pause": "Longest pause",
+      "silence_hint": "Every pause longer than {n} s is shortened to {n} s; shorter ones stay as they are.",
+      "speed": "Speed",
+      "speed_hint": "The pitch stays the same, so a faster voice does not sound high.",
+      "ring_hint": "Choose up to {n} seconds on the waveform. It fades in and out. To put it on an iPhone: drag the file onto the phone in Finder."
     }
   },
   "things": {

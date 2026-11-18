@@ -37,7 +37,7 @@ const first = computed(() => outputs.value[0]);
 const isPdf = (name: string) => name.toLowerCase().endsWith('.pdf');
 const isImage = (name: string) => /\.(jpe?g|png|webp|gif)$/i.test(name);
 const isVideo = (name: string) => kindOf(name) === 'video';
-const isAudio = (name: string) => /\.(m4a|mp3|wav)$/i.test(name);
+const isAudio = (name: string) => kindOf(name) === 'audio';
 const smaller = computed(() => {
   if (!props.before || !['imgcompress', 'compress'].includes(props.job.tool)) return null;
   const change = Math.round((1 - total.value / props.before) * 100);
@@ -88,6 +88,13 @@ const offered = computed<ToolId[]>(() => {
       ? ['vidmerge', 'vidcompress', 'vidstrip', 'vidmute']
       : ['vidcompress', 'vidtrim', 'vidgif', 'vidaudio', 'vidstrip', 'vidconvert'];
     return all.filter((id) => id !== tool);
+  }
+  if (outputs.value.every((o) => isAudio(o.name))) {
+    const all: ToolId[] = outputs.value.length > 1
+      ? ['audmerge', 'audconvert', 'audloud']
+      : ['audtrim', 'audloud', 'auddenoise', 'audsilence', 'audconvert', 'audspeed', 'audring'];
+    // A ringtone is done: it goes to a phone, not on to another tool.
+    return tool === 'audring' ? [] : all.filter((id) => id !== tool);
   }
   return [];
 });

@@ -22,8 +22,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// The files the video tools take, by extension.
-pub const EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "mkv", "webm", "avi", "3gp", "mts", "m2ts", "ts", "wmv", "flv", "mpg", "mpeg"];
+/// The files the video tools take, by extension. Not `.ts`: in a vault that
+/// is TypeScript far more often than an MPEG transport stream, and cameras
+/// write theirs as `.mts` or `.m2ts`.
+pub const EXTENSIONS: &[&str] = &["mp4", "mov", "m4v", "mkv", "webm", "avi", "3gp", "mts", "m2ts", "wmv", "flv", "mpg", "mpeg"];
 
 /// The most pictures "a frame every N seconds" makes.
 pub const MOST_FRAMES: usize = 500;
@@ -200,6 +202,8 @@ pub enum AudioFormat {
     M4a,
     Mp3,
     Wav,
+    Flac,
+    Opus,
 }
 
 /// A quarter turn to the right or left, or half a turn, as the picture is seen.
@@ -250,6 +254,9 @@ pub enum PlanError {
     BadRange,
     #[error("too-long")]
     TooLong,
+    /// Nothing to measure: the sound is silent throughout.
+    #[error("silent")]
+    Silent,
     /// The size asked for is too small for this length; the least that would do, in MB.
     #[error("too-small: {0:.1}")]
     TooSmall(f64),
@@ -283,7 +290,7 @@ pub struct Plan {
 }
 
 impl Plan {
-    fn one(steps: Vec<Step>, ext: &str) -> Self {
+    pub(super) fn one(steps: Vec<Step>, ext: &str) -> Self {
         Self { steps, ext: ext.to_string(), made: Made::One, files: Vec::new() }
     }
 
@@ -293,13 +300,13 @@ impl Plan {
 }
 
 /// Every run starts so: quiet but for errors and its progress, twice a second.
-const START: &[&str] = &["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-stats", "-stats_period", "0.5"];
+pub(super) const START: &[&str] = &["-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-stats", "-stats_period", "0.5"];
 
-fn args(parts: &[&str]) -> Vec<String> {
+pub(super) fn args(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|p| p.to_string()).collect()
 }
 
-fn start() -> Vec<String> {
+pub(super) fn start() -> Vec<String> {
     args(START)
 }
 
@@ -309,11 +316,11 @@ pub fn input_url(path: &str) -> String {
 }
 
 /// Containers the MP4 family's mover of the index (`faststart`) applies to.
-fn mp4_family(ext: &str) -> bool {
+pub(super) fn mp4_family(ext: &str) -> bool {
     matches!(ext, "mp4" | "mov" | "m4v" | "3gp")
 }
 
-fn finish(mut a: Vec<String>, ext: &str) -> Vec<String> {
+pub(super) fn finish(mut a: Vec<String>, ext: &str) -> Vec<String> {
     if mp4_family(ext) {
         a.extend(args(&["-movflags", "+faststart"]));
     }
@@ -365,7 +372,7 @@ fn vp9() -> Vec<String> {
     args(&["-c:v", "libvpx-vp9", "-crf", "32", "-b:v", "0", "-row-mt", "1", "-deadline", "good", "-cpu-used", "2"])
 }
 
-fn aac(kbps: u32) -> Vec<String> {
+pub(super) fn aac(kbps: u32) -> Vec<String> {
     vec!["-c:a".into(), "aac".into(), "-b:a".into(), format!("{kbps}k")]
 }
 
@@ -387,7 +394,7 @@ fn audio_into(audio: &Option<AudioStream>, container: &str) -> Vec<String> {
     }
 }
 
-fn range(start: f64, end: f64, duration: f64) -> Result<(f64, f64), PlanError> {
+pub(super) fn range(start: f64, end: f64, duration: f64) -> Result<(f64, f64), PlanError> {
     let ok = start.is_finite() && end.is_finite() && start >= 0.0 && end - start >= 0.1 && (duration <= 0.0 || end <= duration + 0.5);
     if ok {
         Ok((start, end - start))
@@ -396,7 +403,7 @@ fn range(start: f64, end: f64, duration: f64) -> Result<(f64, f64), PlanError> {
     }
 }
 
-fn secs(x: f64) -> String {
+pub(super) fn secs(x: f64) -> String {
     format!("{x:.3}")
 }
 
@@ -412,6 +419,12 @@ pub fn plan(task: &Task, input: &str, ext: &str, probe: &Probe) -> Result<Plan, 
             let v = video_only(probe)?;
             let (w, h) = v.shown();
             let audio_kbps = if quality == Quality::Small { 96 } else { 128 };
+            // Sound that is already AAC and no heavier than what it would be
+            // made into is copied: encoding it again only loses.
+            let light_aac = probe
+                .audio
+                .as_ref()
+                .is_some_and(|a| a.codec == "aac" && a.bitrate.is_some_and(|b| b <= audio_kbps as u64 * 1000 + 8000));
             // Input, streams and size, then the picture's codec, then the sound.
             let build = |picture: Vec<String>, sound: bool| -> Vec<String> {
                 let mut a = start();
@@ -423,7 +436,9 @@ pub fn plan(task: &Task, input: &str, ext: &str, probe: &Probe) -> Result<Plan, 
                     a.extend(["-vf".into(), format!("scale={sw}:{sh}")]);
                 }
                 a.extend(picture);
-                if sound {
+                if sound && light_aac {
+                    a.extend(args(&["-c:a", "copy"]));
+                } else if sound {
                     a.extend(aac(audio_kbps));
                 }
                 a
@@ -544,6 +559,14 @@ pub fn plan(task: &Task, input: &str, ext: &str, probe: &Probe) -> Result<Plan, 
                 AudioFormat::Wav => {
                     a.extend(args(&["-c:a", "pcm_s16le"]));
                     "wav"
+                }
+                AudioFormat::Flac => {
+                    a.extend(if audio.codec == "flac" { args(&["-c:a", "copy"]) } else { args(&["-c:a", "flac"]) });
+                    "flac"
+                }
+                AudioFormat::Opus => {
+                    a.extend(if audio.codec == "opus" { args(&["-c:a", "copy"]) } else { args(&["-c:a", "libopus", "-b:a", "128k"]) });
+                    "opus"
                 }
             };
             if out == "m4a" {
@@ -669,7 +692,7 @@ fn joins_as_is(a: &Probe, b: &Probe) -> bool {
 
 /// One line of a concat list: a path in single quotes, any quote in it closed,
 /// escaped and opened again.
-fn concat_line(path: &str) -> String {
+pub(super) fn concat_line(path: &str) -> String {
     format!("file '{}'\n", path.replace('\'', "'\\''"))
 }
 
@@ -848,7 +871,8 @@ mod running {
     /// Runs a plan's steps in a room that reads `inputs`' folders, one job
     /// after another, telling `progress` how far through (0–1) it is and
     /// stopping when `stopped` says so. The room is handed back with what it
-    /// made, to be copied out with [`take`]; it is emptied when dropped.
+    /// made, to be copied out with [`take`]; it is emptied when dropped. With
+    /// it, the last lines the last step printed (`loudnorm`'s measurement).
     pub async fn run(
         rooms: &Arc<Rooms>,
         name: &str,
@@ -856,7 +880,7 @@ mod running {
         plan: &Plan,
         progress: &(dyn Fn(f64) + Sync),
         stopped: &(dyn Fn() -> bool + Sync),
-    ) -> Result<Borrowed, RoomError> {
+    ) -> Result<(Borrowed, String), RoomError> {
         let (ffmpeg, _) = programs().ok_or_else(missing)?;
         let mut doors = Vec::new();
         for input in inputs {
@@ -872,6 +896,7 @@ mod running {
         }
         let total = plan.seconds().max(0.001);
         let mut before = 0.0;
+        let mut said = String::new();
         for step in &plan.steps {
             let job = rooms
                 .start_job(cell.clone(), name, "utilities", &script(&ffmpeg, &step.args), long())
@@ -901,8 +926,9 @@ mod running {
             }
             before += step.seconds;
             progress((before / total).clamp(0.0, 1.0));
+            said = job.last_lines(40);
         }
-        Ok(room)
+        Ok((room, said))
     }
 
     /// Copies what a plan made out of its room: to `to` for one file, or to
@@ -1036,7 +1062,7 @@ mod real {
             let planned = super::plan(&task, &real, "mov", &p).unwrap();
             let started = std::time::Instant::now();
             let steps = std::sync::Mutex::new(Vec::new());
-            let room = run(&rooms, &format!("v-{name}"), std::slice::from_ref(&input), &planned, &|f| steps.lock().unwrap().push(f), &|| false)
+            let (room, _) = run(&rooms, &format!("v-{name}"), std::slice::from_ref(&input), &planned, &|f| steps.lock().unwrap().push(f), &|| false)
                 .await
                 .unwrap_or_else(|e| panic!("{name}: {e:?}"));
             let (o, ext) = (out.clone(), planned.ext.clone());
@@ -1067,7 +1093,7 @@ mod real {
         let a = (real.clone(), "mov".to_string(), p.clone());
         let planned = plan_merge(&[a.clone(), a.clone()]).unwrap();
         assert!(planned.files.len() == 1);
-        let room = run(&rooms, "v-merge", std::slice::from_ref(&input), &planned, &|_| {}, &|| false).await.unwrap();
+        let (room, _) = run(&rooms, "v-merge", std::slice::from_ref(&input), &planned, &|_| {}, &|| false).await.unwrap();
         let o = out.join("merge.mov");
         let written = take(&room, &planned, move |_| o.clone()).await.unwrap();
         let merged = ffprobe(&written[0]);
@@ -1076,7 +1102,7 @@ mod real {
         let other = out.join("webm-1.webm");
         let b = (other.canonicalize().unwrap().to_string_lossy().into_owned(), "webm".to_string(), ffprobe(&other));
         let planned = plan_merge(&[a, b]).unwrap();
-        let room = run(&rooms, "v-merge2", &[input.clone(), other.clone()], &planned, &|_| {}, &|| false).await.unwrap();
+        let (room, _) = run(&rooms, "v-merge2", &[input.clone(), other.clone()], &planned, &|_| {}, &|| false).await.unwrap();
         let o = out.join("merge2.mp4");
         let written = take(&room, &planned, move |_| o.clone()).await.unwrap();
         println!("merge2: {:?}", ffprobe(&written[0]));

@@ -14,6 +14,7 @@ import {
   Crop, Eraser, EyeOff, FileDown, FileImage, FileInput, FileOutput, FileSearch, FileStack, FileType, FormInput, Frame, Images, LayoutGrid,
   Grid2x2, ListOrdered, Lock, LockOpen, Minimize2, Repeat, RotateCw, RotateCwSquare, Scaling, ScanFace, ScanText, Scissors, Signature,
   SquareMinus, SquareUser, Stamp, BadgeCheck, Shrink, Repeat2, Clapperboard, AudioLines, ShieldOff, Combine, ImagePlay, VolumeX, GalleryHorizontalEnd,
+  FileMusic, Volume2, Sparkles, AudioWaveform, Gauge, BellRing,
 } from 'lucide-vue-next';
 
 export type ToolId =
@@ -22,16 +23,19 @@ export type ToolId =
   | 'ocr' | 'office2pdf' | 'pdf2word' | 'img2pdf' | 'pdf2img' | 'pdf2text'
   | 'removebg' | 'imgtext' | 'imgcompress' | 'resize' | 'crop' | 'imgconvert' | 'exif'
   | 'idphoto' | 'imgmark' | 'collage' | 'imgrotate' | 'imgblur'
-  | 'vidcompress' | 'vidconvert' | 'vidtrim' | 'vidaudio' | 'vidstrip' | 'vidmerge' | 'vidgif' | 'vidrotate' | 'vidmute' | 'vidframes';
-export type CategoryId = 'pdf' | 'convert' | 'image' | 'video';
-export type InputKind = 'pdf' | 'image' | 'office' | 'video';
+  | 'vidcompress' | 'vidconvert' | 'vidtrim' | 'vidaudio' | 'vidstrip' | 'vidmerge' | 'vidgif' | 'vidrotate' | 'vidmute' | 'vidframes' | 'vidloud'
+  | 'audconvert' | 'audtrim' | 'audmerge' | 'audloud' | 'auddenoise' | 'audsilence' | 'audspeed' | 'audring';
+export type CategoryId = 'pdf' | 'convert' | 'image' | 'video' | 'audio';
+export type InputKind = 'pdf' | 'image' | 'office' | 'video' | 'audio';
 
 export interface ToolDef {
   id: ToolId;
   category: CategoryId;
   icon: Component;
-  /** The one kind of file it takes. */
+  /** The kind of file it is for. */
   accepts: InputKind;
+  /** Other kinds it takes too: the audio tools work on a video's sound. */
+  alsoAccepts?: InputKind[];
   /** Fewest files it can run with. */
   min: number;
   /** Most files it takes, when there is a limit. */
@@ -49,7 +53,7 @@ export interface ToolDef {
   needs?: 'subject' | 'text' | 'libreoffice' | 'pdf2docx' | 'ffmpeg';
 }
 
-export const CATEGORIES: readonly CategoryId[] = ['pdf', 'convert', 'image', 'video'];
+export const CATEGORIES: readonly CategoryId[] = ['pdf', 'convert', 'image', 'video', 'audio'];
 
 export const TOOLS: readonly ToolDef[] = [
   { id: 'merge',    category: 'pdf',     icon: FileStack,  accepts: 'pdf',   min: 2,         workspace: 'files' },
@@ -93,7 +97,21 @@ export const TOOLS: readonly ToolDef[] = [
   { id: 'vidmute',  category: 'video',   icon: VolumeX,    accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
   { id: 'vidframes', category: 'video',  icon: GalleryHorizontalEnd, accepts: 'video', min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
   { id: 'vidstrip', category: 'video',   icon: ShieldOff,  accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'vidloud',  category: 'video',   icon: Volume2,    accepts: 'video', min: 1,         workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audconvert', category: 'audio', icon: FileMusic,  accepts: 'audio', alsoAccepts: ['video'], min: 1, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audtrim',  category: 'audio',   icon: Scissors,   accepts: 'audio', alsoAccepts: ['video'], min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
+  { id: 'audmerge', category: 'audio',   icon: Combine,    accepts: 'audio', alsoAccepts: ['video'], min: 2, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audloud',  category: 'audio',   icon: Volume2,    accepts: 'audio', alsoAccepts: ['video'], min: 1, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'auddenoise', category: 'audio', icon: Sparkles,   accepts: 'audio', alsoAccepts: ['video'], min: 1, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audsilence', category: 'audio', icon: AudioWaveform, accepts: 'audio', alsoAccepts: ['video'], min: 1, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audspeed', category: 'audio',   icon: Gauge,      accepts: 'audio', alsoAccepts: ['video'], min: 1, workspace: 'files', needs: 'ffmpeg' },
+  { id: 'audring',  category: 'audio',   icon: BellRing,   accepts: 'audio', alsoAccepts: ['video'], min: 1, max: 1, workspace: 'clip', needs: 'ffmpeg' },
 ];
+
+/** Whether a tool takes files of this kind. */
+export function takes(tool: ToolDef, kind: InputKind | null): boolean {
+  return kind !== null && (kind === tool.accepts || !!tool.alsoAccepts?.includes(kind));
+}
 
 export function toolById(id: string | null | undefined): ToolDef | undefined {
   return TOOLS.find((t) => t.id === id);
@@ -102,7 +120,9 @@ export function toolById(id: string | null | undefined): ToolDef | undefined {
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'jfif', 'png', 'heic', 'heif', 'webp', 'gif', 'bmp', 'tif', 'tiff'];
 const OFFICE_EXTENSIONS = ['docx', 'doc', 'odt', 'rtf', 'xlsx', 'xls', 'ods', 'csv', 'pptx', 'ppt', 'odp'];
 /** As `utilities::video::EXTENSIONS`. */
-export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', '3gp', 'mts', 'm2ts', 'ts', 'wmv', 'flv', 'mpg', 'mpeg'];
+export const VIDEO_EXTENSIONS = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', '3gp', 'mts', 'm2ts', 'wmv', 'flv', 'mpg', 'mpeg'];
+/** As `utilities::audio::EXTENSIONS`. */
+export const AUDIO_EXTENSIONS = ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'aiff', 'aif', 'wma', 'amr', 'caf', 'm4r'];
 
 /** What kind of file a name is, or null for one no tool takes. */
 export function kindOf(name: string): InputKind | null {
@@ -111,6 +131,7 @@ export function kindOf(name: string): InputKind | null {
   if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
   if (OFFICE_EXTENSIONS.includes(ext)) return 'office';
   if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+  if (AUDIO_EXTENSIONS.includes(ext)) return 'audio';
   return null;
 }
 
@@ -136,7 +157,8 @@ const SUGGESTION_ORDER: Record<InputKind, ToolId[]> = {
   ],
   office: ['office2pdf'],
   image: ['removebg', 'img2pdf', 'imgcompress', 'resize', 'collage', 'imgmark', 'idphoto', 'imgrotate', 'imgblur', 'exif', 'imgtext', 'imgconvert', 'crop'],
-  video: ['vidcompress', 'vidtrim', 'vidmerge', 'vidaudio', 'vidconvert', 'vidgif', 'vidrotate', 'vidmute', 'vidframes', 'vidstrip'],
+  video: ['vidcompress', 'vidtrim', 'vidmerge', 'vidaudio', 'vidconvert', 'vidgif', 'vidrotate', 'vidloud', 'vidmute', 'vidframes', 'vidstrip'],
+  audio: ['audconvert', 'audtrim', 'audmerge', 'audloud', 'auddenoise', 'audsilence', 'audspeed', 'audring'],
 };
 
 export function suggestionsFor(kind: InputKind, count: number): ToolDef[] {
@@ -149,7 +171,7 @@ export function suggestionsFor(kind: InputKind, count: number): ToolDef[] {
  */
 export function sortDrop<T extends { name: string }>(files: T[]): { kind: InputKind | null; taken: T[]; left: T[] } {
   // Ties go to the earlier kind in this list.
-  const groups = (['pdf', 'image', 'video', 'office'] as const).map((kind) => ({ kind, files: files.filter((f) => kindOf(f.name) === kind) }));
+  const groups = (['pdf', 'image', 'video', 'audio', 'office'] as const).map((kind) => ({ kind, files: files.filter((f) => kindOf(f.name) === kind) }));
   const best = groups.reduce((a, b) => (b.files.length > a.files.length ? b : a));
   if (!best.files.length) return { kind: null, taken: [], left: files };
   return { kind: best.kind, taken: best.files, left: files.filter((f) => !best.files.includes(f)) };
@@ -256,6 +278,15 @@ const SUFFIX: Record<ToolId, string> = {
   vidrotate: 'xoay',
   vidmute: 'tat-tieng',
   vidframes: '',
+  vidloud: 'chuan-am',
+  audconvert: '',
+  audtrim: 'cat',
+  audmerge: 'gop',
+  audloud: 'chuan-am',
+  auddenoise: 'loc-on',
+  audsilence: 'bo-lang',
+  audspeed: 'toc-do',
+  audring: '',
 };
 
 /** A file name's extension, lower case, without the dot. */
@@ -275,7 +306,8 @@ export function outputName(tool: ToolId, firstInput: string, part?: number, ext?
   if (tool === 'office2pdf') return `${base}.pdf`;
   if (tool === 'pdf2word') return `${base}.docx`;
   if (tool === 'split') return `${base}-${SUFFIX.split}-${part ?? 1}.pdf`;
-  if (toolById(tool)?.category === 'image' || toolById(tool)?.category === 'video') {
+  const category = toolById(tool)?.category;
+  if (category === 'image' || category === 'video' || category === 'audio') {
     const out = ext ?? extension(firstInput);
     return SUFFIX[tool] ? `${base}-${SUFFIX[tool]}.${out}` : `${base}.${out}`;
   }
@@ -581,6 +613,8 @@ export function videoExt(
       return 'gif';
     case 'vidframes':
       return o.framesPng ? 'png' : 'jpg';
+    case 'vidloud':
+      return ownVideoExt(name);
     case 'vidrotate': {
       const own = ownVideoExt(name);
       return ['mp4', 'mov', 'm4v', '3gp', 'webm', 'mkv'].includes(own) ? own : 'mp4';
@@ -607,3 +641,20 @@ export function leastTarget(seconds: number, hasAudio: boolean, small: boolean):
   const sound = hasAudio ? (small ? 96 : 128) : 0;
   return Math.ceil(((150 + sound) * seconds) / 8000 / 0.97 * 10) / 10;
 }
+
+/**
+ * The extension an audio tool's result gets, as `utilities::audio::plan`
+ * decides it: its own kind of file where ffmpeg writes that back, M4A where
+ * it does not (WMA, AMR, a video's sound).
+ */
+export function audioExt(tool: ToolId, name: string, convert: 'mp3' | 'm4a' | 'opus' | 'flac' | 'alac' | 'wav'): string {
+  if (tool === 'audring') return 'm4r';
+  if (tool === 'audconvert') return convert === 'alac' ? 'm4a' : convert;
+  const ext = extension(name);
+  if (ext === 'aif') return 'aiff';
+  if (ext === 'oga') return 'ogg';
+  return ['mp3', 'wav', 'aiff', 'flac', 'opus', 'ogg'].includes(ext) ? ext : 'm4a';
+}
+
+/** The longest iPhone ringtone, in seconds, as `utilities::audio::LONGEST_RINGTONE`. */
+export const LONGEST_RINGTONE = 40;

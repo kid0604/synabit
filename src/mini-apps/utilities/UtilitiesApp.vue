@@ -147,8 +147,8 @@ async function addToTool(inputs: api.Input[]) {
 
 async function pick() {
   try {
-    if (tool.value) await addToTool(await api.pickInputs([tool.value.accepts], tool.value.max !== 1));
-    else await offer(await api.pickInputs(['pdf', 'image', 'video', 'office'], true));
+    if (tool.value) await addToTool(await api.pickInputs([tool.value.accepts, ...(tool.value.alsoAccepts ?? [])], tool.value.max !== 1));
+    else await offer(await api.pickInputs(['pdf', 'image', 'video', 'audio', 'office'], true));
   } catch (e) {
     logger.error('[utilities] picking files failed', e);
     showAppNotice(t('utilities.errors.other', { reason: errorText(e) }), 'error');
@@ -458,6 +458,9 @@ onBeforeUnmount(() => {
 .utility-tint-video { background: color-mix(in oklab, #0d9488 13%, transparent); color: #0f766e; }
 .dark .utility-tint-video { color: #2dd4bf; }
 .utility-dot-video { background: #0d9488; }
+.utility-tint-audio { background: color-mix(in oklab, #d97706 13%, transparent); color: #b45309; }
+.dark .utility-tint-audio { color: #fbbf24; }
+.utility-dot-audio { background: #d97706; }
 
 .utility-section {
   padding: 12px 12px 2px 20px;

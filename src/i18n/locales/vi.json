@@ -1141,6 +1141,60 @@
         "desc": "Bỏ vị trí, ngày giờ và thiết bị video mang theo",
         "verb": "Xoá thông tin | Xoá thông tin {n} video",
         "running": "Đang làm sạch…"
+      },
+      "vidloud": {
+        "name": "Chỉnh tiếng video",
+        "desc": "Làm tiếng video to hơn, nhỏ hơn hoặc đều hơn; hình giữ nguyên",
+        "verb": "Chỉnh tiếng | Chỉnh tiếng {n} video",
+        "running": "Đang chỉnh tiếng…"
+      },
+      "audconvert": {
+        "name": "Đổi định dạng âm thanh",
+        "desc": "MP3, M4A, Opus, FLAC, ALAC hoặc WAV; nhỏ hơn, hoặc không mất chất lượng",
+        "verb": "Đổi định dạng | Đổi định dạng {n} file",
+        "running": "Đang chuyển…"
+      },
+      "audtrim": {
+        "name": "Cắt âm thanh",
+        "desc": "Giữ đoạn bạn cần, có thể to dần và nhỏ dần",
+        "verb": "Cắt",
+        "running": "Đang cắt…"
+      },
+      "audmerge": {
+        "name": "Ghép âm thanh",
+        "desc": "Nối tiếp thành một file, có thể chuyển mượt giữa các bài",
+        "verb": "Ghép | Ghép {n} file",
+        "running": "Đang ghép…"
+      },
+      "audloud": {
+        "name": "Chuẩn hoá âm lượng",
+        "desc": "Độ to chuẩn podcast hay nhạc, giọng đều, hoặc chỉ to hơn",
+        "verb": "Chuẩn hoá | Chuẩn hoá {n} file",
+        "running": "Đang đo và chuẩn hoá…"
+      },
+      "auddenoise": {
+        "name": "Lọc tiếng ồn",
+        "desc": "Bỏ tiếng xì và tiếng ù dưới giọng nói",
+        "verb": "Lọc ồn | Lọc ồn {n} file",
+        "running": "Đang lọc ồn…"
+      },
+      "audsilence": {
+        "name": "Rút ngắn khoảng lặng",
+        "desc": "Cắt bớt những quãng im lặng dài trong bản ghi",
+        "verb": "Rút ngắn | Rút ngắn {n} file",
+        "running": "Đang rút ngắn khoảng lặng…"
+      },
+      "audspeed": {
+        "name": "Đổi tốc độ",
+        "desc": "Nhanh hơn hoặc chậm hơn, giọng vẫn như cũ",
+        "verb": "Đổi tốc độ | Đổi tốc độ {n} file",
+        "running": "Đang đổi tốc độ…"
+      },
+      "audring": {
+        "name": "Nhạc chuông iPhone",
+        "desc": "Một đoạn bài hát thành file nhạc chuông (.m4r)",
+        "verb": "Tạo nhạc chuông",
+        "running": "Đang tạo nhạc chuông…"
       }
     },
     "categories": {
@@ -1159,13 +1213,18 @@
       "video": {
         "name": "Video",
         "note": "Nén, cắt, đổi định dạng và ghép"
+      },
+      "audio": {
+        "name": "Âm thanh",
+        "note": "Đổi định dạng, cắt, ghép và làm sạch tiếng"
       }
     },
     "accepts": {
       "pdf": "file PDF",
       "image": "ảnh",
       "office": "tài liệu Office",
-      "video": "video"
+      "video": "video",
+      "audio": "file âm thanh"
     },
     "sidebar": {
       "label": "Tiện ích",
@@ -1219,7 +1278,8 @@
       "problem_unreadable_image": "Không đọc được ảnh này",
       "problem_heic": "Ảnh HEIC chỉ mở được trên máy Mac",
       "problem_unreadable_video": "Không đọc được như một video",
-      "problem_no_audio": "Không có âm thanh"
+      "problem_no_audio": "Không có âm thanh",
+      "problem_audio_only": "Chỉ có tiếng, không có hình: hãy dùng công cụ Âm thanh"
     },
     "pages": {
       "page": "Trang {n}",
@@ -1433,7 +1493,8 @@
       "none_fit": "Không công cụ nào nhận chừng này file loại này.",
       "keys": "↑↓ để chọn · ↵ để mở · gõ số để mở dòng đó",
       "title_office": "Làm gì với {n} tài liệu này?",
-      "title_video": "Làm gì với {n} video này?"
+      "title_video": "Làm gì với {n} video này?",
+      "title_audio": "Làm gì với {n} file âm thanh này?"
     },
     "errors": {
       "locked": "“{name}” có mật khẩu. Hãy mở khoá bằng Mở khoá PDF trước.",
@@ -1455,7 +1516,8 @@
       "video_bad_range": "Đoạn đã chọn không nằm trong video.",
       "video_too_long": "GIF dài tối đa một phút. Hãy chọn đoạn ngắn hơn.",
       "video_busy": "Phòng kín đang chạy ba việc dài. Thử lại khi một việc xong.",
-      "video_failed": "Không đọc được “{name}”, hoặc không tạo được kết quả. File có thể bị hỏng, hoặc ở dạng ffmpeg không biết."
+      "video_failed": "Không đọc được “{name}”, hoặc không tạo được kết quả. File có thể bị hỏng, hoặc ở dạng ffmpeg không biết.",
+      "video_silent": "Tiếng im lặng suốt cả file nên không có gì để chuẩn hoá."
     },
     "preview": {
       "applies_to": "Áp dụng cho {n} file"
@@ -1650,7 +1712,8 @@
       "end": "Cuối",
       "at": "Lấy ảnh tại",
       "here": "Tại đây",
-      "length": "Dài {length}"
+      "length": "Dài {length}",
+      "no_play_sound": "Loại file này không phát được ở đây; sóng âm vẫn cho thấy chỗ cắt."
     },
     "video": {
       "aim": "Mục tiêu",
@@ -1702,7 +1765,51 @@
       "frames_hint": "Tối đa {n} ảnh.",
       "vidmerge_hint": "Video được nối theo thứ tự đang hiện. Video cùng loại, cùng cỡ được nối nguyên; nếu khác, mỗi video được đặt vào khung của video đầu và nén lại.",
       "vidstrip_hint": "Hình và tiếng được chép nguyên. Bị xoá: nơi quay, ngày giờ, tên thiết bị và app, tiêu đề và chương. Hướng xoay được giữ.",
-      "vidmute_hint": "Âm thanh bị bỏ; hình được chép nguyên nên không gì khác thay đổi."
+      "vidmute_hint": "Âm thanh bị bỏ; hình được chép nguyên nên không gì khác thay đổi.",
+      "audio_flac_hint": "FLAC không mất chất lượng: nặng hơn, không bỏ gì.",
+      "audio_opus_hint": "Opus nhỏ nhất với cùng chất lượng; trình phát cũ có thể không đọc được."
+    },
+    "audio": {
+      "format_mp3_hint": "MP3 phát được trên mọi thứ.",
+      "format_m4a_hint": "M4A (AAC): nhỏ hơn MP3 với cùng chất lượng; là định dạng thiết bị Apple dùng.",
+      "format_opus_hint": "Opus: nhỏ nhất với cùng chất lượng; trình phát cũ có thể không đọc được.",
+      "format_flac_hint": "FLAC: không mất chất lượng, nhẹ khoảng một nửa WAV.",
+      "format_alac_hint": "ALAC (Apple Lossless): không mất chất lượng, phát được trong app Nhạc và trên iPhone.",
+      "format_wav_hint": "WAV: không nén, nặng; dùng để biên tập.",
+      "level_high": "Cao",
+      "level_medium": "Vừa",
+      "level_small": "Nhỏ",
+      "convert_hint": "File đã đúng định dạng và không nặng hơn mức chọn thì được chép nguyên: nén lại chỉ làm mất chất lượng.",
+      "fades": "To dần, nhỏ dần",
+      "fade_in": "To dần",
+      "fade_out": "Nhỏ dần",
+      "seconds_n": "{n} giây",
+      "no_fade": "Không",
+      "trim_hint": "Không chọn to dần/nhỏ dần thì đoạn được cắt nguyên: không mất gì. Có thì file được nén lại cùng định dạng.",
+      "crossfade": "Giữa các file",
+      "no_crossfade": "Nối liền",
+      "merge_hint": "File được nối theo thứ tự đang hiện. Cùng loại thì nối nguyên; khác thì được chuyển về định dạng của file đầu.",
+      "loudness": "Âm lượng",
+      "loud_podcast": "Podcast, giọng nói",
+      "loud_podcast_hint": "−16 LUFS, mức các app podcast và Spotify yêu cầu. Đo trước, rồi chỉnh đều một lần.",
+      "loud_music": "Nhạc",
+      "loud_music_hint": "−14 LUFS, mức các dịch vụ nghe nhạc phát.",
+      "loud_speech": "Giọng đều",
+      "loud_speech_hint": "Chỗ nói nhỏ và chỗ nói to được kéo lại gần nhau: bài giảng, cuộc họp.",
+      "loud_gain": "To hơn hoặc nhỏ hơn",
+      "loud_gain_hint": "Theo số decibel bạn chọn; đỉnh tiếng được giữ không bị vỡ.",
+      "gain": "Độ tăng giảm (dB)",
+      "vidloud_hint": "Hình được chép nguyên; chỉ tiếng được làm lại.",
+      "strength": "Mức lọc",
+      "strength_light": "Nhẹ",
+      "strength_medium": "Vừa",
+      "strength_strong": "Mạnh",
+      "denoise_hint": "Hợp nhất với tiếng ồn đều dưới giọng nói: quạt, tiếng xì, tiếng ù. Lọc mạnh có thể làm giọng mỏng đi.",
+      "pause": "Khoảng lặng dài nhất",
+      "silence_hint": "Mọi khoảng lặng dài hơn {n} giây được rút còn {n} giây; khoảng ngắn hơn giữ nguyên.",
+      "speed": "Tốc độ",
+      "speed_hint": "Cao độ giữ nguyên, nên giọng nói nhanh không bị the thé.",
+      "ring_hint": "Chọn tối đa {n} giây trên sóng âm. Nhạc to dần và nhỏ dần ở hai đầu. Để cài lên iPhone: kéo file vào máy trong Finder."
     }
   },
   "things": {

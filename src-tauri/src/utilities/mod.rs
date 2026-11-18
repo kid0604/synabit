@@ -17,10 +17,12 @@
 //! - [`metadata`] takes EXIF and the like out of pictures without re-encoding.
 //! - [`searchable`] lays recognised text over a scan, invisible.
 //! - [`redact`] blacks out parts of pages and takes what was under them out.
+//! - [`audio`] plans ffmpeg runs on sound: convert, cut, join, loudness, noise.
 //! - [`video`] plans ffmpeg runs; on macOS it runs them in a sealed room.
 //! - `vision` (macOS) finds a photo's subject and the text in a scan.
 //! - [`workspace`] is where inputs and results wait, and how they are named.
 
+pub mod audio;
 pub mod catalog;
 pub mod compress;
 pub mod crypt;

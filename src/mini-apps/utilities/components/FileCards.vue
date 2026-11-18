@@ -8,7 +8,7 @@
  */
 import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ArrowLeft, ArrowRight, Lock, Plus, TriangleAlert, X } from 'lucide-vue-next';
+import { ArrowLeft, ArrowRight, Lock, Music, Plus, TriangleAlert, X } from 'lucide-vue-next';
 import PdfThumb from './PdfThumb.vue';
 import VideoThumb from './VideoThumb.vue';
 import { fileUrl } from '../render';
@@ -103,6 +103,9 @@ function caption(item: Item): string {
           <TriangleAlert v-else class="w-6 h-6" aria-hidden="true" />
         </div>
         <PdfThumb v-else-if="item.kind === 'pdf'" :path="item.input.path" :width="128" />
+        <div v-else-if="item.kind === 'audio' || (item.probe && !item.probe.video)" class="w-full aspect-video rounded-sm utility-tint-audio grid place-items-center">
+          <Music class="w-7 h-7" aria-hidden="true" />
+        </div>
         <VideoThumb v-else-if="item.kind === 'video' && item.probe" :input="item.input.id" :at="Math.min(1, item.probe.duration / 3)" />
         <div v-else-if="item.kind === 'video'" class="w-full aspect-video rounded-sm bg-surface-hover dark:bg-surface-hover-dark animate-pulse" aria-hidden="true" />
         <img
