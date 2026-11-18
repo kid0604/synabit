@@ -1842,6 +1842,24 @@ impl SynEngine {
                             reversal: crate::syn::registry::Reversal::Nothing,
                         })
                     }
+                    // A Utilities tool: the screen's own commands, awaited, with
+                    // the stop button as its Cancel. See `syn::utility`.
+                    crate::syn::gate::How::Utility => {
+                        let tool_ctx = crate::syn::tools::ToolContext {
+                            db: req.db,
+                            vault_path: req.vault_path,
+                            app: req.app,
+                            run_id: Some(&run_id),
+                            model: Some(&taint),
+                        };
+                        let content = crate::syn::utility::call(&tool_ctx, &tc.function.arguments, &stop_check).await;
+                        let reversal = if tool_succeeded(&content) {
+                            crate::syn::policy::reversal(&tc.function.name, &crate::syn::consent::Capability::VaultWrite)
+                        } else {
+                            crate::syn::registry::Reversal::Nothing
+                        };
+                        Ok(crate::syn::registry::ToolOutcome { content, reversal })
+                    }
                     crate::syn::gate::How::Execute => {
                         req.registry.execute(&ctx, &tc.function.name, &tc.function.arguments)
                     }

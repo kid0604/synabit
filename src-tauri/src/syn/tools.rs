@@ -2002,6 +2002,8 @@ fn phase_f_definitions() -> Vec<ToolDefinition> {
         },
     ];
 
+    definitions.push(crate::syn::utility::definition());
+
     if crate::syn::spreadsheet::WORKBOOKS {
         definitions.push(ToolDefinition {
             tool_type: "function".to_string(),
@@ -7391,6 +7393,15 @@ mod tests {
             assert!(names.contains(&tool), "{tool} is missing");
         }
 
+        // The Utilities app's tools on vault files: the `utilities` group,
+        // brought by asking for what it does ("gộp PDF", "nén video"). Its
+        // own store: the app's commands, which no other tool reaches without
+        // a command in a room. See `syn::utility`.
+        let utilities = [crate::syn::utility::TOOL];
+        for tool in utilities {
+            assert!(names.contains(&tool), "{tool} is missing");
+        }
+
         // Nothing outside those two groups. This is the assertion that used to
         // be a count: a number told you the list had changed and nothing about
         // whether the change was the kind that ruins it.
@@ -7414,6 +7425,7 @@ mod tests {
             .chain(skills)
             .chain(visuals)
             .chain(room)
+            .chain(utilities)
             // And the helper sent out, whose room is a room with the network.
             .chain([ROOM_ENV, ROOM_DOOR, ROOM_REHEARSE, ROOM_PROPOSE, "machine_find", "machine_status", "machine_reveal", "machine_open", crate::syn::delegate::OUT_TOOL])
             .collect();

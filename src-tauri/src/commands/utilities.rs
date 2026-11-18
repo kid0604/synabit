@@ -34,7 +34,7 @@ use crate::utilities::{crypt, form, frame, metadata, redact, stamp};
 use crate::utilities::pdf::{self, PdfError, Pick};
 use crate::utilities::workspace::{clean_name, unused_path, Input, Job, Output, Workspace, KEEP_FOR};
 
-fn workspace(app: &tauri::AppHandle) -> AppResult<Workspace> {
+fn workspace<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<Workspace> {
     let root = app
         .path()
         .app_cache_dir()
@@ -73,7 +73,7 @@ struct Running {
 }
 
 impl Running {
-    fn start(app: &tauri::AppHandle, job: &str) -> AppResult<Self> {
+    fn start<R: tauri::Runtime>(app: &tauri::AppHandle<R>, job: &str) -> AppResult<Self> {
         if !crate::utilities::workspace::is_id(job) {
             return Err(AppError::InvalidPath(format!("'{job}' is not a job")));
         }
@@ -222,7 +222,7 @@ pub async fn utility_stage(app: tauri::AppHandle, request: tauri::ipc::Request<'
 
 /// Start a run. Its id is what [`utility_cancel`] stops.
 #[tauri::command]
-pub fn utility_new_job(app: tauri::AppHandle, tool: String) -> AppResult<Job> {
+pub fn utility_new_job<R: tauri::Runtime>(app: tauri::AppHandle<R>, tool: String) -> AppResult<Job> {
     let job = workspace(&app)?.new_job(&tool)?;
     stop_flag(&job.id);
     Ok(job)
@@ -251,8 +251,8 @@ pub struct PdfOutput {
 /// Make new PDFs from pages of the inputs. `picks[].source` indexes `inputs`.
 /// Merge, split, organize and rotate all come here (see `utilities::pdf`).
 #[tauri::command]
-pub async fn utility_assemble(
-    app: tauri::AppHandle,
+pub async fn utility_assemble<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     job: String,
     inputs: Vec<String>,
     outputs: Vec<PdfOutput>,
@@ -301,8 +301,8 @@ pub async fn utility_assemble(
 /// Make a PDF of the inputs, one page each. Every input must be a JPEG: the
 /// screen turns other pictures into one first.
 #[tauri::command]
-pub async fn utility_images_to_pdf(
-    app: tauri::AppHandle,
+pub async fn utility_images_to_pdf<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     job: String,
     inputs: Vec<String>,
     layout: Layout,
@@ -608,7 +608,7 @@ pub struct OfficeStatus {
 }
 
 #[cfg(target_os = "macos")]
-fn machine(app: &tauri::AppHandle) -> AppResult<Arc<crate::syn::machine::rooms::Rooms>> {
+fn machine<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> AppResult<Arc<crate::syn::machine::rooms::Rooms>> {
     app.try_state::<Arc<crate::syn::machine::rooms::Rooms>>()
         .map(|r| r.inner().clone())
         .ok_or_else(|| AppError::UnsupportedCapability("room".into()))
@@ -627,7 +627,7 @@ fn pdf2docx_bin(rooms: &crate::syn::machine::rooms::Rooms) -> Option<PathBuf> {
 }
 
 #[tauri::command]
-pub fn utility_office_status(app: tauri::AppHandle) -> OfficeStatus {
+pub fn utility_office_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> OfficeStatus {
     #[cfg(target_os = "macos")]
     {
         let major = tauri_plugin_os::version().to_string().split('.').next().and_then(|m| m.parse::<u32>().ok()).unwrap_or(0);
@@ -669,7 +669,7 @@ fn room_name(job: &str, index: usize) -> String {
 
 /// Write what a room made as one of the job's outputs, off the async runtime.
 #[cfg(target_os = "macos")]
-async fn keep_output(app: &tauri::AppHandle, job: &str, name: &str, bytes: Vec<u8>) -> AppResult<()> {
+async fn keep_output<R: tauri::Runtime>(app: &tauri::AppHandle<R>, job: &str, name: &str, bytes: Vec<u8>) -> AppResult<()> {
     let (ws, job, name) = (workspace(app)?, job.to_string(), name.to_string());
     tauri::async_runtime::spawn_blocking(move || {
         let out = ws.output_path(&job, &name)?;
@@ -683,7 +683,7 @@ async fn keep_output(app: &tauri::AppHandle, job: &str, name: &str, bytes: Vec<u
 /// Each Word, Excel, PowerPoint or OpenDocument file as a PDF, by LibreOffice
 /// in a sealed room.
 #[tauri::command]
-pub async fn utility_office_to_pdf(app: tauri::AppHandle, job: String, files: Vec<PerFile>) -> AppResult<Job> {
+pub async fn utility_office_to_pdf<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>) -> AppResult<Job> {
     #[cfg(target_os = "macos")]
     {
         let rooms = machine(&app)?;
@@ -756,7 +756,7 @@ pub async fn utility_install_pdf2docx(app: tauri::AppHandle) -> AppResult<()> {
 
 /// Each PDF as a Word file, by pdf2docx in a sealed room.
 #[tauri::command]
-pub async fn utility_pdf_to_word(app: tauri::AppHandle, job: String, files: Vec<PerFile>) -> AppResult<Job> {
+pub async fn utility_pdf_to_word<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>) -> AppResult<Job> {
     #[cfg(target_os = "macos")]
     {
         let rooms = machine(&app)?;
@@ -915,7 +915,7 @@ async fn keep_video(
 /// One video tool over each file in turn, by ffmpeg in a sealed room. A
 /// compressed file that comes out no smaller is left out, as a PDF is.
 #[tauri::command]
-pub async fn utility_video(app: tauri::AppHandle, job: String, files: Vec<PerFile>, task: crate::utilities::video::Task) -> AppResult<Job> {
+pub async fn utility_video<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>, task: crate::utilities::video::Task) -> AppResult<Job> {
     #[cfg(target_os = "macos")]
     {
         use crate::utilities::video;
@@ -983,7 +983,7 @@ pub async fn utility_video(app: tauri::AppHandle, job: String, files: Vec<PerFil
 /// Videos one after another, in the order given, as one file named for the
 /// first (`name`).
 #[tauri::command]
-pub async fn utility_video_merge(app: tauri::AppHandle, job: String, inputs: Vec<String>, name: String) -> AppResult<Job> {
+pub async fn utility_video_merge<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, inputs: Vec<String>, name: String) -> AppResult<Job> {
     #[cfg(target_os = "macos")]
     {
         use crate::utilities::video;
@@ -1051,8 +1051,8 @@ pub async fn utility_audio_waveform(app: tauri::AppHandle, input: String, durati
 /// picture too. Loudness to a target measures each file first, in a room of
 /// its own, as the first half of the file's progress.
 #[tauri::command]
-pub async fn utility_audio(
-    app: tauri::AppHandle,
+pub async fn utility_audio<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     job: String,
     files: Vec<PerFile>,
     task: crate::utilities::audio::AudioTask,
@@ -1125,7 +1125,7 @@ pub async fn utility_audio(
 /// Sound files one after another, in the order given, as one file named for
 /// the first (`name`), each running into the next over `crossfade` seconds.
 #[tauri::command]
-pub async fn utility_audio_merge(app: tauri::AppHandle, job: String, inputs: Vec<String>, name: String, crossfade: f64) -> AppResult<Job> {
+pub async fn utility_audio_merge<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, inputs: Vec<String>, name: String, crossfade: f64) -> AppResult<Job> {
     #[cfg(target_os = "macos")]
     {
         use crate::utilities::{audio, video};
@@ -1189,7 +1189,7 @@ type PerFileWork = dyn FnMut(&Workspace, &PerFile, &mut dyn FnMut(usize, usize) 
 
 /// Run `work` over each file in its own thread, with stopping, progress by
 /// file, and nothing left behind if it fails.
-async fn per_file(app: &tauri::AppHandle, job: String, files: Vec<PerFile>, mut work: Box<PerFileWork>) -> AppResult<Job> {
+async fn per_file<R: tauri::Runtime>(app: &tauri::AppHandle<R>, job: String, files: Vec<PerFile>, mut work: Box<PerFileWork>) -> AppResult<Job> {
     let run = Running::start(app, &job)?;
     let ws = workspace(app)?;
     let flag = run.flag.clone();
@@ -1446,7 +1446,7 @@ pub async fn utility_redact(app: tauri::AppHandle, job: String, files: Vec<PerFi
 
 /// Number the pages of each input.
 #[tauri::command]
-pub async fn utility_number_pages(app: tauri::AppHandle, job: String, files: Vec<PerFile>, numbering: stamp::Numbering) -> AppResult<Job> {
+pub async fn utility_number_pages<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>, numbering: stamp::Numbering) -> AppResult<Job> {
     let id = job.clone();
     per_file(
         &app,
@@ -1470,7 +1470,7 @@ pub struct FramedFile {
 /// Crop each input's pages to their boxes, or, given `paper`, put every page
 /// on paper of that size.
 #[tauri::command]
-pub async fn utility_frame(app: tauri::AppHandle, job: String, files: Vec<FramedFile>, paper: Option<frame::Paper>) -> AppResult<Job> {
+pub async fn utility_frame<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<FramedFile>, paper: Option<frame::Paper>) -> AppResult<Job> {
     let id = job.clone();
     let boxes: HashMap<String, Vec<Option<frame::Share>>> = files.iter().map(|f| (f.input.clone(), f.boxes.clone())).collect();
     let per: Vec<PerFile> = files.into_iter().map(|f| PerFile { input: f.input, name: f.name }).collect();
@@ -1519,7 +1519,7 @@ pub async fn utility_unlock(app: tauri::AppHandle, job: String, files: Vec<PerFi
 /// Take EXIF, XMP, IPTC and comments out of JPEGs and PNGs, without
 /// re-encoding them. Other formats are the WebView's to redraw.
 #[tauri::command]
-pub async fn utility_strip_metadata(app: tauri::AppHandle, job: String, files: Vec<PerFile>) -> AppResult<Job> {
+pub async fn utility_strip_metadata<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>) -> AppResult<Job> {
     let id = job.clone();
     per_file(
         &app,
@@ -1541,7 +1541,7 @@ pub async fn utility_strip_metadata(app: tauri::AppHandle, job: String, files: V
 /// Turn JPEGs without re-encoding them: only the orientation they are shown
 /// at changes. Other pictures are the WebView's to redraw.
 #[tauri::command]
-pub async fn utility_turn_jpegs(app: tauri::AppHandle, job: String, files: Vec<PerFile>, turn: metadata::Turn) -> AppResult<Job> {
+pub async fn utility_turn_jpegs<R: tauri::Runtime>(app: tauri::AppHandle<R>, job: String, files: Vec<PerFile>, turn: metadata::Turn) -> AppResult<Job> {
     let id = job.clone();
     per_file(
         &app,

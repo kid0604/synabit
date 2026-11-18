@@ -51,7 +51,7 @@ Ba ý chính:
 | U5 | doc↔pdf, pdf→docx | **Chỉ macOS 14+, qua phòng kín**, LibreOffice do người dùng tự cài, pdf2docx cài qua môi trường của phòng | Windows, Linux, macOS 13 không có các tool này |
 | U6 | Tách nền ảnh | **Vision của Apple (macOS 14+)**, không tải model | Máy khác chưa có; chất lượng do Apple quyết |
 | U7 | pdf2docx là AGPL | **Chấp nhận**, vì không chở trong bản cài và chạy như tiến trình riêng | Cần đọc lại giấy phép trước khi phát hành (§6.3) |
-| U8 | Syn có gọi được Utilities không | **Chưa.** Sau này một tool `run_utility` cho tầng A | Hiện Syn trên Mac làm được việc này bằng phòng kín |
+| U8 | Syn có gọi được Utilities không | **Có, từ U-5 (2026-11-18):** `run_utility`, cho những tool Rust chạy một mình được | Tool cần nhìn màn hình (ký, che, watermark, ảnh) vẫn chỉ ở màn Utilities |
 
 ---
 
@@ -370,7 +370,7 @@ RMBG-2.0 không dùng (phi thương mại).
 | U-2 | Watermark chữ và ảnh, đánh số trang, khoá/mở khoá, PDF → văn bản, nén/đổi cỡ/cắt/đổi định dạng ảnh, xoá thông tin ảnh. Menu Tiện ích trong Files | M |
 | U-3 | macOS: tách nền và nhận dạng chữ bằng Vision | S |
 | U-4 | macOS 14+: phòng Utilities, môi trường, Office → PDF, PDF → Word, nén PDF | L |
-| U-5 | `run_utility` cho Syn, chỉ tầng A, mọi nền tảng | M |
+| U-5 | `run_utility` cho Syn: PDF, JPEG mọi nền tảng; Office, video, âm thanh trên Mac | M |
 | U-7 | Tool ảnh sau khi so với iLoveIMG, PDF24, Squoosh, PowerToys: ảnh thẻ, đóng dấu ảnh, ghép ảnh, xoay ảnh, làm mờ ảnh; Nén ảnh không còn làm file to ra | M |
 | U-6 | Thêm tool PDF sau khi so với iLovePDF và PDF24: ký & điền, điền form, che thông tin, cắt lề & khổ trang, nắn ảnh chụp giấy tờ. Gộp/tách/sắp xếp giữ mục lục, nhãn trang, form, đích có tên, layer | L |
 | U-8 | macOS 14+: mười tool video bằng ffmpeg (Homebrew) chạy trong phòng kín, đọc file qua cửa chỉ đọc, chạy như job có tiến độ và dừng được | L |
@@ -630,7 +630,7 @@ ezgif, Clideo, 123apps. ffmpeg chạy trong phòng kín thay cho `avconvert` c�
   - Chưa thử video iPhone thật (HEVC 10 bit HDR, track vị trí) và file vài GB.
 
 
-**U-9, 2026-11-18 (chưa commit):** âm thanh, so với 123apps, Audacity, Auphonic, Adobe Podcast, XLD/fre:ac, Permute
+**U-9, 2026-11-18 (commit `7845c370`):** âm thanh, so với 123apps, Audacity, Auphonic, Adobe Podcast, XLD/fre:ac, Permute
 và MacWhisper. Trước đó Utilities không nhận file âm thanh nào.
 
 - **Cách chạy:** y như video (`audio.rs` chỉ lập tham số, phòng và job là của `video.rs`). Tool âm thanh nhận cả file
@@ -670,6 +670,35 @@ và MacWhisper. Trước đó Utilities không nhận file âm thanh nào.
   - Trong trình duyệt với IPC giả lập: màn cắt có sóng âm, phát được, phím và fade; màn chuẩn hoá; kết quả phát được
     và gợi ý tool âm thanh tiếp.
 - **Chưa kiểm:** chưa chạy trong app Tauri thật; chưa thử bản ghi giọng nói thật có tiếng ồn thật.
+
+**U-5, 2026-11-18 (chưa commit):** Syn dùng được Utilities, qua một tool `run_utility` (`src-tauri/src/syn/utility.rs`).
+
+- **Cùng một đường chạy, không chép lại.** Tool gọi đúng các lệnh của màn hình (`commands::utilities`, nay generic
+  theo runtime): cùng vùng tạm, cùng job có cờ dừng, cùng phòng kín cho ffmpeg, LibreOffice, pdf2docx. Nút dừng của Syn
+  là nút Huỷ của job.
+- **Vào:** file của vault, theo `node_id` hoặc đường dẫn trong vault, và chỉ file mà Files hiện
+  (`enforce_within_roots`). Chép vào vùng tạm như khi kéo từ Files. Khoá Files thì tool bị từ chối (`policy`, lock
+  `file`).
+- **Tuỳ chọn:** một object nhỏ cho mỗi tool, Rust đọc thành đúng task có kiểu mà lệnh nhận, với mặc định của màn hình.
+  Giá trị sai thì trả về các lựa chọn đúng. Mọi tham số ffmpeg vẫn do Rust viết.
+- **Ra:** file mới cạnh file gốc, đặt tên như màn hình (`-gop`, `-nen`, `-chuan-am`…), hoặc vào `assets/` nếu file
+  gốc ở thư mục nguồn ngoài vault. Không bao giờ ghi đè: tên trùng thì thêm " (2)". Khung hình của video vào một thư
+  mục riêng. Vùng tạm được dọn ngay sau đó.
+- **Có:** gộp, tách (theo khoảng hoặc mỗi N trang), sắp xếp/bỏ trang, xoay (cả trang lẻ), đánh số trang, đưa lên khổ
+  giấy, JPEG → PDF, xoá thông tin ảnh, xoay JPEG; trên Mac: Office → PDF, PDF → Word, 11 tool video, 8 tool âm thanh.
+- **Không có, vì cần người nhìn màn hình:** nén PDF (ảnh nén lại trong WebView), watermark, ký, điền form, che, cắt
+  lề, OCR, PDF → ảnh, và các tool ảnh vẽ bằng canvas. Hỏi tới, tool nói mở tool nào trong Utilities. **Khoá / mở khoá
+  PDF cũng không**: mật khẩu gõ cho Syn sẽ nằm trong hội thoại và ở nhà cung cấp model.
+- **Chính sách:** nhóm `utilities` mới. Chỉ làm ra file mới, nên chạy được sau khi đọc lời người ngoài, từ Telegram
+  và trong routine, như `create_node`. Kết quả chỉ là tên và cỡ file, không phải lời của ai. Không cho helper.
+- **Gọi nhóm:** câu có cụm như "gộp pdf", "nén video", "nhạc chuông", hoặc có một động từ (gộp, nén, xoay, cắt…)
+  cùng một loại file (pdf, video, nhạc…). Nhóm `utilities` kéo theo `files` để tìm được file. Mô tả nhóm `room` trỏ
+  sang `utilities` cho việc mà Utilities làm được.
+- **Đã kiểm:** 8 test Rust, trong đó 2 test chạy thật trên vault tạm (gộp, gộp lần hai ra " (2)", sắp xếp có tên,
+  tách mỗi 2 trang, xoay trang lẻ, file gốc không đổi; từ chối file ngoài vault, sai loại, thiếu file, tool cần màn
+  hình). `real_room` (bị `ignore`) chạy tăng tốc, chuẩn hoá podcast, nhạc chuông bằng ffmpeg thật trong phòng qua
+  `run_utility`. Một test nhóm câu hỏi.
+- **Chưa kiểm:** chưa chạy với model thật (eval trên `gpt-6-luna`), chưa trong app Tauri thật.
 
 ---
 

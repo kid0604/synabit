@@ -180,6 +180,8 @@ pub enum How {
     /// A sealed room on this machine: a command awaited, or a file in or out of
     /// it. See `syn::machine::tool`.
     Cell,
+    /// A Utilities tool on files of the vault, awaited. See `syn::utility`.
+    Utility,
     /// The registry runs it.
     Execute,
 }
@@ -665,6 +667,8 @@ pub fn decide(tool: &str, args: &Value, capability: Option<&Capability>, view: &
         How::ShowVisual
     } else if crate::syn::tools::is_room_tool(tool) {
         How::Cell
+    } else if tool == crate::syn::utility::TOOL {
+        How::Utility
     } else if crate::syn::connector::is_connector_tool(tool) && capability.is_some() {
         // Connectors (Phase F): a request to another machine, awaited by the engine.
         How::Connector

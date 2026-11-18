@@ -176,6 +176,15 @@ impl Workspace {
         Ok(input)
     }
 
+    /// Forget an input: its copy, and where it came from. For a caller that
+    /// is done with it at once, rather than leaving it to [`Self::sweep`].
+    pub fn remove_input(&self, id: &str) {
+        if let Ok(dir) = self.input_dir(id) {
+            let _ = std::fs::remove_dir_all(dir);
+            let _ = std::fs::remove_file(self.inputs().join(format!("{id}.origin")));
+        }
+    }
+
     /// The vault folder an input came from, if it came from one.
     pub fn origin_of(&self, id: &str) -> Option<PathBuf> {
         if !is_id(id) {

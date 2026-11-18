@@ -79,6 +79,8 @@ pub enum Group {
     Machine,
     /// A sealed room on this machine, for real programs. macOS only.
     Room,
+    /// The Utilities app's tools, on files of the vault: `run_utility`.
+    Utilities,
     /// One connected connector, by its slug.
     Connector(String),
 }
@@ -106,6 +108,7 @@ impl Group {
             Group::Visuals => "visuals".into(),
             Group::Machine => "machine".into(),
             Group::Room => "room".into(),
+            Group::Utilities => "utilities".into(),
             Group::Connector(server) => format!("connector:{server}"),
         }
     }
@@ -131,6 +134,7 @@ impl Group {
             "visuals" => Group::Visuals,
             "machine" => Group::Machine,
             "room" => Group::Room,
+            "utilities" => Group::Utilities,
             // `mcp:` is what these were called before connectors had their
             // name, and runs from then keep it in `Run::tool_groups`.
             other => {
@@ -162,7 +166,13 @@ impl Group {
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
             Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
             Group::Machine => "this Mac, outside the vault: find a file by name anywhere in the person's folders, and how the battery, disk and memory are doing".into(),
-            Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — convert or compress a video, work through a large CSV, make a file, read a folder on this Mac the user opens to it — and keep the result in the vault; and delegate_out, a helper with a shell and the Internet, to download public data into the room".into(),
+            Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — anything the utilities group cannot do to a video or a file, work through a large CSV, make a file, read a folder on this Mac the user opens to it — and keep the result in the vault; and delegate_out, a helper with a shell and the Internet, to download public data into the room".into(),
+            Group::Utilities => if cfg!(target_os = "macos") {
+                "the Utilities app on vault files, no code: merge, split, reorder, turn or number PDF pages, put them on A4; JPEGs to PDF; Office to PDF, PDF to Word; compress, cut, convert, join, rotate or mute videos, GIFs and frames; convert, cut, join, even out, clean up or speed up sound, ringtones"
+            } else {
+                "the Utilities app on vault files, no code: merge, split, reorder, turn or number PDF pages, put them on A4; JPEGs to PDF; take the location out of photos"
+            }
+            .into(),
             Group::Visuals => "draw an interactive visual under the answer: a diagram, a chart of the user's data, an explainer with sliders, a simulation".into(),
             Group::Connector(server) => format!("tools from the connected server `{server}`"),
         }
@@ -285,9 +295,35 @@ fn cues(group: &Group) -> &'static [&'static str] {
             "cho tao xem", "cho mình xem", "cho tôi xem", "visualize", "visualise", "visualization", "simulate",
             "simulation", "interactive", "show me", "chart", "graph", "plot", "animate", "animation",
         ],
+        // What people ask Utilities for, by what they want done to a file.
+        Group::Utilities => &[
+            "gộp pdf", "ghép pdf", "nối pdf", "tách pdf", "chia pdf", "cắt pdf", "xoay pdf", "xoay trang", "sắp xếp trang",
+            "xoá trang", "xóa trang", "bỏ trang", "đánh số trang", "số trang", "khổ a4", "sang pdf", "ra pdf", "thành pdf",
+            "chuyển pdf", "pdf sang word", "pdf ra word", "word sang pdf", "excel sang pdf", "nén video", "giảm dung lượng",
+            "cắt video", "cắt đoạn", "ghép video", "nối video", "xoay video", "tắt tiếng", "bỏ tiếng", "tách âm thanh",
+            "tách nhạc", "làm gif", "ảnh gif", "chụp khung hình", "cắt nhạc", "cắt âm thanh", "ghép nhạc", "nối nhạc",
+            "chuẩn hoá âm lượng", "chuẩn hóa âm lượng", "âm lượng", "chỉnh tiếng", "remove silence", "mute the video", "lọc ồn", "lọc tiếng ồn",
+            "khử ồn", "khoảng lặng", "tăng tốc", "giảm tốc", "nhạc chuông", "đổi định dạng", "chuyển định dạng",
+            "mp3", "m4a", "mp4", "tiện ích", "utilities", "merge pdf", "combine pdf", "split pdf", "rotate pdf",
+            "page numbers", "number the pages", "to pdf", "pdf to word", "compress video", "trim video", "cut video",
+            "join video", "rotate video", "extract audio", "make a gif", "ringtone", "normalize", "loudness",
+            "denoise", "background noise", "speed up", "slow down", "gps", "exif", "vị trí ảnh",
+        ],
         Group::Core | Group::Connector(_) | Group::Compute | Group::Writes => &[],
     }
 }
+
+/// What is done to a file, and the kinds of file it is done to: one of each
+/// in a question brings the Utilities tools.
+const UTILITY_VERBS: &[&str] = &[
+    "gộp", "ghép", "nối", "tách", "chia", "xoay", "nén", "cắt", "đánh số", "chuyển", "đổi", "chuẩn hoá", "chuẩn hóa",
+    "lọc", "tăng tốc", "làm chậm", "tắt tiếng", "merge", "combine", "split", "rotate", "compress", "trim", "cut",
+    "convert", "join", "extract", "shrink", "speed",
+];
+const UTILITY_KINDS: &[&str] = &[
+    "pdf", "pdfs", "video", "videos", "clip", "mp3", "mp4", "mov", "nhạc", "âm thanh", "ghi âm", "audio", "podcast", "word", "docx",
+    "excel", "powerpoint", "pptx", "jpg", "jpeg", "gif", "voice", "recording",
+];
 
 /// Cues matched only as typed, with their marks.
 ///
@@ -345,6 +381,7 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         Group::Visuals,
         Group::Machine,
         Group::Room,
+        Group::Utilities,
     ] {
         if matches!(group, Group::Machine | Group::Room) && !cfg!(target_os = "macos") {
             continue;
@@ -352,6 +389,18 @@ pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Gr
         if cues(&group).iter().any(|cue| said(cue)) {
             groups.insert(group);
         }
+    }
+    // Or a thing done to a kind of file, with words between: "gộp 2 file pdf
+    // hợp đồng", "nén giúp cái video quay hôm qua".
+    if UTILITY_VERBS.iter().any(|v| said(v))
+        && UTILITY_KINDS.iter().any(|k| said(k))
+    {
+        groups.insert(Group::Utilities);
+    }
+    // A file to work on is found with search_files: asking for a tool on it
+    // brings the way to find it.
+    if groups.contains(&Group::Utilities) {
+        groups.insert(Group::Files);
     }
     for (slug, name) in servers {
         // "Thời tiết (Open-Meteo)" is asked for as "thời tiết": the name without
@@ -468,6 +517,25 @@ mod tests {
         assert!(groups("tuần trước tôi làm gì").contains(&"timeline".into()));
         assert!(groups("khôi phục note vừa xoá").contains(&"history".into()));
         assert!(groups("lần trước bạn nói gì về FPT").contains(&"past".into()));
+    }
+
+    /// Asking for what Utilities does brings it, and the way to find the file.
+    #[test]
+    fn asking_for_a_utility_brings_it_with_files() {
+        for q in [
+            "gộp 2 file pdf hợp đồng lại",
+            "nén video quay hôm qua cho nhẹ",
+            "cắt nhạc làm nhạc chuông iphone",
+            "chuẩn hoá âm lượng file podcast",
+            "merge these PDFs",
+            "chuyen word sang pdf giup",
+        ] {
+            let got = groups(q);
+            assert!(got.contains(&"utilities".into()) && got.contains(&"files".into()), "{q}: {got:?}");
+        }
+        assert!(!groups("cái nào to hơn").contains(&"utilities".into()));
+        assert_eq!(Group::from_name("utilities"), Some(Group::Utilities));
+        assert_eq!(group_of(crate::syn::utility::TOOL), Group::Utilities);
     }
 
     /// A word inside another is not the word: "tiền" is not in "tiện".

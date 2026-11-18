@@ -79,6 +79,7 @@ pub enum Home {
     Visuals,
     Machine,
     Room,
+    Utilities,
 }
 
 impl Home {
@@ -103,6 +104,7 @@ impl Home {
             Home::Visuals => Group::Visuals,
             Home::Machine => Group::Machine,
             Home::Room => Group::Room,
+            Home::Utilities => Group::Utilities,
         }
     }
 }
@@ -391,6 +393,22 @@ pub static POLICIES: &[Policy] = &[
         .routine()
         .locked_with("file")
         .undone_by("a new file, nothing overwritten; deleting it in the Files app moves it to the vault's trash")
+        .engine(),
+
+    // ── The Utilities app ──────────────────────────────────────────
+    // The screen's own commands on files of the vault, into new files beside
+    // them: what Syn could otherwise do only with a command in a room, done
+    // the app's way, with arguments Rust writes. Only ever new files, so it
+    // goes on after reading, from the phone and in a routine, as making a
+    // note does; nothing it returns is anybody's words. Hidden with the Files
+    // app. Not a helper, which only reads. The engine runs it: a video is
+    // awaited. See `syn::utility`.
+    Policy::write(crate::syn::utility::TOOL, Home::Utilities)
+        .after_reading()
+        .telegram()
+        .routine()
+        .locked_with("file")
+        .undone_by("new files beside the originals, nothing overwritten; deleting them in the Files app moves them to the vault's trash")
         .engine(),
 
     // ── The run itself ─────────────────────────────────────────────

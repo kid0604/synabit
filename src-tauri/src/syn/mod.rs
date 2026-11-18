@@ -63,4 +63,5 @@ pub mod visual;
 pub mod web;
 pub mod tempo;
 pub mod tools;
+pub mod utility;
 pub mod vault_json;
