@@ -1640,7 +1640,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "read_board".to_string(),
-                description: "What is on a whiteboard: boxes, frames, lines. Use this, not get_node: a board file is mostly coordinates.".to_string(),
+                description: "What is on a whiteboard, and where: boxes, frames, lines, writing and sticky notes, drawings by name. Use this, not get_node: a board file is mostly coordinates.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["board"],
@@ -1652,12 +1652,14 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "draw_board".to_string(),
-                description: "Draw a whiteboard the user can rearrange by hand. Say what is on it and what joins what; positions are worked out here, never give coordinates. Items sharing a `group` get a frame, frames sit side by side as columns, and a group nests: `\"DC 1/Network Hub\"`. List groups, and items in them, so linked things sit side by side: lines must not cross. What the drawing is follows from what you give: `lane` on every item → swimlanes (one band per lane, flow left to right); `order` on links → a sequence diagram (items are participants, links are messages top to bottom); `fields` → a table or class with a row per field, and a link can end on one: `\"orders.user_id\"`. These combine: a table can sit in a group or a lane.".to_string(),
+                description: "Draw a diagram on a whiteboard the user can rearrange by hand (anything drawn freely — a picture, a sketch, sticky notes, marks on a board: draw_freely). Say what is on it and what joins what; positions are worked out here, never give coordinates. Items sharing a `group` get a frame, frames sit side by side as columns, and a group nests: `\"DC 1/Network Hub\"`. List groups, and items in them, so linked things sit side by side: lines must not cross. What the drawing is follows from what you give: `lane` on every item → swimlanes (one band per lane, flow left to right); `order` on links → a sequence diagram (items are participants, links are messages top to bottom); `fields` → a table or class with a row per field, and a link can end on one: `\"orders.user_id\"`. These combine: a table can sit in a group or a lane. A mind map — ideas growing from one centre — is `mindmap` instead of items: the app's own map the person grows by Tab and Enter.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
-                    "required": ["title", "items"],
+                    "required": ["title"],
                     "properties": {
                         "title": { "type": "string" },
+                        "mindmap": { "type": "string", "description": "A mind map, as an indented Markdown list: the first line its centre, each indent a level (\"- Trip\\n  - Before\\n    - Book flights\"). Short ideas, a few words each; `[ ] ` before one makes it a task. Not with items." },
+                        "layout": { "type": "string", "enum": ["map", "right", "down"], "description": "For a mind map: branches on both sides (default), a logic chart to the right, or `down` for an org chart or a breakdown." },
                         "items": {
                             "type": "array",
                             "description": "Boxes. Labels must differ: lines and edits name them.",
@@ -1698,9 +1700,9 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                         "board": { "type": "string", "description": "Its title, or its path." },
                         "changes": {
                             "type": "array",
-                            "description": "add {label, shape?, inside?, near?, fields?} · connect {from, to, label?, start?, end?, dashed?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame} · add_frame {label, near?, inside?}. `inside`/`move_into` put a box in a frame (never in a box): the only way to say it is in a zone. The frame grows. Swimlanes on an existing board: redraw with `lane`, do not build them from frames. Name things by label: boxes, frames, sticky notes, cards and writing all answer to theirs.",
+                            "description": "add {label, shape?, inside?, near?, fields?} · add {label, under, task?} (a branch of a mind-map idea; the map lays itself out again) · tick {item, done?} (a mind map's task done, or with done false not) · connect {from, to, label?, start?, end?, dashed?} · rename {item, label} · remove {item} · place {item, side: left|right|above|below, of} · move_into {item, frame} · add_frame {label, near?, inside?} · recolor {item, color}. `inside`/`move_into` put a box in a frame (never in a box): the only way to say it is in a zone. The frame grows. Swimlanes on an existing board: redraw with `lane`, do not build them from frames. Name things by label: boxes, frames, sticky notes, cards and writing all answer to theirs, and a drawing to its name (`place` and `remove` move or take it whole).",
                             "items": { "type": "object", "required": ["op"], "properties": {
-                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into", "add_frame"] },
+                                "op": { "type": "string", "enum": ["add", "connect", "rename", "remove", "place", "move_into", "add_frame", "recolor", "tick"] },
                                 "label": { "type": "string" }, "shape": { "type": "string", "description": SHAPE_HELP },
                                 "near": { "type": "string" }, "inside": { "type": "string" },
                                 "frame": { "type": "string" }, "from": { "type": "string" },
@@ -1708,7 +1710,40 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                                 "side": { "type": "string" }, "of": { "type": "string" },
                                 "fields": { "type": "array", "items": { "type": "string" } },
                                 "start": { "type": "string" }, "end": { "type": "string", "description": LINE_END_HELP },
-                                "dashed": { "type": "boolean" }
+                                "dashed": { "type": "boolean" },
+                                "color": { "type": "string", "description": "For recolor: hex." },
+                                "under": { "type": "string", "description": "For add: the mind-map idea it grows from." },
+                                "task": { "type": "boolean", "description": "For add under: a task, with a box to tick." },
+                                "done": { "type": "boolean", "description": "For tick. Default true." }
+                            } }
+                        }
+                    }
+                }),
+            },
+        },
+        ToolDefinition {
+            tool_type: "function".to_string(),
+            function: FunctionDefinition {
+                name: "draw_freely".to_string(),
+                description: "Draw on a whiteboard by hand, as a person would, wherever how it looks and where things go is the point: a picture, a sketch that explains something, a wireframe, sticky notes for a brainstorm, a ring and a note on a board that exists. (Boxes and lines laid out for you: draw_board.) `svg` is drawn as ink — every filled or outlined shape a stroke the person can move, recolour or erase, `<text>` the board's text; `items` are sticky notes, boxes and text the person types into. Both in the same coordinates. Without `board`, a new board, in the SVG's own coordinates: viewBox about 800×500. With `board`, you draw onto it in its coordinates, from what read_board says is where; nothing there moves, and new ink lies over old unless `behind` — a background added later goes behind, or changing one is recolor. Give each part an id (`<g id=\"boat\">`): it is then one piece the person drags whole, and edit_board can recolor, place, rename or remove it by that name. Paint back to front. Real colours as hex, never `var(--…)`; shade with a few tones, not gradients (each becomes one colour). Images, filters, masks and clipping are left out.".to_string(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "board": { "type": "string", "description": "A board that exists, by title or path, to draw onto. Leave out for a new one." },
+                        "title": { "type": "string", "description": "A new board's title." },
+                        "svg": { "type": "string", "description": "A whole `<svg>` with a viewBox." },
+                        "behind": { "type": "boolean", "description": "Onto a board: this ink goes under the ink already there." },
+                        "items": {
+                            "type": "array",
+                            "items": { "type": "object", "required": ["kind", "x", "y"], "properties": {
+                                "kind": { "type": "string", "enum": ["sticky", "box", "text"] },
+                                "text": { "type": "string", "description": "What it says. Text is Markdown." },
+                                "x": { "type": "number" }, "y": { "type": "number" },
+                                "width": { "type": "number" }, "height": { "type": "number" },
+                                "color": { "type": "string", "description": "A sticky's paper: yellow, orange, pink, purple, blue, green, gray. A box's fill, text's colour: hex." },
+                                "shape": { "type": "string", "description": SHAPE_HELP },
+                                "size": { "type": "number", "description": "Text's font size." },
+                                "rotate": { "type": "number", "description": "Degrees, for notes stuck on by hand." }
                             } }
                         }
                     }
@@ -2131,6 +2166,7 @@ pub fn execute_tool<R: tauri::Runtime>(
         "get_linked_nodes" => tool_get_linked_nodes(&*lock(ctx)?, args),
         "read_board" => tool_read_board(ctx, args),
         "draw_board" => tool_draw_board(ctx, args),
+        "draw_freely" => tool_draw_freely(ctx, args),
         "edit_board" => tool_edit_board(ctx, args),
         "table_rows" => tool_table_rows(ctx, args),
         name if name == crate::syn::crunch::TOOL => tool_crunch(ctx, args),
@@ -6611,10 +6647,40 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
         .filter(|t| !t.is_empty())
         .ok_or_else(|| AppError::General("A board needs a title.".into()))?;
 
+    let now = chrono::Utc::now().timestamp_millis();
+    // A mind map: the app's own, from an outline, rather than boxes and lines.
+    let outline = args.get("mindmap").and_then(|v| v.as_str()).filter(|m| !m.trim().is_empty());
+    let has_items = args.get("items").and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty());
+    if let Some(outline) = outline {
+        if has_items {
+            return Err(AppError::General("Give a mind map or items, not both: they are two drawings.".into()));
+        }
+        let idea = crate::syn::mindmap::read(outline, title)
+            .ok_or_else(|| AppError::General("That mind map has no ideas in it: one per line, indented under the one it grows from.".into()))?;
+        let mut board = crate::syn::mindmap::draw(title, &idea, now);
+        if let Some(layout) = args.get("layout").and_then(|v| v.as_str()).filter(|l| *l != "map") {
+            let root = crate::syn::mindmap::roots(&board).into_iter().next().unwrap_or_default();
+            crate::syn::mindmap::lay_out_as(&mut board, &root, layout, now);
+        }
+        stamp_board(ctx, &mut board);
+        let dir = std::path::Path::new(ctx.vault_path).join(crate::syn::board::BOARDS_DIR);
+        std::fs::create_dir_all(&dir)?;
+        let path = crate::commands::whiteboards::claim_board_file(&dir, now.max(0) as u128)?;
+        save_board_file(ctx, &path, &board)?;
+        return Ok(serde_json::json!({
+            "board": rel_board_path(ctx, &path).trim_start_matches("File: "),
+            "title": title,
+            "mind_map": crate::syn::mindmap::size(&idea),
+            "centre": idea.label,
+            "note": "Drawn and saved as a mind map the person grows by hand. To change it, edit_board: \
+                     add {label, under} for a branch, rename or remove an idea by its words — not a new board.",
+        })
+        .to_string());
+    }
+
     let sketch: crate::syn::board::Sketch = serde_json::from_value(args.clone())
         .map_err(|e| AppError::General(format!("That is not a drawing this can lay out: {e}")))?;
 
-    let now = chrono::Utc::now().timestamp_millis();
     let mut board = crate::syn::board::draw(title, &sketch, now).map_err(AppError::General)?;
     stamp_board(ctx, &mut board);
 
@@ -6637,6 +6703,103 @@ fn tool_draw_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> App
                  do not redraw it — use edit_board to change it.",
     })
     .to_string())
+}
+
+fn tool_draw_freely<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
+    let svg = args.get("svg").and_then(|v| v.as_str());
+    let pieces: Vec<crate::syn::freehand::Piece> = match args.get("items") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(v) => serde_json::from_value(v.clone())
+            .map_err(|e| AppError::General(format!("Those items cannot be read: {e}")))?,
+    };
+    let onto = args.get("board").and_then(|v| v.as_str()).map(str::trim).filter(|b| !b.is_empty());
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let (path, title, drawing) = match onto {
+        // Onto a board that exists: what is there stays where it is, and the
+        // drawing is added over it, in its coordinates.
+        Some(name) => {
+            let path = board_at(std::path::Path::new(ctx.vault_path), name)?;
+            // Found by its title, so the check on the call's arguments in
+            // `execute_tool` never saw its path. Before anything is written.
+            if let Some(hidden) = locked_for(ctx)? {
+                if hidden.hides_ref(rel_board_path(ctx, &path).trim_start_matches("File: ")) {
+                    return Ok(crate::syn::locks::refusal_json(crate::syn::locks::LOCKED));
+                }
+            }
+            let drawing = crate::syn::freehand::draw(svg, &pieces, true, now).map_err(AppError::General)?;
+            let title = {
+                // From the read to the write, no other writer: see `board_lock`.
+                let lock = crate::commands::whiteboards::board_lock(&path);
+                let _held = lock.lock().unwrap_or_else(|e| e.into_inner());
+                let mut board = read_board_file(&path)?;
+                // An id made by an earlier drawing in the same millisecond is
+                // not taken twice.
+                let taken: std::collections::HashSet<String> = board.nodes.iter().map(|n| n.id.clone()).collect();
+                // Loose ink is painted in the order it is listed, so ink put
+                // `behind` goes in before the first stroke already there. A
+                // yellow background drawn over a cat hid the cat.
+                let behind = args.get("behind").and_then(Value::as_bool).unwrap_or(false);
+                let mut under = if behind {
+                    board.nodes.iter().position(|n| n.kind == "stroke").unwrap_or(0)
+                } else {
+                    usize::MAX
+                };
+                for mut node in drawing.nodes.iter().cloned() {
+                    while taken.contains(&node.id) {
+                        node.id.push('x');
+                    }
+                    if node.kind == "stroke" && under <= board.nodes.len() {
+                        board.nodes.insert(under, node);
+                        under += 1;
+                    } else {
+                        board.nodes.push(node);
+                    }
+                }
+                stamp_board(ctx, &mut board);
+                board.metadata.get_or_insert_with(serde_json::Map::new).insert(
+                    "updated_at".into(),
+                    serde_json::json!(chrono::Utc::now().to_rfc3339()),
+                );
+                // What was there before Syn drew on it, in the board's history,
+                // so the drawing can be taken back from the History panel.
+                crate::commands::whiteboards::keep_before_write(ctx.app, ctx.vault_path, &path, true);
+                write_board_file(&path, &board)?;
+                board.title
+            };
+            index_board_file(ctx, &path)?;
+            (path, title, drawing)
+        }
+        None => {
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| {
+                    AppError::General("A new board needs a title; to draw on one that exists, give `board`.".into())
+                })?
+                .to_string();
+            let drawing = crate::syn::freehand::draw(svg, &pieces, false, now).map_err(AppError::General)?;
+            let mut board = crate::syn::board::new_board(&title, drawing.nodes.clone(), Vec::new());
+            stamp_board(ctx, &mut board);
+            let dir = std::path::Path::new(ctx.vault_path).join(crate::syn::board::BOARDS_DIR);
+            std::fs::create_dir_all(&dir)?;
+            let path = crate::commands::whiteboards::claim_board_file(&dir, now.max(0) as u128)?;
+            save_board_file(ctx, &path, &board)?;
+            (path, title, drawing)
+        }
+    };
+
+    let mut said = crate::syn::freehand::summary(&drawing);
+    said["board"] = serde_json::json!(rel_board_path(ctx, &path).trim_start_matches("File: "));
+    said["title"] = serde_json::json!(title);
+    said["note"] = serde_json::json!(
+        "Drawn and saved: each shape is ink the person can move, recolour or erase in the Whiteboard app, \
+         and each named part moves whole. Say what you drew; if `left_out` names something, say what changed. \
+         To change it, draw more onto this board or edit_board by the names in `named` — not a new board."
+    );
+    Ok(said.to_string())
 }
 
 fn tool_edit_board<R: tauri::Runtime>(ctx: &ToolContext<R>, args: &Value) -> AppResult<String> {
@@ -7223,6 +7386,8 @@ mod tests {
             "read_board",
             "draw_board",
             "edit_board",
+            // A board too, drawn by hand from SVG: no node write makes ink.
+            "draw_freely",
             // The timeline lives in `timeline.db`, which no node query reads:
             // spans with a precision, compared by overlap, and a person's side
             // of them. The harness also looks it up before the model is asked
@@ -7665,6 +7830,93 @@ mod tests {
 
         assert_eq!(said["_returned"], 1);
         assert!(said.get("in_notes").is_none(), "nothing to point at: the file was found");
+    }
+
+    /// A picture, drawn the way Syn draws one: saved where the app looks,
+    /// heard of by the index, and read back as the ink it is.
+    #[test]
+    fn a_drawing_is_made_added_to_and_changed_by_name() {
+        let holder = tempfile::tempdir().expect("temp");
+        let vault = std::fs::canonicalize(holder.path()).expect("canonical");
+        let vault_path = vault.to_string_lossy().to_string();
+
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("mock app");
+        let handle = app.handle().clone();
+        handle.manage(crate::db::DbState::new(
+            DbBridge::new_in_memory_full().expect("schema"),
+        ));
+        let call = |tool: &str, args: serde_json::Value| -> String {
+            let state = handle.state::<crate::db::DbState>();
+            let ctx = ToolContext { db: &state, vault_path: &vault_path, app: &handle, run_id: None, model: None };
+            execute_tool(&ctx, tool, &args).expect("the tool runs")
+        };
+
+        let drawn: serde_json::Value = serde_json::from_str(&call(
+            "draw_freely",
+            serde_json::json!({
+                "title": "Hồ trên núi",
+                "svg": "<svg viewBox=\"0 0 800 500\" xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"sky\" width=\"800\" height=\"300\" fill=\"#cfe8ff\"/><path d=\"M0 300 L200 120 L400 300Z\" fill=\"#5b6b82\"/><rect y=\"300\" width=\"800\" height=\"200\" fill=\"#3f8fd2\"/><text x=\"400\" y=\"460\" text-anchor=\"middle\" font-size=\"24\" fill=\"#fff\">Hồ</text></svg>"
+            }),
+        ))
+        .expect("JSON");
+        assert_eq!(drawn["strokes"], 3, "{drawn}");
+        assert_eq!(drawn["words"], 1, "{drawn}");
+        let rel = drawn["board"].as_str().expect("a path");
+        assert!(rel.starts_with("Whiteboards/") && vault.join(rel).exists(), "{rel}");
+        {
+            let state = handle.state::<crate::db::DbState>();
+            let db = state.lock().expect("lock");
+            assert_eq!(db.get_node(rel).expect("read").expect("indexed").title, "Hồ trên núi");
+        }
+        let said = call("read_board", serde_json::json!({ "board": "Hồ trên núi" }));
+        assert!(said.contains(&format!("File: {rel}")), "{said}");
+        assert!(said.contains("- sky: 1 stroke(s) at 0,0, 800×300, in #cfe8ff"), "{said}");
+
+        // More, onto the same board, in its coordinates: a boat and a note.
+        let more: serde_json::Value = serde_json::from_str(&call(
+            "draw_freely",
+            serde_json::json!({
+                "board": "Hồ trên núi",
+                "svg": "<svg viewBox=\"0 0 800 500\" xmlns=\"http://www.w3.org/2000/svg\"><g id=\"boat\"><path d=\"M300 420 H420 L400 440 H320Z\" fill=\"#7c4a2d\"/><path id=\"sail\" d=\"M360 420 V360 L400 420Z\" fill=\"#fff\"/></g></svg>",
+                "items": [{ "kind": "sticky", "text": "Đi thuyền lúc 6h", "x": 600, "y": 100, "color": "pink" }]
+            }),
+        ))
+        .expect("JSON");
+        assert_eq!((more["strokes"].as_u64(), more["items"].as_u64()), (Some(2), Some(1)), "{more}");
+        // A background added later goes under what is drawn, not over it.
+        call(
+            "draw_freely",
+            serde_json::json!({ "board": "Hồ trên núi", "behind": true,
+                "svg": "<svg viewBox=\"0 0 800 500\" xmlns=\"http://www.w3.org/2000/svg\"><rect id=\"paper\" width=\"800\" height=\"500\" fill=\"#fef9c3\"/></svg>" }),
+        );
+        let board = read_board_file(&vault.join(rel)).expect("board");
+        let first_ink = board.nodes.iter().find(|n| n.kind == "stroke").expect("ink");
+        assert!(crate::syn::freehand::answers_to(first_ink, "paper"), "painted first, so under the rest");
+        assert_eq!(more["board"], rel, "the same board, not a new one");
+        let said = call("read_board", serde_json::json!({ "board": rel }));
+        assert!(said.contains("- boat: 2 stroke(s) at 300,360"), "{said}");
+        assert!(said.contains("parts: sail"), "{said}");
+        assert!(said.contains("\"Đi thuyền lúc 6h\" [sticky pink] at 600,100"), "{said}");
+
+        // And changed by the names the drawing gave its parts.
+        let edited: serde_json::Value = serde_json::from_str(&call(
+            "edit_board",
+            serde_json::json!({ "board": rel, "changes": [
+                { "op": "recolor", "item": "sky", "color": "#fde047" },
+                { "op": "place", "item": "boat", "side": "right", "of": "Đi thuyền lúc 6h" },
+                { "op": "remove", "item": "sail" }
+            ] }),
+        ))
+        .expect("JSON");
+        assert_eq!(edited["did"].as_array().map(Vec::len), Some(3), "{edited}");
+        let board = read_board_file(&vault.join(rel)).expect("board");
+        let sky = board.nodes.iter().find(|n| crate::syn::freehand::answers_to(n, "sky")).expect("sky");
+        assert_eq!(sky.data["color"], "#fde047");
+        let hull = board.nodes.iter().find(|n| crate::syn::freehand::answers_to(n, "boat")).expect("hull");
+        assert_eq!(hull.position.x, 600.0 + 200.0 + 48.0, "beside the note, the whole boat moved");
+        assert!(!board.nodes.iter().any(|n| crate::syn::freehand::answers_to(n, "sail")), "the sail is gone");
     }
 
     /// The three board tools, against a real vault and a real index.

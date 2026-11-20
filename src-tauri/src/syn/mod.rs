@@ -13,6 +13,8 @@ pub mod browser;
 pub mod calibration;
 pub mod changes;
 pub mod pane;
+pub mod freehand;
+pub mod mindmap;
 pub mod policy;
 pub mod consent;
 pub mod correction;

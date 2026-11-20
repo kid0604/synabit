@@ -581,13 +581,20 @@ mod doors {
 }
 
 /// `SYN_EVAL_KEEP=<dir>`: every visual a trial left, as the page "Download"
-/// writes — `<task>-<trial>-<n>.html`, standing alone — so a visual that
+/// writes (and every board with ink or text, as an SVG) — `<task>-<trial>-<n>.html`, standing alone — so a visual that
 /// failed a check can be looked at after its vault is gone.
 fn keep_visuals(vault: &fixture::Vault, task: &str, trial: u32) {
     let Some(dir) = std::env::var_os("SYN_EVAL_KEEP").filter(|d| !d.is_empty()) else { return };
     let _ = std::fs::create_dir_all(&dir);
     for (n, html) in grade::visuals(vault).iter().enumerate() {
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{task}-{trial}-{}.html", n + 1)), standalone(html));
+    }
+    // Pictures on boards, drawn the way the Whiteboard draws their ink.
+    for (name, board) in grade::boards(vault) {
+        if let Some(svg) = grade::board_svg(&board) {
+            let stem = name.trim_end_matches(".json").trim_end_matches(".whiteboard");
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{task}-{trial}-{stem}.svg")), svg);
+        }
     }
 }
 

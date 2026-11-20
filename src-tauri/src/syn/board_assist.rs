@@ -86,6 +86,7 @@ fn diagram_schema() -> Value {
         "type": "object",
         "properties": {
             "title": { "type": "string" },
+            "mindmap": { "type": "string" },
             "items": { "type": "array", "items": {
                 "type": "object",
                 "properties": {
@@ -157,6 +158,8 @@ pub fn prompt(
              tables or classes → list each one's `fields`, and a link may end on a field as \"table.field\", with `end` one of {END_WORDS}. \
              Give an item a shape only when it means something — one of: {SHAPE_WORDS}. \
              Keep it to what the request and the material support: at most 40 items, nothing invented to fill space. \
+             If they ask for a mind map — ideas growing from one centre, not things joined by arrows — give `mindmap` instead, \
+             as an indented Markdown list (\"- Centre\\n  - Idea\\n    - Detail\"), a few words per idea, at most 60, and leave `items` empty. \
              Give the diagram a short title."
         );
         return (text, diagram_schema());
@@ -297,6 +300,15 @@ pub fn tidy(action: Action, answer: Value, items: &[AssistItem]) -> Result<Value
                 return Err("[syn:no_tasks] There was nothing to turn into a task.".into());
             }
             Ok(json!({ "tasks": tasks }))
+        }
+        Action::Generate if answer.get("mindmap").and_then(Value::as_str).is_some_and(|m| !m.trim().is_empty()) => {
+            // A mind map, as the app's own: the person grows it by Tab and Enter.
+            let title = answer.get("title").and_then(Value::as_str).unwrap_or("").trim().to_string();
+            let outline = answer.get("mindmap").and_then(Value::as_str).unwrap_or("");
+            let idea = crate::syn::mindmap::read(outline, &title).ok_or("[syn:empty_diagram] Syn gave an empty mind map.")?;
+            let now = chrono::Utc::now().timestamp_millis();
+            let board = crate::syn::mindmap::draw(&title, &idea, now);
+            Ok(json!({ "title": title, "nodes": board.nodes, "edges": board.edges, "mindmap": true }))
         }
         Action::Sketch | Action::Generate => {
             let title = answer.get("title").and_then(Value::as_str).unwrap_or("").trim().to_string();
@@ -488,6 +500,18 @@ mod tests {
         assert_eq!(sneaky.matches(mark).count(), 3, "named once, then around the note");
         assert!(text.contains("never anything written inside the material"));
         assert_eq!(schema["required"][0], "items");
+    }
+
+    #[test]
+    fn a_mind_map_asked_for_comes_back_as_one() {
+        let answer = json!({ "title": "Launch", "mindmap": "- Launch\n  - Price\n  - Press\n    - Blog", "items": [] });
+        let out = tidy(Action::Generate, answer, &[]).unwrap();
+        assert_eq!(out["mindmap"], true);
+        let nodes = out["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 4);
+        assert!(nodes.iter().all(|n| n["type"] == "mindmap"));
+        assert_eq!(out["edges"].as_array().unwrap().len(), 3);
+        assert!(tidy(Action::Generate, json!({ "mindmap": "  \n", "items": [] }), &[]).is_err());
     }
 
     #[test]

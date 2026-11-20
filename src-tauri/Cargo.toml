@@ -110,6 +110,11 @@ rhai = { version = "1.26", features = ["sync", "serde", "no_module", "no_custom_
 # Syn's `ssh` connectors: pure Rust, so it builds for Android too. `ring`
 # for the crypto, already in the build through rustls; no RSA, no aws-lc.
 russh = { version = "=0.61.2", default-features = false, features = ["ring"] }
+# Syn's `draw_freely`: SVG read into a board's ink. No fonts, pure Rust;
+# about 310 KB compressed on Android arm64 (see `timeline::media` tests).
+usvg = { version = "0.50", default-features = false }
+tiny-skia-path = "0.12"
+svgtypes = "0.16"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 # A hotkey that works while another app is focused only exists on desktop;

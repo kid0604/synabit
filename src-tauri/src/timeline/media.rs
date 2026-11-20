@@ -1119,16 +1119,21 @@ mod tests {
     /// they are shared rather than doubled. `ring` for the crypto, no RSA, no
     /// aws-lc: pure Rust plus `ring`'s C, which the build already compiles for
     /// Android through rustls.
+    /// `usvg`, `tiny-skia-path` and `svgtypes` (Syn's `draw_freely`,
+    /// 2026-11-19): measured as a cdylib built for aarch64-linux-android with
+    /// this release profile, about 630 KB more, 310 KB compressed — an upper
+    /// bound, since the probe carried its own copy of what the app already
+    /// has. No fonts (`usvg` without default features), no C.
     const REVIEWED_CRATES: &[&str] = &[
         "aes", "ammonia", "argon2", "async-trait", "base64", "bip39", "blake3", "chacha20", "chacha20poly1305", "chrono", "chrono-tz",
         "ctor", "feed-rs", "flate2", "futures", "gray_matter", "hex", "iana-time-zone", "infer",
         "iroh", "jni", "keyring", "libc", "log", "loro", "lopdf", "lz4_flex", "ndk-context", "notify", "opener",
         "opml", "postcard", "pulldown-cmark", "quick-xml", "rand", "regex", "reqwest", "rhai", "rusqlite", "russh", "rustls", "scraper",
-        "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "synabit_protocol", "tauri",
+        "serde", "serde_json", "serde_yaml", "sha1", "sha2", "similar", "svgtypes", "synabit_protocol", "tauri",
         "tauri-plugin-deep-link", "tauri-plugin-dialog", "tauri-plugin-fs", "tauri-plugin-log",
         "tauri-plugin-notification", "tauri-plugin-opener", "tauri-plugin-os", "tauri-plugin-process",
-        "tauri-plugin-store", "tauri-plugin-updater", "thiserror", "time", "tokio", "url", "urlencoding",
-        "uuid", "walkdir", "zeroize", "zip",
+        "tauri-plugin-store", "tauri-plugin-updater", "thiserror", "time", "tiny-skia-path", "tokio", "url", "urlencoding",
+        "usvg", "uuid", "walkdir", "zeroize", "zip",
     ];
 
     /// The npm packages bundled into every build, Android's included.

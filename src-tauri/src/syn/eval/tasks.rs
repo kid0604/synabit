@@ -37,10 +37,14 @@ pub enum Category {
     /// returned, not when unasked, not from a page's orders, and not by a
     /// run that was not offered them. PR 7 of `docs/syn-visuals-plan-2026-10-26.md`.
     Visuals,
+    /// The Utilities app's tools on files of the vault: `run_utility`, which
+    /// the model has to load itself with `find_tools` — no word in the
+    /// question brings it (2026-11-18, `syn::toolset`).
+    Utilities,
 }
 
 impl Category {
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 12] = [
         Category::VaultQa,
         Category::MultiStep,
         Category::Board,
@@ -52,6 +56,7 @@ impl Category {
         Category::Connectors,
         Category::Visuals,
         Category::Machine,
+        Category::Utilities,
     ];
 
     pub fn name(self) -> &'static str {
@@ -67,6 +72,7 @@ impl Category {
             Category::Connectors => "connectors",
             Category::Visuals => "visuals",
             Category::Machine => "machine",
+            Category::Utilities => "utilities",
         }
     }
 }
@@ -1235,7 +1241,218 @@ pub fn all() -> Vec<Task> {
     ];
     tasks.extend(stale_answers());
     tasks.extend(where_it_goes());
+    tasks.extend(utilities());
+    tasks.extend(by_hand());
+    tasks.extend(mind_maps());
     tasks
+}
+
+/// The whiteboard used by hand, not as a diagram: `draw_freely`, which the
+/// model loads itself with `find_tools`. Pictures were added 2026-11-19 after
+/// a run drew a lake as three boxes, then as a chat visual in theme colours;
+/// the rest the same day, after a review found every other free use of a
+/// board — a sketch that explains, a brainstorm, a wireframe, marks on a
+/// board that exists, a change to a drawing — went to `draw_board` or nowhere.
+fn by_hand() -> Vec<Task> {
+    use Category::*;
+    use Check::*;
+    use Preset::*;
+    vec![
+        task("pc-lake-vi", Board, BoardVault, vec![say(
+            "Vẽ lên whiteboard cho mình một bức tranh phong cảnh: hồ nước, núi, mây và một chiếc thuyền.")],
+            vec![Called("draw_freely"), Picture { strokes: 8, colours: 4, words: &[] }]),
+        task("pc-cat-en", Board, BoardVault, vec![say(
+            "Draw a picture on a whiteboard of a black cat sitting on a windowsill at night, with the moon outside.")],
+            vec![Called("draw_freely"), Picture { strokes: 6, colours: 3, words: &[] }]),
+        task("pc-labelled-vi", Board, BoardVault, vec![say(
+            "Vẽ lên bảng trắng một cây xoài đang có quả, ghi chữ 'Vườn nhà ngoại' ở bên dưới.")],
+            vec![Called("draw_freely"), Picture { strokes: 6, colours: 3, words: &["Vườn nhà ngoại"] }]),
+        task("fr-handshake-vi", Board, BoardVault, vec![say(
+            "Giải thích TCP 3-way handshake bằng hình vẽ tay trên whiteboard cho dễ hiểu.")],
+            vec![Called("draw_freely"), Freehand { title_has: "", strokes: 3, stickies: 0, papers: 0, words: &["SYN", "ACK"], largest_hue: None }]),
+        task("fr-brainstorm-vi", Board, BoardVault, vec![say(
+            "Brainstorm ý tưởng quà sinh nhật cho mẹ trên whiteboard, kiểu giấy note dán lung tung nhiều màu.")],
+            vec![Called("draw_freely"), Freehand { title_has: "", strokes: 0, stickies: 6, papers: 3, words: &[], largest_hue: None }]),
+        task("fr-wireframe-en", Board, BoardVault, vec![say(
+            "Sketch a wireframe of a mobile app's login screen on a whiteboard.")],
+            vec![Called("draw_freely"), Freehand { title_has: "", strokes: 0, stickies: 0, papers: 0, words: &["password"], largest_hue: None }]),
+        task("fr-annotate-en", Board, BoardVault, vec![say(
+            "On the Apollo architecture board, circle the Database in red and write a note beside it: single point of failure.")],
+            vec![Freehand { title_has: "Apollo", strokes: 1, stickies: 0, papers: 0, words: &["single point of failure"], largest_hue: Some((345, 15)) },
+                 BoardsAtMost(1), BoardHas { title_has: "Apollo", labels: &["Database", "Auth service"] }]),
+        task("fr-add-to-picture-vi", Board, BoardVault, vec![
+            say("Vẽ lên whiteboard một bức tranh con mèo ngồi trên tấm thảm."),
+            say("Thêm một chú chó nằm cạnh con mèo, và đổi nền thành màu vàng.")],
+            vec![BoardsAtMost(2), Freehand { title_has: "", strokes: 10, stickies: 0, papers: 0, words: &[], largest_hue: Some((40, 65)) }]),
+    ]
+}
+
+/// Mind maps as the app has them — ideas the person grows by Tab and Enter —
+/// rather than boxes and arrows that look like one: drawn new, grown where
+/// asked on a map that exists, and read back as the tree it is. The map is
+/// asked for by its title: finding a board by a translation of its name
+/// ("product launch" for "Ra mắt sản phẩm") is search's to do, not the map's,
+/// and was what the first runs measured instead.
+fn mind_maps() -> Vec<Task> {
+    use Category::*;
+    use Check::*;
+    use Preset::*;
+    const MAP: &str = "Whiteboards/ra-mat.whiteboard.json";
+    vec![
+        task("mm-make-vi", Board, BoardVault, vec![say(
+            "Vẽ cho mình một mindmap về kế hoạch du lịch Đà Lạt 3 ngày.")],
+            vec![Called("draw_board"), Mindmap { title_has: "", ideas: 8, depth: 3, under: None }]),
+        task("mm-make-en", Board, BoardVault, vec![say(
+            "Make me a mind map on a whiteboard of ways to learn Spanish.")],
+            vec![Called("draw_board"), Mindmap { title_has: "", ideas: 7, depth: 2, under: None }]),
+        task("mm-grow-vi", Board, Empty, vec![say(
+            "Trong mindmap Ra mắt sản phẩm, thêm nhánh 'Ngân sách' với ba ý: quảng cáo, sự kiện, dự phòng.")],
+            vec![Called("edit_board"), BoardsAtMost(1), Mindmap { title_has: "Ra mắt", ideas: 12, depth: 3, under: Some(("Ngân sách", 3)) }])
+            .made(vec![(MAP, launch_map)])
+            .indexed(),
+        task("mm-grow-en", Board, Empty, vec![say(
+            "Under Marketing in my \"Ra mắt sản phẩm\" mind map, add two more ideas: a newsletter and a podcast.")],
+            vec![Called("edit_board"), BoardsAtMost(1), Mindmap { title_has: "Ra mắt", ideas: 10, depth: 3, under: Some(("Marketing", 4)) }])
+            .made(vec![(MAP, launch_map)])
+            .indexed(),
+        task("mm-tick-vi", Board, Empty, vec![say(
+            "Bản beta xong rồi, đánh dấu trong mindmap \"Ra mắt sản phẩm\" giúp mình.")],
+            vec![Called("edit_board"), BoardsAtMost(1), Ticked { title_has: "Ra mắt", label: "Bản beta", done: true },
+                 Ticked { title_has: "Ra mắt", label: "Tuyển dụng", done: false }])
+            .made(vec![(MAP, launch_map)])
+            .indexed(),
+        task("mm-org-en", Board, BoardVault, vec![say(
+            "Draw our team as an org chart mind map: Lan is the CEO; Minh (CTO) and Hoa (CFO) report to her; two engineers, An and Bình, report to Minh.")],
+            vec![Called("draw_board"), Mindmap { title_has: "", ideas: 6, depth: 3, under: Some(("Minh", 2)) }, MapLaidOut { title_has: "", layout: "down" }]),
+        task("mm-read-en", Board, Empty, vec![say(
+            "What's in my \"Ra mắt sản phẩm\" mind map? Go branch by branch.")],
+            vec![Called("read_board"), AnswerHasAll(&["Marketing", "Báo chí", "Bản beta", "Tuyển dụng"])])
+            .made(vec![(MAP, launch_map)])
+            .indexed(),
+    ]
+}
+
+/// A mind map that is already on a board, as the app saves one.
+fn launch_map() -> Vec<u8> {
+    let idea = crate::syn::mindmap::read(
+        "- Ra mắt sản phẩm\n  - Marketing\n    - Mạng xã hội\n    - Báo chí\n  - Sản phẩm\n    - [ ] Bản beta\n    - Giá\n  - Đội ngũ\n    - [ ] Tuyển dụng",
+        "",
+    )
+    .expect("an outline");
+    let board = crate::syn::mindmap::draw("Ra mắt sản phẩm", &idea, 1_790_000_000_000);
+    serde_json::to_vec_pretty(&board).expect("a board")
+}
+
+/// Asked the way a person would, in no word a list once held: "làm nhẹ đi",
+/// "ghép hợp đồng với phụ lục", "turn the photos into one file". What is
+/// measured is that the model finds `utilities` on `find_tools`'s menu.
+fn utilities() -> Vec<Task> {
+    use Category::*;
+    use Check::*;
+    use Preset::*;
+    let tool = crate::syn::utility::TOOL;
+    vec![
+        task("ut-join-contract-vi", Utilities, Empty, vec![say(
+            "Ghép hợp đồng với phụ lục trong thư mục Contracts lại thành một file cho mình.")],
+            vec![Called(tool), KeptFile { ext: "pdf", not: "Contracts/hop-dong.pdf", has: &["hop-dong-3", "phu-luc-2"], max_bytes: None }])
+            .made(vec![("Contracts/hop-dong.pdf", contract_pdf), ("Contracts/phu-luc.pdf", annex_pdf)])
+            .indexed()
+            .smoke(),
+        task("ut-lighter-video-vi", Utilities, Empty, vec![say(
+            "Video Videos/demo.mp4 nặng quá, gửi qua Zalo không được. Làm nó nhẹ đi giúp mình.")],
+            vec![Called(tool), KeptFile { ext: "mp4", not: "Videos/demo.mp4", has: &[], max_bytes: Some(6_000_000) }])
+            .made(vec![("Videos/demo.mp4", demo_video)])
+            .in_a_room(),
+        task("ut-photos-one-file-en", Utilities, Empty, vec![say(
+            "I scanned a form as three photos in Scans/. Put them together into one file I can email, in order.")],
+            vec![Called(tool), KeptFile { ext: "pdf", not: "", has: &[], max_bytes: None }])
+            .made(vec![("Scans/page-1.jpg", page_1_jpg), ("Scans/page-2.jpg", page_2_jpg), ("Scans/page-3.jpg", page_3_jpg)])
+            .indexed(),
+        task("ut-ring-vi", Utilities, Empty, vec![say(
+            "Lấy 20 giây đầu của Music/bai-hat.mp3 để đặt làm chuông điện thoại iPhone giúp mình.")],
+            vec![Called(tool), KeptFile { ext: "m4r", not: "", has: &[], max_bytes: None }])
+            .made(vec![("Music/bai-hat.mp3", song_mp3)])
+            .in_a_room(),
+    ]
+}
+
+/// A PDF of `n` pages, each with its label and number as text, uncompressed,
+/// so a joined file can be read for both.
+fn labelled_pdf(n: u32, label: &str) -> Vec<u8> {
+    use lopdf::{content::Content, content::Operation, dictionary, Dictionary, Document, Object, Stream};
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let font = doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" });
+    let resources = doc.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
+    let mut kids = Vec::new();
+    for i in 1..=n {
+        let content = Content {
+            operations: vec![
+                Operation::new("BT", vec![]),
+                Operation::new("Tf", vec!["F1".into(), 24.into()]),
+                Operation::new("Td", vec![72.into(), 720.into()]),
+                Operation::new("Tj", vec![Object::string_literal(format!("{label}-{i}"))]),
+                Operation::new("ET", vec![]),
+            ],
+        };
+        let stream = doc.add_object(Stream::new(Dictionary::new(), content.encode().expect("content")));
+        kids.push(Object::Reference(doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages_id, "Contents" => stream })));
+    }
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => kids, "Count" => n as i64, "Resources" => resources,
+            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
+        }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    let mut bytes = Vec::new();
+    doc.save_to(&mut bytes).expect("pdf");
+    bytes
+}
+
+fn contract_pdf() -> Vec<u8> {
+    labelled_pdf(3, "hop-dong")
+}
+
+fn annex_pdf() -> Vec<u8> {
+    labelled_pdf(2, "phu-luc")
+}
+
+/// What this Mac's ffmpeg makes of `args`, into a file named `name`; empty
+/// if there is none.
+fn ffmpeg_made(name: &str, args: &[&str]) -> Vec<u8> {
+    let dir = tempfile::tempdir().expect("temp");
+    let out = dir.path().join(name);
+    let made = std::process::Command::new("/opt/homebrew/bin/ffmpeg").args(["-v", "error", "-y"]).args(args).arg(&out).status();
+    match made {
+        Ok(status) if status.success() => std::fs::read(&out).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// A photo of a page: one frame of a test card, a different frame for each
+/// page. Three of the same bytes are one file to the index, which keeps one.
+fn page_jpg(second: &str) -> Vec<u8> {
+    ffmpeg_made("page.jpg", &["-f", "lavfi", "-i", "testsrc2=size=1240x1754:rate=1", "-ss", second, "-frames:v", "1"])
+}
+
+fn page_1_jpg() -> Vec<u8> {
+    page_jpg("0")
+}
+
+fn page_2_jpg() -> Vec<u8> {
+    page_jpg("1")
+}
+
+fn page_3_jpg() -> Vec<u8> {
+    page_jpg("2")
+}
+
+/// A minute of tone, as a song would be an mp3.
+fn song_mp3() -> Vec<u8> {
+    ffmpeg_made("song.mp3", &["-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-b:a", "128k"])
 }
 
 /// Whether an answer Syn gave earlier in a conversation keeps it from using

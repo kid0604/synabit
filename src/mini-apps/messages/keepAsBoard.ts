@@ -134,7 +134,7 @@ export const boardsTouchedBy = (
   const written: string[] = [];
   const read: string[] = [];
   for (const call of log ?? []) {
-    const where = /^(draw|edit)_board$/.test(call.tool_name ?? '')
+    const where = /^((draw|edit)_board|draw_freely)$/.test(call.tool_name ?? '')
       ? written
       : call.tool_name === 'read_board'
         ? read

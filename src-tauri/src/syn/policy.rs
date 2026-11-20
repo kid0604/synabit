@@ -433,6 +433,9 @@ pub static POLICIES: &[Policy] = &[
     // the capture window for that.
     Policy::write(CAPTURE_TOOL, Home::Core).after_reading().telegram().not_in_app(),
     Policy::write("draw_board", Home::Boards).after_reading().routine().locked_with("whiteboard"),
+    // Onto a board that exists as well as a new one: a change to the user's
+    // work, so held after reading, as `edit_board` is.
+    Policy::write("draw_freely", Home::Boards).staged().locked_with("whiteboard"),
     // All it can do is mark an article read or starred, and "read these and
     // mark them" is most of why the feed tools exist.
     Policy::write("update_feed_article", Home::Feeds).after_reading().telegram().locked_with("feeds"),

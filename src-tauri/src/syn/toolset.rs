@@ -156,7 +156,7 @@ impl Group {
             Group::Finance => "money: summary, transactions, recording and correcting them".into(),
             Group::Feeds => "feed articles: search, read, mark read or starred".into(),
             Group::Files => "files in the vault: search, read text, spreadsheets".into(),
-            Group::Boards => "whiteboards: read, draw, change".into(),
+            Group::Boards => "whiteboards: a diagram or mind map laid out for you, or drawing by hand — a picture, a sketch, sticky notes, a wireframe — on a new board or one that exists; change one (read_board is always there)".into(),
             Group::Timeline => "what happened when: a span of days, weeks or years".into(),
             Group::History => "the trash and earlier versions: restore what was removed or changed".into(),
             Group::Structure => "rename or remove a field or a kind across every note".into(),

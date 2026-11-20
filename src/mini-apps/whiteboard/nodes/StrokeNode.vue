@@ -9,6 +9,8 @@ const props = defineProps<{
     color: string;
     size: number;
     opacity?: number;
+    /** `evenodd` for a shape with holes in it, from a picture Syn drew. */
+    fillRule?: 'nonzero' | 'evenodd';
     width?: number;
     height?: number;
     points?: number[][];
@@ -30,6 +32,7 @@ const box = computed(() => strokeSize(props.data));
       <path
         :d="data.svgPath"
         :style="{ fill: paint(data.color) }"
+        :fill-rule="data.fillRule"
         :opacity="data.opacity ?? 0.85"
         stroke="none"
       />

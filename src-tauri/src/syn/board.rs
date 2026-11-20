@@ -29,18 +29,16 @@ pub const BOARDS_DIR: &str = "Whiteboards";
 /// The format version the Whiteboard app writes and refuses to read past.
 pub const SCHEMA_VERSION: u32 = 1;
 
-/// The names of the three tools, which are offered together or not at all.
-pub const TOOLS: [&str; 3] = ["read_board", "draw_board", "edit_board"];
-
 /// Whether this vault has a board in it.
 ///
-/// # Why the tools are not always offered
+/// # Why `read_board` is not always offered
 ///
-/// Three declarations cost about two thousand characters of every request, and
-/// a vault with no whiteboard in it will never use one of them — the same
-/// argument that kept `web_search` out of the payload when no endpoint was
-/// configured. A description paid for on every turn, for something that cannot
-/// apply, is a promise charged in advance.
+/// It is the one board tool sent on every turn, and a vault with no whiteboard
+/// has nothing for it to read — the same argument that kept `web_search` out
+/// of the payload when no endpoint was configured. The tools that draw were
+/// held back with it once, at about two thousand characters a request; since
+/// they arrive only when asked for (`syn::toolset`), they are offered to every
+/// vault, or no first board could ever be drawn.
 ///
 /// A directory listing, deliberately, rather than a query: this runs while the
 /// tool list is built, the answer is one bit, and the folder holds tens of
@@ -203,17 +201,38 @@ pub fn describe(board: &Board) -> String {
         .iter()
         .filter(|n| n.kind == "shape" && !n.data.contains_key("lifelineOf"))
         .collect();
+    // A mind map is read as an outline of its own, below: its items are not
+    // loose writing and its branches not lines to list one by one. A line
+    // drawn between two of its ideas (`relation`) is a line.
+    let branches = crate::syn::mindmap::children(board);
+    let in_maps: std::collections::HashSet<&str> = board
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "mindmap")
+        .filter(|n| {
+            branches.contains_key(&n.id)
+                || branches.values().any(|l| l.contains(&n.id))
+                || n.data.get("level").and_then(Value::as_u64) == Some(0)
+        })
+        .map(|n| n.id.as_str())
+        .collect();
+    let is_branch = |e: &Link| {
+        branches.get(&e.source).is_some_and(|l| l.contains(&e.target))
+            && e.data.get("relation").and_then(Value::as_bool) != Some(true)
+    };
     let lines: Vec<&Link> = board
         .edges
         .iter()
-        .filter(|e| e.data.get("lifeline").and_then(Value::as_bool) != Some(true))
+        .filter(|e| e.data.get("lifeline").and_then(Value::as_bool) != Some(true) && !is_branch(e))
         .collect();
     let strokes = board.nodes.iter().filter(|n| n.kind == "stroke").count();
     let notes: Vec<&Item> = board
         .nodes
         .iter()
-        .filter(|n| matches!(n.kind.as_str(), "text" | "note" | "mindmap" | "sticky" | "card"))
+        .filter(|n| matches!(n.kind.as_str(), "text" | "note" | "mindmap" | "sticky" | "card") && !in_maps.contains(n.id.as_str()))
         .collect();
+    let minds: Vec<&Item> = board.nodes.iter().filter(|n| in_maps.contains(n.id.as_str())).collect();
+    let maps = crate::syn::mindmap::outlines(board, 80);
 
     // Frames are of two kinds: the app's own `frame` items, and — from boards
     // drawn before Syn and diagrams made real ones — a box with two or more
@@ -252,10 +271,18 @@ pub fn describe(board: &Board) -> String {
     if !notes.is_empty() {
         out.push_str(&format!(", {} loose pieces of writing", notes.len()));
     }
+    if !maps.is_empty() {
+        out.push_str(&format!(", {} mind map{} of {} ideas", maps.len(), if maps.len() == 1 { "" } else { "s" }, minds.len()));
+    }
     if strokes > 0 {
-        out.push_str(&format!(", {strokes} freehand strokes (not described here)"));
+        out.push_str(&format!(", {strokes} pieces of ink"));
     }
     out.push_str(".\n");
+    // Where everything is, so a drawing added to the board can go beside it
+    // rather than over it.
+    if let Some((x0, y0, x1, y1)) = extent(board.nodes.iter().filter(|n| n.kind != "comment")) {
+        out.push_str(&format!("Everything lies between {x0},{y0} and {x1},{y1}.\n"));
+    }
 
     if !frames.is_empty() {
         out.push_str("\nFrames, each with what sits inside it:\n");
@@ -263,6 +290,7 @@ pub fn describe(board: &Board) -> String {
             let inside: Vec<&str> = boxes
                 .iter()
                 .chain(notes.iter())
+                .chain(minds.iter())
                 .filter(|b| {
                     b.id != frame.id
                         && b.position.x >= frame.position.x
@@ -291,15 +319,55 @@ pub fn describe(board: &Board) -> String {
             (shape, _) => shape.to_string(),
         };
         out.push_str(&format!(
-            "- {} [{}] at {},{}\n",
+            "- {} [{}] at {},{}, {}×{}\n",
             naming(item.label()),
             kind,
             item.position.x.round(),
-            item.position.y.round()
+            item.position.y.round(),
+            item.width().round(),
+            item.height().round()
         ));
     }
     if boxes.len() > NAMED {
         out.push_str(&format!("…and {} more.\n", boxes.len() - NAMED));
+    }
+
+    if !notes.is_empty() {
+        out.push_str("\nWriting:\n");
+        for n in notes.iter().take(NAMED) {
+            let words: String = n.label().split_whitespace().collect::<Vec<_>>().join(" ");
+            let words: String = if words.chars().count() > 80 {
+                format!("{}…", words.chars().take(80).collect::<String>())
+            } else {
+                words
+            };
+            let colour = match n.kind.as_str() {
+                "sticky" => format!(" {}", n.data.get("color").and_then(Value::as_str).unwrap_or("yellow")),
+                _ => String::new(),
+            };
+            out.push_str(&format!(
+                "- \"{}\" [{}{colour}] at {},{}\n",
+                words,
+                n.kind,
+                n.position.x.round(),
+                n.position.y.round()
+            ));
+        }
+        if notes.len() > NAMED {
+            out.push_str(&format!("…and {} more.\n", notes.len() - NAMED));
+        }
+    }
+
+    if !maps.is_empty() {
+        out.push_str("\nMind maps, each as an outline (grow one with `add` and `under`; rename or remove an idea by its words):\n");
+        for map in &maps {
+            out.push_str(map);
+            out.push('\n');
+        }
+    }
+
+    if strokes > 0 {
+        out.push_str(&drawings(board));
     }
 
     if !lines.is_empty() {
@@ -364,6 +432,76 @@ pub fn describe(board: &Board) -> String {
         }
     }
 
+    out
+}
+
+/// The box around some items: left, top, right, bottom, rounded.
+fn extent<'a>(items: impl Iterator<Item = &'a Item>) -> Option<(f64, f64, f64, f64)> {
+    items.fold(None::<(f64, f64, f64, f64)>, |acc, n| {
+        let (l, t, r, b) = (n.position.x, n.position.y, n.position.x + n.width(), n.position.y + n.height());
+        Some(match acc {
+            None => (l, t, r, b),
+            Some((l0, t0, r0, b0)) => (l0.min(l), t0.min(t), r0.max(r), b0.max(b)),
+        })
+    })
+    .map(|(l, t, r, b)| (l.round(), t.round(), r.round(), b.round()))
+}
+
+/// The ink on a board, by what it is called: a name a drawing gave it
+/// (`freehand`), with its parts and colours, and how much ink nobody named.
+fn drawings(board: &Board) -> String {
+    let ink: Vec<&Item> = board.nodes.iter().filter(|n| n.kind == "stroke").collect();
+    let top = |n: &Item| {
+        n.data
+            .get("name")
+            .and_then(Value::as_str)
+            .and_then(|p| p.split('/').next())
+            .filter(|p| !p.trim().is_empty())
+            .map(str::to_string)
+    };
+    let mut names: Vec<String> = Vec::new();
+    for n in &ink {
+        if let Some(name) = top(n) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    let mut out = String::from("\nDrawn in ink (by name; edit_board can recolor, place, rename or remove each):\n");
+    for name in names.iter().take(NAMED) {
+        let mine: Vec<&Item> = ink.iter().copied().filter(|n| top(n).as_deref() == Some(name.as_str())).collect();
+        let mut parts: Vec<&str> = Vec::new();
+        let mut colours: Vec<&str> = Vec::new();
+        for n in &mine {
+            if let Some(part) = n.data.get("name").and_then(Value::as_str).and_then(|p| p.split_once('/')).map(|(_, rest)| rest) {
+                if !parts.contains(&part) {
+                    parts.push(part);
+                }
+            }
+            if let Some(c) = n.data.get("color").and_then(Value::as_str) {
+                if !colours.contains(&c) {
+                    colours.push(c);
+                }
+            }
+        }
+        let (x0, y0, x1, y1) = extent(mine.iter().copied()).unwrap_or_default();
+        let parts = if parts.is_empty() { String::new() } else { format!("; parts: {}", parts.iter().take(12).copied().collect::<Vec<_>>().join(", ")) };
+        let more = if colours.len() > 4 { "…" } else { "" };
+        out.push_str(&format!(
+            "- {name}: {} stroke(s) at {x0},{y0}, {}×{}, in {}{more}{parts}\n",
+            mine.len(),
+            x1 - x0,
+            y1 - y0,
+            colours.iter().take(4).copied().collect::<Vec<_>>().join(" "),
+        ));
+    }
+    if names.len() > NAMED {
+        out.push_str(&format!("…and {} more.\n", names.len() - NAMED));
+    }
+    let loose: Vec<&Item> = ink.iter().copied().filter(|n| top(n).is_none()).collect();
+    if let Some((x0, y0, x1, y1)) = extent(loose.iter().copied()) {
+        out.push_str(&format!("- {} stroke(s) nobody named, between {x0},{y0} and {x1},{y1}\n", loose.len()));
+    }
     out
 }
 
@@ -1000,21 +1138,26 @@ impl Canvas {
     }
 
     fn into_board(mut self, title: &str) -> Board {
-        let stamp = chrono::Utc::now().to_rfc3339();
-        let mut metadata = Map::new();
-        metadata.insert("updated_at".into(), json!(stamp));
         self.frames.append(&mut self.nodes);
-        Board {
-            schema_version: Some(SCHEMA_VERSION),
-            title: title.to_string(),
-            tags: Vec::new(),
-            created_at: stamp,
-            metadata: Some(metadata),
-            viewport: origin(),
-            nodes: self.frames,
-            edges: self.edges,
-            rest: Map::new(),
-        }
+        new_board(title, self.frames, self.edges)
+    }
+}
+
+/// A board file holding these, made now.
+pub fn new_board(title: &str, nodes: Vec<Item>, edges: Vec<Link>) -> Board {
+    let stamp = chrono::Utc::now().to_rfc3339();
+    let mut metadata = Map::new();
+    metadata.insert("updated_at".into(), json!(stamp));
+    Board {
+        schema_version: Some(SCHEMA_VERSION),
+        title: title.to_string(),
+        tags: Vec::new(),
+        created_at: stamp,
+        metadata: Some(metadata),
+        viewport: origin(),
+        nodes,
+        edges,
+        rest: Map::new(),
     }
 }
 
@@ -1743,7 +1886,7 @@ fn look_of(role: Role) -> (&'static str, Option<&'static str>) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn shape(
+pub(crate) fn shape(
     id: String,
     x: f64,
     y: f64,
@@ -1986,6 +2129,12 @@ pub enum Change {
         /// A table's or a class's fields: drawn as `draw` draws them.
         #[serde(default)]
         fields: Vec<String>,
+        /// A mind-map idea to grow this from, as a branch of it.
+        #[serde(default)]
+        under: Option<String>,
+        /// With `under`: the new idea is a task, with a box to tick.
+        #[serde(default)]
+        task: bool,
     },
     /// Join two things that are already there. Either end may be a table's
     /// field: `"orders.user_id"`.
@@ -2030,6 +2179,19 @@ pub enum Change {
         item: String,
         frame: String,
     },
+    /// Tick a mind map's task as done, or untick it. An idea that was not a
+    /// task becomes one.
+    Tick {
+        item: String,
+        #[serde(default = "yes")]
+        done: bool,
+    },
+    /// Paint something another colour: a box's fill, a note's paper, text,
+    /// or every stroke of a drawing by its name.
+    Recolor {
+        item: String,
+        color: String,
+    },
 }
 
 /// Apply changes, and say what happened.
@@ -2040,11 +2202,51 @@ pub enum Change {
 /// arranged by hand; adding an item is not permission to re-draw the drawing.
 /// It is the difference between a tool somebody can use on their own work and
 /// one they have to check after every call.
+fn yes() -> bool {
+    true
+}
+
 pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<String>, String> {
     let mut done = Vec::new();
     for change in changes {
         match change {
-            Change::Add { label, shape: kind, near, inside, fields } => {
+            Change::Tick { item, done: tick } => {
+                let at = find(board, item).ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
+                if board.nodes[at].kind != "mindmap" {
+                    return Err(format!("\"{item}\" is not part of a mind map; only a mind map's ideas are ticked."));
+                }
+                let n = &mut board.nodes[at];
+                n.data.insert("task".into(), json!(true));
+                if *tick {
+                    n.data.insert("done".into(), json!(true));
+                } else {
+                    n.data.remove("done");
+                }
+                n.updated = Some(now_ms);
+                done.push(format!("{} \"{item}\"", if *tick { "ticked" } else { "unticked" }));
+            }
+            Change::Add { label, under: Some(parent), task, .. } => {
+                // A branch of a mind map. The map is laid out again, as the
+                // app lays it out on every branch added: a map's places are
+                // its tree's, not anybody's arrangement — except an idea put
+                // somewhere by hand (`pinned`), which stays.
+                if label.trim().is_empty() {
+                    return Err("An idea needs words.".into());
+                }
+                let at = find(board, parent).ok_or_else(|| format!("There is nothing called \"{parent}\" here."))?;
+                if board.nodes[at].kind != "mindmap" {
+                    return Err(format!("\"{parent}\" is not part of a mind map; `under` grows a branch of one."));
+                }
+                let parent_id = board.nodes[at].id.clone();
+                if crate::syn::mindmap::has_child(board, &parent_id, label) {
+                    return Err(format!("\"{label}\" is already under \"{parent}\"."));
+                }
+                let id = fresh_id(board, "mind", now_ms);
+                let edge = fresh_id(board, "e", now_ms);
+                crate::syn::mindmap::add_under(board, at, label.trim(), *task, id, edge, now_ms);
+                done.push(format!("added \"{label}\" under \"{parent}\""));
+            }
+            Change::Add { label, shape: kind, near, inside, fields, under: None, .. } => {
                 if label.trim().is_empty() {
                     return Err("An item needs a label.".into());
                 }
@@ -2120,6 +2322,12 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                     return Err(format!("\"{from}\" and \"{to}\" are already joined."));
                 }
                 let mut data = line_data(label.as_deref(), start.as_deref(), end.as_deref(), *dashed);
+                // Between two mind-map items a line is a relationship, not a
+                // branch: the app's tree leaves it out (`isRelation`).
+                if board.nodes[a].kind == "mindmap" && board.nodes[b].kind == "mindmap" {
+                    data.insert("relation".into(), json!(true));
+                    data.insert("dashStyle".into(), json!("dashed"));
+                }
                 if fields {
                     data.remove("sides");
                 } else {
@@ -2140,22 +2348,47 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
             }
 
             Change::Rename { item, label } => {
-                let at = find(board, item)
-                    .ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
-                board.nodes[at].data.insert("label".into(), json!(label));
-                board.nodes[at].updated = Some(now_ms);
+                if let Some(at) = find(board, item) {
+                    board.nodes[at].data.insert("label".into(), json!(label));
+                    board.nodes[at].updated = Some(now_ms);
+                } else {
+                    let drawn = ink(board, item);
+                    if drawn.is_empty() {
+                        return Err(missing(item));
+                    }
+                    let wanted = item.trim().to_lowercase();
+                    for i in drawn {
+                        let name = board.nodes[i].data.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                        let renamed: Vec<&str> = name
+                            .split('/')
+                            .map(|part| if part.to_lowercase() == wanted { label.as_str() } else { part })
+                            .collect();
+                        let renamed = if name.to_lowercase() == wanted { label.clone() } else { renamed.join("/") };
+                        board.nodes[i].data.insert("name".into(), json!(renamed));
+                        board.nodes[i].updated = Some(now_ms);
+                    }
+                }
                 done.push(format!("renamed \"{item}\" to \"{label}\""));
             }
 
             Change::Remove { item } => {
-                let at = find(board, item)
-                    .ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
-                let id = board.nodes[at].id.clone();
-                board.nodes.remove(at);
+                let at: Vec<usize> = match find(board, item) {
+                    // A mind-map item goes with its branch, as in the app.
+                    Some(at) => branch_of(board, at),
+                    None => ink(board, item),
+                };
+                let branch = at.len() > 1 && board.nodes[at[0]].kind == "mindmap";
+                if at.is_empty() {
+                    return Err(missing(item));
+                }
+                let mut gone = Vec::new();
+                for &i in at.iter().rev() {
+                    gone.push(board.nodes.remove(i).id);
+                }
                 let before = board.edges.len();
-                let mut gone = vec![id.clone()];
+                let ids = gone.clone();
                 board.edges.retain(|e| {
-                    let keep = e.source != id && e.target != id;
+                    let keep = !ids.contains(&e.source) && !ids.contains(&e.target);
                     if !keep {
                         gone.push(e.id.clone());
                     }
@@ -2174,7 +2407,44 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                         map.insert(id, json!(now_ms));
                     }
                 }
-                done.push(format!("removed \"{item}\" and {lines} line(s) that ended on it"));
+                if branch {
+                    done.push(format!("removed \"{item}\" and the {} mind-map item(s) under it", at.len() - 1));
+                } else if at.len() > 1 {
+                    done.push(format!("removed the drawing \"{item}\" ({} pieces of ink)", at.len()));
+                } else {
+                    done.push(format!("removed \"{item}\" and {lines} line(s) that ended on it"));
+                }
+            }
+
+            Change::Recolor { item, color } => {
+                let hex = crate::syn::freehand::hex_of(color)
+                    .ok_or_else(|| format!("\"{color}\" is not a colour: give it as hex, #f59e0b."))?;
+                if let Some(at) = find(board, item) {
+                    let n = &mut board.nodes[at];
+                    match n.kind.as_str() {
+                        "sticky" => {
+                            n.data.insert("color".into(), json!(crate::syn::freehand::paper(Some(color))));
+                        }
+                        "text" => {
+                            n.data.insert("color".into(), json!(hex));
+                        }
+                        _ => {
+                            n.data.insert("fillColor".into(), json!(hex));
+                        }
+                    }
+                    n.updated = Some(now_ms);
+                    done.push(format!("painted \"{item}\" {hex}"));
+                } else {
+                    let drawn: Vec<usize> = ink(board, item).into_iter().filter(|&i| board.nodes[i].kind == "stroke").collect();
+                    if drawn.is_empty() {
+                        return Err(missing(item));
+                    }
+                    for &i in &drawn {
+                        board.nodes[i].data.insert("color".into(), json!(hex));
+                        board.nodes[i].updated = Some(now_ms);
+                    }
+                    done.push(format!("painted the drawing \"{item}\" {hex} ({} pieces of ink)", drawn.len()));
+                }
             }
 
             Change::MoveInto { item, frame: zone } => {
@@ -2195,20 +2465,11 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
             }
 
             Change::Place { item, side, of } => {
-                let moving = find(board, item)
-                    .ok_or_else(|| format!("There is nothing called \"{item}\" here."))?;
-                let anchor = find(board, of)
-                    .ok_or_else(|| format!("There is nothing called \"{of}\" here."))?;
-                if moving == anchor {
-                    return Err("A box cannot be placed beside itself.".into());
+                let (moving, (mx, my, w, h)) = whole(board, item)?;
+                let (anchor, (ax, ay, aw, ah)) = whole(board, of)?;
+                if moving.iter().any(|m| anchor.contains(m)) {
+                    return Err("A thing cannot be placed beside itself.".into());
                 }
-                let (ax, ay, aw, ah) = (
-                    board.nodes[anchor].position.x,
-                    board.nodes[anchor].position.y,
-                    board.nodes[anchor].width(),
-                    board.nodes[anchor].height(),
-                );
-                let (w, h) = (board.nodes[moving].width(), board.nodes[moving].height());
                 let to = match side.trim().to_lowercase().as_str() {
                     "right" => (ax + aw + GAP_X, ay),
                     "left" => (ax - w - GAP_X, ay),
@@ -2216,12 +2477,19 @@ pub fn apply(board: &mut Board, changes: &[Change], now_ms: i64) -> Result<Vec<S
                     "below" | "under" | "down" => (ax, ay + ah + GAP_Y),
                     other => return Err(format!("\"{other}\" is not a side: left, right, above, below.")),
                 };
-                board.nodes[moving].position = Point { x: to.0, y: to.1 };
-                board.nodes[moving].updated = Some(now_ms);
+                // A drawing moves whole: every piece of it by the same step.
+                let (dx, dy) = (to.0 - mx, to.1 - my);
+                for &i in &moving {
+                    let p = &mut board.nodes[i].position;
+                    *p = Point { x: p.x + dx, y: p.y + dy };
+                    board.nodes[i].updated = Some(now_ms);
+                }
                 // A layout would undo this, so there is none to come.
                 keep_where_they_are(board, now_ms);
-                let id = board.nodes[moving].id.clone();
-                reroute_lines_of(board, &id, now_ms);
+                for i in moving {
+                    let id = board.nodes[i].id.clone();
+                    reroute_lines_of(board, &id, now_ms);
+                }
                 done.push(format!("put \"{item}\" {side} of \"{of}\""));
             }
         }
@@ -2443,6 +2711,62 @@ fn find(board: &Board, label: &str) -> Option<usize> {
         .or_else(|| board.nodes.iter().position(named))
 }
 
+/// The pieces of a drawing that answer to `name` (`freehand::answers_to`):
+/// its ink and its words, in board order.
+fn ink(board: &Board, name: &str) -> Vec<usize> {
+    (0..board.nodes.len())
+        .filter(|&i| matches!(board.nodes[i].kind.as_str(), "stroke" | "text") && crate::syn::freehand::answers_to(&board.nodes[i], name))
+        .collect()
+}
+
+/// An item, and — for a mind-map item — every mind-map item below it, by the
+/// lines from parent to child, not a relationship drawn between two: in board
+/// order. Deleting a branch's item used
+/// to leave what was under it as loose trees of its own.
+fn branch_of(board: &Board, at: usize) -> Vec<usize> {
+    let mut out = vec![at];
+    if board.nodes[at].kind != "mindmap" {
+        return out;
+    }
+    let index: std::collections::HashMap<&str, usize> =
+        board.nodes.iter().enumerate().map(|(i, n)| (n.id.as_str(), i)).collect();
+    let mut stack = vec![at];
+    while let Some(i) = stack.pop() {
+        let id = board.nodes[i].id.as_str();
+        let branch = |e: &&Link| e.source == id && e.data.get("relation").and_then(Value::as_bool) != Some(true);
+        for e in board.edges.iter().filter(branch) {
+            if let Some(&k) = index.get(e.target.as_str()) {
+                if board.nodes[k].kind == "mindmap" && !out.contains(&k) {
+                    out.push(k);
+                    stack.push(k);
+                }
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// A thing by its name, and the box it fills: one item by its label, or every
+/// piece of a drawing by the name it was drawn with.
+fn whole(board: &Board, name: &str) -> Result<(Vec<usize>, Rect), String> {
+    let at = match find(board, name) {
+        Some(at) => vec![at],
+        None => ink(board, name),
+    };
+    let (l, t, r, b) = extent(at.iter().map(|&i| &board.nodes[i])).ok_or_else(|| missing(name))?;
+    // Unrounded for one item, so a box placed beside a box lands where it did.
+    if let [one] = at[..] {
+        let n = &board.nodes[one];
+        return Ok((at, (n.position.x, n.position.y, n.width(), n.height())));
+    }
+    Ok((at, (l, t, r - l, b - t)))
+}
+
+fn missing(name: &str) -> String {
+    format!("There is nothing called \"{name}\" here.")
+}
+
 /// What a line's end names: a thing by its label, or a table's field —
 /// `orders.user_id`, the row in the `orders` frame whose field is `user_id`.
 fn find_end(board: &Board, name: &str) -> Option<usize> {
@@ -2561,9 +2885,9 @@ mod tests {
         }))
         .expect("a board");
         let changes = vec![
-            Change::Add { label: "One".into(), shape: None, near: None, inside: None, fields: Vec::new() },
+            Change::Add { label: "One".into(), shape: None, near: None, inside: None, fields: Vec::new(), under: None, task: false },
             Change::Remove { item: "X".into() },
-            Change::Add { label: "Two".into(), shape: None, near: None, inside: None, fields: Vec::new() },
+            Change::Add { label: "Two".into(), shape: None, near: None, inside: None, fields: Vec::new(), under: None, task: false },
         ];
         apply(&mut board, &changes, NOW).expect("applied");
         let ids: std::collections::HashSet<_> = board.nodes.iter().map(|n| n.id.clone()).collect();
@@ -3747,6 +4071,91 @@ mod tests {
     // ── Reading ───────────────────────────────────────────────
 
     /// What a person sees when they look at a board — not the file.
+    /// A line Syn draws between two mind-map items is a relationship, as one
+    /// drawn by hand is; to anything else it is an ordinary line.
+    #[test]
+    fn a_line_between_mind_map_items_is_a_relationship() {
+        let item = |id: &str, kind: &str, label: &str| serde_json::json!({ "id": id, "type": kind, "position": { "x": 0, "y": 0 }, "data": { "label": label } });
+        let mut board: Board = serde_json::from_value(serde_json::json!({
+            "title": "Map",
+            "nodes": [item("a", "mindmap", "Cost"), item("b", "mindmap", "Time"), item("s", "sticky", "Budget")],
+            "edges": []
+        }))
+        .expect("board");
+        let joins = [
+            Change::Connect { from: "Cost".into(), to: "Time".into(), label: None, start: None, end: None, dashed: false },
+            Change::Connect { from: "Budget".into(), to: "Time".into(), label: None, start: None, end: None, dashed: false },
+        ];
+        apply(&mut board, &joins, NOW).expect("joined");
+        assert_eq!(board.edges[0].data.get("relation"), Some(&json!(true)));
+        assert_eq!(board.edges[0].data.get("dashStyle"), Some(&json!("dashed")));
+        assert_eq!(board.edges[1].data.get("relation"), None);
+    }
+
+    /// A mind-map item removed by name goes with its branch, as in the app;
+    /// a line to it from something else is only a line.
+    #[test]
+    fn removing_a_mind_map_item_takes_its_branch() {
+        let mind = |id: &str, label: &str| serde_json::json!({ "id": id, "type": "mindmap", "position": { "x": 0, "y": 0 }, "data": { "label": label } });
+        let line = |id: &str, from: &str, to: &str| serde_json::json!({ "id": id, "source": from, "target": to, "type": "default", "data": {} });
+        let mut board: Board = serde_json::from_value(serde_json::json!({
+            "title": "Map",
+            "nodes": [mind("r", "Trip"), mind("a", "Day 1"), mind("a1", "Lake"), mind("a2", "Market"), mind("b", "Day 2"),
+                      { "id": "s", "type": "sticky", "position": { "x": 0, "y": 0 }, "data": { "label": "Budget" } }],
+            "edges": [line("e1", "r", "a"), line("e2", "a", "a1"), line("e3", "a", "a2"), line("e4", "r", "b"), line("e5", "a1", "s"),
+                      { "id": "e6", "source": "a", "target": "b", "type": "default", "data": { "relation": true } }]
+        }))
+        .expect("board");
+        let done = apply(&mut board, &[Change::Remove { item: "Day 1".into() }], NOW).expect("removed");
+        let left: Vec<&str> = board.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert_eq!(left, vec!["r", "b", "s"], "a relationship to Day 2 does not make it part of the branch: {done:?}");
+        assert!(done[0].contains("2 mind-map item(s) under it"), "{done:?}");
+        assert_eq!(board.edges.len(), 1, "only the line to Day 2 is left");
+    }
+
+    /// A mind map is read as the outline it is, and grown by `under`: the
+    /// branch lands under its idea, in its colour, and the map makes room.
+    #[test]
+    fn a_mind_map_reads_as_an_outline_and_grows_by_under() {
+        let idea = crate::syn::mindmap::read("- Trip\n  - Day 1\n    - Lake\n  - Day 2", "").expect("an outline");
+        let mut board = crate::syn::mindmap::draw("Trip", &idea, NOW);
+        board.nodes.push(serde_json::from_value(serde_json::json!({ "id": "s", "type": "sticky", "position": { "x": 0, "y": 600 }, "data": { "label": "Budget" } })).unwrap());
+        let said = describe(&board);
+        assert!(said.contains("1 mind map of 4 ideas"), "{said}");
+        assert!(said.contains("- Trip\n  - Day 1\n    - Lake\n  - Day 2"), "{said}");
+        assert!(!said.contains("\"Lake\" [mindmap]"), "its ideas are not loose writing: {said}");
+        assert!(said.contains("\"Budget\" [sticky"), "{said}");
+        assert!(!said.contains("Lines:"), "its branches are not listed as lines: {said}");
+
+        let done = apply(
+            &mut board,
+            &[Change::Add { label: "Market".into(), shape: None, near: None, inside: None, fields: Vec::new(), under: Some("day 1".into()), task: false }],
+            NOW + 1,
+        )
+        .expect("grown");
+        assert_eq!(done, vec!["added \"Market\" under \"day 1\"".to_string()]);
+        assert!(describe(&board).contains("  - Day 1\n    - Lake\n    - Market\n"), "{}", describe(&board));
+        let by = |l: &str| board.nodes.iter().find(|n| n.label() == l).unwrap();
+        assert_eq!(by("Market").data["color"], by("Day 1").data["color"]);
+        assert_eq!(by("Market").position.x, by("Lake").position.x);
+        assert!(by("Market").position.y > by("Lake").position.y);
+
+        // Twice under the same idea is once; under something not in a map is refused.
+        let again = Change::Add { label: "market".into(), shape: None, near: None, inside: None, fields: Vec::new(), under: Some("Day 1".into()), task: false };
+        assert!(apply(&mut board, &[again], NOW + 2).unwrap_err().contains("already under"));
+        let off = Change::Add { label: "Cash".into(), shape: None, near: None, inside: None, fields: Vec::new(), under: Some("Budget".into()), task: false };
+        assert!(apply(&mut board, &[off], NOW + 2).unwrap_err().contains("not part of a mind map"));
+
+        // A task ticked by its words, and read back so.
+        let done = apply(&mut board, &[Change::Tick { item: "Market".into(), done: true }], NOW + 3).expect("ticked");
+        assert_eq!(done, vec!["ticked \"Market\"".to_string()]);
+        assert!(describe(&board).contains("    - [x] Market\n"), "{}", describe(&board));
+        let json: Change = serde_json::from_value(serde_json::json!({ "op": "tick", "item": "Market", "done": false })).unwrap();
+        apply(&mut board, &[json], NOW + 4).expect("unticked");
+        assert!(describe(&board).contains("    - [ ] Market\n"));
+        assert!(apply(&mut board, &[Change::Tick { item: "Budget".into(), done: true }], NOW + 5).is_err());
+    }
+
     #[test]
     fn a_board_reads_as_what_is_on_it() {
         let mut board = draw("Luồng PSS", &two_sites(), NOW).expect("drawn");
@@ -3763,7 +4172,9 @@ mod tests {
         let said = describe(&board);
         assert!(said.contains("Board \"Luồng PSS\""), "{said}");
         assert!(said.contains("8 boxes"), "the frames are not counted as boxes: {said}");
-        assert!(said.contains("1 freehand strokes (not described here)"), "{said}");
+        assert!(said.contains("1 pieces of ink"), "{said}");
+        assert!(said.contains("1 stroke(s) nobody named, between 0,0"), "where the handwriting is: {said}");
+        assert!(said.contains("Everything lies between"), "{said}");
         assert!(said.contains("DC1"), "{said}");
         assert!(said.contains("SW Core 1, F5 TPZ 1, Kong 1"), "what is inside DC1: {said}");
         assert!(said.contains("TCTV → FW Checkpoint (MPLS)"), "{said}");

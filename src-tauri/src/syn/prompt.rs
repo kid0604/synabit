@@ -553,7 +553,7 @@ const TOOL_SHAPE: &str = r#"Tool usage guidelines:
 2. Then `create_transaction` with the amount, category and account.
 3. Use one of its categories: "nay đi chợ hết 150k" → create_transaction(amount=150000, category="Ăn uống", note="Đi chợ").
 4. To review history, `get_transactions` with the month parameter.
-- Diagrams of boxes and arrows: `draw_board`; `edit_board` changes one.
+- Diagrams: `draw_board`; by hand: `draw_freely`; `edit_board` edits.
 - Web (news, scores, prices, what a site says): `browse`, never memory.
 - 3+ steps: `update_plan` first. Many pages to read: `delegate`.
 - A lasting preference, or a correction about the user: `remember`. `recall` searches it.

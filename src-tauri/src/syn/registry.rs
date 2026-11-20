@@ -246,16 +246,18 @@ impl<R: tauri::Runtime> ToolProvider<R> for VaultTools {
         let ledger = crate::syn::consent::load(ctx.vault_path);
         let now = chrono::Utc::now().to_rfc3339();
 
-        // A vault with no whiteboard in it is told about no whiteboard tools.
-        // Same reasoning as the paragraph above, one step earlier: the three of
-        // them cost about two thousand characters of every request, and where
-        // there is nothing to read or change they can only ever be a promise
-        // paid for in advance. See `board::any_board`.
+        // A vault with no whiteboard in it is not told about `read_board`,
+        // the one board tool sent on every turn: there is nothing to read.
+        // The tools that draw are in a group that arrives only when asked
+        // for (`syn::toolset`), so they cost nothing until then — and hiding
+        // them too meant a first board could never be drawn: asked for a
+        // wireframe on a whiteboard, Syn found no whiteboard tool and said so
+        // (2026-11-19). See `board::any_board`.
         let boards = crate::syn::board::any_board(ctx.vault_path);
 
         crate::syn::tools::get_tool_definitions_for(&settings)
             .into_iter()
-            .filter(|definition| boards || !crate::syn::board::TOOLS.contains(&definition.function.name.as_str()))
+            .filter(|definition| boards || definition.function.name != "read_board")
             // Where the question came from. Left out rather than refused at call
             // time, for the reason above — and the engine refuses at call time
             // as well, for a model that asks by name anyway.

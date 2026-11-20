@@ -69,6 +69,7 @@ const marked = computed(() => {
       :d="s.data.svgPath"
       :transform="`translate(${s.position.x} ${s.position.y})`"
       :style="{ fill: paint(s.data.color) }"
+      :fill-rule="s.data.fillRule"
       :opacity="s.data.opacity ?? 0.85"
       @pointerdown="(e: PointerEvent) => emit('press', s.id, e)"
       @contextmenu.prevent.stop="(e: MouseEvent) => emit('menu', s.id, e)"

@@ -211,11 +211,13 @@ export function useBoardAssist(ctx: {
   }
 
   /** A diagram from a description, in the nearest clear space, and said so. */
-  function placeDiagram(answer: { title?: string; nodes: WBNode[]; edges: WBEdge[] }, area: Box) {
+  function placeDiagram(answer: { title?: string; nodes: WBNode[]; edges: WBEdge[]; mindmap?: boolean }, area: Box) {
     if (!answer.nodes?.length) return;
     const { w, h } = extentOf(answer.nodes);
     const at = freeSpot(area, w, h);
-    ctx.paste({ nodes: answer.nodes, edges: autoSides(answer.edges ?? []) }, at);
+    // A mind map's branches leave from the sides its tree says, not the ones
+    // that happen to face each other.
+    ctx.paste({ nodes: answer.nodes, edges: answer.mindmap ? answer.edges ?? [] : autoSides(answer.edges ?? []) }, at);
     ctx.notify(answer.title ? ctx.t('whiteboard.syn.drawn_titled', { title: answer.title }) : ctx.t('whiteboard.syn.drawn'), 'info');
   }
 

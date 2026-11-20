@@ -82,6 +82,38 @@ pub enum Check {
     AllUnder { prefix: &'static str, key: &'static str, expect: Expect },
     /// A node titled ~`title_has` whose body contains at least `n` of `words`.
     BodyHasAtLeast { title_has: &'static str, words: &'static [&'static str], n: usize },
+    /// A board drawn as a picture: at least `strokes` ink strokes in at least
+    /// `colours` colours, none of them a theme variable, and board text with
+    /// every one of `words`. What `draw_freely` leaves of a picture; boxes do not count.
+    Picture { strokes: usize, colours: usize, words: &'static [&'static str] },
+    /// A board titled ~`title_has` drawn on by hand: at least `strokes` ink
+    /// strokes, `stickies` sticky notes in `papers` colours, every one of
+    /// `words` in its text, notes or boxes, and — when given — its largest
+    /// stroke in this range of hue (degrees; `(345, 15)` wraps through red)
+    /// and painted first, under the rest. The last part since 2026-11-19: a
+    /// yellow background drawn over a whole picture passed as "the background
+    /// is yellow", with the cat it was asked to sit behind hidden under it.
+    Freehand {
+        title_has: &'static str,
+        strokes: usize,
+        stickies: usize,
+        papers: usize,
+        words: &'static [&'static str],
+        largest_hue: Option<(u16, u16)>,
+    },
+    /// No more boards than this in the vault: a change drawn onto the board,
+    /// not a new one beside it.
+    BoardsAtMost(usize),
+    /// A board titled ~`title_has` holds the app's own mind map — `mindmap`
+    /// items joined by branches, not boxes — of at least `ideas` ideas,
+    /// `depth` levels deep counting the centre; with `under`, an idea named
+    /// ~that has at least that many branches.
+    Mindmap { title_has: &'static str, ideas: usize, depth: usize, under: Option<(&'static str, usize)> },
+    /// On a board titled ~`title_has`, the mind-map idea named ~`label` is a
+    /// task, ticked (`done`) or not.
+    Ticked { title_has: &'static str, label: &'static str, done: bool },
+    /// A board titled ~`title_has` holds a mind map laid out this way.
+    MapLaidOut { title_has: &'static str, layout: &'static str },
     /// No board titled ~`title_has` shows this label any more.
     BoardLacks { title_has: &'static str, label: &'static str },
     /// At least `n` nodes have a title containing this.
@@ -165,7 +197,7 @@ fn fold(text: &str) -> String {
 /// Whether `text` contains `word`, ignoring case — and ignoring Vietnamese
 /// marks only when `word` has none. Folded both ways, "của" (of) reads as
 /// "cua" (crab) and an answer saying "của bạn" fails a check for crab; a word
-/// written with its marks is matched with them, the way `toolset::cues` does.
+/// written with its marks is matched with them.
 fn has(text: &str, word: &str) -> bool {
     // The punctuation a model emits, folded to what a check is written with:
     // `couldn’t` with U+2019 is `couldn't`. `rag.rs`'s scorer met the same.
@@ -347,6 +379,148 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
                 .any(|d| has(d, title_has) && labels.iter().all(|l| has(d, l)))
                 .then_some(())
                 .ok_or_else(|| format!("no board ~{title_has:?} showing {labels:?}"))
+        }
+        Check::Picture { strokes, colours, words } => {
+            let found: Vec<(String, crate::syn::board::Board)> = boards(e.vault);
+            let mut said = Vec::new();
+            for (name, b) in &found {
+                let ink: Vec<&crate::syn::board::Item> = b.nodes.iter().filter(|n| n.kind == "stroke").collect();
+                let hues: std::collections::BTreeSet<String> = ink
+                    .iter()
+                    .filter_map(|n| n.data.get("color").and_then(|c| c.as_str()))
+                    .filter(|c| c.starts_with('#'))
+                    .map(str::to_lowercase)
+                    .collect();
+                let text: String = b
+                    .nodes
+                    .iter()
+                    .filter(|n| n.kind == "text")
+                    .filter_map(|n| n.data.get("label").and_then(|l| l.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if ink.len() >= *strokes && hues.len() >= *colours && words.iter().all(|w| has(&text, w)) {
+                    return Ok(());
+                }
+                said.push(format!("{name}: {} strokes, {} colours, text {:?}", ink.len(), hues.len(), text));
+            }
+            Err(format!("no picture of ≥{strokes} strokes in ≥{colours} colours with {words:?} ({})", said.join("; ")))
+        }
+        Check::Mindmap { title_has, ideas, depth, under } => {
+            let mut said = Vec::new();
+            for (name, b) in boards(e.vault) {
+                if !has(&b.title, title_has) {
+                    continue;
+                }
+                let kids = crate::syn::mindmap::children(&b);
+                for root in crate::syn::mindmap::roots(&b) {
+                    let (mut count, mut deepest) = (0usize, 0usize);
+                    let mut seen = std::collections::HashSet::new();
+                    let mut stack = vec![(root.clone(), 1usize)];
+                    while let Some((id, d)) = stack.pop() {
+                        if !seen.insert(id.clone()) {
+                            continue;
+                        }
+                        count += 1;
+                        deepest = deepest.max(d);
+                        for k in kids.get(&id).map(Vec::as_slice).unwrap_or_default() {
+                            stack.push((k.clone(), d + 1));
+                        }
+                    }
+                    let grown = under.is_none_or(|(label, n)| {
+                        b.nodes.iter().any(|item| {
+                            item.kind == "mindmap"
+                                && seen.contains(&item.id)
+                                && has(item.label(), label)
+                                && kids.get(&item.id).map_or(0, Vec::len) >= n
+                        })
+                    });
+                    if count >= *ideas && deepest >= *depth && grown {
+                        return Ok(());
+                    }
+                    if count > 1 {
+                        said.push(format!("{name}: a map of {count} ideas, {deepest} deep{}", if grown { "" } else { ", not grown where asked" }));
+                    }
+                }
+            }
+            Err(format!("no mind map ~{title_has:?} of ≥{ideas} ideas, ≥{depth} deep, {under:?} ({})", said.join("; ")))
+        }
+        Check::MapLaidOut { title_has, layout } => {
+            let found: Vec<String> = boards(e.vault)
+                .into_iter()
+                .filter(|(_, b)| has(&b.title, title_has))
+                .flat_map(|(_, b)| crate::syn::mindmap::roots(&b).into_iter().map(move |r| crate::syn::mindmap::layout_of(&b, &r).to_string()).collect::<Vec<_>>())
+                .collect();
+            found.iter().any(|l| l == layout).then_some(()).ok_or_else(|| format!("no mind map laid out {layout:?} (found {found:?})"))
+        }
+        Check::Ticked { title_has, label, done } => {
+            let mut said = Vec::new();
+            for (name, b) in boards(e.vault) {
+                if !has(&b.title, title_has) {
+                    continue;
+                }
+                for n in b.nodes.iter().filter(|n| n.kind == "mindmap" && has(n.label(), label)) {
+                    let task = n.data.get("task").and_then(|v| v.as_bool()) == Some(true);
+                    let ticked = n.data.get("done").and_then(|v| v.as_bool()) == Some(true);
+                    if task && ticked == *done {
+                        return Ok(());
+                    }
+                    said.push(format!("{name}: {:?} task {task}, done {ticked}", n.label()));
+                }
+            }
+            Err(format!("no mind-map task ~{label:?} {} on ~{title_has:?} ({})", if *done { "ticked" } else { "unticked" }, said.join("; ")))
+        }
+        Check::Freehand { title_has, strokes, stickies, papers, words, largest_hue } => {
+            let mut said = Vec::new();
+            for (name, b) in boards(e.vault) {
+                if !has(&b.title, title_has) {
+                    continue;
+                }
+                let ink: Vec<&crate::syn::board::Item> = b.nodes.iter().filter(|n| n.kind == "stroke").collect();
+                let notes: Vec<&crate::syn::board::Item> = b.nodes.iter().filter(|n| n.kind == "sticky").collect();
+                let colours: std::collections::BTreeSet<&str> =
+                    notes.iter().map(|n| n.data.get("color").and_then(|c| c.as_str()).unwrap_or("yellow")).collect();
+                let text: String = b
+                    .nodes
+                    .iter()
+                    .filter(|n| matches!(n.kind.as_str(), "text" | "sticky" | "shape"))
+                    .map(|n| n.label())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let biggest = ink.iter().max_by(|a, b| (a.width() * a.height()).total_cmp(&(b.width() * b.height())));
+                let underneath = biggest.zip(ink.first()).is_some_and(|(b, first)| b.id == first.id);
+                let largest = biggest
+                    .and_then(|n| n.data.get("color").and_then(|c| c.as_str()))
+                    .and_then(hue_of);
+                let hue_ok = match largest_hue {
+                    None => true,
+                    Some(_) if !underneath => false,
+                    Some((from, to)) => largest.is_some_and(|h| {
+                        if from <= to { (*from..=*to).contains(&h) } else { h >= *from || h <= *to }
+                    }),
+                };
+                if ink.len() >= *strokes
+                    && notes.len() >= *stickies
+                    && colours.len() >= *papers
+                    && words.iter().all(|w| has(&text, w))
+                    && hue_ok
+                {
+                    return Ok(());
+                }
+                said.push(format!(
+                    "{name}: {} strokes, {} notes in {} colours, largest hue {largest:?} (underneath: {underneath}), text {:?}",
+                    ink.len(),
+                    notes.len(),
+                    colours.len(),
+                    text.chars().take(200).collect::<String>()
+                ));
+            }
+            Err(format!("no board ~{title_has:?} drawn as asked ({})", said.join("; ")))
+        }
+        Check::BoardsAtMost(n) => {
+            let found = boards(e.vault);
+            (found.len() <= *n)
+                .then_some(())
+                .ok_or_else(|| format!("{} boards, wanted at most {n}: {:?}", found.len(), found.iter().map(|(_, b)| &b.title).collect::<Vec<_>>()))
         }
         Check::MemoryHas(words) => {
             let state = e.vault.db();
@@ -591,6 +765,144 @@ pub fn check(c: &Check, e: &Evidence) -> Result<(), String> {
 }
 
 /// The HTML of every visual kept in the vault, oldest first.
+/// A colour's hue in degrees, for one with colour enough to have one.
+fn hue_of(hex: &str) -> Option<u16> {
+    let h = hex.trim().trim_start_matches('#');
+    if h.len() != 6 {
+        return None;
+    }
+    let c = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).ok().map(|v| v as f64 / 255.0);
+    let (r, g, b) = (c(0)?, c(2)?, c(4)?);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let d = max - min;
+    // Grey, near-white and near-black have no hue worth naming.
+    if d < 0.15 || max < 0.2 {
+        return None;
+    }
+    let hue = if max == r {
+        60.0 * (((g - b) / d).rem_euclid(6.0))
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    Some(hue.round() as u16 % 360)
+}
+
+/// Every board in the vault, by file name, as `read_board` would load it.
+pub fn boards(vault: &Vault) -> Vec<(String, crate::syn::board::Board)> {
+    let dir = std::path::Path::new(&vault.path).join(crate::syn::board::BOARDS_DIR);
+    let mut found: Vec<(String, crate::syn::board::Board)> = std::fs::read_dir(&dir)
+        .map(|it| {
+            it.flatten()
+                .filter_map(|f| {
+                    let name = f.file_name().to_string_lossy().to_string();
+                    let text = std::fs::read_to_string(f.path()).ok()?;
+                    Some((name, serde_json::from_str(&text).ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// A board drawn roughly the way the Whiteboard draws it, as one SVG — ink,
+/// text, sticky notes and boxes, not lines — to look at what a trial drew
+/// after its vault is gone.
+pub fn board_svg(board: &crate::syn::board::Board) -> Option<String> {
+    let num = |d: &serde_json::Map<String, serde_json::Value>, k: &str| d.get(k).and_then(|v| v.as_f64());
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    let mut ink = Vec::new();
+    let mut words = Vec::new();
+    for n in &board.nodes {
+        let (x, y) = (n.position.x, n.position.y);
+        let w = num(&n.data, "width").unwrap_or(0.0);
+        let h = num(&n.data, "height").unwrap_or(num(&n.data, "fontSize").unwrap_or(16.0) * 1.5 + 16.0);
+        match n.kind.as_str() {
+            "stroke" => {
+                let d = n.data.get("svgPath").and_then(|v| v.as_str()).unwrap_or("");
+                let c = n.data.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
+                let o = num(&n.data, "opacity").unwrap_or(0.85);
+                let rule = n.data.get("fillRule").and_then(|v| v.as_str()).unwrap_or("nonzero");
+                ink.push(format!(
+                    r#"<path transform="translate({x} {y})" d="{}" fill="{}" fill-opacity="{o}" fill-rule="{rule}"/>"#,
+                    esc(d),
+                    esc(c)
+                ));
+            }
+            "text" => {
+                let size = num(&n.data, "fontSize").unwrap_or(16.0);
+                let c = n.data.get("color").and_then(|v| v.as_str()).unwrap_or("#111");
+                let label = n.data.get("label").and_then(|v| v.as_str()).unwrap_or("").replace('\\', "");
+                let anchor = match n.data.get("textAlign").and_then(|v| v.as_str()) {
+                    Some("center") => ("middle", x + w / 2.0),
+                    Some("right") => ("end", x + w - 12.0),
+                    _ => ("start", x + 12.0),
+                };
+                words.push(format!(
+                    r#"<text x="{}" y="{}" font-size="{size}" fill="{}" text-anchor="{}" font-family="-apple-system,sans-serif">{}</text>"#,
+                    anchor.1,
+                    y + 8.0 + size,
+                    esc(c),
+                    anchor.0,
+                    esc(&label)
+                ));
+            }
+            "sticky" | "shape" => {
+                let fill = if n.kind == "sticky" {
+                    match n.data.get("color").and_then(|v| v.as_str()).unwrap_or("yellow") {
+                        "orange" => "#fed7aa",
+                        "pink" => "#fbcfe8",
+                        "purple" => "#ddd6fe",
+                        "blue" => "#bfdbfe",
+                        "green" => "#bbf7d0",
+                        "gray" => "#e5e7eb",
+                        _ => "#fef08a",
+                    }
+                    .to_string()
+                } else {
+                    n.data.get("fillColor").and_then(|v| v.as_str()).unwrap_or("none").to_string()
+                };
+                let line = n.data.get("color").and_then(|v| v.as_str()).filter(|_| n.kind == "shape").unwrap_or("none");
+                let round = if n.data.get("shapeType").and_then(|v| v.as_str()).is_some_and(|k| k.contains("ellipse") || k == "circle") { w / 2.0 } else { 6.0 };
+                let turn = n.data.get("rotation").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                let label = n.label().replace('\n', " ");
+                words.push(format!(
+                    r##"<g transform="rotate({turn} {} {})"><rect x="{x}" y="{y}" width="{w}" height="{h}" rx="{round}" fill="{}" stroke="{}"/><text x="{}" y="{}" font-size="14" text-anchor="middle" fill="#1f2937" font-family="-apple-system,sans-serif">{}</text></g>"##,
+                    x + w / 2.0,
+                    y + h / 2.0,
+                    esc(&fill),
+                    esc(line),
+                    x + w / 2.0,
+                    y + h / 2.0 + 5.0,
+                    esc(&label.chars().take(40).collect::<String>())
+                ));
+            }
+            _ => continue,
+        }
+        x0 = x0.min(x);
+        y0 = y0.min(y);
+        x1 = x1.max(x + w);
+        y1 = y1.max(y + h);
+    }
+    if ink.is_empty() && words.is_empty() {
+        return None;
+    }
+    Some(format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="{} {} {} {}" width="{}" height="{}" style="background:#fff">{}{}</svg>"#,
+        x0 - 20.0,
+        y0 - 20.0,
+        x1 - x0 + 40.0,
+        y1 - y0 + 40.0,
+        x1 - x0 + 40.0,
+        y1 - y0 + 40.0,
+        ink.join(""),
+        words.join("")
+    ))
+}
+
 pub fn visuals(vault: &Vault) -> Vec<String> {
     kept_visuals(vault).into_iter().map(|v| v.html).collect()
 }
