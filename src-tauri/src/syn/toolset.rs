@@ -14,22 +14,29 @@
 //!
 //! # Who decides a group is wanted
 //!
-//! Rust, first. This codebase has measured what happens when the model has to
-//! think of reaching for something it was not shown: `recall` was called in
-//! none of fifteen runs, skills were loaded in none of seventeen. So the
-//! question is read before the model sees it (`for_question`), the same way
-//! `tempo`, `timeline::asked` and `skill::chosen_for` read it: a question
-//! about money brings the finance tools, one about last week brings the
-//! timeline, one naming a connected server brings that server's tools.
+//! The model. `find_tools` is in the core, and its description names every
+//! group with what it is for (`description`), so the model sees the whole
+//! menu on every turn and loads what the question needs. A tool the model
+//! calls by name — the prompt still names several — runs whether or not it
+//! was sent, and brings its group for the rest of the run.
 //!
-//! The model, second: `find_tools` names every group and loads one, for the
-//! question the words did not give away. And a tool the model calls by name
-//! — the prompt still names several — runs whether or not it was sent, and
-//! brings its group for the rest of the run.
+//! Until 2026-11-18 Rust read the question first, against lists of words per
+//! group, because `recall` had been called in none of fifteen runs and skills
+//! loaded in none of seventeen when the model had to think of reaching for
+//! something it was not shown. Then `find_tools` named eight groups out of
+//! seventeen, and the rest were invisible unless the words gave them away.
+//! The lists were the wrong fix: they missed what was said another way ("làm
+//! video nhẹ đi", "ghép mấy tấm ảnh") and loaded groups for words that meant
+//! something else, and every new group needed another list. Naming every
+//! group costs about two thousand characters, which the budget was raised to
+//! hold.
+//!
+//! One thing is still read off the question: a connected server it names
+//! (`named_in`). That is the server's own name, not a list anyone keeps.
 //!
 //! A group once loaded stays loaded for the run. A run that has used the
 //! finance tools will likely use them again, and taking them away between
-//! rounds would make the second use depend on the words a second time.
+//! rounds would make the second use depend on the model asking a second time.
 
 use std::collections::BTreeSet;
 
@@ -67,8 +74,6 @@ pub enum Group {
     Writes,
     /// Syn writing a connector: `connector_draft`, `connector_connect`.
     Authoring,
-    /// Syn writing down a way of doing a job, for the person to keep.
-    Skills,
     /// Syn writing something to do on its own — at a time, or when something
     /// new comes in — for the person to turn on.
     Jobs,
@@ -103,7 +108,6 @@ impl Group {
             Group::Compute => "compute".into(),
             Group::Writes => "writes".into(),
             Group::Authoring => "authoring".into(),
-            Group::Skills => "skills".into(),
             Group::Jobs => "jobs".into(),
             Group::Visuals => "visuals".into(),
             Group::Machine => "machine".into(),
@@ -129,7 +133,6 @@ impl Group {
             "compute" => Group::Compute,
             "writes" => Group::Writes,
             "authoring" => Group::Authoring,
-            "skills" => Group::Skills,
             "jobs" => Group::Jobs,
             "visuals" => Group::Visuals,
             "machine" => Group::Machine,
@@ -164,7 +167,6 @@ impl Group {
             Group::Writes => "a plan of sends to connectors for the user to approve (propose_writes)".into(),
             Group::Authoring => "connect to a new service: draft a connector from its API or OpenAPI spec, and ask the user to approve it".into(),
             Group::Jobs => "set up something Syn does on its own — at a time, or when a connected service brings something new (a routine), for the user to turn on".into(),
-            Group::Skills => "write down a way of doing a job so it is done the same way next time (a skill), for the user to keep".into(),
             Group::Machine => "this Mac, outside the vault: find a file by name anywhere in the person's folders, and how the battery, disk and memory are doing".into(),
             Group::Room => "a sealed room on this Mac with a real shell and no network: run python, ffmpeg, sqlite3 and other programs on copies of vault files — anything the utilities group cannot do to a video or a file, work through a large CSV, make a file, read a folder on this Mac the user opens to it — and keep the result in the vault; and delegate_out, a helper with a shell and the Internet, to download public data into the room".into(),
             Group::Utilities => if cfg!(target_os = "macos") {
@@ -194,222 +196,66 @@ pub fn group_of(tool: &str) -> Group {
     crate::syn::policy::of(tool).map_or(Group::Core, |p| p.group.group())
 }
 
-/// Words that bring a group, written as a person types them.
+/// The groups `find_tools` names, in the order it names them.
 ///
-/// With their marks, because folding them away makes Vietnamese words collide:
-/// "tiền" (money) and "tiện" (handy) are both `tien`, and "tiện thể ghi lại"
-/// is not a question about money. A question typed with marks is matched with
-/// marks; one typed without any — which people do — is matched folded, where
-/// the collision is the question's own and nothing better is possible.
-fn cues(group: &Group) -> &'static [&'static str] {
-    match group {
-        Group::Machine => &[
-            "trên máy", "máy tính", "máy mình", "máy tôi", "máy tao", "máy tớ", "macbook", "my mac",
-            "this mac", "my computer", "this computer", "my laptop", "downloads", "thư mục tải",
-            "battery", "còn pin", "hết pin", "bao nhiêu pin", "pin yếu", "disk space", "free space",
-            "dung lượng", "ổ đĩa", "ổ cứng", "ram", "finder", "mở file", "mở giúp", "mở tài liệu", "open the file",
-            "open it", "show me where", "show it in", "hiện ra", "nằm ở đâu",
-        ],
-        Group::Room => &[
-            "chạy lệnh", "chạy thử", "chạy script", "viết script", "dòng lệnh", "terminal", "shell",
-            "python", "ffmpeg", "sqlite", "nén video", "cắt video", "chuyển định dạng", "đổi định dạng",
-            "run a command", "run this", "run a script", "write a script", "command line", "compress",
-            "convert", "transcode", "large csv", "csv lớn", "file csv", "phân tích file",
-            "trên máy", "on my mac", "on this mac", "my documents", "downloads", "desktop",
-            "tải về", "tải file", "tải dữ liệu", "dữ liệu công khai", "download", "dataset", "public data",
-            "open data", "api công khai", "public api", "bộ dữ liệu", "tải giúp", "tải xuống", ".csv",
-            "github", "repository",
-        ],
-        Group::Finance => &[
-            "tiền", "chi tiêu", "tiêu", "thu nhập", "lương", "giao dịch", "ngân sách", "tài khoản",
-            "số dư", "tài chính", "vnd", "triệu", "hoá đơn", "hóa đơn", "thanh toán", "spend",
-            "spent", "expense", "expenses", "budget", "income", "salary", "transaction",
-            "transactions", "balance", "money", "finance", "paid", "bill",
-        ],
-        Group::Feeds => &[
-            "feed", "feeds", "rss", "bài báo", "bài viết", "tin tức", "đọc báo", "article",
-            "articles", "news", "newsletter",
-        ],
-        Group::Files => &[
-            "file", "files", "tệp", "pdf", "docx", "word", "excel", "xlsx", "xls", "csv", "ods",
-            "bảng tính", "spreadsheet", "tài liệu", "document", "attachment", "đính kèm",
-            "sheet", "google sheet", "điền vào", "thư mục", "folder",
-        ],
-        Group::Boards => &[
-            "whiteboard", "board", "bảng trắng", "sơ đồ", "mindmap", "mind map", "diagram", "vẽ",
-            "draw", "canvas", "flowchart", "lưu đồ", "kiến trúc", "architecture",
-        ],
-        Group::Timeline => &[
-            "hôm qua", "tuần trước", "tháng trước", "năm ngoái", "năm trước", "dạo này", "gần đây",
-            "timeline", "dòng thời gian", "lúc đó", "khi nào", "ngày nào", "yesterday", "last week",
-            "last month", "last year", "recently", "when did", "what happened",
-        ],
-        Group::History => &[
-            "khôi phục", "thùng rác", "phục hồi", "phiên bản", "hoàn tác", "lấy lại", "undo",
-            "restore", "trash", "version", "versions", "revert", "deleted",
-        ],
-        Group::Structure => &[
-            "đổi tên trường", "xoá trường", "xóa trường", "đổi tên loại", "xoá loại", "xóa loại",
-            "rename field", "delete field", "rename kind", "delete kind", "rename type",
-        ],
-        Group::Past => &[
-            "lần trước", "trước đây", "bạn đã nói", "hôm trước", "bạn nói", "earlier", "last time",
-            "you said", "you told", "you answered", "nhớ lại", "có nhớ", "còn nhớ",
-            "do you remember", "my preference", "sở thích",
-        ],
-        Group::Safe => &[
-            "mật khẩu", "khoá", "khóa", "api key", "token", "secret", "safe", "đăng nhập", "tài khoản",
-            "password", "passwords", "key", "keys", "credential", "credentials", "login", "api",
-        ],
-        // Not "hàng" or "dòng" alone: "cửa hàng" is a shop, "hàng ngày" is
-        // daily, "dòng thời gian" is a timeline. A row is asked for with a
-        // verb in front of it, or with the table named.
-        Group::Tables => &[
-            "bảng", "cột", "thêm hàng", "thêm một hàng", "thêm dòng", "thêm một dòng", "xoá hàng",
-            "xóa hàng", "xoá dòng", "xóa dòng", "sửa hàng", "sửa dòng", "vào bảng", "trong bảng",
-            "table", "tables", "row", "rows", "column", "columns",
-        ],
-        // Never by the question's words: `crunch` can do nothing until a table
-        // exists, and a table existing is what brings it (`brought_by`).
-        Group::Authoring => &[
-            "kết nối với", "nối với", "nối syn", "tích hợp", "connector", "openapi", "kết nối tới", "connect to",
-            "integrate", "integration", "hook up",
-        ],
-        // Asking for a way of working to be kept: "from now on, whenever…".
-        Group::Skills => &[
-            "từ giờ", "từ nay", "mỗi khi", "mỗi lần", "lần sau", "kỹ năng", "cách làm", "quy trình",
-            "nhớ cách", "làm như vậy", "skill", "skills", "whenever", "every time", "from now on",
-            "next time", "procedure", "the way you did",
-        ],
-        // Asking for something done without being asked each time.
-        Group::Jobs => &[
-            "mỗi sáng", "mỗi tối", "mỗi ngày", "hàng ngày", "hằng ngày", "mỗi tuần", "hàng tuần",
-            "hằng tuần", "định kỳ", "mỗi thứ", "khi có", "tự động", "every morning", "every evening",
-            "every day", "daily", "every week", "weekly", "every monday", "routine", "on a schedule",
-            "automatically", "whenever a new",
-        ],
-        // Asking to see something rather than read it. Not "giải thích" or
-        // "explain" alone: most answers explain, and most are words.
-        Group::Visuals => &[
-            "mô phỏng", "minh họa", "minh hoạ", "trực quan", "hình dung", "biểu đồ", "đồ thị", "tương tác",
-            "cho tao xem", "cho mình xem", "cho tôi xem", "visualize", "visualise", "visualization", "simulate",
-            "simulation", "interactive", "show me", "chart", "graph", "plot", "animate", "animation",
-        ],
-        // What people ask Utilities for, by what they want done to a file.
-        Group::Utilities => &[
-            "gộp pdf", "ghép pdf", "nối pdf", "tách pdf", "chia pdf", "cắt pdf", "xoay pdf", "xoay trang", "sắp xếp trang",
-            "xoá trang", "xóa trang", "bỏ trang", "đánh số trang", "số trang", "khổ a4", "sang pdf", "ra pdf", "thành pdf",
-            "chuyển pdf", "pdf sang word", "pdf ra word", "word sang pdf", "excel sang pdf", "nén video", "giảm dung lượng",
-            "cắt video", "cắt đoạn", "ghép video", "nối video", "xoay video", "tắt tiếng", "bỏ tiếng", "tách âm thanh",
-            "tách nhạc", "làm gif", "ảnh gif", "chụp khung hình", "cắt nhạc", "cắt âm thanh", "ghép nhạc", "nối nhạc",
-            "chuẩn hoá âm lượng", "chuẩn hóa âm lượng", "âm lượng", "chỉnh tiếng", "remove silence", "mute the video", "lọc ồn", "lọc tiếng ồn",
-            "khử ồn", "khoảng lặng", "tăng tốc", "giảm tốc", "nhạc chuông", "đổi định dạng", "chuyển định dạng",
-            "mp3", "m4a", "mp4", "tiện ích", "utilities", "merge pdf", "combine pdf", "split pdf", "rotate pdf",
-            "page numbers", "number the pages", "to pdf", "pdf to word", "compress video", "trim video", "cut video",
-            "join video", "rotate video", "extract audio", "make a gif", "ringtone", "normalize", "loudness",
-            "denoise", "background noise", "speed up", "slow down", "gps", "exif", "vị trí ảnh",
-        ],
-        Group::Core | Group::Connector(_) | Group::Compute | Group::Writes => &[],
-    }
-}
-
-/// What is done to a file, and the kinds of file it is done to: one of each
-/// in a question brings the Utilities tools.
-const UTILITY_VERBS: &[&str] = &[
-    "gộp", "ghép", "nối", "tách", "chia", "xoay", "nén", "cắt", "đánh số", "chuyển", "đổi", "chuẩn hoá", "chuẩn hóa",
-    "lọc", "tăng tốc", "làm chậm", "tắt tiếng", "merge", "combine", "split", "rotate", "compress", "trim", "cut",
-    "convert", "join", "extract", "shrink", "speed",
-];
-const UTILITY_KINDS: &[&str] = &[
-    "pdf", "pdfs", "video", "videos", "clip", "mp3", "mp4", "mov", "nhạc", "âm thanh", "ghi âm", "audio", "podcast", "word", "docx",
-    "excel", "powerpoint", "pptx", "jpg", "jpeg", "gif", "voice", "recording",
-];
-
-/// Cues matched only as typed, with their marks.
-///
-/// Folded, each is a commoner word: "bảng" (table) is `bang`, which is also
-/// "bằng" (by, with — "bằng cách nào"); "cột" is `cot`, also "cốt". A question
-/// typed without marks reaches a table through the longer cues instead —
-/// "vào bảng", "thêm hàng" — which fold into nothing else.
-const MARKED_ONLY: &[&str] = &["bảng", "cột"];
-
-/// Whether the text carries any Vietnamese marks at all.
-fn has_marks(text: &str) -> bool {
-    fold(text) != text.to_lowercase()
-}
-
-/// The groups a question brings, read from its words.
-///
-/// `servers` are the connected connectors' slugs and names: a question that
-/// names one brings its tools.
-pub fn for_question(question: &str, servers: &[(String, String)]) -> BTreeSet<Group> {
-    // Matched as typed when it was typed with marks; folded when it was not.
-    let marked = has_marks(question);
-    let shape = |text: &str| if marked { text.to_lowercase() } else { fold(text) };
-    let asked = shape(question);
-    let words: BTreeSet<&str> = asked
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .collect();
-    let said = |cue: &str| {
-        if !marked && MARKED_ONLY.contains(&cue) {
-            return false;
-        }
-        let cue = shape(cue);
-        if cue.contains(' ') {
-            asked.contains(&cue)
-        } else {
-            words.contains(cue.as_str())
-        }
-    };
-
-    let mut groups = BTreeSet::from([Group::Core]);
-    for group in [
+/// Every group but the core and the two that come on their own: `compute`
+/// once a result carries a table (`brought_by`), `writes` with a connector
+/// tool that sends. Connectors are named apart, by `naming_servers`. The
+/// machine and the room are macOS only.
+pub fn listed() -> Vec<Group> {
+    let mut groups = vec![
+        Group::Files,
+        Group::Utilities,
         Group::Finance,
         Group::Feeds,
-        Group::Files,
         Group::Boards,
+        Group::Tables,
         Group::Timeline,
         Group::History,
         Group::Structure,
         Group::Past,
         Group::Safe,
-        Group::Tables,
-        Group::Authoring,
-        Group::Skills,
-        Group::Jobs,
         Group::Visuals,
-        Group::Machine,
-        Group::Room,
-        Group::Utilities,
-    ] {
-        if matches!(group, Group::Machine | Group::Room) && !cfg!(target_os = "macos") {
-            continue;
-        }
-        if cues(&group).iter().any(|cue| said(cue)) {
-            groups.insert(group);
-        }
+        Group::Jobs,
+        Group::Authoring,
+    ];
+    if cfg!(target_os = "macos") {
+        groups.extend([Group::Machine, Group::Room]);
     }
-    // Or a thing done to a kind of file, with words between: "gộp 2 file pdf
-    // hợp đồng", "nén giúp cái video quay hôm qua".
-    if UTILITY_VERBS.iter().any(|v| said(v))
-        && UTILITY_KINDS.iter().any(|k| said(k))
-    {
-        groups.insert(Group::Utilities);
-    }
-    // A file to work on is found with search_files: asking for a tool on it
-    // brings the way to find it.
-    if groups.contains(&Group::Utilities) {
-        groups.insert(Group::Files);
-    }
+    groups
+}
+
+/// `find_tools`'s description: what it does, and every group in `groups`
+/// with what it is for, one to a line.
+pub fn description(groups: &[Group]) -> String {
+    let menu: String = groups.iter().map(|g| format!("\n- {}: {}", g.name(), g.about())).collect();
+    format!(
+        "Load more tools. Before saying you cannot do something, see whether a group below does it. \
+         Pass a group's name, or what you need; the tools arrive on your next step. Groups:{menu}\n\
+         - connector:<server>: a connected server's tools."
+    )
+}
+
+/// The connected servers a question names, whose tools it brings.
+///
+/// `servers` are the connected connectors' slugs and names. Read off the
+/// question because a person who says "Jira" means the Jira they connected,
+/// and the name is the server's own: nobody keeps a list of it.
+pub fn named_in(question: &str, servers: &[(String, String)]) -> BTreeSet<Group> {
+    let asked = fold(question);
+    let words: BTreeSet<&str> = asked
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut groups = BTreeSet::from([Group::Core]);
     for (slug, name) in servers {
         // "Thời tiết (Open-Meteo)" is asked for as "thời tiết": the name without
         // what is in brackets counts as saying it.
         let short = name.split('(').next().unwrap_or(name).trim().to_string();
-        let name = shape(name);
-        let short = shape(&short);
+        let name = fold(name);
+        let short = fold(&short);
         let named = |n: &str| n.trim().chars().count() >= 3 && asked.contains(n.trim());
-        if said(slug) || named(&name) || named(&short) {
+        if words.contains(fold(slug).as_str()) || named(&name) || named(&short) {
             groups.insert(Group::Connector(slug.clone()));
         }
     }
@@ -440,28 +286,57 @@ pub fn naming_servers(description: &str, servers: &[(String, String)]) -> String
 
 /// The groups `find_tools` loads for what the model asked it.
 ///
-/// A group named exactly, or every group whose name or description shares a
-/// word with the query.
+/// The groups it names — one, or several as "utilities, files" — and every
+/// group whose name or description shares a word with the rest of what it
+/// asked for: "finance summary; chart visualization" names finance and wants
+/// a visual. Utilities brings files with it: a file to work on is found with
+/// `search_files`.
 pub fn found(query: &str, known: &[Group]) -> Vec<Group> {
-    if let Some(group) = Group::from_name(query).filter(|g| known.contains(g)) {
-        return vec![group];
-    }
-    let wanted: BTreeSet<String> = fold(query)
+    let named = |word: &str| Group::from_name(word).filter(|g| known.contains(g) && *g != Group::Core);
+    let (names, rest): (Vec<&str>, Vec<&str>) = query.split([',', ';', ' ', '\n']).partition(|w| named(w).is_some());
+    let mut got: Vec<Group> = names.into_iter().filter_map(named).collect();
+    // What is left once the names are taken out: "connector:jira" names a
+    // server and is not a word about writing connectors.
+    let wanted: BTreeSet<String> = fold(&rest.join(" "))
         .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() >= 3)
-        .map(str::to_string)
+        .filter(|w| w.len() >= 3 && !FILLER.contains(w))
+        .map(one)
         .collect();
-    known
-        .iter()
-        .filter(|g| **g != Group::Core)
-        .filter(|g| {
-            let said = fold(&format!("{} {}", g.name(), g.about()));
-            said.split(|c: char| !c.is_alphanumeric()).any(|w| wanted.contains(w))
-                || for_question(query, &[]).contains(g)
-        })
-        .cloned()
-        .collect()
+    got.extend(
+        known
+            .iter()
+            .filter(|g| **g != Group::Core)
+            .filter(|g| {
+                let said = fold(&format!("{} {}", g.name(), g.about()));
+                said.split(|c: char| !c.is_alphanumeric()).any(|w| wanted.contains(&one(w)))
+            })
+            .cloned(),
+    );
+    if got.contains(&Group::Utilities) && known.contains(&Group::Files) {
+        got.push(Group::Files);
+    }
+    let mut seen = BTreeSet::new();
+    got.retain(|g| seen.insert(g.clone()));
+    got
 }
+
+/// A word as one of it: "whiteboard" was asked for and "whiteboards" is what
+/// the boards group says, and the two did not match — Syn asked twice in one
+/// turn and was told nothing matched. English plurals only, which is what the
+/// descriptions are written in.
+fn one(word: &str) -> String {
+    match word.strip_suffix('s') {
+        Some(stem) if stem.len() >= 3 && !stem.ends_with('s') => stem.to_string(),
+        _ => word.to_string(),
+    }
+}
+
+/// Words every description has, which match a query to every group: "tools
+/// for the video" is about the video.
+const FILLER: &[&str] = &[
+    "the", "and", "for", "with", "you", "your", "what", "any", "all", "are", "can", "from", "that", "this", "its", "not",
+    "out", "tool", "tools", "need", "want", "into", "how", "one", "use", "user",
+];
 
 /// A group a tool's result makes worth sending for the rest of the run.
 ///
@@ -484,7 +359,7 @@ mod tests {
     use super::*;
 
     fn groups(q: &str) -> Vec<String> {
-        for_question(q, &[("jira".into(), "Jira".into())]).iter().map(Group::name).collect()
+        named_in(q, &[("jira".into(), "Jira".into())]).iter().map(Group::name).collect()
     }
 
     #[test]
@@ -501,63 +376,64 @@ mod tests {
         );
     }
 
+    /// No list of words decides: what a question says another way is the
+    /// model's to load, from the menu `find_tools` carries.
     #[test]
-    fn a_plain_question_is_sent_the_core_only() {
-        assert_eq!(groups("Tóm tắt note họp hôm nay"), vec!["core"]);
-        assert_eq!(groups("What are my tasks today?"), vec!["core"]);
-    }
-
-    #[test]
-    fn the_words_bring_their_tools() {
-        assert!(groups("Tháng này tôi tiêu bao nhiêu tiền?").contains(&"finance".into()));
-        assert!(groups("how much did I spend on food").contains(&"finance".into()));
-        assert!(groups("Có bài báo nào hay trên feed không").contains(&"feeds".into()));
-        assert!(groups("đọc file excel báo cáo").contains(&"files".into()));
-        assert!(groups("vẽ sơ đồ kiến trúc").contains(&"boards".into()));
-        assert!(groups("tuần trước tôi làm gì").contains(&"timeline".into()));
-        assert!(groups("khôi phục note vừa xoá").contains(&"history".into()));
-        assert!(groups("lần trước bạn nói gì về FPT").contains(&"past".into()));
-    }
-
-    /// Asking for what Utilities does brings it, and the way to find the file.
-    #[test]
-    fn asking_for_a_utility_brings_it_with_files() {
+    fn the_words_bring_no_group_of_their_own() {
         for q in [
+            "Tóm tắt note họp hôm nay",
+            "Tháng này tôi tiêu bao nhiêu tiền?",
             "gộp 2 file pdf hợp đồng lại",
-            "nén video quay hôm qua cho nhẹ",
-            "cắt nhạc làm nhạc chuông iphone",
-            "chuẩn hoá âm lượng file podcast",
-            "merge these PDFs",
-            "chuyen word sang pdf giup",
+            "làm cái video này nhẹ đi",
+            "tuần trước tôi làm gì",
         ] {
-            let got = groups(q);
-            assert!(got.contains(&"utilities".into()) && got.contains(&"files".into()), "{q}: {got:?}");
+            assert_eq!(groups(q), vec!["core"], "{q}");
         }
-        assert!(!groups("cái nào to hơn").contains(&"utilities".into()));
+    }
+
+    /// Every group the model can load is on the menu, with what it is for.
+    #[test]
+    fn find_tools_names_every_group() {
+        let said = description(&listed());
+        for g in listed() {
+            assert!(said.contains(&format!("\n- {}: {}", g.name(), g.about())), "{} is not named", g.name());
+        }
+        assert!(said.contains("connector:<server>"));
+        assert!(!listed().contains(&Group::Core));
+        assert!(!listed().contains(&Group::Compute) && !listed().contains(&Group::Writes));
         assert_eq!(Group::from_name("utilities"), Some(Group::Utilities));
         assert_eq!(group_of(crate::syn::utility::TOOL), Group::Utilities);
     }
 
-    /// A word inside another is not the word: "tiền" is not in "tiện".
+    /// Several named at once are all loaded, and Utilities brings the way
+    /// to find its file.
     #[test]
-    fn a_cue_is_a_whole_word() {
-        assert!(!groups("tiện thể ghi lại").contains(&"finance".into()));
-        assert!(!groups("wordy notes").contains(&"files".into()));
-        // Typed without marks, it is matched folded: "tien" is money.
-        assert!(groups("thang nay tieu bao nhieu tien").contains(&"finance".into()));
+    fn find_tools_loads_several_and_utilities_brings_files() {
+        let known = listed();
+        assert_eq!(found("finance, timeline", &known), vec![Group::Finance, Group::Timeline]);
+        assert_eq!(found("utilities", &known), vec![Group::Utilities, Group::Files]);
+        let pi = [known.clone(), vec![Group::Connector("raspberry_pi_ssh".into())]].concat();
+        assert_eq!(found("connector:raspberry_pi_ssh", &pi), vec![Group::Connector("raspberry_pi_ssh".into())]);
+        assert!(found("compress a video", &known).contains(&Group::Utilities));
+        // A group named and one described, in one ask: both.
+        let both = found("finance summary; chart visualization", &known);
+        assert!(both.contains(&Group::Finance) && both.contains(&Group::Visuals), "{both:?}");
+        // What every description says matches no group by itself.
+        assert!(found("the tools for this", &known).is_empty());
     }
 
-    /// "hàng" is a shop, a day, goods long before it is a row; "bằng" folds
-    /// into "bảng". None of these is about a table.
+    /// Asked for in the singular, found under the plural. Syn's two asks of
+    /// 2026-11-19, both naming "whiteboard", were each told nothing matched.
     #[test]
-    fn a_shop_a_day_or_a_way_is_not_a_table() {
-        for q in ["cửa hàng gần nhà", "làm hàng ngày", "bằng cách nào", "bang cach nao", "dòng thời gian tuần này", "50 nghìn đồng"] {
-            assert!(!groups(q).contains(&"tables".into()), "{q}");
-        }
-        assert!(groups("thêm một hàng vào bảng chi tiêu").contains(&"tables".into()));
-        assert!(groups("them mot hang vao bang chi tieu").contains(&"tables".into()));
-        assert!(groups("xoá dòng cà phê").contains(&"tables".into()));
-        assert!(groups("add a row to my reading table").contains(&"tables".into()));
+    fn find_tools_matches_one_and_many() {
+        let known = listed();
+        let vi = "Tạo tranh minh họa phong cảnh dạng hình ảnh trên whiteboard, không phải sơ đồ hộp và mũi tên";
+        assert!(found(vi, &known).contains(&Group::Boards), "{:?}", found(vi, &known));
+        assert!(found("a picture", &known).contains(&Group::Boards));
+        assert!(found("spreadsheet", &known).contains(&Group::Files));
+        // Not every word ending in s is a plural.
+        assert_eq!(super::one("address"), "address");
+        assert_eq!(super::one("bus"), "bus");
     }
 
     #[test]
@@ -591,7 +467,7 @@ mod tests {
         let loaded = BTreeSet::from([Group::Core, Group::Finance]);
         assert!(offered("query_nodes", &loaded));
         assert!(offered("search_finance", &loaded));
-        assert!(!offered("read_board", &loaded));
+        assert!(!offered("draw_board", &loaded));
     }
 
     #[test]

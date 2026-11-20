@@ -491,7 +491,8 @@ fn the_hard_vault_holds_what_its_answers_assume() {
     assert!(super::grade::check(&Check::AnyOf(vec![Check::AskedChoice, Check::StillThere("People/linh-pham.md")]), &e).is_ok());
 }
 
-/// A model that says what it is told to and keeps what it was sent.
+/// A model that says what it is told to and keeps what it was sent. Hosted,
+/// as the Telegram turn it stands in for was.
 struct Listening {
     replies: Arc<Mutex<VecDeque<ChatReply>>>,
     heard: Arc<Mutex<Vec<(Vec<crate::syn::provider::ChatMessage>, Vec<String>)>>>,
@@ -500,7 +501,7 @@ struct Listening {
 #[async_trait]
 impl ChatProvider for Listening {
     fn id(&self) -> SynProvider {
-        SynProvider::Ollama
+        SynProvider::OpenAiCompat
     }
     async fn check_status(&self) -> AppResult<ProviderStatus> {
         Ok(serde_json::from_value(serde_json::json!({ "connected": true, "version": null, "url": "scripted" })).expect("status"))
@@ -532,9 +533,9 @@ async fn a_held_history_and_a_connected_pi_reach_the_model() {
     let replies = Arc::new(Mutex::new(VecDeque::from(vec![
         calls(crate::syn::toolset::FIND_TOOL, serde_json::json!({ "need": "connector:raspberry_pi_ssh" })),
         calls("connector__raspberry_pi_ssh__run", serde_json::json!({ "command": "vcgencmd measure_temp" })),
-        // The reflection after the run that stopped to ask about the line.
-        text("{}"),
         text("Pi đang 57.5°C."),
+        // The reflection after the run.
+        text("{}"),
     ])));
     let (r, h) = (replies.clone(), heard.clone());
     let _model = super::use_provider(Box::new(move |_| {
@@ -543,7 +544,9 @@ async fn a_held_history_and_a_connected_pi_reach_the_model() {
 
     let task = super::tasks::selected("tg-pi-stale-vi").pop().expect("the task");
     assert_eq!(task.surface, crate::syn::surface::Surface::Telegram);
-    let outcome = super::harness::run(&task, 1, SynProvider::Ollama, "scripted").await;
+    // A hosted model's window, as the Telegram turn had: on Ollama's 8,192
+    // the core's declarations leave the held history to be shortened first.
+    let outcome = super::harness::run(&task, 1, SynProvider::OpenAiCompat, "gpt-6-luna").await;
 
     let heard = heard.lock().expect("lock");
     let (messages, tools) = heard.first().expect("the model was asked");

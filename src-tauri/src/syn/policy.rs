@@ -74,7 +74,6 @@ pub enum Home {
     Compute,
     Writes,
     Authoring,
-    Skills,
     Jobs,
     Visuals,
     Machine,
@@ -99,7 +98,6 @@ impl Home {
             Home::Compute => Group::Compute,
             Home::Writes => Group::Writes,
             Home::Authoring => Group::Authoring,
-            Home::Skills => Group::Skills,
             Home::Jobs => Group::Jobs,
             Home::Visuals => Group::Visuals,
             Home::Machine => Group::Machine,
@@ -266,7 +264,7 @@ pub static POLICIES: &[Policy] = &[
     Policy::read(LOOK_BACK_TOOL, Home::Past),
     Policy::read("list_trash", Home::History),
     Policy::read("list_versions", Home::History),
-    Policy::read("read_board", Home::Boards).locked_with("whiteboard"),
+    Policy::read("read_board", Home::Core).locked_with("whiteboard"),
     Policy::read("get_finance_summary", Home::Finance).locked_with("finance"),
     Policy::read("search_finance", Home::Finance).locked_with("finance"),
     Policy::read("get_transactions", Home::Finance).locked_with("finance"),
@@ -508,7 +506,7 @@ pub static POLICIES: &[Policy] = &[
     // on. Inert until then, so it may be written after reading — and the card
     // says what had been read. The app's alone: that is where the card is.
     // See `syn::drafting`.
-    Policy::write(crate::syn::drafting::TOOL, Home::Skills).after_reading().engine(),
+    Policy::write(crate::syn::drafting::TOOL, Home::Core).after_reading().engine(),
     // A routine Syn writes is switched off and agreed to on no computer; the
     // card is where it is turned on. See `routine::draft`.
     Policy::write(crate::syn::routine::DRAFT_TOOL, Home::Jobs).after_reading().engine(),

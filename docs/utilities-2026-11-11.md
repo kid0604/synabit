@@ -691,9 +691,10 @@ và MacWhisper. Trước đó Utilities không nhận file âm thanh nào.
   PDF cũng không**: mật khẩu gõ cho Syn sẽ nằm trong hội thoại và ở nhà cung cấp model.
 - **Chính sách:** nhóm `utilities` mới. Chỉ làm ra file mới, nên chạy được sau khi đọc lời người ngoài, từ Telegram
   và trong routine, như `create_node`. Kết quả chỉ là tên và cỡ file, không phải lời của ai. Không cho helper.
-- **Gọi nhóm:** câu có cụm như "gộp pdf", "nén video", "nhạc chuông", hoặc có một động từ (gộp, nén, xoay, cắt…)
-  cùng một loại file (pdf, video, nhạc…). Nhóm `utilities` kéo theo `files` để tìm được file. Mô tả nhóm `room` trỏ
-  sang `utilities` cho việc mà Utilities làm được.
+- **Gọi nhóm:** model tự nạp bằng `find_tools`. Mô tả của `find_tools` liệt kê mọi nhóm cùng việc nhóm đó làm. Ngày
+  2026-11-18 đã bỏ cách bật nhóm theo danh sách từ khoá trong câu hỏi, và nâng ngân sách khai báo tool lên 16.000 ký tự.
+  Nhóm `utilities` kéo theo `files` để tìm được file. Mô tả nhóm `room` trỏ sang `utilities` cho việc mà Utilities làm
+  được.
 - **Đã kiểm:** 8 test Rust, trong đó 2 test chạy thật trên vault tạm (gộp, gộp lần hai ra " (2)", sắp xếp có tên,
   tách mỗi 2 trang, xoay trang lẻ, file gốc không đổi; từ chối file ngoài vault, sai loại, thiếu file, tool cần màn
   hình). `real_room` (bị `ignore`) chạy tăng tốc, chuẩn hoá podcast, nhạc chuông bằng ffmpeg thật trong phòng qua

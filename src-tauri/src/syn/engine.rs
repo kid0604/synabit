@@ -870,8 +870,8 @@ impl SynEngine {
         // Whether `browse` of a file is pointed at a helper. See `delegate::is_a_file`.
         let sends_out = !sub_run && all_tools.iter().any(|t| t.function.name == crate::syn::delegate::OUT_TOOL);
 
-        // Of those, what this turn is sent: the core, and the groups the
-        // question's words bring. More arrive when the model asks with
+        // Of those, what this turn is sent: the core, and a connected server
+        // the question names. More arrive when the model asks with
         // `find_tools`, or calls one it was not sent. See `syn::toolset`.
         let servers: Vec<(String, String)> = all_tools
             .iter()
@@ -893,13 +893,20 @@ impl SynEngine {
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        // And named to the model in `find_tools`, so it need not guess what
-        // is connected. See `toolset::naming_servers`.
+        // And named to the model in `find_tools`: the groups this run can
+        // have — no visuals where they are not offered, nothing the surface
+        // took away — and what is connected, so it need not guess. See
+        // `toolset::description` and `toolset::naming_servers`.
+        let here: Vec<_> = crate::syn::toolset::listed()
+            .into_iter()
+            .filter(|g| all_tools.iter().any(|t| crate::syn::toolset::group_of(&t.function.name) == *g))
+            .collect();
         let all_tools: Vec<_> = all_tools
             .into_iter()
             .map(|mut t| {
                 if t.function.name == crate::syn::toolset::FIND_TOOL {
-                    t.function.description = crate::syn::toolset::naming_servers(&t.function.description, &servers);
+                    t.function.description =
+                        crate::syn::toolset::naming_servers(&crate::syn::toolset::description(&here), &servers);
                 }
                 t
             })
@@ -911,7 +918,7 @@ impl SynEngine {
             .find(|m| m.role == "user")
             .map(|m| m.content.clone())
             .unwrap_or_default();
-        let mut loaded = crate::syn::toolset::for_question(&question, &servers);
+        let mut loaded = crate::syn::toolset::named_in(&question, &servers);
         // And what the run it carries on from had loaded, so it is not sent
         // fewer tools than the call it is carrying on with needed.
         loaded.extend(run.tool_groups.iter().filter_map(|g| crate::syn::toolset::Group::from_name(g)));
@@ -7442,7 +7449,8 @@ mod driving {
 
     /// The tax of 2026-10-28: `gpt-6.1-terra` read the guide, needed `compute`
     /// for the numbers it was about to draw, and had to ask `find_tools` for
-    /// it. The guide brings it, before anything is drawn.
+    /// it. The guide brings it, before anything is drawn. Drawing itself is
+    /// loaded by the model.
     #[tokio::test]
     async fn the_guide_brings_compute_before_the_visual() {
         use tauri::Manager;
@@ -7459,7 +7467,11 @@ mod driving {
         let provider = std::sync::Arc::new(Scripted::new(
             &vault,
             &run.id,
-            vec![calls("visual_guide", serde_json::json!({ "kind": "chart", "pattern": "areas" })), text("Kéo thanh thuế.")],
+            vec![
+                calls(crate::syn::toolset::FIND_TOOL, serde_json::json!({ "need": "visuals" })),
+                calls("visual_guide", serde_json::json!({ "kind": "chart", "pattern": "areas" })),
+                text("Kéo thanh thuế."),
+            ],
         ));
         let engine = SynEngine::new(Box::new(SharedProvider(provider.clone())));
         let state = app.state::<crate::db::DbState>();
@@ -7489,9 +7501,9 @@ mod driving {
             return;
         }
         let offered = provider.offered.lock().expect("lock").clone();
-        assert!(offered[0].contains(&"visual_guide".to_string()), "drawing is offered: {:?}", offered[0]);
-        assert!(!offered[0].contains(&"compute".to_string()), "not before: {:?}", offered[0]);
-        assert!(offered[1].contains(&"compute".to_string()), "after the guide: {:?}", offered[1]);
+        assert!(offered[1].contains(&"visual_guide".to_string()), "drawing is offered: {:?}", offered[1]);
+        assert!(!offered[1].contains(&"compute".to_string()), "not before: {:?}", offered[1]);
+        assert!(offered[2].contains(&"compute".to_string()), "after the guide: {:?}", offered[2]);
     }
 
     /// Asking `find_tools` for a connector just approved brings its tools.
@@ -10413,17 +10425,17 @@ mod driving {
         assert!(!routine[0].contains(&"trash_node".to_string()), "{:?}", routine[0]);
     }
 
-    /// A plain question is sent the core; one about money brings the finance
-    /// tools with it, before the model has had to think of them.
+    /// Every question is sent the core, money included: the words bring no
+    /// group. `find_tools` is there, naming every group, for the model to
+    /// load what the question needs. See `syn::toolset`.
     #[tokio::test]
-    async fn the_question_decides_which_tools_come_with_it() {
-        let plain = offered_for("tóm tắt note họp", vec![text("xong")]).await;
-        assert!(plain[0].contains(&"query_nodes".to_string()));
-        assert!(!plain[0].contains(&"search_finance".to_string()), "{:?}", plain[0]);
-        assert!(plain[0].contains(&crate::syn::toolset::FIND_TOOL.to_string()));
-
-        let money = offered_for("tháng này tôi tiêu bao nhiêu tiền", vec![text("xong")]).await;
-        assert!(money[0].contains(&"search_finance".to_string()), "{:?}", money[0]);
+    async fn every_question_is_sent_the_core_and_the_menu() {
+        for ask in ["tóm tắt note họp", "tháng này tôi tiêu bao nhiêu tiền"] {
+            let offered = offered_for(ask, vec![text("xong")]).await;
+            assert!(offered[0].contains(&"query_nodes".to_string()));
+            assert!(!offered[0].contains(&"search_finance".to_string()), "{ask}: {:?}", offered[0]);
+            assert!(offered[0].contains(&crate::syn::toolset::FIND_TOOL.to_string()));
+        }
     }
 
     /// And the model can ask for a group the words did not bring; it arrives

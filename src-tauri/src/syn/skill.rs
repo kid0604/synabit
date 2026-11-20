@@ -993,8 +993,8 @@ fn only_edits(chain: &[&str]) -> bool {
 /// false habit was `find_tools → visual_guide → show_visual`: a loan, then a
 /// battle map, offered as "a way of doing it" when all three runs had in common
 /// was the way any visual gets drawn. And `find_tools` comes and goes with what
-/// the words happened to load, so counting it also splits one job into two
-/// shapes.
+/// the run happened to have loaded, so counting it also splits one job into
+/// two shapes.
 pub fn is_setup(tool: &str) -> bool {
     tool == crate::syn::toolset::FIND_TOOL
         || tool == crate::syn::visual::tool::GUIDE_TOOL

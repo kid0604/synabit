@@ -626,7 +626,23 @@ const LOOK_BACK_ANSWER_CHARS: usize = 400;
 /// a question wants them (`syn::toolset`), so this budget now guards the core
 /// alone, and the next tool added to it has to argue its case against a
 /// number that small. A tool that belongs in a group goes in one.
-pub const PAYLOAD_BUDGET_CHARS: usize = 9_600;
+///
+/// # Raised to 16,000, because the model now chooses the groups
+///
+/// Groups used to be brought by lists of words read off the question, and
+/// `find_tools` named eight of seventeen. The lists missed what was said
+/// another way and loaded groups for words that meant something else, so
+/// they went (2026-11-18, `syn::toolset`), and `find_tools` names every group
+/// with what it is for instead. That menu costs about two thousand
+/// characters on every turn. Measured on `gpt-6-luna` the same day, two
+/// groups lost to a core tool that was nearly right: asked to write a way of
+/// doing a job down, the model reached for `remember` instead of loading
+/// skills, and asked about a board it answered from what retrieval had put
+/// in the prompt instead of loading boards. So `skill_draft` and
+/// `read_board` are core now. The core measured 13,474 characters, about
+/// 3,400 tokens: inside an 8,192-token local window with room left for the
+/// conversation, and nothing on a hosted one.
+pub const PAYLOAD_BUDGET_CHARS: usize = 16_000;
 
 /// What the declarations actually cost, serialised as they go on the wire.
 ///
@@ -1470,7 +1486,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: "remember".to_string(),
-                description: "Write down something about this person that should outlive this conversation. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. NOT for notes or tasks — those are create_node.".to_string(),
+                description: "Write down something about this person that should outlive this conversation. Use it when they tell you something they will expect you to know next time, or correct something you got wrong. NOT for notes or tasks — those are create_node — nor for a way of doing a job the user wants done the same way again, which is skill_draft.".to_string(),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["body"],
@@ -1506,7 +1522,7 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
             tool_type: "function".to_string(),
             function: FunctionDefinition {
                 name: crate::syn::toolset::FIND_TOOL.to_string(),
-                description: "Load more tools. Groups: finance, feeds, files, boards, timeline, history (trash, versions), structure (rename or remove fields and kinds), past (your earlier runs), and connector:<server> for connected servers. Pass a group or what you need; the tools arrive on your next step.".to_string(),
+                description: crate::syn::toolset::description(&crate::syn::toolset::listed()),
                 parameters: serde_json::json!({
                     "type": "object",
                     "required": ["need"],
