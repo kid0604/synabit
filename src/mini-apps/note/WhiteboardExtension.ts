@@ -1,15 +1,9 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { VueNodeViewRenderer } from '@tiptap/vue-3';
 import WhiteboardNodeView from './nodes/WhiteboardNodeView.vue';
+import { boardEmbedHtml, escapeAttribute } from './boardEmbed';
 
-/** A value made safe to put between the double quotes of an HTML attribute. */
-export function escapeAttribute(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
+export { escapeAttribute };
 
 export interface WhiteboardEmbedOptions {
   HTMLAttributes: Record<string, any>;
@@ -117,13 +111,7 @@ export const WhiteboardExtension = Node.create<WhiteboardEmbedOptions>({
     return {
       markdown: {
         serialize(state: any, node: any) {
-          const a = node.attrs;
-          // Escaped, because these land inside double quotes in the note's
-          // markdown: a board called `Plan "B"` closed the attribute early,
-          // and everything after it — the path included — was lost from the
-          // note on the next save.
-          const attr = (value: unknown) => escapeAttribute(String(value ?? ''));
-          const html = `<div data-type="whiteboard" data-board-id="${attr(a.boardId)}" data-board-path="${attr(a.boardPath)}" data-title="${attr(a.title || '')}" data-width="${attr(a.width || '100%')}" data-height="${attr(a.height || '240px')}" data-align="${attr(a.align || 'center')}"></div>\n`;
+          const html = boardEmbedHtml(node.attrs);
           state.write(html);
           state.closeBlock(node);
         },

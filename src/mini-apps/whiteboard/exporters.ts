@@ -18,7 +18,7 @@ import { EDGE_GREY } from './composables/useNodeOperations';
 import { cleanGlyph, GLYPH_SHAPE, GLYPH_SIZE, glyphSvg } from './glyph';
 import { labelOn, paint } from './ink';
 import { strokeSize, type Box } from './inkLayer';
-import { estimateSize, hiddenByCollapse } from './mindmap';
+import { branchLine, estimateSize, hiddenByCollapse } from './mindmap';
 import { anchor, sidesFacing, type Point, type Side } from './routing';
 import { SHAPES_MAP, type ShapeDef } from './shapes';
 import { STICKY_SIZE, stickyColor } from './sticky';
@@ -388,8 +388,15 @@ function vertexXml(c: Cell): string {
  * Items wholly inside a frame are put in it (draw.io containers move what
  * they hold); everything else, and every line, is on the page itself.
  */
+/** Items by id, for a line to look its ends up. */
+function itemsById(nodes: WBNode[]): (id: string) => WBNode | undefined {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  return (id) => byId.get(id);
+}
+
 export async function toDrawio(board: ExportInput, opts: ExportOptions = {}): Promise<string> {
   const { nodes, edges, boxes, frames, frameOf } = visible(board);
+  const nodeOf = itemsById(nodes);
   const cellId = (id: string) => (id === '0' || id === '1' ? `item-${id}` : id);
   const parentOf = (id: string) => (frameOf.has(id) ? cellId(frameOf.get(id)!) : '1');
   const local = (id: string): Box => {
@@ -546,8 +553,8 @@ export async function toDrawio(board: ExportInput, opts: ExportOptions = {}): Pr
     const s = style([
       ...(step ? ['edgeStyle=orthogonalEdgeStyle', `rounded=${e.type === 'smoothstep' ? 1 : 0}`, 'orthogonalLoop=1', 'jettySize=auto'] : e.type === 'default' && waypoints.length ? ['curved=1'] : []),
       'html=1',
-      ['strokeColor', hex(d.color || EDGE_GREY, '#8b8b8b')],
-      ['strokeWidth', d.strokeWidth || 2],
+      ['strokeColor', hex(d.color || branchLine(e, nodeOf)?.color || EDGE_GREY, '#8b8b8b')],
+      ['strokeWidth', d.strokeWidth || branchLine(e, nodeOf)?.width || 2],
       ...(d.dashStyle === 'dashed' ? ['dashed=1'] : d.dashStyle === 'dotted' ? ['dashed=1', 'dashPattern=1 4'] : []),
       ['endArrow', end[0]], ['endFill', end[1]], ['startArrow', start[0]], ['startFill', start[1]],
       ...(exit ? [['exitX', at(exit)[0]], ['exitY', at(exit)[1]], 'exitDx=0', 'exitDy=0'] as [string, number][] : []),
@@ -663,6 +670,7 @@ function lineElement(id: string, pts: Point[], closed: boolean, extra: El, stamp
  */
 export async function toExcalidraw(board: ExportInput, opts: ExportOptions = {}): Promise<string> {
   const { nodes, edges, boxes, frameOf } = visible(board);
+  const nodeOf = itemsById(nodes);
   const out: El[] = [];
   const frameEls: El[] = [];
   const files: Record<string, { mimeType: string; id: string; dataURL: string; created: number; lastRetrieved: number }> = {};
@@ -894,7 +902,8 @@ export async function toExcalidraw(board: ExportInput, opts: ExportOptions = {})
     const from = bindable.get(e.source);
     const to = bindable.get(e.target);
     const arrow = element(e.id, 'arrow', { x: start.x, y: start.y, width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }, {
-      strokeColor: hex(d.color || EDGE_GREY, '#8b8b8b'), strokeWidth: d.strokeWidth || 2,
+      strokeColor: hex(d.color || branchLine(e, nodeOf)?.color || EDGE_GREY, '#8b8b8b'),
+      strokeWidth: d.strokeWidth || branchLine(e, nodeOf)?.width || 2,
       strokeStyle: d.dashStyle === 'dashed' || d.dashStyle === 'dotted' ? d.dashStyle : 'solid',
       roundness: (e.type ?? 'default') === 'default' ? { type: 2 } : null,
       points: rel, lastCommittedPoint: null,

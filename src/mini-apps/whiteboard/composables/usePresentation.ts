@@ -29,7 +29,10 @@ export function usePresentation(ctx: {
   let cameraBefore: { x: number; y: number; zoom: number } | null = null;
   let focusBefore: HTMLElement | null = null;
 
+  /** Slides made for this showing — a mind map's branches — in place of the board's frames. */
+  const own = ref<Slide[] | null>(null);
   const slides = computed<Slide[]>(() => {
+    if (own.value) return own.value;
     const frames = slidesOf(ctx.nodes());
     if (frames.length) return frames;
     const box = ctx.boardBox();
@@ -52,7 +55,8 @@ export function usePresentation(ctx: {
     show();
   }
 
-  function start(fromFrameId?: string) {
+  function start(fromFrameId?: string, these?: Slide[]) {
+    own.value = these?.length ? these : null;
     if (!slides.value.length) return;
     cameraBefore = ctx.getViewport();
     focusBefore = document.activeElement as HTMLElement | null;
@@ -73,6 +77,7 @@ export function usePresentation(ctx: {
   function stop() {
     if (!active.value) return;
     active.value = false;
+    own.value = null;
     laser.value = false;
     if (cameraBefore) {
       const back = cameraBefore;

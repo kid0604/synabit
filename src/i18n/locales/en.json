@@ -773,7 +773,11 @@
         "copy": "Copy",
         "copied": "Copied!",
         "open_diagram": "Open diagram",
-        "markmap_failed": "Could not draw this mindmap"
+        "markmap_failed": "Could not draw this mindmap",
+        "edit_on_board": "Edit as mind map",
+        "edit_on_board_hint": "Make this a mind map on a board, shown here live in place of the block",
+        "no_mindmap": "There is no mind map in this block to open.",
+        "board_failed": "This mind map could not be made a board."
       },
       "details": {
         "expand": "Expand",
@@ -2740,6 +2744,7 @@
     "board_missing_hint": "This board's file was deleted or moved outside the app. Changes here are not being saved.",
     "add_child_left": "Add child left",
     "add_child_right": "Add child right (Tab)",
+    "add_child_below": "Add child below (Tab)",
     "open_note": "Open Note",
     "too_new_title": "This board was made by a newer version of Synabit",
     "too_new_body": "It is not opened here, so that saving cannot drop the parts this version does not understand. Update Synabit to work on it.",
@@ -3238,14 +3243,34 @@
       "hidden_count": "{count} hidden — unfold",
       "copy_outline": "Copy as outline",
       "save_note": "Save as note",
-      "saved_note": "Saved as the note “{title}”"
+      "saved_note": "Saved as the note “{title}”, which shows this board; the central idea links to it",
+      "unpin": "Back into the layout",
+      "open_note": "Open its note",
+      "branch_note": "Make the branch a note",
+      "branch_saved": "“{title}” is a note now, and the item links to it",
+      "export_opml": "Export as OPML",
+      "layout_map": "Layout: branches on both sides",
+      "layout_right": "Layout: logic chart, to the right",
+      "layout_down": "Layout: org chart, downwards",
+      "focus": "Focus on this branch",
+      "focused": "Showing “{title}” on its own",
+      "show_all": "Show everything (Esc)",
+      "present": "Present this map, branch by branch",
+      "make_task": "Make it a task",
+      "not_task": "Not a task",
+      "vault_tasks": "Add these tasks to Tasks",
+      "tasks_made": "Added {count} task to Tasks; ticking it here ticks it there | Added {count} tasks to Tasks; ticking one here ticks it there",
+      "mark_done": "Mark done",
+      "undo_done": "Mark not done",
+      "progress": "{done} of {total} tasks done",
+      "marks": "Marks"
     },
     "rotate": "Turn (Shift: 15° steps, double-click: upright)",
     "export_title": "Export",
     "export_svg": "SVG (vector, for the web)",
     "export_pdf": "PDF (one page)",
-    "import_file": "Import a drawing (draw.io, Excalidraw, Mermaid)…",
-    "import_failed": "“{name}” could not be read as a drawing.",
+    "import_file": "Import a drawing (draw.io, Excalidraw, Mermaid) or a mind map (OPML, FreeMind, XMind)…",
+    "import_failed": "“{name}” could not be read as a drawing or a mind map.",
     "a11y": {
       "canvas": "Board canvas. Tab moves between items (on a mind-map item it adds a branch), Enter selects or puts down the active tool's item, arrows move, F2 edits, F6 goes to the item's panel, Shift+F10 opens the menu.",
       "kind": {
@@ -3576,7 +3601,10 @@
         "present_next": "Next frame",
         "present_prev": "Previous frame",
         "present_laser": "Laser pointer",
-        "present_exit": "Stop presenting"
+        "present_exit": "Stop presenting",
+        "mind_newline": "New line in an item",
+        "mind_move": "Go to the next item",
+        "mind_pin": "Hold while dragging: place it freely"
       }
     },
     "fail": {

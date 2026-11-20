@@ -185,7 +185,7 @@ onUnmounted(() => {
 
 // --- Mindmap node dimensions ---
 function getMindmapWidth(node: WBNode): number {
-  const label = node.data.label || t('whiteboard.idea');
+  const label = mindmapWords(node) || t('whiteboard.idea');
   const fontSize = node.data.level === 0 ? 15 : 13;
   const minW = node.data.level === 0 ? 140 : 100;
   // Approximate text width: ~0.6 * fontSize per character + padding
@@ -253,6 +253,17 @@ function getTextNodeHeight(node: WBNode): number {
   }
   const lineHeight = fontSize * 1.4;
   return Math.max(32, totalLines * lineHeight + 20);
+}
+
+/**
+ * A mind-map item's words as the board shows them: its tick or box and its
+ * mark first, its tags after. Text only — this preview is a picture of the
+ * board, and a tick is ticked on the board.
+ */
+function mindmapWords(node: WBNode): string {
+  const box = node.data?.task ? (node.data.done ? '☑ ' : '☐ ') : '';
+  const icon = node.data?.icon ? `${node.data.icon} ` : '';
+  return `${box}${icon}${String(node.data?.label ?? '')}`.trim();
 }
 
 // --- Get accurate node bounds (position + size) ---
@@ -352,8 +363,15 @@ const computedEdges = computed<ComputedEdge[]>(() => {
 
     let sx: number, sy: number, tx: number, ty: number;
 
-    // Source anchor
-    if (srcHandle.startsWith('left')) {
+    // Source anchor. A map laid out downwards (an org chart) joins the
+    // bottom of a parent to the top of its child.
+    if (srcHandle.startsWith('bottom')) {
+      sx = sb.x + sb.w / 2;
+      sy = sb.y + sb.h;
+    } else if (srcHandle.startsWith('top')) {
+      sx = sb.x + sb.w / 2;
+      sy = sb.y;
+    } else if (srcHandle.startsWith('left')) {
       sx = sb.x;
       sy = sb.y + sb.h / 2;
     } else if (srcHandle.startsWith('right')) {
@@ -373,7 +391,13 @@ const computedEdges = computed<ComputedEdge[]>(() => {
     }
 
     // Target anchor
-    if (tgtHandle.startsWith('left')) {
+    if (tgtHandle.startsWith('top')) {
+      tx = tb.x + tb.w / 2;
+      ty = tb.y;
+    } else if (tgtHandle.startsWith('bottom')) {
+      tx = tb.x + tb.w / 2;
+      ty = tb.y + tb.h;
+    } else if (tgtHandle.startsWith('left')) {
       tx = tb.x;
       ty = tb.y + tb.h / 2;
     } else if (tgtHandle.startsWith('right')) {
@@ -399,10 +423,22 @@ const computedEdges = computed<ComputedEdge[]>(() => {
     const srcIsLeft = (srcHandle.startsWith('left') || (!srcHandle && sx === sb.x));
     const tgtIsLeft = (tgtHandle.startsWith('left') || (!tgtHandle && tx === tb.x));
 
-    const cpx1 = srcIsLeft ? sx - cpOffset : sx + cpOffset;
-    const cpy1 = sy;
-    const cpx2 = tgtIsLeft ? tx - cpOffset : tx + cpOffset;
-    const cpy2 = ty;
+    let cpx1 = srcIsLeft ? sx - cpOffset : sx + cpOffset;
+    let cpy1 = sy;
+    let cpx2 = tgtIsLeft ? tx - cpOffset : tx + cpOffset;
+    let cpy2 = ty;
+    // Up and down, the curve bends the other way.
+    const vertical = (h: string) => h.startsWith('top') || h.startsWith('bottom');
+    if (vertical(srcHandle)) {
+      const off = Math.max(Math.abs(ty - sy) * 0.5, 30);
+      cpx1 = sx;
+      cpy1 = srcHandle.startsWith('top') ? sy - off : sy + off;
+    }
+    if (vertical(tgtHandle)) {
+      const off = Math.max(Math.abs(ty - sy) * 0.5, 30);
+      cpx2 = tx;
+      cpy2 = tgtHandle.startsWith('top') ? ty - off : ty + off;
+    }
 
     const path = `M ${sx} ${sy} C ${cpx1} ${cpy1}, ${cpx2} ${cpy2}, ${tx} ${ty}`;
 
@@ -856,7 +892,7 @@ function shapeLabelAt(node: WBNode): { x: number; y: number } {
               font-family="Inter, system-ui, sans-serif"
               fill="currentColor"
               class="wb-svg-text"
-            >{{ node.data.label || t('whiteboard.idea') }}</text>
+            >{{ mindmapWords(node) || t('whiteboard.idea') }}</text>
           </template>
         </svg>
       </div>

@@ -6,6 +6,8 @@ export interface Slide {
   id: string | null;
   title: string;
   box: Box;
+  /** A mind map's branch shown on its own on this slide (`presentMindmap`). */
+  focus?: { branch: string; with?: string };
 }
 
 /**

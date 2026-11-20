@@ -73,7 +73,7 @@ export function useMindmapDrag(
         while (stack.length) {
           const parentId = stack.pop()!;
           for (const edge of vfEdges.value) {
-            if (edge.source !== parentId || !isMindmap(edge.target) || seen.has(edge.target)) continue;
+            if (edge.source !== parentId || !isMindmap(edge.target) || seen.has(edge.target) || edge.data?.relation) continue;
             seen.add(edge.target);
             carried.add(edge.target);
             stack.push(edge.target);

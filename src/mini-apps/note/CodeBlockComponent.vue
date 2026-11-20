@@ -31,6 +31,21 @@
           <button @click.prevent="displayMode = 'preview'" :class="['px-2 py-0.5 text-xs rounded uppercase font-semibold tracking-wider transition-colors', displayMode === 'preview' ? 'bg-white dark:bg-[#333] shadow-sm text-gray-800 dark:text-gray-200' : 'text-gray-500 hover:text-gray-700 dark:hover:text-gray-300']" :title="$t('note.editor.code.preview_only')">{{ $t('note.editor.code.preview') }}</button>
         </div>
 
+        <!--
+          A markmap made the board's mind map: one map, edited on the board and
+          shown live here, in place of this block.
+        -->
+        <button
+          v-if="selectedLanguage === 'markmap' && canMakeBoard"
+          @click.prevent="openAsMindmap"
+          :disabled="makingBoard"
+          class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors flex items-center gap-1.5 text-xs font-medium disabled:opacity-50"
+          :title="$t('note.editor.code.edit_on_board_hint')"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="5" r="2"/><circle cx="20" cy="5" r="2"/><circle cx="4" cy="19" r="2"/><circle cx="20" cy="19" r="2"/><path d="M6 6.5 9.5 10M18 6.5 14.5 10M6 17.5 9.5 14M18 17.5 14.5 14"/></svg>
+          <span>{{ $t('note.editor.code.edit_on_board') }}</span>
+        </button>
+
         <!-- Copy Button -->
         <button 
           @click.prevent="copyCode" 
@@ -108,6 +123,10 @@ import { renderDiagram, diagramId, diagramTheme } from '../../shared/mermaid';
 import DiagramViewer from '../../shared/components/DiagramViewer.vue';
 import QueryResultTable from './QueryResultTable.vue';
 import { grammarsLoaded } from './editor/codeHighlight';
+import { fromMarkdown } from '../whiteboard/mindmap';
+import { createMindmapBoard } from '../whiteboard/mindmapBoard';
+import { showAppNotice } from '../../composables/useAppNotice';
+import { logger } from '../../utils/logger';
 import type { Transformer } from 'markmap-lib';
 import type { Markmap, deriveOptions } from 'markmap-view';
 import type { Toolbar } from 'markmap-toolbar';
@@ -172,6 +191,50 @@ const isDiagramLanguage = computed(() => {
 const isQuery = computed(() => selectedLanguage.value === 'query');
 
 const isDarkMode = ref(document.documentElement.classList.contains('dark'));
+
+// --- A markmap made a mind map on a board ---
+/** Only where the note can show a board in its place. */
+/** The vault the note is in, as the board embed has it (TiptapEditor sets it). */
+const vaultOfNote = (): string => (props.editor?.storage as Record<string, any> | undefined)?.whiteboard?.vaultPath || '';
+const canMakeBoard = computed(() => !!props.editor?.schema?.nodes?.whiteboard && !!vaultOfNote());
+const makingBoard = ref(false);
+
+/**
+ * The map in this block, made a board of its own and shown here live in the
+ * block's place: from then on it is edited as a mind map — dragged, folded,
+ * grown by Tab and Enter, linked to notes — and the note shows what the
+ * board holds rather than a copy. Undo in the note puts the block back; the
+ * board stays.
+ */
+async function openAsMindmap() {
+  if (makingBoard.value) return;
+  const vaultPath = vaultOfNote();
+  const tree = fromMarkdown(props.node.textContent);
+  if (!vaultPath || !tree) {
+    showAppNotice(t('note.editor.code.no_mindmap'), 'error');
+    return;
+  }
+  makingBoard.value = true;
+  try {
+    const title = tree.label.trim() || t('note.editor.whiteboard.untitled');
+    const board = await createMindmapBoard(vaultPath, tree, title);
+    const from = props.getPos();
+    if (typeof from !== 'number') return;
+    props.editor
+      .chain()
+      .focus()
+      .insertContentAt(
+        { from, to: from + props.node.nodeSize },
+        { type: 'whiteboard', attrs: { boardId: board.id || board.path, boardPath: board.path, title, height: '420px' } },
+      )
+      .run();
+  } catch (err) {
+    logger.error('Could not make the markmap a board', err as string);
+    showAppNotice(t('note.editor.code.board_failed'), 'error');
+  } finally {
+    makingBoard.value = false;
+  }
+}
 
 const copyCode = () => {
   navigator.clipboard.writeText(props.node.textContent);

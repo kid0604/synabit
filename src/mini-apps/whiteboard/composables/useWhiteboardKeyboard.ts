@@ -74,6 +74,8 @@ export function useWhiteboardKeyboard(ctx: {
   handleMindmapAddChild: (params: { parentId: string; direction: 'right' | 'left' }) => void;
   handleMindmapAddSibling: (id: string) => void;
   handleMindmapRemoveNode: (id: string) => void;
+  /** An arrow key on one selected mind-map item: go to its neighbour; whether it was one. */
+  goToMindmapItem?: (key: string) => boolean;
   handleMultiGroup: () => void;
   handleMultiUngroup: () => void;
   closeEdgeMenu: () => void;
@@ -146,7 +148,10 @@ export function useWhiteboardKeyboard(ctx: {
       // focus moves on, and taking it there trapped the keyboard on the board.
       const el = e.target as HTMLElement | null;
       const onIt = !el || el === document.body || el.closest?.('.vue-flow__node')?.getAttribute('data-id') === selectedNode?.id;
-      if (selectedNode && onIt) {
+      // Enter on a central idea opens its name, as on any other item: it has
+      // no siblings to add (below).
+      const central = selectedNode && e.key === 'Enter' && !selectedNode.data?.level;
+      if (selectedNode && onIt && !central) {
         e.preventDefault();
         if (e.key === 'Tab') {
           const dir = selectedNode.data?.direction || 'right';
@@ -159,10 +164,11 @@ export function useWhiteboardKeyboard(ctx: {
     }
 
     // F2, or Enter on a selected item, edits its words — the keyboard's
-    // double-click. (Enter on a mind-map item adds a sibling, above.)
+    // double-click. (Enter on a mind-map item below a central idea adds a
+    // sibling, above.)
     if ((e.key === 'F2' || e.key === 'Enter') && !mod && !e.shiftKey && !isControl(e.target)) {
       const chosen = ctx.vfNodes.value.filter((n: any) => n.selected);
-      if (chosen.length === 1 && EDITABLE.has(chosen[0].type) && !chosen[0].data?.locked) {
+      if (chosen.length === 1 && (EDITABLE.has(chosen[0].type) || chosen[0].type === 'mindmap') && !chosen[0].data?.locked) {
         e.preventDefault();
         ctx.startEditing(chosen[0].id);
         return;
@@ -280,6 +286,14 @@ export function useWhiteboardKeyboard(ctx: {
   function handleKeydownCapture(e: KeyboardEvent) {
     if (!ctx.isActive() || e.defaultPrevented || isTypingIn(e.target)) return;
     if ((e.key === 'Delete' || e.key === 'Backspace') && !(e.ctrlKey || e.metaKey) && ctx.deleteLooseSelection?.()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    // On one mind-map item, an arrow goes to the next item along the tree
+    // (`neighbour`) rather than moving it: a mind map is laid out for it.
+    // Shift and an arrow still move it.
+    if (ARROWS[e.key] && !(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) && onBoard(e.target) && !isControl(e.target) && ctx.goToMindmapItem?.(e.key)) {
       e.preventDefault();
       e.stopPropagation();
       return;

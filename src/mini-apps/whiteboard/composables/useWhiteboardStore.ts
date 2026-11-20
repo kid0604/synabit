@@ -17,6 +17,7 @@ import {
 import type { WBEdge, WBNode, WhiteboardData } from '../boardFile';
 import { restoreState, sameState, takeState, type BoardState } from '../undoSnapshots';
 import { boardText, isStale, MAX_WRITE_TRIES, versionOf } from '../boardDisk';
+import { MINDMAP_COLORS, nextBranchColour, parentsOf } from '../mindmap';
 
 // The file format lives in `boardFile`, which is the only thing that reads or
 // writes one. Re-exported because every component in this app names these
@@ -27,10 +28,7 @@ export type ToolMode = 'select' | 'pan' | 'draw' | 'shape' | 'mindmap' | 'text' 
 export type DrawSubTool = 'pen' | 'highlighter' | 'eraser';
 export type ShapeType = string;
 
-const MINDMAP_COLORS = [
-  '#7c3aed', '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-  '#ec4899', '#8b5cf6', '#06b6d4', '#84cc16', '#f97316',
-];
+export { MINDMAP_COLORS };
 
 /** A yes/no kept in this device's storage; a blocked storage just forgets. */
 function devicePreference(key: string, fallback: boolean) {
@@ -684,7 +682,10 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
       position: childPos,
       data: {
         label: '',
-        color: getMindmapColor(childLevel),
+        // A main branch gets a colour of its own; below that, its branch's.
+        color: !parentsOf(currentBoardData.value.nodes, currentBoardData.value.edges).has(parentId)
+          ? nextBranchColour(parentId, currentBoardData.value.nodes, currentBoardData.value.edges, MINDMAP_COLORS)
+          : String(parent.data.color ?? getMindmapColor(childLevel)),
         level: childLevel,
         editing: true,
         direction, // preserve direction for sub-children
@@ -710,10 +711,10 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     return childId;
   }
 
+  /** A mind-map item's parent: by the tree's lines, not an arrow drawn to it. */
   function findParentId(nodeId: string): string | null {
     if (!currentBoardData.value) return null;
-    const parentEdge = currentBoardData.value.edges.find(e => e.target === nodeId);
-    return parentEdge ? parentEdge.source : null;
+    return parentsOf(currentBoardData.value.nodes, currentBoardData.value.edges).get(nodeId) ?? null;
   }
 
   function addMindmapSibling(nodeId: string) {
@@ -721,25 +722,10 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     const node = currentBoardData.value.nodes.find(n => n.id === nodeId);
     if (!node) return;
     const parentId = findParentId(nodeId);
-    if (!parentId) {
-      // Root node — create sibling as another root below
-      const siblingId = generateId('mind');
-      const siblingNode: WBNode = {
-        id: siblingId,
-        type: 'mindmap',
-        position: { x: node.position.x, y: node.position.y + 120 },
-        data: {
-          label: '',
-          color: getMindmapColor(0),
-          level: 0,
-          editing: true,
-        },
-      };
-      pushUndoState();
-      stampElement(siblingNode);
-      currentBoardData.value.nodes.push(siblingNode);
-      return siblingId;
-    }
+    // A central idea has no brothers or sisters. Enter on one, as its name was
+    // being typed, made a second, empty central idea under it; a new map is
+    // made with the mind-map tool.
+    if (!parentId) return undefined;
     // Has parent — add another child to the same parent, preserving direction
     const direction = node.data?.direction || 'right';
     return addMindmapChild(parentId, direction);
@@ -789,6 +775,7 @@ export function useWhiteboardStore(vaultPath: { value: string }) {
     updateNodeData,
     stampNode,
     getMindmapColor,
+    MINDMAP_COLORS,
     addMindmapChild,
     addMindmapSibling,
     findParentId,

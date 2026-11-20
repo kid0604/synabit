@@ -1,6 +1,7 @@
 import { type Ref } from 'vue';
 import type { WBNode, WBEdge } from './useWhiteboardStore';
 import { paint } from '../ink';
+import { branchLine, withBranches } from '../mindmap';
 
 /** Where connectors are stacked: above any node. */
 export const EDGE_Z = 1_000_000;
@@ -107,7 +108,10 @@ export function useNodeOperations(
    * Delete multiple nodes by ID. For each: remove from store, filter out
    * from vfNodes, filter out edges that reference the node. Saves once at end.
    */
-  const deleteNodes = (nodeIds: string[]) => {
+  const deleteNodes = (asked: string[]) => {
+    // A mind-map item goes with its branch (`withBranches`).
+    const board = store.currentBoardData.value;
+    const nodeIds = board ? withBranches(asked, board.nodes, board.edges) : asked;
     // Deleting a selection is one thing the user did, however many nodes it
     // covers, so it is one step to come back from.
     store.beginUndoBatch();
@@ -145,9 +149,27 @@ export function useNodeOperations(
    * The one place an edge is drawn from what the board holds; the edge menu
    * rebuilds through it too, so a style change looks like a reload would.
    */
+  /**
+   * Each list of items by id, made once per list: lines look up their ends
+   * in it. Made again when an end is not in it or the list has changed
+   * length — the board's list is the same array as items are added to it,
+   * and an index kept from before an add drew the new branch's line grey.
+   */
+  const indexes = new WeakMap<WBNode[], { length: number; byId: Map<string, WBNode> }>();
+  const itemOf = (nodes: WBNode[], id: string) => {
+    let index = indexes.get(nodes);
+    if (!index || index.length !== nodes.length || !index.byId.has(id)) {
+      index = { length: nodes.length, byId: new Map(nodes.map((n) => [n.id, n])) };
+      indexes.set(nodes, index);
+    }
+    return index.byId.get(id);
+  };
+
   const buildVfEdge = (edge: WBEdge, nodes: WBNode[]) => {
     const d = edge.data || {};
-    const color = paint(d.color) || undefined;
+    // A mind map's branch, drawn in its branch's colour unless one was chosen.
+    const branch = branchLine(edge, (id) => itemOf(nodes, id));
+    const color = paint(d.color) || paint(branch?.color) || undefined;
     const edgeObj: any = {
       id: edge.id,
       source: edge.source,
@@ -159,7 +181,7 @@ export function useNodeOperations(
       label: d.label || '',
       style: {
         stroke: color,
-        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : undefined,
+        strokeWidth: d.strokeWidth ? `${d.strokeWidth}px` : branch ? `${branch.width}px` : undefined,
         strokeDasharray: d.dashStyle === 'dashed' ? '8 4' : d.dashStyle === 'dotted' ? '2 4' : undefined,
       },
       data: d,

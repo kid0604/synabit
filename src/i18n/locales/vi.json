@@ -773,7 +773,11 @@
         "copy": "Sao chép",
         "copied": "Đã sao chép!",
         "open_diagram": "Mở sơ đồ",
-        "markmap_failed": "Không vẽ được sơ đồ tư duy này"
+        "markmap_failed": "Không vẽ được sơ đồ tư duy này",
+        "edit_on_board": "Sửa thành mindmap",
+        "edit_on_board_hint": "Biến khối này thành mindmap trên bảng trắng, hiện trực tiếp tại đây thay cho khối",
+        "no_mindmap": "Khối này không có mindmap nào để mở.",
+        "board_failed": "Không biến được mindmap này thành bảng."
       },
       "details": {
         "expand": "Mở rộng",
@@ -2740,6 +2744,7 @@
     "board_missing_hint": "File của board này đã bị xoá hoặc di chuyển bên ngoài app. Thay đổi ở đây đang không được lưu.",
     "add_child_left": "Thêm nhánh trái",
     "add_child_right": "Thêm nhánh phải (Tab)",
+    "add_child_below": "Thêm nhánh bên dưới (Tab)",
     "open_note": "Mở ghi chú",
     "too_new_title": "Bảng này được tạo bởi phiên bản Synabit mới hơn",
     "too_new_body": "Bảng không được mở ở đây, để việc lưu không làm mất những phần mà phiên bản này chưa hiểu. Hãy cập nhật Synabit để làm việc với nó.",
@@ -3238,14 +3243,34 @@
       "hidden_count": "{count} mục đang ẩn — mở rộng",
       "copy_outline": "Sao chép dạng dàn ý",
       "save_note": "Lưu thành ghi chú",
-      "saved_note": "Đã lưu thành ghi chú “{title}”"
+      "saved_note": "Đã lưu thành ghi chú “{title}”, hiện trực tiếp bảng này; ý trung tâm có link tới ghi chú",
+      "unpin": "Trả về bố cục tự động",
+      "open_note": "Mở ghi chú của nó",
+      "branch_note": "Biến nhánh thành ghi chú",
+      "branch_saved": "“{title}” giờ là một ghi chú, và mục này có link tới nó",
+      "export_opml": "Xuất ra OPML",
+      "layout_map": "Bố cục: nhánh ở hai bên",
+      "layout_right": "Bố cục: sơ đồ logic, sang phải",
+      "layout_down": "Bố cục: sơ đồ tổ chức, đi xuống",
+      "focus": "Tập trung vào nhánh này",
+      "focused": "Đang chỉ hiện “{title}”",
+      "show_all": "Hiện tất cả (Esc)",
+      "present": "Trình chiếu mindmap theo từng nhánh",
+      "make_task": "Biến thành việc cần làm",
+      "not_task": "Không còn là việc cần làm",
+      "vault_tasks": "Thêm các việc này vào Tasks",
+      "tasks_made": "Đã thêm {count} việc vào Tasks; tick ở đây là tick ở đó | Đã thêm {count} việc vào Tasks; tick ở đây là tick ở đó",
+      "mark_done": "Đánh dấu xong",
+      "undo_done": "Đánh dấu chưa xong",
+      "progress": "Xong {done}/{total} việc",
+      "marks": "Dấu"
     },
     "rotate": "Xoay (Shift: từng 15°, nhấp đúp: dựng thẳng)",
     "export_title": "Xuất",
     "export_svg": "SVG (vector, cho web)",
     "export_pdf": "PDF (một trang)",
-    "import_file": "Nhập bản vẽ (draw.io, Excalidraw, Mermaid)…",
-    "import_failed": "Không đọc được “{name}” thành bản vẽ.",
+    "import_file": "Nhập bản vẽ (draw.io, Excalidraw, Mermaid) hoặc mindmap (OPML, FreeMind, XMind)…",
+    "import_failed": "Không đọc được “{name}” thành bản vẽ hay mindmap.",
     "a11y": {
       "canvas": "Canvas của board. Tab chuyển giữa các item (trên item mindmap thì thêm nhánh), Enter chọn hoặc đặt item của công cụ đang chọn, mũi tên di chuyển, F2 sửa, F6 tới panel của item, Shift+F10 mở menu.",
       "kind": {
@@ -3576,7 +3601,10 @@
         "present_next": "Khung tiếp theo",
         "present_prev": "Khung trước",
         "present_laser": "Bút laser",
-        "present_exit": "Dừng trình chiếu"
+        "present_exit": "Dừng trình chiếu",
+        "mind_newline": "Xuống dòng trong một mục",
+        "mind_move": "Đi sang mục bên cạnh",
+        "mind_pin": "Giữ khi kéo: đặt tự do"
       }
     },
     "fail": {

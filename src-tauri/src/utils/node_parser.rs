@@ -229,6 +229,31 @@ pub fn summarise_whiteboard(raw_json: &str) -> BoardSummary {
             }
         }
 
+        // Any item can carry a link (`data.link`): a mind-map idea saved as a
+        // note, a box pointing at the task it stands for. One into the vault
+        // is a link from the board, as a card is — without this the note had
+        // no backlink to the map it hangs from. It is written as it was on the
+        // item, already in the extractor's form.
+        if let Some(link) = data.and_then(|d| d.get("link")).and_then(Value::as_str) {
+            if let Some(rest) = link.strip_prefix("synabit://") {
+                let (kind, target) = rest.split_once('/').unwrap_or(("", ""));
+                let target = urlencoding::decode(target).map(|t| t.into_owned()).unwrap_or_else(|_| target.to_string());
+                if matches!(kind, "note" | "person" | "task" | "event" | "project" | "file" | "whiteboard")
+                    && !target.is_empty()
+                    && seen_notes.insert(target.clone())
+                {
+                    let title = data
+                        .and_then(|d| d.get("label"))
+                        .and_then(Value::as_str)
+                        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+                        .filter(|l| !l.is_empty())
+                        .unwrap_or_else(|| target.clone());
+                    let safe_title = title.replace(['[', ']'], "");
+                    note_links.push(format!("[{safe_title}](synabit://{kind}/{})", urlencoding::encode(&target)));
+                }
+            }
+        }
+
         // A card names the thing it shows — a task, a person, an event — by
         // its path, the same way: a link to it, so the thing has the board
         // among its backlinks and the graph draws the line.
@@ -358,6 +383,20 @@ mod tests {
         );
         assert!(summary.text.contains("Call [bank]"));
         assert_eq!(summary.note_links, vec!["[Call bank](synabit://task/Tasks%2Fa%20b.md)".to_string()]);
+    }
+
+    #[test]
+    fn an_item_linked_to_a_note_is_a_link_from_the_board() {
+        // A mind-map idea saved as a note: the note has the map among its
+        // backlinks. A web link is not one, and a note linked twice is one.
+        let summary = summarise_whiteboard(
+            r#"{"nodes":[
+                {"id":"m","type":"mindmap","data":{"label":"Launch\nplan","link":"synabit://note/Notes%2FLaunch%20plan.md"}},
+                {"id":"n","type":"mindmap","data":{"label":"Again","link":"synabit://note/Notes%2FLaunch%20plan.md"}},
+                {"id":"w","type":"shape","data":{"label":"Docs","link":"https://example.com"}}
+            ],"edges":[]}"#,
+        );
+        assert_eq!(summary.note_links, vec!["[Launch plan](synabit://note/Notes%2FLaunch%20plan.md)".to_string()]);
     }
 
     #[test]

@@ -36,7 +36,10 @@ const groups: { title: string; rows: [string, string][] }[] = [
   },
   {
     title: 'mindmap',
-    rows: [['Tab', 'mind_child'], ['Enter', 'mind_sibling']],
+    rows: [
+      ['Tab', 'mind_child'], ['Enter', 'mind_sibling'], [k('⇧Enter', 'Shift+Enter'), 'mind_newline'],
+      ['← ↑ → ↓', 'mind_move'], [k('⌥', 'Alt'), 'mind_pin'],
+    ],
   },
   {
     title: 'move',

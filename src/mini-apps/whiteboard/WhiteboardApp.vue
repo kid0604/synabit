@@ -20,7 +20,11 @@ import { layOutPending, waitsForLayout } from './autoLayout';
 import { fromDrawio, fromExcalidraw, looksLikeMermaid, type Imported } from './importers';
 import { renderDiagram, diagramId } from '../../shared/mermaid';
 import { boardFromDiagram } from '../../shared/diagramToBoard';
-import { childrenOf, descendantsOf, estimateSize, fromOutline, hiddenByCollapse, rootOf, tidyTree, toOutline, type OutlineItem } from './mindmap';
+import { branchToRecolour, buildMindmap, childrenOf, descendantsOf, dropPlan, estimateSize, fixHandles, fromOutline, hiddenByCollapse, layoutOf, mapLayouts, moveBranch, neighbour, rootOf, setLayout, tagsOf, taskProgress, tidyTree, toOpml, toOutline, type MapLayout, type OutlineItem } from './mindmap';
+import { isMindmapFile, readMindmapFile } from './mindmapFiles';
+import type { Slide } from './presentation';
+import { today } from './vaultCards';
+import { boardEmbedHtml } from '../note/boardEmbed';
 import { stampElement } from './boardFile';
 import ShapeNode from './nodes/ShapeNode.vue';
 import StrokeNode from './nodes/StrokeNode.vue';
@@ -783,6 +787,23 @@ function spokenName(n: WBNode): string {
 }
 
 // ── VueFlow Sync ────────────────────────────────────────────
+/**
+ * One branch of a mind map shown on its own (`focusBranch`): the item, what
+ * grows from it and, while a map is presented, its central idea. Kept as the
+ * branch's top rather than a list of items, so what is added to the branch
+ * while focused is shown too.
+ */
+const mindFocus = shallowRef<{ branch: string; with?: string } | null>(null);
+const focusIds = computed<Set<string> | null>(() => {
+  const f = mindFocus.value;
+  const board = store.currentBoardData.value;
+  if (!f || !board) return null;
+  void board.nodes.length;
+  const ids = new Set([f.branch, ...descendantsOf(f.branch, childrenOf(board.nodes, board.edges))]);
+  if (f.with) ids.add(f.with);
+  return ids;
+});
+
 function syncToVueFlow(select?: Iterable<string>) {
   if (!store.currentBoardData.value) {
     vfNodes.value = [];
@@ -795,7 +816,11 @@ function syncToVueFlow(select?: Iterable<string>) {
   const selected = new Set(select ?? vfNodes.value.filter((n: any) => n.selected).map((n: any) => n.id));
   // What folded mind-map branches hide, and each mind-map item's children.
   const hidden = hiddenByCollapse(store.currentBoardData.value.nodes, store.currentBoardData.value.edges);
+  // Focused on one branch: everything else is out of sight until it ends.
+  if (focusIds.value) for (const n of store.currentBoardData.value.nodes) if (!focusIds.value.has(n.id)) hidden.add(n.id);
   const children = childrenOf(store.currentBoardData.value.nodes, store.currentBoardData.value.edges);
+  const layouts = mapLayouts(store.currentBoardData.value.nodes, store.currentBoardData.value.edges);
+  const progress = taskProgress(store.currentBoardData.value.nodes, store.currentBoardData.value.edges);
   vfNodes.value = store.currentBoardData.value.nodes.map((n: WBNode) => {
     const node: any = {
       id: n.id, type: n.type,
@@ -806,18 +831,25 @@ function syncToVueFlow(select?: Iterable<string>) {
     };
     applySize(node, n.data.width, n.data.height);
     node.ariaLabel = spokenName(n);
-    if (hidden.has(n.id)) node.hidden = true;
+    // Said both ways: the canvas merges a redrawn item into the one it had
+    // (`Object.assign`), so an item left without `hidden` kept the `true` it
+    // was hidden with, and a branch unfolded — or a focus ended — stayed out
+    // of sight.
+    node.hidden = hidden.has(n.id);
     if (n.type === 'mindmap') {
       // For the fold button: drawn from these, never saved.
       const kids = children.get(n.id) ?? [];
       node.data._childCount = kids.length;
       if (n.data?.collapsed) node.data._hiddenCount = descendantsOf(n.id, children).length;
+      node.data._layout = layouts.get(n.id);
+      const p = progress.get(n.id);
+      if (p) node.data._progress = p;
     }
     return node;
   });
   vfEdges.value = store.currentBoardData.value.edges.map((e: WBEdge) => {
     const edge = buildVfEdge(e, store.currentBoardData.value!.nodes);
-    if (hidden.has(e.source) || hidden.has(e.target)) edge.hidden = true;
+    edge.hidden = hidden.has(e.source) || hidden.has(e.target);
     return edge;
   });
 }
@@ -1060,11 +1092,16 @@ function handleEdgesChange(changes: any[]) {
 }
 
 function handleConnect(params: any) {
+  // Drawn between two mind-map items, a line says they are related — dashed,
+  // and no part of the tree (`isRelation`). Only Tab, Enter and + make branches.
+  const mind = (id: string) => store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === id)?.type === 'mindmap';
+  const relation = mind(params.source) && mind(params.target);
   const edge: any = {
     id: store.generateId('e'), source: params.source, sourceHandle: params.sourceHandle,
     // A new line picks the sides that face each other, and keeps doing so as
     // its ends move (see routing.ts); the panel can pin it to these handles.
-    target: params.target, targetHandle: params.targetHandle, type: 'default', data: { sides: 'auto' }, zIndex: EDGE_Z,
+    target: params.target, targetHandle: params.targetHandle, type: 'default',
+    data: relation ? { sides: 'auto', relation: true, dashStyle: 'dashed' } : { sides: 'auto' }, zIndex: EDGE_Z,
   };
   store.addEdge(edge);
   // Built the way every other line is: with its name for a screen reader,
@@ -1539,6 +1576,16 @@ function handleDrop(event: DragEvent) {
     return;
   }
 
+  // Mind maps from other apps: OPML, FreeMind, XMind.
+  const maps = dropped.filter((f) => isMindmapFile(f.name));
+  if (maps.length) {
+    const at = screenToFlowCoordinate({ x: event.clientX, y: event.clientY });
+    void (async () => {
+      for (const file of maps) await importMindmap(file, at);
+    })();
+    return;
+  }
+
   // Drawings from other tools: a draw.io, Excalidraw or Mermaid file.
   const drawings = dropped.filter((f) => /\.(drawio|excalidraw|mmd|mermaid|xml|json)$/i.test(f.name));
   if (drawings.length) {
@@ -1553,7 +1600,9 @@ function handleDrop(event: DragEvent) {
   const noteTitle = event.dataTransfer.getData('application/synabit-note-title');
   const blockId = event.dataTransfer.getData('application/synabit-block-id');
   if (noteId) {
-    addNoteCard(noteId, noteTitle, blockId || undefined, screenToFlowCoordinate({ x: event.clientX, y: event.clientY }));
+    const onto = blockId ? null : mindmapItemAt(event.clientX, event.clientY);
+    if (onto) addNoteBranch(onto, noteId, noteTitle);
+    else addNoteCard(noteId, noteTitle, blockId || undefined, screenToFlowCoordinate({ x: event.clientX, y: event.clientY }));
   }
 }
 
@@ -1875,8 +1924,94 @@ function tidyMindmap(anyId: string, settle = true) {
     node.position = at;
     stampElement(node);
   }
+  // An item added or moved joins its parent by the sides the map's layout uses.
+  for (const e of fixHandles(root, board.nodes, board.edges)) stampElement(e);
   syncToVueFlow();
   if (settle) setTimeout(() => { tidyMindmap(anyId, false); scheduleSave(); }, 120);
+}
+
+/**
+ * A mind-map item dropped: its branch moved under the item it was dropped on,
+ * or put in its place among its siblings, and the map laid out again
+ * (`dropPlan`). Part of the drag's step: one undo takes back both. A drag of
+ * several items, or of a central idea, moves them and nothing more.
+ */
+function settleMindmapDrop(event: any) {
+  const dragged = event.nodes ?? [event.node];
+  const board = store.currentBoardData.value;
+  if (!board || dragged.length !== 1 || dragged[0].type !== 'mindmap') return;
+  const id = dragged[0].id;
+  const item = board.nodes.find((n: WBNode) => n.id === id);
+  if (!item || item.data?.locked) return;
+  // With Alt (Option), placed by hand: kept where it was put, and left there
+  // by every layout after (`tidyTree`), until it is dragged back in or the
+  // menu puts it back.
+  if (event.event?.altKey) {
+    if (rootOf(id, board.nodes, board.edges) === id) return;
+    item.data = { ...item.data, pinned: true };
+    stampElement(item);
+    syncToVueFlow();
+    return;
+  }
+  if (item.data?.pinned) {
+    item.data = { ...item.data, pinned: undefined };
+    stampElement(item);
+  }
+  const sizeOf = (n: WBNode) => {
+    const d = findNode(n.id)?.dimensions;
+    return d?.width && d?.height ? { width: d.width, height: d.height } : estimateSize(n);
+  };
+  const plan = dropPlan(id, board.nodes, board.edges, sizeOf);
+  if (!plan) return;
+  const into = board.nodes.find((n: WBNode) => n.id === plan.parentId);
+  if (into?.data?.collapsed) into.data = { ...into.data, collapsed: undefined };
+  const changed = moveBranch(id, plan, board.nodes, board.edges, store.MINDMAP_COLORS);
+  for (const item of [...changed.nodes, ...changed.edges]) stampElement(item);
+  if (into) stampElement(into);
+  tidyMindmap(plan.parentId, false);
+}
+
+/**
+ * An arrow key on one selected mind-map item: the item it leads to selected,
+ * given focus so the next key goes on from it, and brought into view if it
+ * was off screen. Whether the selection was a mind-map item at all.
+ */
+function goToMindmapItem(key: string): boolean {
+  const ids = arrange.selectedIds();
+  const board = store.currentBoardData.value;
+  if (!board || ids.length !== 1) return false;
+  const here = board.nodes.find((n: WBNode) => n.id === ids[0]);
+  if (here?.type !== 'mindmap') return false;
+  const next = neighbour(here.id, key, board.nodes, board.edges);
+  if (!next) return true;
+  selectItems([next], false);
+  const el = canvasRef.value?.querySelector<HTMLElement>(`.vue-flow__node[data-id="${CSS.escape(next)}"]`);
+  el?.focus({ preventScroll: true });
+  const node = findNode(next);
+  const item = board.nodes.find((n: WBNode) => n.id === next);
+  if (item) {
+    const size = node?.dimensions?.width ? node.dimensions : estimateSize(item);
+    const { x, y, zoom } = viewport.value;
+    const left = item.position.x * zoom + x;
+    const top = item.position.y * zoom + y;
+    const off = left < 0 || top < 0 || left + size.width * zoom > dimensions.value.width || top + size.height * zoom > dimensions.value.height;
+    if (off) void setCenter(item.position.x + size.width / 2, item.position.y + size.height / 2, { zoom, duration: motion(200) });
+  }
+  return true;
+}
+
+/**
+ * A new colour for a mind-map item, and for the items below it that had its
+ * colour: its branch (`branchToRecolour`). One step to undo.
+ */
+function recolourMindmapBranch(id: string, colour: string) {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  store.beginUndoBatch();
+  for (const k of branchToRecolour(id, board.nodes, board.edges)) store.updateNodeData(k, { color: colour });
+  store.endUndoBatch();
+  syncToVueFlow();
+  scheduleSave();
 }
 
 /** Fold or unfold the branch under a mind-map item. */
@@ -1927,7 +2062,7 @@ function focusMindmapNode(nodeId: string) {
  */
 function startEditing(id: string) {
   const el = canvasRef.value?.querySelector(`.vue-flow__node[data-id="${CSS.escape(id)}"]`);
-  const target = el?.querySelector('.wb-shape-node, .wb-text-node, .wb-sticky, .wb-frame__title, .wb-comment');
+  const target = el?.querySelector('.wb-shape-node, .wb-text-node, .wb-sticky, .wb-frame__title, .wb-comment, .wb-mindmap-node');
   target?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
 }
 
@@ -1991,6 +2126,7 @@ function handleNodeDragStop(event: any) {
     if (follow.length) void tidyLines(follow, { asStep: false });
   }
   positionsAtDragStart = new Map();
+  settleMindmapDrop(event);
   scheduleSave();
 
   // A card dropped in a kanban column or on a timeline day changes its item in
@@ -2051,6 +2187,7 @@ const { handleKeydown, handleKeydownCapture } = useWhiteboardKeyboard({
   startEditing,
   store, vfNodes, vfEdges,
   deleteNodes, syncToVueFlow, scheduleSave,
+  goToMindmapItem,
   deleteLooseSelection,
   arrange,
   focusMindmapNode, handleMindmapAddChild, handleMindmapAddSibling, handleMindmapRemoveNode,
@@ -2123,13 +2260,30 @@ function openContextMenu(event: MouseEvent, onSelection: boolean) {
   const grouped = nodes.length > 1 && nodes.every((n) => n.data?.groupId && n.data.groupId === nodes[0].data.groupId);
   // A single mind-map item gets the mind map's own actions first.
   const mindItem = nodes.length === 1 && nodes[0].type === 'mindmap' ? nodes[0] : null;
+  const mindRoot = mindItem ? store.currentBoardData.value!.nodes.find((n: WBNode) => n.id === rootOf(mindItem.id, store.currentBoardData.value!.nodes, store.currentBoardData.value!.edges)) : undefined;
+  const mindLayout: MapLayout = mindRoot ? layoutOf(mindRoot.id, store.currentBoardData.value!.nodes) : 'map';
+  const mindHasTasks = mindItem
+    ? [mindItem.id, ...descendantsOf(mindItem.id, childrenOf(store.currentBoardData.value!.nodes, store.currentBoardData.value!.edges))]
+      .some((id) => { const n = store.currentBoardData.value!.nodes.find((x: WBNode) => x.id === id); return n?.data?.task && !noteOf(n.data?.link) && !taskOf(n.data?.link); })
+    : false;
   const mindHasKids = mindItem ? (childrenOf(store.currentBoardData.value!.nodes, store.currentBoardData.value!.edges).get(mindItem.id)?.length ?? 0) > 0 : false;
   const mindItems: ContextMenuItem[] = mindItem
     ? [
         { id: 'mind-tidy', label: t('whiteboard.mindmap.tidy') },
+        ...(mindItem.data?.pinned ? [{ id: 'mind-unpin', label: t('whiteboard.mindmap.unpin') }] : []),
         ...(mindHasKids ? [{ id: 'mind-fold', label: t(mindItem.data?.collapsed ? 'whiteboard.mindmap.expand' : 'whiteboard.mindmap.collapse') }] : []),
-        { id: 'mind-outline', label: t('whiteboard.mindmap.copy_outline') },
-        { id: 'mind-note', label: t('whiteboard.mindmap.save_note') },
+        ...(['map', 'right', 'down'] as MapLayout[])
+          .filter((l) => l !== mindLayout)
+          .map((l, i) => ({ id: `mind-layout-${l}`, label: t(`whiteboard.mindmap.layout_${l}`), separated: i === 0 })),
+        ...(mindHasKids ? [{ id: 'mind-focus', label: t('whiteboard.mindmap.focus') }] : []),
+        ...(mindRoot && (childrenOf(store.currentBoardData.value!.nodes, store.currentBoardData.value!.edges).get(mindRoot.id)?.length ?? 0) > 0
+          ? [{ id: 'mind-present', label: t('whiteboard.mindmap.present') }] : []),
+        { id: 'mind-task', label: t(mindItem.data?.task ? 'whiteboard.mindmap.not_task' : 'whiteboard.mindmap.make_task'), separated: true },
+        ...(mindHasTasks ? [{ id: 'mind-vault-tasks', label: t('whiteboard.mindmap.vault_tasks') }] : []),
+        { id: 'mind-outline', label: t('whiteboard.mindmap.copy_outline'), separated: true },
+        { id: 'mind-note', label: t(noteOf(mindRoot?.data?.link) ? 'whiteboard.mindmap.open_note' : 'whiteboard.mindmap.save_note') },
+        ...(mindHasKids && mindItem.data?.level ? [{ id: 'mind-branch-note', label: t('whiteboard.mindmap.branch_note') }] : []),
+        { id: 'mind-opml', label: t('whiteboard.mindmap.export_opml') },
       ]
     : [];
   // Syn's actions, when there is something for it to read or look at.
@@ -2272,22 +2426,50 @@ async function handleContextAction(action: string) {
     case 'export-pdf':
       await exportBoard({ format: id === 'export-pdf' ? 'pdf' : 'png', only: selectionWithFrameContents() });
       break;
+    case 'mind-unpin': {
+      const id = arrange.selectedIds()[0];
+      const item = id ? store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === id) : null;
+      if (item) {
+        store.pushUndoState();
+        item.data = { ...item.data, pinned: undefined };
+        stampElement(item);
+        tidyMindmap(id, false);
+        scheduleSave();
+      }
+      break;
+    }
     case 'mind-tidy': { const id = arrange.selectedIds()[0]; if (id) { store.pushUndoState(); tidyMindmap(id, false); scheduleSave(); } break; }
     case 'mind-fold': { const id = arrange.selectedIds()[0]; if (id) toggleMindmapCollapse(id); break; }
     case 'mind-outline':
-    case 'mind-note': {
+    case 'mind-note':
+    case 'mind-opml': {
       const id = arrange.selectedIds()[0];
       const board = store.currentBoardData.value;
       if (!id || !board) break;
       const root = rootOf(id, board.nodes, board.edges);
-      const outline = toOutline(root, board.nodes, board.edges);
       if (action === 'mind-outline') {
+        const outline = toOutline(root, board.nodes, board.edges);
         try { await navigator.clipboard.writeText(outline); } catch (err) { logger.error('Copy failed', err as string); showAppNotice(t('whiteboard.fail.clipboard'), 'error'); }
+      } else if (action === 'mind-note') {
+        await saveMindmapAsNote(root);
       } else {
-        await saveOutlineAsNote(board.nodes.find((n: WBNode) => n.id === root)?.data?.label || board.title, outline);
+        const label = String(board.nodes.find((n: WBNode) => n.id === root)?.data?.label || board.title || 'mind map');
+        download(new Blob([toOpml(root, board.nodes, board.edges)], { type: 'text/x-opml' }), `${label.replace(/[\\/:*?"<>|\n]+/g, ' ').trim() || 'mind map'}.opml`);
       }
       break;
     }
+    case 'mind-branch-note': { const id = arrange.selectedIds()[0]; if (id) await branchToNote(id); break; }
+    case 'mind-layout-map':
+    case 'mind-layout-right':
+    case 'mind-layout-down': { const id = arrange.selectedIds()[0]; if (id) layOutMindmap(id, action.slice('mind-layout-'.length) as MapLayout); break; }
+    case 'mind-focus': { const id = arrange.selectedIds()[0]; if (id) focusBranch(id); break; }
+    case 'mind-present': { const id = arrange.selectedIds()[0]; if (id) presentMindmap(id); break; }
+    case 'mind-task': {
+      const n = selectedItem();
+      if (n) { updateNodeData(n.id, n.data?.task ? { task: undefined, done: undefined } : { task: true }); tidyMindmap(n.id); }
+      break;
+    }
+    case 'mind-vault-tasks': { const id = arrange.selectedIds()[0]; if (id) await branchTasksToVault(id); break; }
   }
 }
 
@@ -2335,18 +2517,231 @@ function handleArrangeAction(id: string, el?: HTMLElement) {
   else if (id === 'tidy-lines') void tidyLines(linesOfSelection());
 }
 
+/** Lay a map out another way (`setLayout`): one step to undo, laid out at once. */
+function layOutMindmap(anyId: string, layout: MapLayout) {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  const root = rootOf(anyId, board.nodes, board.edges);
+  store.beginUndoBatch();
+  store.pushUndoState();
+  for (const n of setLayout(root, layout, board.nodes, board.edges)) stampElement(n);
+  store.endUndoBatch();
+  tidyMindmap(root);
+  scheduleSave();
+  requestAnimationFrame(() => setTimeout(() => fitMindmap(root), 160));
+}
+
+/** The box around a map's items that are showing, from `from` down. */
+function branchBox(from: string, withItem?: string): Box | null {
+  const board = store.currentBoardData.value;
+  if (!board) return null;
+  const hidden = hiddenByCollapse(board.nodes, board.edges);
+  const ids = [from, ...descendantsOf(from, childrenOf(board.nodes, board.edges)), ...(withItem ? [withItem] : [])];
+  return unionBox(ids.filter((id) => !hidden.has(id)).map((id) => {
+    const n = board.nodes.find((x: WBNode) => x.id === id);
+    const d = findNode(id)?.dimensions;
+    return n ? { x: n.position.x, y: n.position.y, width: d?.width || estimateSize(n).width, height: d?.height || estimateSize(n).height } : null;
+  }).filter((b): b is Box => !!b));
+}
+function fitMindmap(root: string) {
+  const box = branchBox(root);
+  if (box) void fitBounds(box, { padding: 0.12, duration: motion(300) });
+}
+
 /**
- * A mind map, written out as a note: its root is the title and the rest an
- * outline — the same tree, in the form the rest of the vault reads and links.
+ * One branch on its own: the rest of the board out of sight until Esc or
+ * "Show everything", as MindNode's and XMind's focus mode. Nothing on the
+ * board changes; it is a way of looking.
+ */
+function focusBranch(id: string) {
+  mindFocus.value = { branch: id };
+  syncToVueFlow([id]);
+  requestAnimationFrame(() => fitAll(motion(300)));
+}
+function endFocus() {
+  if (!mindFocus.value || presenting.value) return;
+  mindFocus.value = null;
+  syncToVueFlow();
+  requestAnimationFrame(() => fitAll(motion(300)));
+}
+const focusTitle = computed(() => {
+  const id = mindFocus.value?.branch;
+  return id ? String(store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === id)?.data?.label ?? '') : '';
+});
+function onFocusKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !mindFocus.value || presenting.value || !isAppActive.value) return;
+  const el = e.target as HTMLElement | null;
+  if (el?.closest?.('input, textarea, [contenteditable="true"]')) return;
+  endFocus();
+}
+window.addEventListener('keydown', onFocusKey);
+onUnmounted(() => window.removeEventListener('keydown', onFocusKey));
+// Another board is another way of looking.
+watch(() => store.currentBoardId.value, () => { mindFocus.value = null; });
+
+/**
+ * A map presented a branch at a time: the whole map first, then each main
+ * branch on its own with its central idea — as the map is talked through.
+ */
+function presentMindmap(anyId: string) {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  const root = rootOf(anyId, board.nodes, board.edges);
+  const label = (id: string) => String(board.nodes.find((n: WBNode) => n.id === id)?.data?.label ?? '');
+  const slides: Slide[] = [];
+  const whole = branchBox(root);
+  if (whole) slides.push({ id: null, title: label(root), box: whole, focus: { branch: root } });
+  for (const main of childrenOf(board.nodes, board.edges).get(root) ?? []) {
+    const box = branchBox(main, root);
+    if (box) slides.push({ id: null, title: label(main), box, focus: { branch: main, with: root } });
+  }
+  if (slides.length) presentation.start(undefined, slides);
+}
+// What a slide shows of a map, and nothing of it once the show is over.
+watch(() => (presenting.value ? presentation.current.value?.focus ?? null : null), (f) => {
+  mindFocus.value = f;
+  syncToVueFlow([]);
+});
+
+/** The task a link is to, by its path in the vault; null for any other link. */
+function taskOf(link: unknown): string | null {
+  const target = typeof link === 'string' ? vaultTarget(link) : null;
+  return target?.kind === 'task' ? target.id : null;
+}
+
+/**
+ * A task on the map ticked or unticked — and, when it is one of the vault's
+ * tasks, there too, so the Tasks app and the map say the same.
+ */
+async function toggleMindmapDone(id: string) {
+  const n = store.currentBoardData.value?.nodes.find((x: WBNode) => x.id === id);
+  if (!n || n.data?.locked) return;
+  const done = !n.data?.done;
+  updateNodeData(id, { done: done || undefined });
+  syncToVueFlow();
+  const task = taskOf(n.data?.link);
+  if (!task) return;
+  try {
+    await nodeService.writeNode({
+      relPath: task, nodeType: 'task', title: String(n.data?.label ?? ''),
+      properties: done ? { status: 'done', completed_at: today() } : { status: 'todo', completed_at: null },
+      eventType: 'updated',
+    });
+    bus.emit('task:status-changed', { id: task, oldStatus: done ? 'todo' : 'done', newStatus: done ? 'done' : 'todo', title: String(n.data?.label ?? '') });
+    if (done) bus.emit('task:completed', { id: task, title: String(n.data?.label ?? '') });
+  } catch (err) {
+    logger.error('Could not change the task', err as string);
+    showAppNotice(t('whiteboard.fail.card_change'), 'error');
+  }
+}
+
+/**
+ * The branch's tasks made tasks of the vault, each item linked to its own:
+ * then they are in Tasks, with their dates and reminders, and ticking one on
+ * the map ticks it there. Items already linked are left as they are.
+ */
+async function branchTasksToVault(id: string) {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  const ids = [id, ...descendantsOf(id, childrenOf(board.nodes, board.edges))];
+  const todo = ids
+    .map((x) => board.nodes.find((n: WBNode) => n.id === x))
+    .filter((n): n is WBNode => !!n && !!n.data?.task && !n.data?.link);
+  let made = 0;
+  store.beginUndoBatch();
+  for (const n of todo) {
+    const relPath = `Tasks/${crypto.randomUUID()}.md`;
+    try {
+      await nodeService.writeNode({
+        relPath, nodeType: 'task', title: tagsOf(String(n.data?.label ?? '')).text || t('whiteboard.untitled'),
+        properties: { status: n.data?.done ? 'done' : 'todo', ...(n.data?.done ? { completed_at: today() } : {}) },
+        content: '', eventType: 'created',
+      });
+      store.updateNodeData(n.id, { link: `synabit://task/${encodeURIComponent(relPath)}` });
+      made++;
+    } catch (err) {
+      logger.error('Could not make a task from the map', err as string);
+    }
+  }
+  store.endUndoBatch();
+  syncToVueFlow();
+  scheduleSave();
+  if (made) showAppNotice(t('whiteboard.mindmap.tasks_made', { count: made }, made), 'info');
+  if (made < todo.length) showAppNotice(t('whiteboard.fail.tasks', { count: todo.length - made }, todo.length - made), 'error');
+}
+
+/**
+ * The map's ticks brought up to date with the vault's tasks they stand for,
+ * when the board opens: a task ticked off in the Tasks app is ticked here.
+ * Not a step to undo — it is how the board arrives.
+ */
+async function refreshMindmapTasks() {
+  const board = store.currentBoardData.value;
+  if (!board) return;
+  const linked = board.nodes.filter((n: WBNode) => n.type === 'mindmap' && n.data?.task && taskOf(n.data?.link));
+  let changed = false;
+  for (const n of linked) {
+    const task = await nodeService.getNode(taskOf(n.data.link)!).catch(() => null);
+    if (!task || store.currentBoardData.value !== board) continue;
+    const done = task.properties?.status === 'done';
+    if (!!n.data.done === done) continue;
+    n.data = { ...n.data, done: done || undefined };
+    stampElement(n);
+    changed = true;
+  }
+  if (changed) { syncToVueFlow(); scheduleSave(); }
+}
+watch(() => store.currentBoardId.value, () => void refreshMindmapTasks(), { immediate: true });
+
+/** A mark put on an idea, or taken off it. */
+function setMindmapIcon(id: string, icon: string | null) {
+  updateNodeData(id, { icon: icon || undefined });
+  tidyMindmap(id);
+}
+
+
+function noteOf(link: unknown): string | null {
+  const target = typeof link === 'string' ? vaultTarget(link) : null;
+  return target?.kind === 'note' ? target.id : null;
+}
+const noteLink = (relPath: string) => `synabit://note/${encodeURIComponent(relPath)}`;
+
+/** A file handed to the person to keep, as an export is. */
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/**
+ * A mind map kept as a note: the note shows this board, live, and the map's
+ * central idea links to the note — two ends of one link, not a copy of the
+ * map that stops matching it the moment either is changed. Asked again, the
+ * note it already has is opened rather than a second one made.
  */
 const nodeService = useNodeService();
-async function saveOutlineAsNote(title: string, outline: string) {
+async function saveMindmapAsNote(rootId: string) {
+  const board = store.currentBoardData.value;
+  const meta = store.currentBoard.value;
+  const root = board?.nodes.find((n: WBNode) => n.id === rootId);
+  if (!board || !meta || !root) return;
+  const linked = noteOf(root.data?.link);
+  if (linked) {
+    const there = await nodeService.getNode(linked).catch(() => null);
+    if (there) { openInApp(linked, 'note'); return; }
+  }
+  const title = String(root.data?.label || board.title || '').trim() || t('whiteboard.untitled');
   try {
+    await flushSave();
     const relPath = await nodeService.createNode({ directory: 'Notes', nodeType: 'note', silent: true });
-    // The outline under its own title line is a note with a heading; the
-    // first line of the outline is the root, which the title already names.
-    const body = outline.split('\n').slice(1).map((line) => line.slice(2)).join('\n');
-    await nodeService.writeNode({ relPath, nodeType: 'note', title, properties: {}, content: body, eventType: 'created' });
+    const content = boardEmbedHtml({ boardId: meta.id || meta.path, boardPath: meta.path, title: board.title, height: '420px' });
+    await nodeService.writeNode({ relPath, nodeType: 'note', title, properties: {}, content, eventType: 'created' });
+    store.updateNodeData(rootId, { link: noteLink(relPath) });
+    syncToVueFlow([rootId]);
+    scheduleSave();
     showAppNotice(t('whiteboard.mindmap.saved_note', { title }), 'info');
   } catch (err) {
     logger.error('Could not save the mind map as a note', err as string);
@@ -2355,35 +2750,104 @@ async function saveOutlineAsNote(title: string, outline: string) {
 }
 
 /**
- * An indented list pasted onto the board becomes a mind map: its first item
- * the root, each level of indent a level of branch. Laid out at once.
+ * A branch grown too big for the map, made a note of its own: what is under
+ * the item becomes the note's outline, and the item stays on the map as the
+ * note's title, linked to it — the branch moves, it is not copied. One step
+ * to undo on the board; the note is kept.
+ */
+async function branchToNote(id: string) {
+  const board = store.currentBoardData.value;
+  const item = board?.nodes.find((n: WBNode) => n.id === id);
+  if (!board || !item) return;
+  const under = descendantsOf(id, childrenOf(board.nodes, board.edges));
+  if (!under.length) return;
+  const title = String(item.data?.label || '').trim() || t('whiteboard.untitled');
+  // The item's own line is the note's title; what is below it, one indent out.
+  const body = toOutline(id, board.nodes, board.edges).split('\n').slice(1).map((line) => line.slice(2)).join('\n');
+  try {
+    const relPath = await nodeService.createNode({ directory: 'Notes', nodeType: 'note', silent: true });
+    await nodeService.writeNode({ relPath, nodeType: 'note', title, properties: {}, content: body, eventType: 'created' });
+    store.beginUndoBatch();
+    store.updateNodeData(id, { link: noteLink(relPath), collapsed: undefined });
+    deleteNodes(under);
+    store.endUndoBatch();
+    syncToVueFlow([id]);
+    tidyMindmap(id);
+    scheduleSave();
+    showAppNotice(t('whiteboard.mindmap.branch_saved', { title }), 'info');
+  } catch (err) {
+    logger.error('Could not make a note of the branch', err as string);
+    showAppNotice(t('whiteboard.fail.save_note'), 'error');
+  }
+}
+
+/**
+ * A note dropped on a mind-map item: a branch of it, named for the note and
+ * linked to it, as Heptabase puts a card in a map. Dropped anywhere else it
+ * is the note's card, as before.
+ */
+function addNoteBranch(parentId: string, noteId: string, noteTitle: string) {
+  const board = store.currentBoardData.value;
+  const parent = board?.nodes.find((n: WBNode) => n.id === parentId);
+  if (!board || !parent) return;
+  // Off a central idea, on its emptier side; further out, the side it grows on.
+  let direction: 'left' | 'right' = parent.data?.direction === 'left' ? 'left' : 'right';
+  if (!parent.data?.level) {
+    const kids = (childrenOf(board.nodes, board.edges).get(parentId) ?? []).map((k) => board.nodes.find((n: WBNode) => n.id === k));
+    const left = kids.filter((k) => k?.data?.direction === 'left').length;
+    direction = left < kids.length - left ? 'left' : 'right';
+  }
+  const title = noteTitle || noteId.split('/').pop()?.replace(/\.md$/i, '') || noteId;
+  store.beginUndoBatch();
+  const childId = store.addMindmapChild(parentId, direction);
+  const child = childId ? board.nodes.find((n: WBNode) => n.id === childId) : undefined;
+  if (child) child.data = { ...child.data, label: title, link: noteLink(noteId), editing: undefined };
+  store.endUndoBatch();
+  if (parent.data?.collapsed) store.updateNodeData(parentId, { collapsed: undefined });
+  tidyMindmap(parentId);
+  scheduleSave();
+}
+
+/** The mind-map item under a point on the screen, if there is one. */
+function mindmapItemAt(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y)?.closest('.vue-flow__node');
+  const id = el?.getAttribute('data-id');
+  const node = id ? store.currentBoardData.value?.nodes.find((n: WBNode) => n.id === id) : undefined;
+  return node?.type === 'mindmap' ? node.id : null;
+}
+
+/** A mind map from another app's file, on the board at `at`. */
+async function importMindmap(file: File, at: { x: number; y: number }): Promise<boolean> {
+  let tree: OutlineItem | null = null;
+  try {
+    tree = await readMindmapFile(file);
+  } catch (err) {
+    logger.error('Could not import a mind map', err as string);
+  }
+  if (!tree) {
+    showAppNotice(t('whiteboard.import_failed', { name: file.name || t('whiteboard.untitled') }), 'error');
+    return false;
+  }
+  addMindmapFromOutline(tree, at);
+  return true;
+}
+
+/**
+ * A tree — an indented list pasted, a mind-map file dropped — becomes a mind
+ * map on the board: its first idea the root, each level of indent a level of
+ * branch, balanced between the root's two sides (`buildMindmap`). One step to
+ * undo, laid out again once the items can be measured.
  */
 function addMindmapFromOutline(tree: OutlineItem, at: { x: number; y: number }) {
   const board = store.currentBoardData.value;
   if (!board) return;
   store.beginUndoBatch();
   store.pushUndoState();
-  const rootId = store.generateId('mind');
-  const add = (item: OutlineItem, id: string, level: number, parentId: string | null) => {
-    const node: WBNode = {
-      id, type: 'mindmap', position: { ...at },
-      data: { label: item.label, color: store.getMindmapColor(level), level, direction: 'right' },
-    };
-    stampElement(node);
-    board.nodes.push(node);
-    if (parentId) {
-      const edge: WBEdge = {
-        id: store.generateId('e'), source: parentId, target: id, type: 'default', data: {},
-        sourceHandle: 'right-source', targetHandle: 'left-target',
-      };
-      stampElement(edge);
-      board.edges.push(edge);
-    }
-    for (const child of item.children) add(child, store.generateId('mind'), level + 1, id);
-  };
-  add(tree, rootId, 0, null);
+  const map = buildMindmap(tree, at, store.MINDMAP_COLORS, store.generateId);
+  for (const n of map.nodes) { stampElement(n); board.nodes.push(n); }
+  for (const e of map.edges) { stampElement(e); board.edges.push(e); }
   store.endUndoBatch();
-  tidyMindmap(rootId);
+  tidyMindmap(map.rootId);
   scheduleSave();
 }
 
@@ -2449,10 +2913,12 @@ async function importDrawing(text: string, name: string, at: { x: number; y: num
 function pickDrawing() {
   const input = document.createElement('input');
   input.type = 'file';
-  input.accept = '.drawio,.xml,.excalidraw,.json,.mmd,.mermaid';
+  input.accept = '.drawio,.xml,.excalidraw,.json,.mmd,.mermaid,.opml,.mm,.xmind';
   input.onchange = async () => {
     const file = input.files?.[0];
-    if (file) await importDrawing(await file.text(), file.name, placementPoint());
+    if (!file) return;
+    if (isMindmapFile(file.name)) await importMindmap(file, placementPoint());
+    else await importDrawing(await file.text(), file.name, placementPoint());
   };
   input.click();
 }
@@ -2907,7 +3373,7 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           <template #node-shape="nodeProps"><ShapeNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" @rotate="(deg: number, final: boolean) => handleImageRotation(nodeProps.id, deg, final)" /></template>
           <template #node-stroke="nodeProps"><StrokeNode v-bind="nodeProps" /></template>
           <template #node-mindmap="nodeProps">
-            <MindmapNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" @add-child="handleMindmapAddChild" @add-sibling="handleMindmapAddSibling" @remove-node="handleMindmapRemoveNode" @toggle-collapse="toggleMindmapCollapse" />
+            <MindmapNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" @add-child="handleMindmapAddChild" @add-sibling="handleMindmapAddSibling" @remove-node="handleMindmapRemoveNode" @toggle-collapse="toggleMindmapCollapse" @recolour="recolourMindmapBranch" @toggle-done="toggleMindmapDone" @set-icon="setMindmapIcon" />
           </template>
           <template #node-frame="nodeProps"><FrameNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" @refresh="refreshOneLive" /></template>
           <template #node-sticky="nodeProps"><StickyNode v-bind="nodeProps" @update:data="(d: any) => handleNodeDataUpdate(nodeProps.id, d)" @rotate="(deg: number, final: boolean) => handleImageRotation(nodeProps.id, deg, final)" /></template>
@@ -3027,6 +3493,11 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
           @restore="restoreVersion"
           @close="showHistory = false"
         />
+        <!-- One branch on its own: what it is, and the way back. -->
+        <div v-if="mindFocus && !presenting" class="wb-focus-bar" role="status">
+          <span class="wb-focus-text">{{ t('whiteboard.mindmap.focused', { title: focusTitle }) }}</span>
+          <button type="button" class="wb-focus-btn" @click="endFocus">{{ t('whiteboard.mindmap.show_all') }}</button>
+        </div>
         <BoardSearch
           v-if="showSearch && !presenting"
           :nodes="store.currentBoardData.value.nodes"
@@ -3188,6 +3659,42 @@ defineExpose({ openBoardById, currentBoardId: store.currentBoardId, refreshBoard
 </template>
 
 <style scoped>
+.wb-focus-bar {
+  position: absolute;
+  /* Below the title bar, which lies over the canvas: where the search sits. */
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 32px);
+  padding: 6px 6px 6px 14px;
+  border-radius: 999px;
+  background: var(--color-surface, #fff);
+  border: 1px solid var(--color-border, #e6e6e6);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  font-size: 13px;
+}
+:global(.dark) .wb-focus-bar {
+  background: var(--color-surface-dark, #1e1e1e);
+  border-color: var(--color-border-dark, #333);
+}
+.wb-focus-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wb-focus-btn {
+  flex: none;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
 /* An item with a link carries a small mark in its corner; Alt-click or the
    menu follows it. */
 :deep(.vue-flow__node.wb-has-link)::before {
