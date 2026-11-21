@@ -1,9 +1,13 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  buildMindmap, dropPlan, estimateSize, fixHandles, fromOutline, layoutOf, mapLayouts, MINDMAP_COLORS, neighbour,
+  buildMindmap, dropPlan, ICON_GROUPS, ICONS, estimateSize, fixHandles, fromOutline, layoutOf, mapLayouts, MINDMAP_COLORS, neighbour,
   setLayout, tagsOf, taskProgress, tidyTree, toOutline, type OutlineItem,
 } from '../mindmap';
 import type { WBNode } from '../boardFile';
+
+declare const __dirname: string;
 
 let n = 0;
 const newId = (prefix: string) => `${prefix}_${++n}`;
@@ -142,5 +146,18 @@ describe('tasks, marks and tags', () => {
     const marked: WBNode = { ...plain, data: { ...plain.data, task: true, icon: '⭐', label: 'Book the hall #venue' } };
     expect(estimateSize(marked).width).toBeGreaterThan(estimateSize(plain).width);
     expect(estimateSize(marked).height).toBeGreaterThan(estimateSize(plain).height);
+  });
+
+  it('offers each mark once, in groups that fill the picker’s rows, as Syn reads them', () => {
+    expect(new Set(ICONS).size).toBe(ICONS.length);
+    for (const g of ICON_GROUPS) expect(g.icons.length % 9, g.key).toBe(0);
+    const rust = readFileSync(resolve(__dirname, '../../../../src-tauri/src/syn/mindmap.rs'), 'utf8');
+    const list = /pub const ICONS: \[&str; \d+\] = \[([^\]]*)\]/.exec(rust)![1];
+    expect([...list.matchAll(/"([^"]+)"/g)].map((m) => m[1])).toEqual([...ICONS]);
+  });
+
+  it('reads any of the marks back from an outline', () => {
+    const back = fromOutline('- Plan\n  - [ ] 🟢 Go\n  - 9️⃣ Last\n  - 🤔 Maybe')!;
+    expect(back.children.map((c) => [c.icon, c.label])).toEqual([['🟢', 'Go'], ['9️⃣', 'Last'], ['🤔', 'Maybe']]);
   });
 });

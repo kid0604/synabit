@@ -3263,7 +3263,15 @@
       "mark_done": "Mark done",
       "undo_done": "Mark not done",
       "progress": "{done} of {total} tasks done",
-      "marks": "Marks"
+      "marks": "Marks",
+      "mark_groups": {
+        "priority": "Priority",
+        "progress": "Progress",
+        "numbers": "Order",
+        "colours": "Colours",
+        "things": "About",
+        "feelings": "Feelings"
+      }
     },
     "rotate": "Turn (Shift: 15° steps, double-click: upright)",
     "export_title": "Export",

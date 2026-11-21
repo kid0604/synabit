@@ -3,7 +3,7 @@ import { ref, watch, nextTick, onMounted, computed } from 'vue';
 import { Handle, Position } from '@vue-flow/core';
 import { useOnlySelected } from '../composables/useOnlySelected';
 import { MINDMAP_COLORS } from '../composables/useWhiteboardStore';
-import { ICONS, tagsOf } from '../mindmap';
+import { ICON_GROUPS, tagsOf } from '../mindmap';
 
 /** The colours a branch can be given, by the names the board's colours go by. */
 const SWATCHES: { value: string; name: string }[] = [
@@ -295,16 +295,19 @@ function addChild(direction: 'right' | 'left') {
       >{{ data.icon || '☺' }}</button>
     </div>
     <!-- The marks an idea can carry; the one it has, again, takes it off. -->
-    <div v-if="alone && picking && !isEditing && !(data as any).locked" class="wb-mindmap-marks nodrag nopan" role="toolbar" :aria-label="$t('whiteboard.mindmap.marks')">
-      <button
-        v-for="icon in ICONS"
-        :key="icon"
-        type="button"
-        class="wb-mindmap-mark"
-        :class="{ active: data.icon === icon }"
-        :aria-pressed="data.icon === icon"
-        @click.stop="emit('set-icon', id, data.icon === icon ? null : icon); picking = false"
-      >{{ icon }}</button>
+    <div v-if="alone && picking && !isEditing && !(data as any).locked" class="wb-mindmap-marks nodrag nopan nowheel" role="toolbar" :aria-label="$t('whiteboard.mindmap.marks')">
+      <template v-for="group in ICON_GROUPS" :key="group.key">
+        <div class="wb-mindmap-mark-group" role="presentation">{{ $t(`whiteboard.mindmap.mark_groups.${group.key}`) }}</div>
+        <button
+          v-for="icon in group.icons"
+          :key="icon"
+          type="button"
+          class="wb-mindmap-mark"
+          :class="{ active: data.icon === icon }"
+          :aria-pressed="data.icon === icon"
+          @click.stop="emit('set-icon', id, data.icon === icon ? null : icon); picking = false"
+        >{{ icon }}</button>
+      </template>
     </div>
 
     <!-- Handles with IDs for directional edges -->
@@ -418,9 +421,13 @@ function addChild(direction: 'right' | 'left') {
   bottom: calc(100% + 44px);
   transform: translateX(-50%);
   display: grid;
-  grid-template-columns: repeat(8, 28px);
+  grid-template-columns: repeat(9, 28px);
   gap: 2px;
-  padding: 6px;
+  padding: 4px 6px 6px;
+  /* Seventy-odd marks: the box scrolls rather than running off the top. */
+  max-height: 248px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: 12px;
   background: var(--color-surface, #fff);
   border: 1px solid var(--color-border, #e6e6e6);
@@ -431,6 +438,16 @@ function addChild(direction: 'right' | 'left') {
 :global(.dark .wb-mindmap-marks) {
   background: var(--color-surface-dark, #1e1e1e);
   border-color: var(--color-border-dark, #333);
+}
+.wb-mindmap-mark-group {
+  grid-column: 1 / -1;
+  padding: 4px 2px 0;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--color-text-secondary, #6b6b6b);
+}
+:global(.dark .wb-mindmap-mark-group) {
+  color: var(--color-text-secondary-dark, #a0a0a0);
 }
 .wb-mindmap-mark {
   width: 28px;
@@ -485,6 +502,15 @@ function addChild(direction: 'right' | 'left') {
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
   cursor: default;
   z-index: 11;
+}
+/*
+ * The board stacks lines above every item (EDGE_Z, useNodeOperations.ts), and
+ * their words above them, so a branch leaving the root ran over its colour row
+ * and hid the mark button at its end. While the row is open its item goes over
+ * the lines; the item's own z-index is written on it, hence !important.
+ */
+:global(.vue-flow__node:has(.wb-mindmap-colors)) {
+  z-index: 1000002 !important;
 }
 :global(.dark .wb-mindmap-colors) {
   background: var(--color-surface-dark, #1e1e1e);

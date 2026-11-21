@@ -3263,7 +3263,15 @@
       "mark_done": "Đánh dấu xong",
       "undo_done": "Đánh dấu chưa xong",
       "progress": "Xong {done}/{total} việc",
-      "marks": "Dấu"
+      "marks": "Dấu",
+      "mark_groups": {
+        "priority": "Ưu tiên",
+        "progress": "Tiến độ",
+        "numbers": "Thứ tự",
+        "colours": "Màu",
+        "things": "Chủ đề",
+        "feelings": "Cảm xúc"
+      }
     },
     "rotate": "Xoay (Shift: từng 15°, nhấp đúp: dựng thẳng)",
     "export_title": "Xuất",

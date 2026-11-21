@@ -378,11 +378,31 @@ export interface OutlineItem { label: string; children: OutlineItem[]; link?: st
 // ── Tasks, marks and tags ───────────────────────────────────
 
 /**
- * The marks an idea can carry, before its words: priority, a question, done,
- * an idea, a warning. A short list chosen for what a map says, not an emoji
- * keyboard; any emoji typed into a label is still just a word in it.
+ * The marks an idea can carry, before its words, in groups as the picker
+ * shows them: priority, how far along, a number to order by, a colour, what
+ * the idea is about, and a feeling. Chosen for what a map says, not an emoji
+ * keyboard; any other emoji typed into a label is still just a word in it.
+ * Syn reads the same list (`ICONS` in src-tauri/src/syn/mindmap.rs): a test
+ * keeps the two alike.
  */
-export const ICONS = ['⭐', '❗', '❓', '💡', '⚠️', '🔥', '🎯', '📌', '💰', '📅', '👤', '🚩', '1️⃣', '2️⃣', '3️⃣', '✅'];
+export const ICON_GROUPS = [
+  { key: 'priority', icons: ['⭐', '❗', '❓', '⚠️', '🔥', '🎯', '📌', '🚩', '💎'] },
+  { key: 'progress', icons: ['✅', '❌', '⏳', '🔄', '⏸️', '🚧', '🆕', '🏁', '💯'] },
+  { key: 'numbers', icons: ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '6️⃣', '7️⃣', '8️⃣', '9️⃣'] },
+  { key: 'colours', icons: ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫', '⚪'] },
+  {
+    key: 'things',
+    icons: [
+      '💡', '📅', '⏰', '👤', '👥', '📝', '📎', '🔗', '📚',
+      '💰', '💼', '🏠', '🛒', '✈️', '📞', '✉️', '🔒', '⚙️',
+      '🐞', '🧪', '🎨', '🚀', '🏆', '🎁', '🍀', '❤️', '🌱',
+    ],
+  },
+  { key: 'feelings', icons: ['👍', '👎', '😀', '🙂', '😐', '😕', '😢', '😡', '🤔'] },
+] as const;
+
+/** Every mark, in the order the picker shows them. */
+export const ICONS: readonly string[] = ICON_GROUPS.flatMap((g) => g.icons);
 
 /** A label's words and its `#tags`, apart: the tags are drawn as chips, the words as the label. */
 export function tagsOf(label: string): { text: string; tags: string[] } {
